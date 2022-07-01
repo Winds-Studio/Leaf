@@ -1,18 +1,12 @@
 <div align="center">
-<a href="https://purpurmc.org"><img src="https://user-images.githubusercontent.com/74448585/150906023-101cd383-da82-4a3c-9603-a3b5741c3994.png" alt="Purpur"></a>
 
 ## Leaf
 
 [![MIT License](https://img.shields.io/github/license/PurpurMC/Purpur?&logo=github)](LICENSE)
 [![Github Actions Build](https://img.shields.io/github/workflow/status/PurpurMC/purpur/Build?event=push&logo=github)](https://purpurmc.org/downloads/)
-[![CodeFactor](https://www.codefactor.io/repository/github/PurpurMC/purpur/badge)](https://www.codefactor.io/repository/github/PurpurMC/purpur)
 [![Join us on Discord](https://img.shields.io/discord/685683385313919172.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://purpurmc.org/discord)
 
-[![Purpur's Stargazers](https://img.shields.io/github/stars/PurpurMC/Purpur?label=stars&logo=github)](https://github.com/PurpurMC/Purpur/stargazers)
-[![Purpur Forks](https://img.shields.io/github/forks/PurpurMC/Purpur?label=forks&logo=github)](https://github.com/PurpurMC/Purpur/network/members)
-[![Purpur Watchers](https://img.shields.io/github/watchers/PurpurMC/Purpur?label=watchers&logo=github)](https://github.com/PurpurMC/Purpur/watchers)
-
-Purpur is a drop-in replacement for [Paper](https://github.com/PaperMC/Paper) servers designed for configurability, new fun and exciting gameplay features, and performance built on top of [Paper](https://github.com/PaperMC/Paper/).
+Leaf is a drop-in replacement for [Purpur](https://github.com/PurpurMC/Purpur) servers designed for fix some bugs and customize, and performance built on top of [Purpur](https://github.com/PurpurMC/Purpur).
 
 </div>
 
@@ -22,19 +16,9 @@ Purpur is a drop-in replacement for [Paper](https://github.com/PaperMC/Paper) se
 Join us on [Discord](https://discord.gg/mtAAnkk)
 
 ## Downloads
-[![Downloads](https://img.shields.io/github/workflow/status/PurpurMC/purpur/Build?event=push&label=Downloads&logo=github)](https://purpurmc.org/downloads)
 
 Downloads can be obtained from the [downloads page](https://purpurmc.org/downloads/) or the [downloads API](https://api.purpurmc.org).
 
-Downloads API endpoints:
- * List versions of Minecraft with builds available:
-   `https://api.purpurmc.org/v2/purpur`
- * List builds for a version of Minecraft:
-   `https://api.purpurmc.org/v2/purpur/<version>`
- * Download a specific build of a specific version:
-   `https://api.purpurmc.org/v2/purpur/<version>/<build>/download`
- * Download the latest build for a version of Minecraft:
-   `https://api.purpurmc.org/v2/purpur/<version>/latest/download`
 
 ## License
 [![MIT License](https://img.shields.io/github/license/PurpurMC/Purpur?&logo=github)](LICENSE)
@@ -42,10 +26,6 @@ Downloads API endpoints:
 All patches are licensed under the MIT license, unless otherwise noted in the patch headers.
 
 See [PaperMC/Paper](https://github.com/PaperMC/Paper), and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of material used by this project.
-
-## bStats
-
-[![bStats Graph Data](https://bstats.org/signatures/server-implementation/Purpur.svg)](https://bstats.org/plugin/server-implementation/Purpur)
 
 
 ## API
@@ -112,10 +92,5 @@ To install the `purpur-api` and `purpur` dependencies to your local Maven repo, 
 Special Thanks To:
 -------------
 
-![YourKit-Logo](https://www.yourkit.com/images/yklogo.png)
-
-[YourKit](https://www.yourkit.com/), makers of the outstanding Java profiler,
-support open source projects of all kinds with their full featured [Java](https://www.yourkit.com/java/profiler)
-and [.NET](https://www.yourkit.com/.net/profiler) application profilers. We thank them for allowing us to use their
-software so we can make Purpur the best it can be.
+<a href="https://purpurmc.org"><img src="https://user-images.githubusercontent.com/74448585/150906023-101cd383-da82-4a3c-9603-a3b5741c3994.png" alt="Purpur"></a>
 
