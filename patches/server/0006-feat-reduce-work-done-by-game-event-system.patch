@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: peaches94 <peachescu94@gmail.com>
+Date: Sun, 10 Jul 2022 13:29:20 -0500
+Subject: [PATCH] feat: reduce work done by game event system
+
+1. going into game event dispatching can be expensive so run the checks before dispatching
+
+2. euclideangameeventdispatcher is not used concurrently so we ban that usage for improved performance with allays
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 0d82ca8ba9f2b11213cfe1ab01dc6ef3f2f510c9..bad88fddd25a99fdbe35285f7694fed26f943296 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -1672,6 +1672,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+                 if (chunk != null) {
+                     for (int j2 = k; j2 <= j1; ++j2) {
+                         flag |= chunk.getEventDispatcher(j2).walkListeners(event, emitterPos, emitter, (gameeventlistener, vec3d1) -> {
++                            if (!gameeventlistener.listensToEvent(event, emitter)) return; // petal - if they don't listen, ignore
+                             (gameeventlistener.handleEventsImmediately() ? list : this.gameEventMessages).add(new GameEvent.Message(event, emitterPos, emitter, gameeventlistener, vec3d1));
+                         });
+                     }
+diff --git a/src/main/java/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java b/src/main/java/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
+index 22c309343299e60ed8028229b7f134109001ff35..d5947d29295ddc93ba8ac1c0fc61f7badad582c4 100644
+--- a/src/main/java/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
++++ b/src/main/java/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
+@@ -85,6 +85,13 @@ public class SculkCatalystBlockEntity extends BlockEntity implements GameEventLi
+         }
+     }
+ 
++    // petal start
++    @Override
++    public boolean listensToEvent(GameEvent gameEvent, GameEvent.Context context) {
++        return !this.isRemoved() && gameEvent == GameEvent.ENTITY_DIE && context.sourceEntity() instanceof LivingEntity;
++    }
++    // petal end
++
+     public static void serverTick(Level world, BlockPos pos, BlockState state, SculkCatalystBlockEntity blockEntity) {
+         org.bukkit.craftbukkit.event.CraftEventFactory.sourceBlockOverride = blockEntity.getBlockPos(); // CraftBukkit - SPIGOT-7068: Add source block override, not the most elegant way but better than passing down a BlockPosition up to five methods deep.
+         blockEntity.sculkSpreader.updateCursors(world, pos, world.getRandom(), true);
+diff --git a/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventDispatcher.java b/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventDispatcher.java
+index 0dd708ebe81f73710de51215529c05ec61837dd3..f5b402efa86f824c460db8cac20c1c2b090f82d0 100644
+--- a/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventDispatcher.java
++++ b/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventDispatcher.java
+@@ -13,8 +13,8 @@ import net.minecraft.world.phys.Vec3;
+ 
+ public class EuclideanGameEventDispatcher implements GameEventDispatcher {
+     private final List<GameEventListener> listeners = Lists.newArrayList();
+-    private final Set<GameEventListener> listenersToRemove = Sets.newHashSet();
+-    private final List<GameEventListener> listenersToAdd = Lists.newArrayList();
++    //private final Set<GameEventListener> listenersToRemove = Sets.newHashSet(); // petal - not necessary
++    //private final List<GameEventListener> listenersToAdd = Lists.newArrayList(); // petal
+     private boolean processing;
+     private final ServerLevel level;
+ 
+@@ -30,7 +30,7 @@ public class EuclideanGameEventDispatcher implements GameEventDispatcher {
+     @Override
+     public void register(GameEventListener listener) {
+         if (this.processing) {
+-            this.listenersToAdd.add(listener);
++            throw new java.util.ConcurrentModificationException(); // petal - disallow concurrent modification
+         } else {
+             this.listeners.add(listener);
+         }
+@@ -41,7 +41,7 @@ public class EuclideanGameEventDispatcher implements GameEventDispatcher {
+     @Override
+     public void unregister(GameEventListener listener) {
+         if (this.processing) {
+-            this.listenersToRemove.add(listener);
++            throw new java.util.ConcurrentModificationException(); // petal - disallow concurrent modification
+         } else {
+             this.listeners.remove(listener);
+         }
+@@ -58,7 +58,7 @@ public class EuclideanGameEventDispatcher implements GameEventDispatcher {
+ 
+             while(iterator.hasNext()) {
+                 GameEventListener gameEventListener = iterator.next();
+-                if (this.listenersToRemove.remove(gameEventListener)) {
++                if (false) { // petal - disallow concurrent modification
+                     iterator.remove();
+                 } else {
+                     Optional<Vec3> optional = getPostableListenerPosition(this.level, pos, gameEventListener);
+@@ -72,6 +72,8 @@ public class EuclideanGameEventDispatcher implements GameEventDispatcher {
+             this.processing = false;
+         }
+ 
++        // petal start
++        /*
+         if (!this.listenersToAdd.isEmpty()) {
+             this.listeners.addAll(this.listenersToAdd);
+             this.listenersToAdd.clear();
+@@ -81,6 +83,8 @@ public class EuclideanGameEventDispatcher implements GameEventDispatcher {
+             this.listeners.removeAll(this.listenersToRemove);
+             this.listenersToRemove.clear();
+         }
++         */
++        // petal end
+ 
+         return bl;
+     }
+diff --git a/src/main/java/net/minecraft/world/level/gameevent/GameEventListener.java b/src/main/java/net/minecraft/world/level/gameevent/GameEventListener.java
+index e5601afe8b739da518f36ae306f5e0cb252238f0..bc8f04424c5e8c416d6988f0e06d8cadbb400ca7 100644
+--- a/src/main/java/net/minecraft/world/level/gameevent/GameEventListener.java
++++ b/src/main/java/net/minecraft/world/level/gameevent/GameEventListener.java
+@@ -12,4 +12,10 @@ public interface GameEventListener {
+     int getListenerRadius();
+ 
+     boolean handleGameEvent(ServerLevel world, GameEvent.Message event);
++
++    // petal start - add check for seeing if this listener cares about an event
++    default boolean listensToEvent(net.minecraft.world.level.gameevent.GameEvent gameEvent, net.minecraft.world.level.gameevent.GameEvent.Context context) {
++        return true;
++    }
++    // petal end
+ }
+diff --git a/src/main/java/net/minecraft/world/level/gameevent/vibrations/VibrationListener.java b/src/main/java/net/minecraft/world/level/gameevent/vibrations/VibrationListener.java
+index e45f54534bbf054eaf0008546ff459d4c11ddd50..e49d0d1c2a539fcd7e75262c4010475193964287 100644
+--- a/src/main/java/net/minecraft/world/level/gameevent/vibrations/VibrationListener.java
++++ b/src/main/java/net/minecraft/world/level/gameevent/vibrations/VibrationListener.java
+@@ -162,6 +162,13 @@ public class VibrationListener implements GameEventListener {
+         return true;
+     }
+ 
++    // petal start
++    @Override
++    public boolean listensToEvent(GameEvent gameEvent, GameEvent.Context context) {
++        return this.receivingEvent == null && gameEvent.is(this.config.getListenableEvents());
++    }
++    // petal end
++
+     public interface VibrationListenerConfig {
+ 
+         default TagKey<GameEvent> getListenableEvents() {
