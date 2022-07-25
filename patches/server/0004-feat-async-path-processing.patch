@@ -6,10 +6,10 @@ Subject: [PATCH] feat: async path processing
 
 diff --git a/src/main/java/host/bloom/pathfinding/AsyncPath.java b/src/main/java/host/bloom/pathfinding/AsyncPath.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eeced76de761
+index 0000000000000000000000000000000000000000..db264161dfa5ef288f6d79a0031b56f95f17dd9d
 --- /dev/null
 +++ b/src/main/java/host/bloom/pathfinding/AsyncPath.java
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,288 @@
 +package host.bloom.pathfinding;
 +
 +import net.minecraft.core.BlockPos;
@@ -20,9 +20,9 @@ index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eece
 +import org.jetbrains.annotations.NotNull;
 +import org.jetbrains.annotations.Nullable;
 +
++import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Set;
-+import java.util.concurrent.CompletableFuture;
 +import java.util.function.Supplier;
 +
 +/**
@@ -36,9 +36,9 @@ index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eece
 +    private volatile boolean processed = false;
 +
 +    /**
-+     * a future representing the processing state of this path
++     * runnables waiting for this to be processed
 +     */
-+    private final @NotNull CompletableFuture<Path> processingFuture;
++    private final List<Runnable> postProcessing = new ArrayList<>(0);
 +
 +    /**
 +     * a list of positions that this path could path towards
@@ -85,7 +85,7 @@ index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eece
 +        this.positions = positions;
 +        this.pathSupplier = pathSupplier;
 +
-+        this.processingFuture = AsyncPathProcessor.queue(this).thenApply((unused) -> this);
++        AsyncPathProcessor.queue(this);
 +    }
 +
 +    @Override
@@ -97,8 +97,12 @@ index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eece
 +     * returns the future representing the processing state of this path
 +     * @return a future
 +     */
-+    public @NotNull CompletableFuture<Path> getProcessingFuture() {
-+        return this.processingFuture;
++    public synchronized void postProcessing(@NotNull Runnable runnable) {
++        if (this.processed) {
++            runnable.run();
++        } else {
++            this.postProcessing.add(runnable);
++        }
 +    }
 +
 +    /**
@@ -131,6 +135,10 @@ index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eece
 +        this.canReach = bestPath.canReach();
 +
 +        this.processed = true;
++
++        for (Runnable runnable : this.postProcessing) {
++            runnable.run();
++        }
 +    }
 +
 +    /**
@@ -292,7 +300,7 @@ index 0000000000000000000000000000000000000000..c6d9d79707d7953f30e7373ca6e3eece
 +}
 diff --git a/src/main/java/host/bloom/pathfinding/AsyncPathProcessor.java b/src/main/java/host/bloom/pathfinding/AsyncPathProcessor.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e900f8fb637c0d69f94c5a24fb17f794513a482b
+index 0000000000000000000000000000000000000000..421670f967568c10e1e9052d0fc25818538d3b51
 --- /dev/null
 +++ b/src/main/java/host/bloom/pathfinding/AsyncPathProcessor.java
 @@ -0,0 +1,44 @@
@@ -334,7 +342,7 @@ index 0000000000000000000000000000000000000000..e900f8fb637c0d69f94c5a24fb17f794
 +     */
 +    public static void awaitProcessing(@Nullable Path path, Consumer<@Nullable Path> afterProcessing) {
 +        if (path != null && !path.isProcessed() && path instanceof AsyncPath asyncPath) {
-+            asyncPath.getProcessingFuture().thenAcceptAsync(afterProcessing, mainThreadExecutor);
++            asyncPath.postProcessing(() -> mainThreadExecutor.execute(() -> afterProcessing.accept(path)));
 +        } else {
 +            afterProcessing.accept(path);
 +        }
@@ -446,78 +454,170 @@ index bf3b8ccb3e031e0ad24cd51e28ea8cbd4f8a8030..e0453df8c0fcdb40ef0ed5ae8865d45d
      }
  
 diff --git a/src/main/java/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java b/src/main/java/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
-index 18364ce4c60172529b10bc9e3a813dcedc4b766f..e6cd04bc4e19a54b1bd621ce1c880e932207bce3 100644
+index 18364ce4c60172529b10bc9e3a813dcedc4b766f..b91abb2c5f06b3b81c242f16f738bed450d923b7 100644
 --- a/src/main/java/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
 +++ b/src/main/java/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
-@@ -58,6 +58,7 @@ public class MoveToTargetSink extends Behavior<Mob> {
+@@ -3,6 +3,7 @@ package net.minecraft.world.entity.ai.behavior;
+ import com.google.common.collect.ImmutableMap;
+ import java.util.Optional;
+ import javax.annotation.Nullable;
++
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.Mob;
+@@ -16,11 +17,13 @@ import net.minecraft.world.entity.ai.util.DefaultRandomPos;
+ import net.minecraft.world.level.pathfinder.Path;
+ import net.minecraft.world.phys.Vec3;
+ 
++// petal start
+ public class MoveToTargetSink extends Behavior<Mob> {
+     private static final int MAX_COOLDOWN_BEFORE_RETRYING = 40;
+     private int remainingCooldown;
+     @Nullable
+     private Path path;
++    private boolean finishedProcessing; // petal - track when path is processed
+     @Nullable
+     private BlockPos lastTargetPos;
+     private float speedModifier;
+@@ -39,11 +42,11 @@ public class MoveToTargetSink extends Behavior<Mob> {
+             --this.remainingCooldown;
+             return false;
+         } else {
++            // petal start - async path processing means we cant know if the path is reachable here
+             Brain<?> brain = entity.getBrain();
+             WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get();
+             boolean bl = this.reachedTarget(entity, walkTarget);
+-            if (!bl && this.tryComputePath(entity, walkTarget, world.getGameTime())) {
+-                this.lastTargetPos = walkTarget.getTarget().currentBlockPosition();
++            if (!bl) {
+                 return true;
+             } else {
+                 brain.eraseMemory(MemoryModuleType.WALK_TARGET);
+@@ -53,11 +56,14 @@ public class MoveToTargetSink extends Behavior<Mob> {
+ 
+                 return false;
+             }
++            // petal end
+         }
+     }
  
      @Override
      protected boolean canStillUse(ServerLevel serverLevel, Mob mob, long l) {
-+        if (this.path != null && !this.path.isProcessed()) return true; // petal - wait for path to process
++        if (!this.finishedProcessing) return true; // petal - wait for processing
++
          if (this.path != null && this.lastTargetPos != null) {
              Optional<WalkTarget> optional = mob.getBrain().getMemory(MemoryModuleType.WALK_TARGET);
              PathNavigation pathNavigation = mob.getNavigation();
-@@ -87,6 +88,8 @@ public class MoveToTargetSink extends Behavior<Mob> {
+@@ -81,59 +87,79 @@ public class MoveToTargetSink extends Behavior<Mob> {
+ 
+     @Override
+     protected void start(ServerLevel serverLevel, Mob mob, long l) {
+-        mob.getBrain().setMemory(MemoryModuleType.PATH, this.path);
+-        mob.getNavigation().moveTo(this.path, (double)this.speedModifier);
++        Brain<?> brain = mob.getBrain();
++        WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get();
++
++        this.finishedProcessing = false;
++        this.lastTargetPos = walkTarget.getTarget().currentBlockPosition();
++        this.path = this.computePath(mob, walkTarget);
+     }
  
      @Override
      protected void tick(ServerLevel world, Mob entity, long time) {
 +        if (this.path != null && !this.path.isProcessed()) return; // petal - wait for processing
 +
-         Path path = entity.getNavigation().getPath();
-         Brain<?> brain = entity.getBrain();
-         if (this.path != path) {
-@@ -94,6 +97,12 @@ public class MoveToTargetSink extends Behavior<Mob> {
-             brain.setMemory(MemoryModuleType.PATH, path);
-         }
- 
-+        // petal start - periodically recall moveTo to ensure we're moving towards the correct path
-+        if (time % 8 == 0) {
++        if (!this.finishedProcessing) {
++            this.finishedProcessing = true;
++
++            Brain<?> brain = entity.getBrain();
++            boolean canReach = this.path != null && this.path.canReach();
++            if (canReach) {
++                brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
++            } else if (!brain.hasMemoryValue(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE)) {
++                brain.setMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE, time);
++            }
++
++            if (!canReach) {
++                Optional<WalkTarget> walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET);
++
++                if (walkTarget.isPresent()) {
++                    BlockPos blockPos = walkTarget.get().getTarget().currentBlockPosition();
++                    Vec3 vec3 = DefaultRandomPos.getPosTowards((PathfinderMob)entity, 10, 7, Vec3.atBottomCenterOf(blockPos), (double)((float)Math.PI / 2F));
++                    if (vec3 != null) {
++                        // try recalculating the path using a random position
++                        this.path = entity.getNavigation().createPath(vec3.x, vec3.y, vec3.z, 0);
++                        this.finishedProcessing = false;
++                        return;
++                    }
++                }
++
++                // we failed, erase and move on
++                brain.eraseMemory(MemoryModuleType.WALK_TARGET);
++                this.path = null;
++
++                return;
++            }
++
++            entity.getBrain().setMemory(MemoryModuleType.PATH, this.path);
 +            entity.getNavigation().moveTo(this.path, (double)this.speedModifier);
 +        }
-+        // petal end
 +
-         if (path != null && this.lastTargetPos != null) {
+         Path path = entity.getNavigation().getPath();
+         Brain<?> brain = entity.getBrain();
+-        if (this.path != path) {
+-            this.path = path;
+-            brain.setMemory(MemoryModuleType.PATH, path);
+-        }
+ 
+-        if (path != null && this.lastTargetPos != null) {
++        if (path != null && this.lastTargetPos != null && brain.hasMemoryValue(MemoryModuleType.WALK_TARGET)) {
              WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get();
-             if (walkTarget.getTarget().currentBlockPosition().distSqr(this.lastTargetPos) > 4.0D && this.tryComputePath(entity, walkTarget, world.getGameTime())) {
-@@ -112,6 +121,20 @@ public class MoveToTargetSink extends Behavior<Mob> {
+-            if (walkTarget.getTarget().currentBlockPosition().distSqr(this.lastTargetPos) > 4.0D && this.tryComputePath(entity, walkTarget, world.getGameTime())) {
+-                this.lastTargetPos = walkTarget.getTarget().currentBlockPosition();
++            if (walkTarget.getTarget().currentBlockPosition().distSqr(this.lastTargetPos) > 4.0D) {
+                 this.start(world, entity, time);
+             }
+ 
+         }
+     }
+ 
+-    private boolean tryComputePath(Mob entity, WalkTarget walkTarget, long time) {
++    private Path computePath(Mob entity, WalkTarget walkTarget) {
+         BlockPos blockPos = walkTarget.getTarget().currentBlockPosition();
+-        this.path = entity.getNavigation().createPath(blockPos, 0);
+         this.speedModifier = walkTarget.getSpeedModifier();
+         Brain<?> brain = entity.getBrain();
          if (this.reachedTarget(entity, walkTarget)) {
              brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
-         } else {
-+            // petal start - move this out to postProcessPath
-+            host.bloom.pathfinding.AsyncPathProcessor.awaitProcessing(this.path, (unusedPath) -> {
-+                this.postProcessPath(entity, walkTarget, time);
-+            });
-+            return true;
-+        }
-+
-+        return false;
-+    }
-+
-+    private boolean postProcessPath(Mob entity, WalkTarget walkTarget, long time) {
-+       Brain<?> brain = entity.getBrain();
-+       BlockPos blockPos = walkTarget.getTarget().currentBlockPosition();
-+
-             boolean bl = this.path != null && this.path.canReach();
-             if (bl) {
-                 brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
-@@ -128,10 +151,17 @@ public class MoveToTargetSink extends Behavior<Mob> {
-                 this.path = entity.getNavigation().createPath(vec3.x, vec3.y, vec3.z, 0);
-                 return this.path != null;
-             }
-+
-+        // We failed, so erase and move on
-+        brain.eraseMemory(MemoryModuleType.WALK_TARGET);
-+        if (bl) {
-+            brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
+-        } else {
+-            boolean bl = this.path != null && this.path.canReach();
+-            if (bl) {
+-                brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
+-            } else if (!brain.hasMemoryValue(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE)) {
+-                brain.setMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE, time);
+-            }
+-
+-            if (this.path != null) {
+-                return true;
+-            }
+-
+-            Vec3 vec3 = DefaultRandomPos.getPosTowards((PathfinderMob)entity, 10, 7, Vec3.atBottomCenterOf(blockPos), (double)((float)Math.PI / 2F));
+-            if (vec3 != null) {
+-                this.path = entity.getNavigation().createPath(vec3.x, vec3.y, vec3.z, 0);
+-                return this.path != null;
+-            }
          }
-+        this.path = null;
  
-         return false;
+-        return false;
++        return entity.getNavigation().createPath(blockPos, 0);
      }
-+    // petal end
  
      private boolean reachedTarget(Mob entity, WalkTarget walkTarget) {
          return walkTarget.getTarget().currentBlockPosition().distManhattan(entity.blockPosition()) <= walkTarget.getCloseEnoughDist();
+     }
+ }
++// petal end
+\ No newline at end of file
 diff --git a/src/main/java/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java b/src/main/java/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java
 index 9bd6d4f7b86daaaa9cfbad454dde06b797e3f667..dc9dca72a22df9acadb8cdae8383522c996cbe10 100644
 --- a/src/main/java/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java
