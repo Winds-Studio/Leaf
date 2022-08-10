@@ -4,16 +4,14 @@
 
 [![MIT License](https://img.shields.io/github/license/PurpurMC/Purpur?&logo=github)](LICENSE)
 [![Github Actions Build](https://img.shields.io/github/workflow/status/PurpurMC/purpur/Build?event=push&logo=github)](https://purpurmc.org/downloads/)
-[![Join us on Discord](https://img.shields.io/discord/685683385313919172.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://purpurmc.org/discord)
 
 Leaf is a drop-in replacement for [Purpur](https://github.com/PurpurMC/Purpur) servers designed for fix some bugs and customize, and performance built on top of [Purpur](https://github.com/PurpurMC/Purpur).
 
 </div>
 
 ## Contact
-[![Join us on Discord](https://img.shields.io/discord/685683385313919172.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/mtAAnkk)
 
-Join us on [Discord](https://discord.gg/mtAAnkk)
+Null
 
 ## Downloads
 
