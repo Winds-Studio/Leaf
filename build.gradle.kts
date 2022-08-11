@@ -66,12 +66,14 @@ paperweight {
     remapRepo.set("https://maven.fabricmc.net/")
     decompileRepo.set("https://files.minecraftforge.net/maven/")
 
-    useStandardUpstream("purpur") {
-        url.set(github("PurpurMC", "Purpur"))
-        ref.set(providers.gradleProperty("purpurCommit"))
+    useStandardUpstream("pufferfish") {
+        url.set(github("pufferfish-gg", "Pufferfish"))
+        ref.set(providers.gradleProperty("pufferfishCommit"))
 
         withStandardPatcher {
-            baseName("Purpur")
+            //thanks Pearl
+            apiSourceDirPath.set("pufferfish-api")
+            serverSourceDirPath.set("pufferfish-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
