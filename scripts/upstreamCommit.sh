@@ -14,7 +14,7 @@ pufferfish=$(curl -H "Accept: application/vnd.github.v3+json" https://api.github
 updated=""
 logsuffix=""
 if [ ! -z "$pufferfish" ]; then
-    logsuffix="$logsuffix\n\nPufferfish Changes:\n$purpur"
+    logsuffix="$logsuffix\n\nPufferfish Changes:\n$pufferfish"
     updated="Pufferfish"
 fi
 disclaimer="Upstream has released updates that appear to apply and compile correctly"

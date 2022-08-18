@@ -71,7 +71,9 @@ paperweight {
         ref.set(providers.gradleProperty("pufferfishCommit"))
 
         withStandardPatcher {
-            baseName("Pufferfish")
+            //thanks Pearl
+            apiSourceDirPath.set("pufferfish-api")
+            serverSourceDirPath.set("pufferfish-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
