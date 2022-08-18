@@ -12,7 +12,7 @@ upstream=$(git ls-remote https://github.com/pufferfish-gg/Pufferfish | grep ver/
 if [ "$current" != "$upstream" ]; then
     sed -i 's/pufferfishCommit = .*/pufferfishCommit = '"$upstream"'/' gradle.properties
     {
-      ./gradlew applyPatches --stacktrace && ./gradlew build --stacktrace && ./gradlew rebuildPatches --stacktrace
+      ./gradlew applyPatches --stacktrace && ./gradlew rebuildPatches --stacktrace
     } || exit
 
     git add .
