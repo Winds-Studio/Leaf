@@ -6,7 +6,7 @@
 set -e
 PS1="$"
 
-current=$(cat gradle.properties | grep purpurCommit | sed 's/pufferfishCommit = //')
+current=$(cat gradle.properties | grep pufferfishCommit | sed 's/pufferfishCommit = //')
 upstream=$(git ls-remote https://github.com/pufferfish-gg/Pufferfish | grep ver/1.19 | cut -f 1)
 
 if [ "$current" != "$upstream" ]; then
