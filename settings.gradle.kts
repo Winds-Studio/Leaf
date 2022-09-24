@@ -7,7 +7,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = "leaf"
+rootProject.name = "leafmirai"
 for (name in listOf("Leaf-API", "Leaf-Server")) {
     val projName = name.toLowerCase(Locale.ENGLISH)
     include(projName)

@@ -66,14 +66,14 @@ paperweight {
     remapRepo.set("https://maven.fabricmc.net/")
     decompileRepo.set("https://files.minecraftforge.net/maven/")
 
-    useStandardUpstream("pufferfish") {
-        url.set(github("pufferfish-gg", "Pufferfish"))
-        ref.set(providers.gradleProperty("pufferfishCommit"))
+    useStandardUpstream("mirai") {
+        url.set(github("etil2jz", "Mirai"))
+        ref.set(providers.gradleProperty("MiraiCommit"))
 
         withStandardPatcher {
             //thanks Pearl
-            apiSourceDirPath.set("pufferfish-api")
-            serverSourceDirPath.set("pufferfish-server")
+            apiSourceDirPath.set("mirai-api")
+            serverSourceDirPath.set("mirai-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))

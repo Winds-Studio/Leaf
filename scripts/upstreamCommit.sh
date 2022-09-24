@@ -9,13 +9,13 @@
 set -e
 PS1="$"
 
-pufferfish=$(curl -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/pufferfish-gg/Pufferfish/compare/$1...HEAD | jq -r '.commits[] | "pufferfish-gg/Pufferfish@\(.sha[:7]) \(.commit.message | split("\r\n")[0] | split("\n")[0])"')
+pufferfish=$(curl -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/etil2jz/Mirai/compare/$1...HEAD | jq -r '.commits[] | "etil2jz/Mirai@\(.sha[:7]) \(.commit.message | split("\r\n")[0] | split("\n")[0])"')
 
 updated=""
 logsuffix=""
 if [ ! -z "$pufferfish" ]; then
-    logsuffix="$logsuffix\n\nPufferfish Changes:\n$pufferfish"
-    updated="Pufferfish"
+    logsuffix="$logsuffix\n\nMirai Changes:\n$pufferfish"
+    updated="Mirai"
 fi
 disclaimer="Upstream has released updates that appear to apply and compile correctly"
 
