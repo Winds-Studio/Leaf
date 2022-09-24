@@ -66,14 +66,14 @@ paperweight {
     remapRepo.set("https://maven.fabricmc.net/")
     decompileRepo.set("https://files.minecraftforge.net/maven/")
 
-    useStandardUpstream("pufferfish") {
-        url.set(github("pufferfish-gg", "Pufferfish"))
-        ref.set(providers.gradleProperty("pufferfishCommit"))
+    useStandardUpstream("Prismarine") {
+        url.set(github("PrismarineTeam", "Prismarine"))
+        ref.set(providers.gradleProperty("PrismarineCommit"))
 
         withStandardPatcher {
             //thanks Pearl
-            apiSourceDirPath.set("pufferfish-api")
-            serverSourceDirPath.set("pufferfish-server")
+            apiSourceDirPath.set("Prismarine-API")
+            serverSourceDirPath.set("Prismarine-Server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
