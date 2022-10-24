@@ -5,12 +5,12 @@
 [![Github Actions Build](https://img.shields.io/github/workflow/status/Dreeam-qwq/Leaf/Build%20Leaf?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
-Leaf is a drop-in replacement for [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) servers designed for fix some bugs and customize, and performance built on top of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish).
+Leaf is a drop-in replacement for [KeYi](https://github.com/KeYiMC/KeYi) servers designed for fix some bugs and customize, and performance built on top of [KeYi](https://github.com/KeYiMC/KeYi).
 
 </div>
 
 ## Features
- - Fork of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) for better performance.
+ - Fork of [KeYi](https://github.com/KeYiMC/KeYi) for better performance.
  - Allow all characters as username, including Chinese and other characters.
  - Allow to connect to backend server without enabling bunngecord mode under Proxy.
  - Disable expired chat warning.
@@ -48,4 +48,4 @@ Yes, this also includes all API provided by Paper, Spigot, and Bukkit.
 Credits:
 -------------
 
-- [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
+- [KeYi](https://github.com/KeYiMC/KeYi)

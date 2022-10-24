@@ -60,14 +60,14 @@ paperweight {
     remapRepo.set("https://maven.fabricmc.net/")
     decompileRepo.set("https://maven.quiltmc.org/")
 
-    useStandardUpstream("pufferfish") {
-        url.set(github("pufferfish-gg", "Pufferfish"))
-        ref.set(providers.gradleProperty("pufferfishCommit"))
+    useStandardUpstream("KeYi") {
+        url.set(github("KeYiMC", "KeYi"))
+        ref.set(providers.gradleProperty("KeYiCommit"))
 
         withStandardPatcher {
             //thanks Pearl
-            apiSourceDirPath.set("pufferfish-api")
-            serverSourceDirPath.set("pufferfish-server")
+            apiSourceDirPath.set("keyi-api")
+            serverSourceDirPath.set("keyi-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
