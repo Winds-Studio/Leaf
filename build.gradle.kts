@@ -66,8 +66,8 @@ paperweight {
 
         withStandardPatcher {
             //thanks Pearl
-            apiSourceDirPath.set("keyi-api")
-            serverSourceDirPath.set("keyi-server")
+            apiSourceDirPath.set("KeYi-API")
+            serverSourceDirPath.set("KeYi-Server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
