@@ -66,8 +66,8 @@ paperweight {
 
         withStandardPatcher {
             //thanks Pearl
-            apiSourceDirPath.set("paper-api")
-            serverSourceDirPath.set("paper-server")
+            apiSourceDirPath.set("Paper-API")
+            serverSourceDirPath.set("Paper-Server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
