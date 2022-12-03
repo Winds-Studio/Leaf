@@ -1,3 +1,4 @@
+<img src="Leaf.png" alt="Leaf logo" align="right" width="400">
 <div align="center">
 
 ## Leaf
@@ -5,8 +6,8 @@
 [![Github Actions Build](https://img.shields.io/github/workflow/status/Dreeam-qwq/Leaf/Build%20Leaf?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
-Leaf is a drop-in replacement for [KeYi](https://github.com/KeYiMC/KeYi) servers designed for fix some bugs and customize, and performance built on top of [KeYi](https://github.com/KeYiMC/KeYi).
-
+<h5>Leaf is a drop-in replacement for <a href="https://github.com/KeYiMC/KeYi">KeYi</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/KeYiMC/KeYi">KeYi</a>.</h5>
+<h8>Logo created by <a href="https://github.com/naiximcn">NaixiNana</a></h8>
 </div>
 
 ## Features

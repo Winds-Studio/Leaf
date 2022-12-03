@@ -1,3 +1,5 @@
+import io.papermc.paperweight.util.constants.*
+
 plugins {
     java
     `maven-publish`
@@ -16,7 +18,7 @@ repositories {
 
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.8.6:fat")
-    decompiler("org.quiltmc:quiltflower:1.8.1")
+    decompiler("org.quiltmc:quiltflower:1.9.0")
     paperclip("io.papermc:paperclip:3.0.3-SNAPSHOT")
 }
 
@@ -65,9 +67,7 @@ paperweight {
         ref.set(providers.gradleProperty("KeYiCommit"))
 
         withStandardPatcher {
-            //thanks Pearl
-            apiSourceDirPath.set("KeYi-API")
-            serverSourceDirPath.set("KeYi-Server")
+            baseName("KeYi")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
