@@ -1,8 +1,10 @@
+import io.papermc.paperweight.util.constants.*
+
 plugins {
     java
     `maven-publish`
     id("com.github.johnrengelman.shadow") version "7.1.2" apply false
-    id("io.papermc.paperweight.patcher") version "1.3.9-SNAPSHOT"
+    id("io.papermc.paperweight.patcher") version "1.3.9"
 }
 
 val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
@@ -16,7 +18,7 @@ repositories {
 
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.8.6:fat")
-    decompiler("net.minecraftforge:forgeflower:1.5.605.7")
+    decompiler("org.quiltmc:quiltflower:1.9.0")
     paperclip("io.papermc:paperclip:3.0.3-SNAPSHOT")
 }
 
@@ -58,16 +60,15 @@ paperweight {
     serverProject.set(project(":leaf-server"))
 
     remapRepo.set("https://maven.fabricmc.net/")
-    decompileRepo.set("https://files.minecraftforge.net/maven/")
+    decompileRepo.set("https://maven.quiltmc.org/")
 
-    useStandardUpstream("Paper") {
-        url.set(github("PaperMC", "Paper"))
-        ref.set(providers.gradleProperty("PaperCommit"))
+    useStandardUpstream("Mirai") {
+        url.set(github("etil2jz", "Mirai"))
+        ref.set(providers.gradleProperty("MiraiCommit"))
 
         withStandardPatcher {
-            //thanks Pearl
-            apiSourceDirPath.set("Paper-API")
-            serverSourceDirPath.set("Paper-Server")
+            apiSourceDirPath.set("mirai-api")
+            serverSourceDirPath.set("mirai-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
