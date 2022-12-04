@@ -67,7 +67,8 @@ paperweight {
         ref.set(providers.gradleProperty("GaleCommit"))
 
         withStandardPatcher {
-            baseName("Gale")
+            apiSourceDirPath.set("gale-api")
+            serverSourceDirPath.set("gale-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
