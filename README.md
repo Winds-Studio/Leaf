@@ -53,8 +53,4 @@ Credits:
 
 ## TODO
 
-- Add Paper Update  ef5d95f9fbb38cfa03d64188f6fab13a15598c93 to fc9ee65a32622d03a91db39364b6f106cf88335b
-
 - Add https://github.com/etil2jz/Sakura/tree/ver/1.18.2/patches/server
-
-- Add Upstream Update (Leaf)
