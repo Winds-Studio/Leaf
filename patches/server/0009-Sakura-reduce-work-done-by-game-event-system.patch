@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: peaches94 <peachescu94@gmail.com>
+Date: Sun, 10 Jul 2022 13:29:20 -0500
+Subject: [PATCH] Sakura: reduce work done by game event system
+
+1. going into game event dispatching can be expensive so run the checks before dispatching
+
+2. euclideangameeventdispatcher is not used concurrently so we ban that usage for improved performance with allays
+
+Original license: GPLv3
+Original project: https://github.com/Bloom-host/Petal
+
+diff --git a/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java b/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java
+index 38f2d97c2ffb6911c5020274b0a853ddc7d1589d..c21ad51bacb815784688865ea48493d9fe3b8975 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -132,7 +132,18 @@ public class LevelChunk extends ChunkAccess {
+     private Supplier<ChunkHolder.FullChunkStatus> fullStatus;
+     @Nullable
+     private LevelChunk.PostLoadProcessor postLoad;
+-    private final Int2ObjectMap<GameEventDispatcher> gameEventDispatcherSections;
++    // petal start
++    private final GameEventDispatcher[] gameEventDispatcherSections;
++    private static final int GAME_EVENT_DISPATCHER_RADIUS = 2;
++
++    private static int getGameEventSectionIndex(int sectionIndex) {
++        return sectionIndex + GAME_EVENT_DISPATCHER_RADIUS;
++    }
++
++    private static int getGameEventSectionLength(int sectionCount) {
++        return sectionCount + (GAME_EVENT_DISPATCHER_RADIUS * 2);
++    }
++    // petal end
+     private final LevelChunkTicks<Block> blockTicks;
+     private final LevelChunkTicks<Fluid> fluidTicks;
+     // Paper start - track last save time
+@@ -167,7 +178,7 @@ public class LevelChunk extends ChunkAccess {
+         this.tickersInLevel = Maps.newHashMap();
+         this.clientLightReady = false;
+         this.level = (ServerLevel) world; // CraftBukkit - type
+-        this.gameEventDispatcherSections = new Int2ObjectOpenHashMap();
++        this.gameEventDispatcherSections = new GameEventDispatcher[getGameEventSectionLength(this.getSectionsCount())]; // petal
+         Heightmap.Types[] aheightmap_type = Heightmap.Types.values();
+         int j = aheightmap_type.length;
+ 
+@@ -496,9 +507,23 @@ public class LevelChunk extends ChunkAccess {
+ 
+     @Override
+     public GameEventDispatcher getEventDispatcher(int ySectionCoord) {
+-        return (GameEventDispatcher) this.gameEventDispatcherSections.computeIfAbsent(ySectionCoord, (j) -> {
+-            return new EuclideanGameEventDispatcher(this.level);
+-        });
++        // petal start
++            int sectionIndex = getGameEventSectionIndex(this.getSectionIndexFromSectionY(ySectionCoord));
++
++            // drop game events that are too far away (32 blocks) from loaded sections
++            // this matches the highest radius of game events in the game
++            if (sectionIndex < 0 || sectionIndex >= this.gameEventDispatcherSections.length) {
++                return GameEventDispatcher.NOOP;
++            }
++
++            var dispatcher = this.gameEventDispatcherSections[sectionIndex];
++
++            if (dispatcher == null) {
++                dispatcher = this.gameEventDispatcherSections[sectionIndex] = new EuclideanGameEventDispatcher(this.level);
++            }
++
++            return dispatcher;
++            // petal end
+     }
+ 
+     // Paper start - Optimize getBlockData to reduce instructions
+@@ -846,7 +871,7 @@ public class LevelChunk extends ChunkAccess {
+ 
+                     gameeventdispatcher.unregister(gameeventlistener);
+                     if (gameeventdispatcher.isEmpty()) {
+-                        this.gameEventDispatcherSections.remove(i);
++                        this.gameEventDispatcherSections[getGameEventSectionIndex(this.getSectionIndexFromSectionY(i))] = null; // petal
+                     }
+                 }
+             }

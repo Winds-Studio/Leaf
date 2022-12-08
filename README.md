@@ -48,9 +48,7 @@ Yes, this also includes all API provided by Paper, Spigot, and Bukkit.
 Credits:
 -------------
 
-- [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
-
-
-## TODO
-
-- Add https://github.com/etil2jz/Sakura/tree/ver/1.18.2/patches/server
+- [Paper](https://github.com/PaperMC/Paper)
+- [Purpur](https://github.com/PurpurMC/Purpur)
+- [Mirai](https://github.com/etil2jz/Mirai)
+- [Sakura](https://github.com/etil2jz/Sakura)
