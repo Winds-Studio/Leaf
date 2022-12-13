@@ -3,7 +3,7 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/workflow/status/Dreeam-qwq/Leaf/Build%20Leaf?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
+[![Github Actions Build](https://img.shields.io/github/workflow/status/Winds-Studio/Leaf/Build%20Leaf%201.19.2/main?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement for <a href="https://github.com/GaleMC/Gale">Gale</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a>.</h5>
@@ -12,9 +12,12 @@
 
 ## Features
  - Fork of [Gale](https://github.com/GaleMC/Gale) for better performance.
- - Allow all characters as username, including Chinese and other characters.
- - Allow to connect to backend server without enabling bunngecord mode under Proxy.
- - Disable expired chat warning.
+ - Allowing all characters as username, including Chinese and other characters.
+ - Allowing players connect to backend server through proxy without enabling bunngecord mode.
+ - Allowing players use tripwire dupe.
+ - Disabling the UseItemOnPacket Too Far check.
+ - Update all dependencies to the latest.
+ - Some Purpur patches.
  - ...
 
 ## Contact
@@ -50,3 +53,5 @@ Credits:
 -------------
 
 - [Gale](https://github.com/GaleMC/Gale)
+- [Purpur](https://github.com/PurpurMC/Purpur)
+- [KeYi](https://github.com/KeYiMC/KeYi)
