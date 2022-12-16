@@ -2,7 +2,7 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/workflow/status/Dreeam-qwq/Leaf/Build%20Leaf?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/Leaf-1182.yml?branch=ver%2F1.18.2&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
 Leaf is a drop-in replacement for [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) servers designed for fix some bugs and customize, and performance built on top of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish).
