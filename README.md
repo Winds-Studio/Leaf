@@ -3,7 +3,7 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/workflow/status/Dreeam-qwq/Leaf/Build%20Leaf?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/LeafKeYi-1192.yml?branch=KeYi%2F1.19.2&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement for <a href="https://github.com/KeYiMC/KeYi">KeYi</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/KeYiMC/KeYi">KeYi</a>.</h5>
