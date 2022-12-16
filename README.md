@@ -3,7 +3,7 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/workflow/status/Winds-Studio/Leaf/Build%20Leaf%201.19.2/main?style=flat-square)](https://github.com/Dreeam-qwq/Leaf/actions)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/main.yml?branch=main&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement for <a href="https://github.com/GaleMC/Gale">Gale</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a>.</h5>
