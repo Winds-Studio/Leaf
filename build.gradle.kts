@@ -62,13 +62,13 @@ paperweight {
     remapRepo.set("https://maven.fabricmc.net/")
     decompileRepo.set("https://maven.quiltmc.org/")
 
-    useStandardUpstream("Gale") {
-        url.set(github("GaleMC", "Gale"))
-        ref.set(providers.gradleProperty("GaleCommit"))
+    useStandardUpstream("Pufferfish") {
+        url.set(github("pufferfish-gg", "Pufferfish"))
+        ref.set(providers.gradleProperty("PufferfishCommit"))
 
         withStandardPatcher {
-            apiSourceDirPath.set("gale-api")
-            serverSourceDirPath.set("gale-server")
+            apiSourceDirPath.set("pufferfish-api")
+            serverSourceDirPath.set("pufferfish-server")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
             apiOutputDir.set(layout.projectDirectory.dir("Leaf-API"))
