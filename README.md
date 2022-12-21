@@ -6,12 +6,12 @@
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/main.yml?branch=main&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
-<h5>Leaf is a drop-in replacement for <a href="https://github.com/GaleMC/Gale">Gale</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a>.</h5>
+<h5>Leaf is a drop-in replacement for <a href="https://github.com/pufferfish-gg/Pufferfish">Pufferfish</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/pufferfish-gg/Pufferfish">Pufferfish</a>.</h5>
 <h8>Logo created by <a href="https://github.com/naiximcn">NaixiNana</a></h8>
 </div>
 
 ## Features
- - Fork of [Gale](https://github.com/GaleMC/Gale) for better performance.
+ - Fork of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) for better performance.
  - Allowing all characters as username, including Chinese and other characters.
  - Allowing players connect to backend server through proxy without enabling bunngecord mode.
  - Allowing players use tripwire dupe.
@@ -52,6 +52,8 @@ Yes, this also includes all API provided by Paper, Spigot, and Bukkit.
 Credits:
 -------------
 
-- [Gale](https://github.com/GaleMC/Gale)
+- [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Purpur](https://github.com/PurpurMC/Purpur)
 - [KeYi](https://github.com/KeYiMC/KeYi)
+- [Petal](https://github.com/Bloom-host/Petal)
+- [Gale](https://github.com/GaleMC/Gale)
