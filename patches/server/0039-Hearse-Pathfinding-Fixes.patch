@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: BuildTools <unconfigured@null.spigotmc.org>
 Date: Wed, 4 Jan 2023 15:19:31 +0800
-Subject: [PATCH] Hearse: Try to fix some thread problems may happen
+Subject: [PATCH] Hearse: Pathfinding Fixes
 
 Original license:
 Original project: https://github.com/NaturalCodeClub/Hearse
@@ -110,7 +110,7 @@ index b0bae04ab5a93dd4cf1eeeb02bed1e508e1f2913..d427735eff0056c171591709829d0bb7
      private static final int MAX_START_NODE_CANDIDATES = 10;
  
 diff --git a/src/main/java/net/minecraft/world/level/pathfinder/NodeEvaluator.java b/src/main/java/net/minecraft/world/level/pathfinder/NodeEvaluator.java
-index a8a2594b8f5b3ebf6a1f918c7d822ad35b051b17..c614bcfc2bbbbccc7c4aac9389d4780478e739d2 100644
+index a8a2594b8f5b3ebf6a1f918c7d822ad35b051b17..7de3c41e036ddb91d951cefbd2ea093918150680 100644
 --- a/src/main/java/net/minecraft/world/level/pathfinder/NodeEvaluator.java
 +++ b/src/main/java/net/minecraft/world/level/pathfinder/NodeEvaluator.java
 @@ -1,6 +1,7 @@
@@ -130,6 +130,99 @@ index a8a2594b8f5b3ebf6a1f918c7d822ad35b051b17..c614bcfc2bbbbccc7c4aac9389d47804
      protected int entityWidth;
      protected int entityHeight;
      protected int entityDepth;
+@@ -39,9 +40,7 @@ public abstract class NodeEvaluator {
+     }
+ 
+     protected Node getNode(int x, int y, int z) {
+-        return this.nodes.computeIfAbsent(Node.createHash(x, y, z), (l) -> {
+-            return new Node(x, y, z);
+-        });
++        return this.nodes.computeIfAbsent(Node.createHash(x, y, z), (l) -> new Node(x, y, z));
+     }
+ 
+     public abstract Node getStart();
+diff --git a/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java b/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java
+index d23481453717f715124156b5d83f6448f720d049..17073b714285857d7fc5c816f1ea57f9f528be22 100644
+--- a/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java
++++ b/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java
+@@ -8,6 +8,8 @@ import java.util.List;
+ import java.util.Map;
+ import java.util.Optional;
+ import java.util.Set;
++import java.util.concurrent.locks.ReadWriteLock;
++import java.util.concurrent.locks.ReentrantReadWriteLock;
+ import java.util.function.Function;
+ import java.util.stream.Collectors;
+ import javax.annotation.Nullable;
+@@ -20,6 +22,7 @@ import net.minecraft.world.level.PathNavigationRegion;
+ public class PathFinder {
+     private static final float FUDGING = 1.5F;
+     private final Node[] neighbors = new Node[32];
++    private final ReadWriteLock evaluatorLock = new ReentrantReadWriteLock();
+     private final int maxVisitedNodes;
+     public final NodeEvaluator nodeEvaluator;
+     private static final boolean DEBUG = false;
+@@ -33,19 +36,40 @@ public class PathFinder {
+     @Nullable
+     public Path findPath(PathNavigationRegion world, Mob mob, Set<BlockPos> positions, float followRange, int distance, float rangeMultiplier) {
+         this.openSet.clear();
+-        this.nodeEvaluator.prepare(world, mob);
+-        Node node = this.nodeEvaluator.getStart();
++        this.evaluatorLock.writeLock().lock();
++        try {
++            this.nodeEvaluator.prepare(world, mob);
++        }finally {
++            this.evaluatorLock.writeLock().unlock();
++        }
++        Node node;
++        this.evaluatorLock.readLock().lock();
++        try{
++            node = this.nodeEvaluator.getStart();
++        }finally {
++            this.evaluatorLock.readLock().unlock();
++        }
+         if (node == null) {
+             return null;
+         } else {
+             // Paper start - remove streams - and optimize collection
+             List<Map.Entry<Target, BlockPos>> map = Lists.newArrayList();
+-            for (BlockPos pos : positions) {
+-                map.add(new java.util.AbstractMap.SimpleEntry<>(this.nodeEvaluator.getGoal(pos.getX(), pos.getY(), pos.getZ()), pos));
++            this.evaluatorLock.readLock().lock();
++            try {
++                for (BlockPos pos : positions) {
++                    map.add(new java.util.AbstractMap.SimpleEntry<>(this.nodeEvaluator.getGoal(pos.getX(), pos.getY(), pos.getZ()), pos));
++                }
++            }finally {
++                this.evaluatorLock.readLock().unlock();
+             }
+             // Paper end
+             Path path = this.findPath(world.getProfiler(), node, map, followRange, distance, rangeMultiplier);
+-            this.nodeEvaluator.done();
++            this.evaluatorLock.writeLock().lock();
++            try {
++                this.nodeEvaluator.done();
++            }finally {
++                this.evaluatorLock.writeLock().unlock();;
++            }
+             return path;
+         }
+     }
+@@ -91,7 +115,13 @@ public class PathFinder {
+             }
+ 
+             if (!(node.distanceTo(startNode) >= followRange)) {
+-                int k = this.nodeEvaluator.getNeighbors(this.neighbors, node);
++                int k;
++                this.evaluatorLock.readLock().lock();
++                try {
++                    k = this.nodeEvaluator.getNeighbors(this.neighbors, node);
++                }finally {
++                    this.evaluatorLock.readLock().unlock();
++                }
+ 
+                 for(int l = 0; l < k; ++l) {
+                     Node node2 = this.neighbors[l];
 diff --git a/src/main/java/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java b/src/main/java/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java
 index 6084631b5b502279b84f190dc62fc76b770e368e..f526adbd31e65fc74af48f6137d293a7a7ceafbb 100644
 --- a/src/main/java/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java
