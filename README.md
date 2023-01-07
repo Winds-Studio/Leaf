@@ -17,8 +17,7 @@
  - Allowing players use tripwire dupe.
  - Disabling the UseItemOnPacket Too Far check.
  - Update all dependencies to the latest.
- - Async enetity AI & travling
- - Fix some pathfinding issues
+ - Parallel entity ticking(Half of async)(In alpha)
  - Some Purpur patches.
  - ...
 
