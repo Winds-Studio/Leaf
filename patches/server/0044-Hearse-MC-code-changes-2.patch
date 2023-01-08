@@ -1,0 +1,386 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 8 Jan 2023 21:59:47 +0800
+Subject: [PATCH] Hearse: MC code changes 2
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 03b8ef3409fd5f7a4d4b06e13cf8eb22b3bbf8a1..3d99330160a3ba0715394d0c88533bc4a79fe3a2 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -3,10 +3,12 @@ package net.minecraft.server.level;
+ import com.google.common.annotations.VisibleForTesting;
+ import co.aikar.timings.TimingHistory; // Paper
+ import com.google.common.collect.Lists;
++import com.google.common.collect.Sets;
+ import com.mojang.datafixers.DataFixer;
+ import com.mojang.datafixers.util.Pair;
+ import com.mojang.logging.LogUtils;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
++import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.longs.LongSet;
+ import it.unimi.dsi.fastutil.longs.LongSets;
+@@ -21,15 +23,8 @@ import java.io.IOException;
+ import java.io.Writer;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+-import java.util.ArrayList;
+-import java.util.Comparator;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.Locale;
+-import java.util.Objects;
+-import java.util.Optional;
+-import java.util.Set;
+-import java.util.UUID;
++import java.util.*;
++import java.util.concurrent.ConcurrentLinkedDeque;
+ import java.util.concurrent.Executor;
+ import java.util.function.BooleanSupplier;
+ import java.util.function.Function;
+@@ -204,7 +199,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+     final Set<Mob> navigatingMobs;
+     volatile boolean isUpdatingNavigations;
+     protected final Raids raids;
+-    private final ObjectLinkedOpenHashSet<BlockEventData> blockEvents;
++    private final Deque<BlockEventData> blockEvents;
+     private final List<BlockEventData> blockEventsToReschedule;
+     private boolean handlingTick;
+     private final List<CustomSpawner> customSpawners;
+@@ -536,10 +531,10 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         this.entityTickList = new EntityTickList();
+         this.blockTicks = new LevelTicks<>(this::isPositionTickingWithEntitiesLoaded, this.getProfilerSupplier());
+         this.fluidTicks = new LevelTicks<>(this::isPositionTickingWithEntitiesLoaded, this.getProfilerSupplier());
+-        this.navigatingMobs = new ObjectOpenHashSet();
+-        this.blockEvents = new ObjectLinkedOpenHashSet();
+-        this.blockEventsToReschedule = new ArrayList(64);
+-        this.dragonParts = new Int2ObjectOpenHashMap();
++        this.navigatingMobs = Sets.newConcurrentHashSet();
++        this.blockEvents = new ConcurrentLinkedDeque<>();
++        this.blockEventsToReschedule = Collections.synchronizedList(new ArrayList(64));
++        this.dragonParts = Int2ObjectMaps.synchronize(new Int2ObjectOpenHashMap());
+         this.tickTime = flag1;
+         this.server = minecraftserver;
+         this.customSpawners = list;
+@@ -1777,10 +1772,8 @@ public class ServerLevel extends Level implements WorldGenLevel {
+ 
+     private void runBlockEvents() {
+         this.blockEventsToReschedule.clear();
+-
+-        while (!this.blockEvents.isEmpty()) {
+-            BlockEventData blockactiondata = (BlockEventData) this.blockEvents.removeFirst();
+-
++        BlockEventData blockactiondata;
++        while ((blockactiondata = (BlockEventData) this.blockEvents.pollFirst())!=null) {
+             if (this.shouldTickBlocksAt(blockactiondata.pos())) {
+                 if (this.doBlockEvent(blockactiondata)) {
+                     this.server.getPlayerList().broadcast((Player) null, (double) blockactiondata.pos().getX(), (double) blockactiondata.pos().getY(), (double) blockactiondata.pos().getZ(), 64.0D, this.dimension(), new ClientboundBlockEventPacket(blockactiondata.pos(), blockactiondata.block(), blockactiondata.paramA(), blockactiondata.paramB()));
+diff --git a/src/main/java/net/minecraft/util/ThreadingDetector.java b/src/main/java/net/minecraft/util/ThreadingDetector.java
+index b6e98aaebe57453b8eceaa633a989aa24409830f..60162cccf765800c6172d1544f2cd9bcf30cbd97 100644
+--- a/src/main/java/net/minecraft/util/ThreadingDetector.java
++++ b/src/main/java/net/minecraft/util/ThreadingDetector.java
+@@ -17,7 +17,7 @@ import org.slf4j.Logger;
+ public class ThreadingDetector {
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private final String name;
+-    private final Semaphore lock = new Semaphore(1);
++    private final Semaphore lock = new Semaphore(255);
+     private final Lock stackTraceLock = new ReentrantLock();
+     @Nullable
+     private volatile Thread threadThatFailedToAcquire;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/behavior/LongJumpToRandomPos.java b/src/main/java/net/minecraft/world/entity/ai/behavior/LongJumpToRandomPos.java
+index d3827215ef19f6e1e63f846d91ed00525a318c7a..80215972538d5cfce5f224253ea0e34ea4fd45a4 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/behavior/LongJumpToRandomPos.java
++++ b/src/main/java/net/minecraft/world/entity/ai/behavior/LongJumpToRandomPos.java
+@@ -40,7 +40,7 @@ public class LongJumpToRandomPos<E extends Mob> extends Behavior<E> {
+     protected final int maxLongJumpHeight;
+     protected final int maxLongJumpWidth;
+     protected final float maxJumpVelocity;
+-    protected List<LongJumpToRandomPos.PossibleJump> jumpCandidates = Lists.newArrayList();
++    protected List<LongJumpToRandomPos.PossibleJump> jumpCandidates = Lists.newCopyOnWriteArrayList();
+     protected Optional<Vec3> initialPosition = Optional.empty();
+     @Nullable
+     protected Vec3 chosenJump;
+diff --git a/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java b/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java
+index 878a42695ecedf0c3f2e6310e3ce44c6b6c36858..0c308e12f9b590fa169babac487c8adc7e3f823c 100644
+--- a/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java
++++ b/src/main/java/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java
+@@ -2,18 +2,17 @@ package net.minecraft.world.level.gameevent;
+ 
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Sets;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.Optional;
+-import java.util.Set;
++
++import java.util.*;
++
+ import net.minecraft.network.protocol.game.DebugPackets;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.phys.Vec3;
+ 
+ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegistry {
+-    private final List<GameEventListener> listeners = Lists.newArrayList();
+-    private final Set<GameEventListener> listenersToRemove = Sets.newHashSet();
+-    private final List<GameEventListener> listenersToAdd = Lists.newArrayList();
++    private final List<GameEventListener> listeners = Collections.synchronizedList(Lists.newArrayList());
++    private final Set<GameEventListener> listenersToRemove = Sets.newConcurrentHashSet();
++    private final List<GameEventListener> listenersToAdd = Lists.newCopyOnWriteArrayList();
+     private boolean processing;
+     private final ServerLevel level;
+ 
+diff --git a/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java b/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java
+index ac807277a6b26d140ea9873d17c7aa4fb5fe37b2..4c75f50ab0184637b72e08936ff8808ad6c6fb5f 100644
+--- a/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java
++++ b/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java
+@@ -13,6 +13,8 @@ import java.util.function.Function;
+ import java.util.function.Predicate;
+ import java.util.stream.Stream;
+ import javax.annotation.Nullable;
++
++import it.unimi.dsi.fastutil.objects.ObjectSets;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.nbt.ListTag;
+ import net.minecraft.world.level.ChunkPos;
+@@ -21,7 +23,7 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+     private final Queue<ScheduledTick<T>> tickQueue = new PriorityQueue<>(ScheduledTick.DRAIN_ORDER);
+     @Nullable
+     private List<SavedTick<T>> pendingTicks;
+-    private final Set<ScheduledTick<?>> ticksPerPosition = new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH);
++    private final Set<ScheduledTick<?>> ticksPerPosition = ObjectSets.synchronize(new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH));
+     @Nullable
+     private BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> onTickAdded;
+ 
+@@ -29,11 +31,11 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+     private boolean dirty;
+     private long lastSaved = Long.MIN_VALUE;
+ 
+-    public boolean isDirty(final long tick) {
++    public synchronized boolean isDirty(final long tick) {
+         return this.dirty || (!this.tickQueue.isEmpty() && tick != this.lastSaved);
+     }
+ 
+-    public void clearDirty() {
++    public synchronized void clearDirty() {
+         this.dirty = false;
+     }
+     // Paper end - add dirty flag
+@@ -50,17 +52,17 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+ 
+     }
+ 
+-    public void setOnTickAdded(@Nullable BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> tickConsumer) {
++    public synchronized void setOnTickAdded(@Nullable BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> tickConsumer) {
+         this.onTickAdded = tickConsumer;
+     }
+ 
+     @Nullable
+-    public ScheduledTick<T> peek() {
++    public synchronized ScheduledTick<T> peek() {
+         return this.tickQueue.peek();
+     }
+ 
+     @Nullable
+-    public ScheduledTick<T> poll() {
++    public synchronized ScheduledTick<T> poll() {
+         ScheduledTick<T> scheduledTick = this.tickQueue.poll();
+         if (scheduledTick != null) {
+             this.dirty = true; // Paper - add dirty flag
+@@ -71,7 +73,7 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+     }
+ 
+     @Override
+-    public void schedule(ScheduledTick<T> orderedTick) {
++    public synchronized void schedule(ScheduledTick<T> orderedTick) {
+         if (this.ticksPerPosition.add(orderedTick)) {
+             this.dirty = true; // Paper - add dirty flag
+             this.scheduleUnchecked(orderedTick);
+@@ -88,11 +90,11 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+     }
+ 
+     @Override
+-    public boolean hasScheduledTick(BlockPos pos, T type) {
++    public synchronized boolean hasScheduledTick(BlockPos pos, T type) {
+         return this.ticksPerPosition.contains(ScheduledTick.probe(type, pos));
+     }
+ 
+-    public void removeIf(Predicate<ScheduledTick<T>> predicate) {
++    public synchronized void removeIf(Predicate<ScheduledTick<T>> predicate) {
+         Iterator<ScheduledTick<T>> iterator = this.tickQueue.iterator();
+ 
+         while(iterator.hasNext()) {
+@@ -105,17 +107,17 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+ 
+     }
+ 
+-    public Stream<ScheduledTick<T>> getAll() {
++    public synchronized Stream<ScheduledTick<T>> getAll() {
+         return this.tickQueue.stream();
+     }
+ 
+     @Override
+-    public int count() {
++    public synchronized int count() {
+         return this.tickQueue.size() + (this.pendingTicks != null ? this.pendingTicks.size() : 0);
+     }
+ 
+     @Override
+-    public ListTag save(long l, Function<T, String> function) {
++    public synchronized ListTag save(long l, Function<T, String> function) {
+         this.lastSaved = l; // Paper - add dirty system to level ticks
+         ListTag listTag = new ListTag();
+         if (this.pendingTicks != null) {
+@@ -131,7 +133,7 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+         return listTag;
+     }
+ 
+-    public void unpack(long time) {
++    public synchronized void unpack(long time) {
+         if (this.pendingTicks != null) {
+             // Paper start - add dirty system to level chunk ticks
+             if (this.tickQueue.isEmpty()) {
+diff --git a/src/main/java/net/minecraft/world/ticks/LevelTicks.java b/src/main/java/net/minecraft/world/ticks/LevelTicks.java
+index 5dea8414964e0d2d1fb15a6baa27227e9722bfc7..2203adc2a68e7fb253e353098fd6ddad521e3a32 100644
+--- a/src/main/java/net/minecraft/world/ticks/LevelTicks.java
++++ b/src/main/java/net/minecraft/world/ticks/LevelTicks.java
+@@ -1,24 +1,9 @@
+ package net.minecraft.world.ticks;
+ 
+-import it.unimi.dsi.fastutil.longs.Long2LongMap;
+-import it.unimi.dsi.fastutil.longs.Long2LongMaps;
+-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
+-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
++import it.unimi.dsi.fastutil.longs.*;
+ import it.unimi.dsi.fastutil.objects.ObjectIterator;
+ import it.unimi.dsi.fastutil.objects.ObjectOpenCustomHashSet;
+-import java.util.ArrayDeque;
+-import java.util.ArrayList;
+-import java.util.Comparator;
+-import java.util.List;
+-import java.util.LongSummaryStatistics;
+-import java.util.PriorityQueue;
+-import java.util.Queue;
+-import java.util.Set;
+-import java.util.function.BiConsumer;
+-import java.util.function.LongPredicate;
+-import java.util.function.Predicate;
+-import java.util.function.Supplier;
++import it.unimi.dsi.fastutil.objects.ObjectSets;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+@@ -26,31 +11,36 @@ import net.minecraft.core.Vec3i;
+ import net.minecraft.util.profiling.ProfilerFiller;
+ import net.minecraft.world.level.ChunkPos;
+ import net.minecraft.world.level.levelgen.structure.BoundingBox;
++import java.util.*;
++import java.util.concurrent.ConcurrentLinkedDeque;
++import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.function.BiConsumer;
++import java.util.function.LongPredicate;
++import java.util.function.Predicate;
++import java.util.function.Supplier;
+ 
+ public class LevelTicks<T> implements LevelTickAccess<T> {
+     private static final Comparator<LevelChunkTicks<?>> CONTAINER_DRAIN_ORDER = (a, b) -> {
+         return ScheduledTick.INTRA_TICK_DRAIN_ORDER.compare(a.peek(), b.peek());
+     };
+     private final LongPredicate tickCheck;
+-    private final Supplier<ProfilerFiller> profiler;
+-    private final Long2ObjectMap<LevelChunkTicks<T>> allContainers = new Long2ObjectOpenHashMap<>();
++    private final Long2ObjectMap<LevelChunkTicks<T>> allContainers = Long2ObjectMaps.synchronize(new Long2ObjectOpenHashMap<>());
+     private final Long2LongMap nextTickForContainer = Util.make(new Long2LongOpenHashMap(), (map) -> {
+         map.defaultReturnValue(Long.MAX_VALUE);
+     });
+     private final Queue<LevelChunkTicks<T>> containersToTick = new PriorityQueue<>(CONTAINER_DRAIN_ORDER);
+-    private final Queue<ScheduledTick<T>> toRunThisTick = new ArrayDeque<>();
+-    private final List<ScheduledTick<T>> alreadyRunThisTick = new ArrayList<>();
+-    private final Set<ScheduledTick<?>> toRunThisTickSet = new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH);
++    private final Queue<ScheduledTick<T>> toRunThisTick = new ConcurrentLinkedDeque<>();
++    private final List<ScheduledTick<T>> alreadyRunThisTick = new CopyOnWriteArrayList<>();
++    private final Set<ScheduledTick<?>> toRunThisTickSet = ObjectSets.synchronize(new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH));
++
+     private final BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> chunkScheduleUpdater = (chunkTickScheduler, tick) -> {
+         if (tick.equals(chunkTickScheduler.peek())) {
+             this.updateContainerScheduling(tick);
+         }
+-
+     };
+ 
+     public LevelTicks(LongPredicate tickingFutureReadyPredicate, Supplier<ProfilerFiller> profilerGetter) {
+         this.tickCheck = tickingFutureReadyPredicate;
+-        this.profiler = profilerGetter;
+     }
+ 
+     public void addContainer(ChunkPos pos, LevelChunkTicks<T> scheduler) {
+@@ -123,7 +113,9 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+                         entry.setValue(scheduledTick.triggerTick());
+                     } else if (this.tickCheck.test(l)) {
+                         objectIterator.remove();
+-                        this.containersToTick.add(levelChunkTicks);
++                        synchronized (this.containersToTick){
++                            this.containersToTick.add(levelChunkTicks);
++                        }
+                     }
+                 }
+             }
+@@ -133,27 +125,29 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+ 
+     private void drainContainers(long time, int maxTicks) {
+         LevelChunkTicks<T> levelChunkTicks;
+-        while(this.canScheduleMoreTicks(maxTicks) && (levelChunkTicks = this.containersToTick.poll()) != null) {
+-            ScheduledTick<T> scheduledTick = levelChunkTicks.poll();
+-            this.scheduleForThisTick(scheduledTick);
+-            this.drainFromCurrentContainer(this.containersToTick, levelChunkTicks, time, maxTicks);
+-            ScheduledTick<T> scheduledTick2 = levelChunkTicks.peek();
+-            if (scheduledTick2 != null) {
+-                if (scheduledTick2.triggerTick() <= time && this.canScheduleMoreTicks(maxTicks)) {
+-                    this.containersToTick.add(levelChunkTicks);
+-                } else {
+-                    this.updateContainerScheduling(scheduledTick2);
++        synchronized (this.containersToTick){
++            while(this.canScheduleMoreTicks(maxTicks) && (levelChunkTicks = this.containersToTick.poll()) != null) {
++                ScheduledTick<T> scheduledTick = levelChunkTicks.poll();
++                this.scheduleForThisTick(scheduledTick);
++                this.drainFromCurrentContainer(this.containersToTick, levelChunkTicks, time, maxTicks);
++                ScheduledTick<T> scheduledTick2 = levelChunkTicks.peek();
++                if (scheduledTick2 != null) {
++                    if (scheduledTick2.triggerTick() <= time && this.canScheduleMoreTicks(maxTicks)) {
++                        this.containersToTick.add(levelChunkTicks);
++                    } else {
++                        this.updateContainerScheduling(scheduledTick2);
++                    }
+                 }
+             }
+         }
+-
+     }
+ 
+     private void rescheduleLeftoverContainers() {
+-        for(LevelChunkTicks<T> levelChunkTicks : this.containersToTick) {
+-            this.updateContainerScheduling(levelChunkTicks.peek());
++        synchronized (this.containersToTick){
++            for(LevelChunkTicks<T> levelChunkTicks : this.containersToTick) {
++                this.updateContainerScheduling(levelChunkTicks.peek());
++            }
+         }
+-
+     }
+ 
+     private void updateContainerScheduling(ScheduledTick<T> tick) {
+@@ -201,7 +195,9 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+ 
+     private void cleanupAfterTick() {
+         this.toRunThisTick.clear();
+-        this.containersToTick.clear();
++        synchronized (this.containersToTick){
++            this.containersToTick.clear();
++        }
+         this.alreadyRunThisTick.clear();
+         this.toRunThisTickSet.clear();
+     }

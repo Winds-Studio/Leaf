@@ -1,0 +1,460 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Thu, 12 Jan 2023 20:18:22 +0800
+Subject: [PATCH] Hearse: Remove some lock in ChunkEntitySlices
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+index 1012b8d1d192a946b0982c88c12a0fc0e6051972..b2eb6feffb2191c450175547c1371623ce5185eb 100644
+--- a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
++++ b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+@@ -191,15 +191,19 @@ public final class ChunkEntitySlices {
+ 
+     public void mergeInto(final ChunkEntitySlices slices) {
+         final long id = this.accessLock.readLock();
++        final List<Entity> cop = new ArrayList<>();
+         try {
+             final Entity[] entities = this.entities.getRawData();
+             for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
+                 final Entity entity = entities[i];
+-                slices.addEntity(entity, entity.sectionY);
++                cop.add(entity);
+             }
+         } finally {
+             this.accessLock.unlockRead(id);
+         }
++        for (Entity entity : cop){
++            slices.addEntity(entity, entity.sectionY);
++        }
+     }
+ 
+     public void updateStatus(final ChunkHolder.FullChunkStatus status, final EntityLookup lookup) {
+@@ -370,11 +374,11 @@ public final class ChunkEntitySlices {
+             this.storage = (E[]) (cap <= 0 ? EMPTY : new Entity[cap]);
+         }
+ 
+-        public synchronized boolean isEmpty() {
++        public boolean isEmpty() {
+             return this.size == 0;
+         }
+ 
+-        public synchronized int size() {
++        public int size() {
+             return this.size;
+         }
+ 
+@@ -386,7 +390,7 @@ public final class ChunkEntitySlices {
+             }
+         }
+ 
+-        public synchronized void add(final E entity) {
++        public void add(final E entity) {
+             final int idx = this.size++;
+             if (idx >= this.storage.length) {
+                 this.resize();
+@@ -396,7 +400,7 @@ public final class ChunkEntitySlices {
+             }
+         }
+ 
+-        public synchronized int indexOf(final E entity) {
++        public int indexOf(final E entity) {
+             final E[] storage = this.storage;
+ 
+             for (int i = 0, len = Math.min(this.storage.length, this.size); i < len; ++i) {
+@@ -408,7 +412,7 @@ public final class ChunkEntitySlices {
+             return -1;
+         }
+ 
+-        public synchronized boolean remove(final E entity) {
++        public boolean remove(final E entity) {
+             final int idx = this.indexOf(entity);
+             if (idx == -1) {
+                 return false;
+@@ -425,7 +429,7 @@ public final class ChunkEntitySlices {
+             return true;
+         }
+ 
+-        public synchronized boolean has(final E entity) {
++        public boolean has(final E entity) {
+             return this.indexOf(entity) != -1;
+         }
+     }
+@@ -436,7 +440,6 @@ public final class ChunkEntitySlices {
+         protected final long[] nonEmptyBitset;
+         protected final BasicEntityList<Entity>[] entitiesBySection;
+         protected int count;
+-        private final StampedLock listLock = new StampedLock();//Hearse
+ 
+         public EntityCollectionBySection(final ChunkEntitySlices manager) {
+             this.manager = manager;
+@@ -448,242 +451,212 @@ public final class ChunkEntitySlices {
+         }
+ 
+         public void addEntity(final Entity entity, final int sectionIndex) {
+-            final long id = this.listLock.writeLock();
+-            try {
+-                BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
+-
+-                if (list != null && list.has(entity)) {
+-                    return;
+-                }
++            BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
+ 
+-                if (list == null) {
+-                    this.entitiesBySection[sectionIndex] = list = new BasicEntityList<>();
+-                    this.nonEmptyBitset[sectionIndex >>> 6] |= (1L << (sectionIndex & (Long.SIZE - 1)));
+-                }
++            if (list != null && list.has(entity)) {
++                return;
++            }
+ 
+-                list.add(entity);
+-                ++this.count;
+-            } finally {
+-                this.listLock.unlockWrite(id);
++            if (list == null) {
++                this.entitiesBySection[sectionIndex] = list = new BasicEntityList<>();
++                this.nonEmptyBitset[sectionIndex >>> 6] |= (1L << (sectionIndex & (Long.SIZE - 1)));
+             }
++
++            list.add(entity);
++            ++this.count;
+         }
+ 
+         public void removeEntity(final Entity entity, final int sectionIndex) {
+-            final long id = this.listLock.writeLock();
+-            try {
+-                final BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
++            final BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
+ 
+-                if (list == null || !list.remove(entity)) {
+-                    return;
+-                }
++            if (list == null || !list.remove(entity)) {
++                return;
++            }
+ 
+-                --this.count;
++            --this.count;
+ 
+-                if (list.isEmpty()) {
+-                    this.entitiesBySection[sectionIndex] = null;
+-                    this.nonEmptyBitset[sectionIndex >>> 6] ^= (1L << (sectionIndex & (Long.SIZE - 1)));
+-                }
+-            } finally {
+-                this.listLock.unlockWrite(id);
++            if (list.isEmpty()) {
++                this.entitiesBySection[sectionIndex] = null;
++                this.nonEmptyBitset[sectionIndex >>> 6] ^= (1L << (sectionIndex & (Long.SIZE - 1)));
+             }
+         }
+ 
+         public void getEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-            final long id = this.listLock.readLock();
+-            try {
+-                if (this.count == 0) {
+-                    return;
+-                }
+-
+-                final int minSection = this.manager.minSection;
+-                final int maxSection = this.manager.maxSection;
++            if (this.count == 0) {
++                return;
++            }
+ 
+-                final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
+-                final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
++            final int minSection = this.manager.minSection;
++            final int maxSection = this.manager.maxSection;
+ 
+-                final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
++            final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
++            final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
+ 
+-                for (int section = min; section <= max; ++section) {
+-                    final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
++            final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
+ 
+-                    if (list == null) {
+-                        continue;
+-                    }
++            for (int section = min; section <= max; ++section) {
++                final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
+ 
+-                    final Entity[] storage = list.storage;
++                if (list == null) {
++                    continue;
++                }
+ 
+-                    for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+-                        final Entity entity = storage[i];
++                final Entity[] storage = list.storage;
+ 
+-                        if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
+-                            continue;
+-                        }
++                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
++                    final Entity entity = storage[i];
+ 
+-                        if (predicate != null && !predicate.test(entity)) {
+-                            continue;
+-                        }
++                    if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
++                        continue;
++                    }
+ 
+-                        into.add(entity);
++                    if (predicate != null && !predicate.test(entity)) {
++                        continue;
+                     }
++
++                    into.add(entity);
+                 }
+-            } finally {
+-                this.listLock.unlockRead(id);
+             }
+         }
+ 
+         public void getEntitiesWithEnderDragonParts(final Entity except, final AABB box, final List<Entity> into,
+                                                     final Predicate<? super Entity> predicate) {
+-            final long id = this.listLock.readLock();
+-            try {
+-                if (this.count == 0) {
+-                    return;
+-                }
+-
+-                final int minSection = this.manager.minSection;
+-                final int maxSection = this.manager.maxSection;
++            if (this.count == 0) {
++                return;
++            }
+ 
+-                final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
+-                final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
++            final int minSection = this.manager.minSection;
++            final int maxSection = this.manager.maxSection;
+ 
+-                final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
++            final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
++            final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
+ 
+-                for (int section = min; section <= max; ++section) {
+-                    final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
++            final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
+ 
+-                    if (list == null) {
+-                        continue;
+-                    }
++            for (int section = min; section <= max; ++section) {
++                final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
+ 
+-                    final Entity[] storage = list.storage;
++                if (list == null) {
++                    continue;
++                }
+ 
+-                    for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+-                        final Entity entity = storage[i];
++                final Entity[] storage = list.storage;
+ 
+-                        if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
+-                            continue;
+-                        }
++                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
++                    final Entity entity = storage[i];
+ 
+-                        if (predicate == null || predicate.test(entity)) {
+-                            into.add(entity);
+-                        } // else: continue to test the ender dragon parts
++                    if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
++                        continue;
++                    }
+ 
+-                        if (entity instanceof EnderDragon) {
+-                            for (final EnderDragonPart part : ((EnderDragon) entity).subEntities) {
+-                                if (part == except || !part.getBoundingBox().intersects(box)) {
+-                                    continue;
+-                                }
++                    if (predicate == null || predicate.test(entity)) {
++                        into.add(entity);
++                    } // else: continue to test the ender dragon parts
+ 
+-                                if (predicate != null && !predicate.test(part)) {
+-                                    continue;
+-                                }
++                    if (entity instanceof EnderDragon) {
++                        for (final EnderDragonPart part : ((EnderDragon) entity).subEntities) {
++                            if (part == except || !part.getBoundingBox().intersects(box)) {
++                                continue;
++                            }
+ 
+-                                into.add(part);
++                            if (predicate != null && !predicate.test(part)) {
++                                continue;
+                             }
++
++                            into.add(part);
+                         }
+                     }
+                 }
+-            } finally {
+-                this.listLock.unlockRead(id);
+             }
+         }
+ 
+         public void getEntitiesWithEnderDragonParts(final Entity except, final Class<?> clazz, final AABB box, final List<Entity> into,
+                                                     final Predicate<? super Entity> predicate) {
+-            final long id = this.listLock.readLock();
+-            try {
+-                if (this.count == 0) {
+-                    return;
+-                }
++            if (this.count == 0) {
++                return;
++            }
+ 
+-                final int minSection = this.manager.minSection;
+-                final int maxSection = this.manager.maxSection;
++            final int minSection = this.manager.minSection;
++            final int maxSection = this.manager.maxSection;
+ 
+-                final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
+-                final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
++            final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
++            final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
+ 
+-                final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
++            final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
+ 
+-                for (int section = min; section <= max; ++section) {
+-                    final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
++            for (int section = min; section <= max; ++section) {
++                final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
+ 
+-                    if (list == null) {
+-                        continue;
+-                    }
+-
+-                    final Entity[] storage = list.storage;
++                if (list == null) {
++                    continue;
++                }
+ 
+-                    for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+-                        final Entity entity = storage[i];
++                final Entity[] storage = list.storage;
+ 
+-                        if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
+-                            continue;
+-                        }
++                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
++                    final Entity entity = storage[i];
+ 
+-                        if (predicate == null || predicate.test(entity)) {
+-                            into.add(entity);
+-                        } // else: continue to test the ender dragon parts
++                    if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
++                        continue;
++                    }
+ 
+-                        if (entity instanceof EnderDragon) {
+-                            for (final EnderDragonPart part : ((EnderDragon) entity).subEntities) {
+-                                if (part == except || !part.getBoundingBox().intersects(box) || !clazz.isInstance(part)) {
+-                                    continue;
+-                                }
++                    if (predicate == null || predicate.test(entity)) {
++                        into.add(entity);
++                    } // else: continue to test the ender dragon parts
+ 
+-                                if (predicate != null && !predicate.test(part)) {
+-                                    continue;
+-                                }
++                    if (entity instanceof EnderDragon) {
++                        for (final EnderDragonPart part : ((EnderDragon) entity).subEntities) {
++                            if (part == except || !part.getBoundingBox().intersects(box) || !clazz.isInstance(part)) {
++                                continue;
++                            }
+ 
+-                                into.add(part);
++                            if (predicate != null && !predicate.test(part)) {
++                                continue;
+                             }
++
++                            into.add(part);
+                         }
+                     }
+                 }
+-            } finally {
+-                this.listLock.unlockRead(id);
+             }
+         }
+ 
+         public <T extends Entity> void getEntities(final EntityType<?> type, final AABB box, final List<? super T> into,
+                                                    final Predicate<? super T> predicate) {
+-            final long id = this.listLock.readLock();
+-            try {
+-                if (this.count == 0) {
+-                    return;
+-                }
+-
+-                final int minSection = this.manager.minSection;
+-                final int maxSection = this.manager.maxSection;
++            if (this.count == 0) {
++                return;
++            }
+ 
+-                final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
+-                final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
++            final int minSection = this.manager.minSection;
++            final int maxSection = this.manager.maxSection;
+ 
+-                final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
++            final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
++            final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
+ 
+-                for (int section = min; section <= max; ++section) {
+-                    final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
++            final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
+ 
+-                    if (list == null) {
+-                        continue;
+-                    }
++            for (int section = min; section <= max; ++section) {
++                final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
+ 
+-                    final Entity[] storage = list.storage;
++                if (list == null) {
++                    continue;
++                }
+ 
+-                    for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+-                        final Entity entity = storage[i];
++                final Entity[] storage = list.storage;
+ 
+-                        if (entity == null || (type != null && entity.getType() != type) || !entity.getBoundingBox().intersects(box)) {
+-                            continue;
+-                        }
++                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
++                    final Entity entity = storage[i];
+ 
+-                        if (predicate != null && !predicate.test((T) entity)) {
+-                            continue;
+-                        }
++                    if (entity == null || (type != null && entity.getType() != type) || !entity.getBoundingBox().intersects(box)) {
++                        continue;
++                    }
+ 
+-                        into.add((T) entity);
++                    if (predicate != null && !predicate.test((T) entity)) {
++                        continue;
+                     }
++
++                    into.add((T) entity);
+                 }
+-            } finally {
+-                this.listLock.unlockRead(id);
+             }
+         }
+     }

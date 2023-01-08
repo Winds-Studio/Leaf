@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Wed, 11 Jan 2023 21:55:57 +0800
+Subject: [PATCH] Hearse: Don't wait async tasks when stopping and change
+ something in CraftEventFactory
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/co/earthme/hearse/Hearse.java b/src/main/java/co/earthme/hearse/Hearse.java
+index f8fcb07bc54f4b150dacba325d0a47f0dc7687bc..79116449c221e0748e938f40366af03f93a4ab9f 100644
+--- a/src/main/java/co/earthme/hearse/Hearse.java
++++ b/src/main/java/co/earthme/hearse/Hearse.java
+@@ -16,11 +16,7 @@ public class Hearse {
+ 
+     public static void onServerStop(){
+         HearseConfig.save();
+-        try {
+-            workerManager.shutdownAll();
+-        } catch (InterruptedException e) {
+-            e.printStackTrace();
+-        }
++        workerManager.shutdownAllNow();
+     }
+ 
+     public static WorkerThreadPoolManager getWorkerManager() {
+diff --git a/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java b/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
+index 3e3ae10fcc54b80ff4ec433f136d15d3b9fa4fe4..443ac5267245c20830692b37802afd6ebdf8813b 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
++++ b/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
+@@ -9,12 +9,17 @@ public class DefaultWorkerFactory implements WorkerThreadFactory {
+     private static final AtomicInteger poolId = new AtomicInteger();
+     private final AtomicInteger threadId = new AtomicInteger();
+ 
++    public DefaultWorkerFactory(){
++        poolId.getAndIncrement();
++    }
++
+     @Override
+     public WorkerThread getNewThread(Runnable task) {
+-        final WorkerThread workerThread = new WorkerThread(task,"pool-"+poolId.getAndIncrement()+"-worker-"+threadId.getAndIncrement());
++        final WorkerThread workerThread = new WorkerThread(task,"pool-"+poolId.get()+"-worker-"+threadId.getAndIncrement());
+         if (workerThread.isDaemon()){
+             workerThread.setDaemon(false);
+         }
++        workerThread.setDaemon(true);
+         workerThread.setPriority(Thread.NORM_PRIORITY - 2);
+         workerThread.setContextClassLoader(MinecraftServer.class.getClassLoader());
+         return workerThread;
+diff --git a/src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java b/src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java
+index b1eb341728f41c5a62e35944c4b0222758ae8eef..527dba288e1988773fd5a89f076f92084034f421 100644
+--- a/src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java
++++ b/src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java
+@@ -16,6 +16,7 @@ public class WorkerThreadPoolManager {
+     public void shutdownAll() throws InterruptedException {
+         for (WorkerThreadPoolExecutor worker : this.managedWorkers.values()){
+             if (!worker.isShutdown()){
++                worker.getQueue().clear(); //Clear the tasks.We don't need wait them
+                 worker.shutdown();
+                 while (worker.awaitTermination(100, TimeUnit.MILLISECONDS)) {}
+             }
+@@ -40,33 +41,6 @@ public class WorkerThreadPoolManager {
+             if (!worker.isShutdown()){
+                 try {
+                     final List<Runnable> taskNotRunned = worker.shutdownNow();
+-                    while (worker.awaitTermination(1,TimeUnit.MILLISECONDS)){
+-
+-                    }
+-                    ret.put(workerName,taskNotRunned);
+-                }catch (Exception e){
+-                    e.printStackTrace();
+-                }
+-            }
+-        }
+-        return ret;
+-    }
+-
+-    public Map<String,List<Runnable>> shutdownAllNow(long timeOutCount){
+-        final Map<String,List<Runnable>> ret = Maps.newHashMap();
+-        for (Map.Entry<String,WorkerThreadPoolExecutor> entry : this.managedWorkers.entrySet()){
+-            final String workerName = entry.getKey();
+-            final WorkerThreadPoolExecutor worker = entry.getValue();
+-            if (!worker.isShutdown()){
+-                try {
+-                    long timeCounter = timeOutCount;
+-                    final List<Runnable> taskNotRunned = worker.shutdownNow();
+-                    while (worker.awaitTermination(1,TimeUnit.MILLISECONDS)){
+-                        if (timeCounter == 0){
+-                            break;
+-                        }
+-                        timeCounter--;
+-                    }
+                     ret.put(workerName,taskNotRunned);
+                 }catch (Exception e){
+                     e.printStackTrace();
+diff --git a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+index 6a52ae70b5f7fd9953b6b2605cae722f606e7fec..af5956bd57141cae08fe839bb2176988a48cd9b8 100644
+--- a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
++++ b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+@@ -57,6 +57,7 @@ import net.minecraft.world.phys.BlockHitResult;
+ import net.minecraft.world.phys.EntityHitResult;
+ import net.minecraft.world.phys.HitResult;
+ import net.minecraft.world.phys.Vec3;
++import org.apache.logging.log4j.LogManager;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location; // Paper
+ import org.bukkit.Material;
+@@ -229,7 +230,7 @@ public class CraftEventFactory {
+     public static final DamageSource MELTING = CraftDamageSource.copyOf(DamageSource.ON_FIRE);
+     public static final DamageSource POISON = CraftDamageSource.copyOf(DamageSource.MAGIC);
+     public static org.bukkit.block.Block blockDamage; // For use in EntityDamageByBlockEvent
+-    public static Entity entityDamage; // For use in EntityDamageByEntityEvent
++    public static volatile Entity entityDamage; // For use in EntityDamageByEntityEvent
+ 
+     // helper methods
+     private static boolean canBuild(ServerLevel world, Player player, int x, int z) {
+@@ -1078,7 +1079,8 @@ public class CraftEventFactory {
+             } else if (source == DamageSource.MAGIC) {
+                 cause = DamageCause.MAGIC;
+             } else {
+-                throw new IllegalStateException(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.msgId));
++                LogManager.getLogger().error(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.msgId));
++                cause = DamageCause.CUSTOM;
+             }
+             EntityDamageEvent event = new EntityDamageByEntityEvent(damager, entity.getBukkitEntity(), cause, modifiers, modifierFunctions, source.isCritical()); // Paper - add critical damage API
+             event.setCancelled(cancelled);

@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Thu, 12 Jan 2023 13:58:20 +0800
+Subject: [PATCH] Hearse: Print world worker thread names when server started
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java b/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
+index c26511c26bd02320a55a01168f342b4b051ffdfd..03a29509821a17faac2dc8ab810a2693b03bfbc6 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
++++ b/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
+@@ -2,25 +2,38 @@ package co.earthme.hearse.concurrent.threadfactory;
+ 
+ import co.earthme.hearse.concurrent.WorkerThread;
+ import co.earthme.hearse.concurrent.WorkerThreadFactory;
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.server.MinecraftServer;
++
++import java.util.List;
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+ public class DefaultWorkerFactory implements WorkerThreadFactory {
+     private static final AtomicInteger poolId = new AtomicInteger();
+     private final AtomicInteger threadId = new AtomicInteger();
+     private final String bound;
++    private final List<Thread> createdThreads = ObjectLists.synchronize(new ObjectArrayList<>());
+ 
+     public DefaultWorkerFactory(String bound){
+         poolId.getAndIncrement();
+         this.bound = bound;
+     }
+ 
++    public List<Thread> getCreatedThreads() {
++        return this.createdThreads;
++    }
++
+     @Override
+     public WorkerThread getNewThread(Runnable task) {
+-        final WorkerThread workerThread = new WorkerThread(task,"pool-"+poolId.get()+"-worker-"+threadId.getAndIncrement()+"-bound-"+this.bound);
+-        if (workerThread.isDaemon()){
+-            workerThread.setDaemon(false);
+-        }
++        final WorkerThread workerThread = new WorkerThread(()->{
++            try {
++                task.run();
++            }finally {
++                this.createdThreads.remove(Thread.currentThread());
++            }
++        },"pool-"+poolId.get()+"-worker-"+threadId.getAndIncrement()+"-bound-"+this.bound);
++        this.createdThreads.add(workerThread);
+         workerThread.setDaemon(true);
+         workerThread.setPriority(Thread.NORM_PRIORITY - 2);
+         workerThread.setContextClassLoader(MinecraftServer.class.getClassLoader());
+diff --git a/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java b/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
+index 5670fdae5d16cbbdf605df048ae253208e49a82c..8085eb700d8e5c20ebb5bfeceb78198c6e973019 100644
+--- a/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
++++ b/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
+@@ -2,12 +2,15 @@ package co.earthme.hearse.server;
+ 
+ import co.earthme.hearse.Hearse;
+ import co.earthme.hearse.HearseConfig;
++import co.earthme.hearse.concurrent.WorkerThread;
+ import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
+ import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
+ import net.minecraft.CrashReport;
+ import net.minecraft.ReportedException;
+ import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerLevel;
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
+ 
+ import java.util.concurrent.LinkedBlockingQueue;
+ import java.util.concurrent.TimeUnit;
+@@ -21,6 +24,7 @@ public class ServerLevelTickHook {
+     private static boolean enabledParaWorld;
+     private static volatile boolean inited = false;
+     private static final AtomicInteger activeTaskCount = new AtomicInteger();
++    private static final Logger logger = LogManager.getLogger();
+ 
+     public static void initWorker(){
+         enabledParaWorld = HearseConfig.getBoolean("optimizations.enableparallelworldtick",true);
+@@ -28,13 +32,17 @@ public class ServerLevelTickHook {
+             worker = new WorkerThreadPoolExecutor(
+                     MinecraftServer.getServer().levels.size(),
+                     MinecraftServer.getServer().levels.size(),
+-                    0,
++                    Long.MAX_VALUE,
+                     TimeUnit.MILLISECONDS,
+                     new LinkedBlockingQueue<>(),
+                     workerFactory
+             );
++            worker.allowCoreThreadTimeOut(true);
+             worker.prestartAllCoreThreads();
+             Hearse.getWorkerManager().addWorker("world",worker);
++            for (Thread worker : workerFactory.getCreatedThreads()){
++                logger.warn("World worker name:{}.This can help you to slove the lag problems when you using parallel world ticking",worker.getName());
++            }
+         }
+         inited = true;
+     }

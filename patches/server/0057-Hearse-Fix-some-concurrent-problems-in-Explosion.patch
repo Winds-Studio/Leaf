@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Tue, 10 Jan 2023 12:50:27 +0800
+Subject: [PATCH] Hearse: Fix some concurrent problems in Explosion
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/net/minecraft/Util.java b/src/main/java/net/minecraft/Util.java
+index 5ef58831a857fd8aa4ac30147762dc17d773a53e..2a8590d46bab64fe27e8dadf80f91ab0662a4352 100644
+--- a/src/main/java/net/minecraft/Util.java
++++ b/src/main/java/net/minecraft/Util.java
+@@ -65,6 +65,8 @@ import java.util.stream.Collectors;
+ import java.util.stream.IntStream;
+ import java.util.stream.Stream;
+ import javax.annotation.Nullable;
++
++import it.unimi.dsi.fastutil.objects.ObjectList;
+ import net.minecraft.resources.ResourceLocation;
+ import net.minecraft.server.Bootstrap;
+ import net.minecraft.util.Mth;
+@@ -793,7 +795,7 @@ public class Util {
+         return objectArrayList;
+     }
+ 
+-    public static <T> void shuffle(ObjectArrayList<T> list, RandomSource random) {
++    public static <T> void shuffle(ObjectList<T> list, RandomSource random) {
+         int i = list.size();
+ 
+         for(int j = i; j > 1; --j) {
+diff --git a/src/main/java/net/minecraft/world/level/Explosion.java b/src/main/java/net/minecraft/world/level/Explosion.java
+index c0d39afe5b80159ed9aaca4ddd4763d707882f2e..2f53f8f2695231179ff16bb014cd990e94f9ec79 100644
+--- a/src/main/java/net/minecraft/world/level/Explosion.java
++++ b/src/main/java/net/minecraft/world/level/Explosion.java
+@@ -4,12 +4,15 @@ import com.google.common.collect.Maps;
+ import com.google.common.collect.Sets;
+ import com.mojang.datafixers.util.Pair;
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectList;
+ import it.unimi.dsi.fastutil.objects.ObjectListIterator;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Optional;
+ import java.util.Set;
+ import javax.annotation.Nullable;
++
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.particles.ParticleTypes;
+@@ -63,7 +66,7 @@ public class Explosion {
+     private final float radius;
+     private final DamageSource damageSource;
+     private final ExplosionDamageCalculator damageCalculator;
+-    private final ObjectArrayList<BlockPos> toBlow;
++    private final ObjectList<BlockPos> toBlow;
+     private final Map<Player, Vec3> hitPlayers;
+     public boolean wasCanceled = false; // CraftBukkit - add field
+ 
+@@ -81,9 +84,9 @@ public class Explosion {
+     }
+ 
+     public Explosion(Level world, @Nullable Entity entity, @Nullable DamageSource damageSource, @Nullable ExplosionDamageCalculator behavior, double x, double y, double z, float power, boolean createFire, Explosion.BlockInteraction destructionType) {
+-        this.random = RandomSource.create();
+-        this.toBlow = new ObjectArrayList();
+-        this.hitPlayers = Maps.newHashMap();
++        this.random = RandomSource.createThreadSafe();
++        this.toBlow = ObjectLists.synchronize(new ObjectArrayList<>());
++        this.hitPlayers = Maps.newConcurrentMap();
+         this.level = world;
+         this.source = entity;
+         this.radius = (float) Math.max(power, 0.0); // CraftBukkit - clamp bad values
+@@ -396,14 +399,10 @@ public class Explosion {
+         }
+ 
+         if (this.fire) {
+-            ObjectListIterator objectlistiterator1 = this.toBlow.iterator();
+-
+-            while (objectlistiterator1.hasNext()) {
+-                BlockPos blockposition2 = (BlockPos) objectlistiterator1.next();
+-
++            for (BlockPos blockposition2 : this.toBlow) {
+                 if (this.random.nextInt(3) == 0 && this.level.getBlockState(blockposition2).isAir() && this.level.getBlockState(blockposition2.below()).isSolidRender(this.level, blockposition2.below())) {
+                     // CraftBukkit start - Ignition by explosion
+-                    if (!org.bukkit.craftbukkit.event.CraftEventFactory.callBlockIgniteEvent(this.level, blockposition2.getX(), blockposition2.getY(), blockposition2.getZ(), this).isCancelled()) {
++                    if (!CraftEventFactory.callBlockIgniteEvent(this.level, blockposition2.getX(), blockposition2.getY(), blockposition2.getZ(), this).isCancelled()) {
+                         this.level.setBlockAndUpdate(blockposition2, BaseFireBlock.getState(this.level, blockposition2));
+                     }
+                     // CraftBukkit end

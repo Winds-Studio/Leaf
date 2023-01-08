@@ -18,6 +18,7 @@
  - Disabling the UseItemOnPacket Too Far check.
  - Update all dependencies to the latest.
  - Parallel entity ticking(Half of async)(In alpha)
+ - Parallel world ticking
  - Some Purpur patches.
  - ...
 
@@ -64,4 +65,4 @@ Credits:
 - [Petal](https://github.com/Bloom-host/Petal)
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
 - [VMP](https://github.com/RelativityMC/VMP-fabric)
-- [Hearse](https://github.com/NaturalCodeClub/Hearse)
+- [Hearse](https://github.com/NaturalCodeClub/HearseRewrite)
