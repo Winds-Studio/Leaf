@@ -1,0 +1,225 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 14 Jan 2023 09:27:14 +0800
+Subject: [PATCH] Hearse: Fix a NoSuchElementError in Delayed8 and Delayed26
+ distance propagators
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java b/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java
+index 762f09c8f374fbccc9f5be985401ad334e1655a0..e831738a2988746fe4e065f6ded811a8bdf5dabe 100644
+--- a/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java
++++ b/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java
+@@ -94,24 +94,42 @@ public final class Delayed26WayDistancePropagator3D {
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte level) {
+         final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelIncreaseWorkQueues[level];
+-        queue.queuedCoordinates.add(coordinate);
+-        queue.queuedLevels.add(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << level);
+     }
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte index, final byte level) {
+         final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelIncreaseWorkQueues[index];
+-        queue.queuedCoordinates.add(coordinate);
+-        queue.queuedLevels.add(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << index);
+     }
+ 
+     protected final void addToRemoveWorkQueue(final long coordinate, final byte level) {
+         final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelRemoveWorkQueues[level];
+-        queue.queuedCoordinates.add(coordinate);
+-        queue.queuedLevels.add(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelRemoveWorkQueueBitset |= (1L << level);
+     }
+@@ -163,9 +181,20 @@ public final class Delayed26WayDistancePropagator3D {
+              this.levelIncreaseWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelIncreaseWorkQueueBitset)) {
+ 
+             final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelIncreaseWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirst();
+-                byte level = queue.queuedLevels.removeFirst();
++            while (true) {
++
++                long coordinate;
++                byte level;
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final boolean neighbourCheck = level < 0;
+ 
+@@ -232,9 +261,19 @@ public final class Delayed26WayDistancePropagator3D {
+              this.levelRemoveWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelRemoveWorkQueueBitset)) {
+ 
+             final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelRemoveWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirst();
+-                final byte level = queue.queuedLevels.removeFirst();
++            while (true) {
++                long coordinate;
++                byte level;
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final byte currentLevel = this.levels.removeIfGreaterOrEqual(coordinate, level);
+                 if (currentLevel == 0) {
+diff --git a/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java b/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java
+index 8c5a51b5992eccf3627f326e164288b5f6bbcff6..0fa95d81bafc7fe5c1bede7a0608b54795a78fa0 100644
+--- a/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java
++++ b/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java
+@@ -8,6 +8,7 @@ import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
+ 
+ import java.util.Deque;
+ import java.util.concurrent.ConcurrentLinkedDeque;
++import java.util.concurrent.locks.StampedLock;
+ 
+ public final class Delayed8WayDistancePropagator2D {
+ 
+@@ -357,24 +358,42 @@ public final class Delayed8WayDistancePropagator2D {
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte level) {
+         final WorkQueue queue = this.levelIncreaseWorkQueues[level];
+-        queue.queuedCoordinates.add(coordinate);
+-        queue.queuedLevels.add(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << level);
+     }
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte index, final byte level) {
+         final WorkQueue queue = this.levelIncreaseWorkQueues[index];
+-        queue.queuedCoordinates.add(coordinate);
+-        queue.queuedLevels.add(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << index);
+     }
+ 
+     protected final void addToRemoveWorkQueue(final long coordinate, final byte level) {
+         final WorkQueue queue = this.levelRemoveWorkQueues[level];
+-        queue.queuedCoordinates.add(coordinate);
+-        queue.queuedLevels.add(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelRemoveWorkQueueBitset |= (1L << level);
+     }
+@@ -426,9 +445,19 @@ public final class Delayed8WayDistancePropagator2D {
+              this.levelIncreaseWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelIncreaseWorkQueueBitset)) {
+ 
+             final WorkQueue queue = this.levelIncreaseWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirst();
+-                byte level = queue.queuedLevels.removeFirst();
++            while (true) {
++                byte level;
++                long coordinate;
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final boolean neighbourCheck = level < 0;
+ 
+@@ -492,9 +521,20 @@ public final class Delayed8WayDistancePropagator2D {
+              this.levelRemoveWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelRemoveWorkQueueBitset)) {
+ 
+             final WorkQueue queue = this.levelRemoveWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirst();
+-                final byte level = queue.queuedLevels.removeFirst();
++            while (true) {
++                long coordinate;
++                byte level;
++
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final byte currentLevel = this.levels.removeIfGreaterOrEqual(coordinate, level);
+                 if (currentLevel == 0) {
+@@ -681,6 +721,7 @@ public final class Delayed8WayDistancePropagator2D {
+     protected static final class WorkQueue {
+         public final Deque<Long> queuedCoordinates = new ConcurrentLinkedDeque<>();
+         public final Deque<Byte> queuedLevels = new ConcurrentLinkedDeque<>();
++        public final StampedLock lock = new StampedLock();
+     }
+ 
+ }

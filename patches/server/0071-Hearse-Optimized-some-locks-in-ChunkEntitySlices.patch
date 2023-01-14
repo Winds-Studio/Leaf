@@ -1,0 +1,317 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 14 Jan 2023 10:14:54 +0800
+Subject: [PATCH] Hearse: Optimized some locks in ChunkEntitySlices
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/HearseRewrite
+
+diff --git a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+index 122699937606f5e00e356f5c1ea12db0563508a3..b12c02962e9dad92ae79d762887c65db10765488 100644
+--- a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
++++ b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+@@ -66,50 +66,67 @@ public final class ChunkEntitySlices {
+         this.status = status;
+     }
+ 
++    private org.bukkit.entity.Entity[] getChunkEntitiesUnsafe(){
++        List<org.bukkit.entity.Entity> ret = new java.util.ArrayList<>();
++        final Entity[] entities = this.entities.getRawData();
++        for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
++            final Entity entity = entities[i];
++            if (entity == null) {
++                continue;
++            }
++            final org.bukkit.entity.Entity bukkit = entity.getBukkitEntity();
++            if (bukkit != null && bukkit.isValid()) {
++                ret.add(bukkit);
++            }
++        }
++        return ret.toArray(new org.bukkit.entity.Entity[0]);
++    }
++
+     // Paper start - optimise CraftChunk#getEntities
+     public org.bukkit.entity.Entity[] getChunkEntities() {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)) {
++            return this.getChunkEntitiesUnsafe();
++        }
++
++        id = this.accessLock.readLock();
+         try {
+-            List<org.bukkit.entity.Entity> ret = new java.util.ArrayList<>();
+-            final Entity[] entities = this.entities.getRawData();
+-            for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
+-                final Entity entity = entities[i];
+-                if (entity == null) {
+-                    continue;
+-                }
+-                final org.bukkit.entity.Entity bukkit = entity.getBukkitEntity();
+-                if (bukkit != null && bukkit.isValid()) {
+-                    ret.add(bukkit);
+-                }
+-            }
+-            return ret.toArray(new org.bukkit.entity.Entity[0]);
++            return this.getChunkEntitiesUnsafe();
+         } finally {
+             this.accessLock.unlockRead(id);
+         }
+     }
+ 
+-    public CompoundTag save() {
+-        final long id = this.accessLock.readLock();
+-        try {
+-            final int len = this.entities.size();
+-            if (len == 0) {
+-                return null;
+-            }
++    private CompoundTag saveUnsafe(){
++        final int len = this.entities.size();
++        if (len == 0) {
++            return null;
++        }
+ 
+-            final Entity[] rawData = this.entities.getRawData();
+-            final List<Entity> collectedEntities = new ArrayList<>(len);
+-            for (int i = 0; i < len; ++i) {
+-                final Entity entity = rawData[i];
+-                if (entity.shouldBeSaved()) {
+-                    collectedEntities.add(entity);
+-                }
++        final Entity[] rawData = this.entities.getRawData();
++        final List<Entity> collectedEntities = new ArrayList<>(len);
++        for (int i = 0; i < len; ++i) {
++            final Entity entity = rawData[i];
++            if (entity.shouldBeSaved()) {
++                collectedEntities.add(entity);
+             }
++        }
+ 
+-            if (collectedEntities.isEmpty()) {
+-                return null;
+-            }
++        if (collectedEntities.isEmpty()) {
++            return null;
++        }
++
++        return EntityStorage.saveEntityChunk(collectedEntities, new ChunkPos(this.chunkX, this.chunkZ), this.world);
++    }
+ 
+-            return EntityStorage.saveEntityChunk(collectedEntities, new ChunkPos(this.chunkX, this.chunkZ), this.world);
++    public CompoundTag save() {
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            return this.saveUnsafe();
++        }
++        id = this.accessLock.readLock();
++        try {
++            return this.saveUnsafe();
+         } finally {
+             this.accessLock.unlockRead(id);
+         }
+@@ -119,12 +136,18 @@ public final class ChunkEntitySlices {
+     public boolean unload() {
+         Entity[] collectedEntities;
+         int len;
+-        long id = this.accessLock.readLock();
+-        try {
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
+             len = this.entities.size();
+             collectedEntities = Arrays.copyOf(this.entities.getRawData(), len);
+-        } finally {
+-            this.accessLock.unlockRead(id);
++        }else {
++            id = this.accessLock.readLock();
++            try {
++                len = this.entities.size();
++                collectedEntities = Arrays.copyOf(this.entities.getRawData(), len);
++            } finally {
++                this.accessLock.unlockRead(id);
++            }
+         }
+         for (int i = 0; i < len; ++i) {
+             final Entity entity = collectedEntities[i];
+@@ -160,7 +183,12 @@ public final class ChunkEntitySlices {
+     }
+ 
+     public void callEntitiesLoadEvent() {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            CraftEventFactory.callEntitiesLoadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             CraftEventFactory.callEntitiesLoadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
+         } finally {
+@@ -169,7 +197,12 @@ public final class ChunkEntitySlices {
+     }
+ 
+     public void callEntitiesUnloadEvent() {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            CraftEventFactory.callEntitiesUnloadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             CraftEventFactory.callEntitiesUnloadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
+         } finally {
+@@ -179,7 +212,11 @@ public final class ChunkEntitySlices {
+     // Paper end - optimise CraftChunk#getEntities
+ 
+     public boolean isEmpty() {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            return this.entities.size() == 0;
++        }
++        id = this.accessLock.readLock();
+         try {
+             return this.entities.size() == 0;
+         } finally {
+@@ -188,16 +225,25 @@ public final class ChunkEntitySlices {
+     }
+ 
+     public void mergeInto(final ChunkEntitySlices slices) {
+-        final long id = this.accessLock.readLock();
+         final List<Entity> cop = new ArrayList<>();
+-        try {
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
+             final Entity[] entities = this.entities.getRawData();
+             for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
+                 final Entity entity = entities[i];
+                 cop.add(entity);
+             }
+-        } finally {
+-            this.accessLock.unlockRead(id);
++        }else {
++            id = this.accessLock.readLock();
++            try {
++                final Entity[] entities = this.entities.getRawData();
++                for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
++                    final Entity entity = entities[i];
++                    cop.add(entity);
++                }
++            } finally {
++                this.accessLock.unlockRead(id);
++            }
+         }
+         for (Entity entity : cop){
+             slices.addEntity(entity, entity.sectionY);
+@@ -209,13 +255,19 @@ public final class ChunkEntitySlices {
+ 
+         Entity[] entities;
+ 
+-        final long id = this.accessLock.readLock();
+-        try {
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
+             entities = Arrays.copyOf(this.entities.getRawData(), this.entities.getRawData().length);
+-        } finally {
+-            this.accessLock.unlockRead(id);
++        }else {
++            id = this.accessLock.readLock();
++            try {
++                entities = Arrays.copyOf(this.entities.getRawData(), this.entities.getRawData().length);
++            } finally {
++                this.accessLock.unlockRead(id);
++            }
+         }
+ 
++
+         for (final Entity entity : entities) {
+             final Visibility oldVisibility = EntityLookup.getEntityStatus(entity);
+             entity.chunkStatus = status;
+@@ -278,7 +330,12 @@ public final class ChunkEntitySlices {
+     }
+ 
+     public void getHardCollidingEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.hardCollidingEntities.getEntities(except, box, into, predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             this.hardCollidingEntities.getEntities(except, box, into, predicate);
+         } finally {
+@@ -287,34 +344,46 @@ public final class ChunkEntitySlices {
+     }
+ 
+     public void getEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.allEntities.getEntitiesWithEnderDragonParts(except, box, into, predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             this.allEntities.getEntitiesWithEnderDragonParts(except, box, into, predicate);
+         } finally {
+             this.accessLock.unlockRead(id);
+         }
+-
+     }
+ 
+     public void getEntitiesWithoutDragonParts(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.allEntities.getEntities(except, box, into, predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             this.allEntities.getEntities(except, box, into, predicate);
+         } finally {
+             this.accessLock.unlockRead(id);
+         }
+-
+     }
+ 
+     public <T extends Entity> void getEntities(final EntityType<?> type, final AABB box, final List<? super T> into,
+                                                final Predicate<? super T> predicate) {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.allEntities.getEntities(type, box, (List) into, (Predicate) predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             this.allEntities.getEntities(type, box, (List) into, (Predicate) predicate);
+         } finally {
+             this.accessLock.unlockRead(id);
+         }
+-
+     }
+ 
+     protected EntityCollectionBySection initClass(final Class<? extends Entity> clazz) {
+@@ -342,7 +411,18 @@ public final class ChunkEntitySlices {
+ 
+     public <T extends Entity> void getEntities(final Class<? extends T> clazz, final Entity except, final AABB box, final List<? super T> into,
+                                                final Predicate<? super T> predicate) {
+-        final long id = this.accessLock.readLock();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            EntityCollectionBySection collection = this.entitiesByClass.get(clazz);
++            if (collection != null) {
++                collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List) into, (Predicate) predicate);
++            } else {
++                this.entitiesByClass.putIfAbsent(clazz, collection = this.initClass(clazz));
++                collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List) into, (Predicate) predicate);
++            }
++            return;
++        }
++        id = this.accessLock.readLock();
+         try {
+             EntityCollectionBySection collection = this.entitiesByClass.get(clazz);
+             if (collection != null) {
