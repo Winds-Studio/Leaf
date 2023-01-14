@@ -17,8 +17,7 @@
  - Allowing players use tripwire dupe.
  - Disabling the UseItemOnPacket Too Far check.
  - Update all dependencies to the latest.
- - Parallel entity ticking(Half of async)(In alpha)
- - Parallel world ticking
+ - Parallel entity ticking(Half of async)(In beta)
  - Some Purpur patches.
  - ...
 
