@@ -1,0 +1,451 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 15 Jan 2023 14:42:55 +0800
+Subject: [PATCH] Hearse: Remove MCMT's fix in scheduled ticks and add locks
+ into them
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/Hearse
+
+diff --git a/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java b/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java
+index 4c75f50ab0184637b72e08936ff8808ad6c6fb5f..367ce55fb9b31f718357a8da522a639848e9dc6a 100644
+--- a/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java
++++ b/src/main/java/net/minecraft/world/ticks/LevelChunkTicks.java
+@@ -23,7 +23,7 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+     private final Queue<ScheduledTick<T>> tickQueue = new PriorityQueue<>(ScheduledTick.DRAIN_ORDER);
+     @Nullable
+     private List<SavedTick<T>> pendingTicks;
+-    private final Set<ScheduledTick<?>> ticksPerPosition = ObjectSets.synchronize(new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH));
++    private final Set<ScheduledTick<?>> ticksPerPosition = new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH);
+     @Nullable
+     private BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> onTickAdded;
+ 
+@@ -40,8 +40,7 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+     }
+     // Paper end - add dirty flag
+ 
+-    public LevelChunkTicks() {
+-    }
++    public LevelChunkTicks() {}
+ 
+     public LevelChunkTicks(List<SavedTick<T>> ticks) {
+         this.pendingTicks = ticks;
+@@ -49,7 +48,6 @@ public class LevelChunkTicks<T> implements SerializableTickContainer<T>, TickCon
+         for(SavedTick<T> savedTick : ticks) {
+             this.ticksPerPosition.add(ScheduledTick.probe(savedTick.type(), savedTick.pos()));
+         }
+-
+     }
+ 
+     public synchronized void setOnTickAdded(@Nullable BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> tickConsumer) {
+diff --git a/src/main/java/net/minecraft/world/ticks/LevelTicks.java b/src/main/java/net/minecraft/world/ticks/LevelTicks.java
+index 2203adc2a68e7fb253e353098fd6ddad521e3a32..da9fdcce1562ebf5334a7441414a1fecc5d2a791 100644
+--- a/src/main/java/net/minecraft/world/ticks/LevelTicks.java
++++ b/src/main/java/net/minecraft/world/ticks/LevelTicks.java
+@@ -14,24 +14,24 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
+ import java.util.*;
+ import java.util.concurrent.ConcurrentLinkedDeque;
+ import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.concurrent.locks.StampedLock;
+ import java.util.function.BiConsumer;
+ import java.util.function.LongPredicate;
+ import java.util.function.Predicate;
+ import java.util.function.Supplier;
+ 
+ public class LevelTicks<T> implements LevelTickAccess<T> {
+-    private static final Comparator<LevelChunkTicks<?>> CONTAINER_DRAIN_ORDER = (a, b) -> {
+-        return ScheduledTick.INTRA_TICK_DRAIN_ORDER.compare(a.peek(), b.peek());
+-    };
++    private static final Comparator<LevelChunkTicks<?>> CONTAINER_DRAIN_ORDER = (a, b) -> ScheduledTick.INTRA_TICK_DRAIN_ORDER.compare(a.peek(), b.peek());
+     private final LongPredicate tickCheck;
+-    private final Long2ObjectMap<LevelChunkTicks<T>> allContainers = Long2ObjectMaps.synchronize(new Long2ObjectOpenHashMap<>());
++    private final Long2ObjectMap<LevelChunkTicks<T>> allContainers = new Long2ObjectOpenHashMap<>();
+     private final Long2LongMap nextTickForContainer = Util.make(new Long2LongOpenHashMap(), (map) -> {
+         map.defaultReturnValue(Long.MAX_VALUE);
+     });
+     private final Queue<LevelChunkTicks<T>> containersToTick = new PriorityQueue<>(CONTAINER_DRAIN_ORDER);
+-    private final Queue<ScheduledTick<T>> toRunThisTick = new ConcurrentLinkedDeque<>();
+-    private final List<ScheduledTick<T>> alreadyRunThisTick = new CopyOnWriteArrayList<>();
+-    private final Set<ScheduledTick<?>> toRunThisTickSet = ObjectSets.synchronize(new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH));
++    private final Queue<ScheduledTick<T>> toRunThisTick = new ArrayDeque<>();
++    private final List<ScheduledTick<T>> alreadyRunThisTick = new ArrayList<>();
++    private final Set<ScheduledTick<?>> toRunThisTickSet = new ObjectOpenCustomHashSet<>(ScheduledTick.UNIQUE_TICK_HASH);
++    private final StampedLock ticksLock = new StampedLock(); //Hearse
+ 
+     private final BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> chunkScheduleUpdater = (chunkTickScheduler, tick) -> {
+         if (tick.equals(chunkTickScheduler.peek())) {
+@@ -44,34 +44,47 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+     }
+ 
+     public void addContainer(ChunkPos pos, LevelChunkTicks<T> scheduler) {
+-        long l = pos.toLong();
+-        this.allContainers.put(l, scheduler);
+-        ScheduledTick<T> scheduledTick = scheduler.peek();
+-        if (scheduledTick != null) {
+-            this.nextTickForContainer.put(l, scheduledTick.triggerTick());
++        final long stamp = this.ticksLock.writeLock();
++        try {
++            long l = pos.toLong();
++            this.allContainers.put(l, scheduler);
++            ScheduledTick<T> scheduledTick = scheduler.peek();
++            if (scheduledTick != null) {
++                this.nextTickForContainer.put(l, scheduledTick.triggerTick());
++            }
++            scheduler.setOnTickAdded(this.chunkScheduleUpdater);
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+-
+-        scheduler.setOnTickAdded(this.chunkScheduleUpdater);
+     }
+ 
+     public void removeContainer(ChunkPos pos) {
+-        long l = pos.toLong();
+-        LevelChunkTicks<T> levelChunkTicks = this.allContainers.remove(l);
+-        this.nextTickForContainer.remove(l);
+-        if (levelChunkTicks != null) {
+-            levelChunkTicks.setOnTickAdded((BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>>)null);
++        final long stamp = this.ticksLock.writeLock();
++        try {
++            long l = pos.toLong();
++            LevelChunkTicks<T> levelChunkTicks = this.allContainers.remove(l);
++            this.nextTickForContainer.remove(l);
++            if (levelChunkTicks != null) {
++                levelChunkTicks.setOnTickAdded((BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>>)null);
++            }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+-
+     }
+ 
+     @Override
+     public void schedule(ScheduledTick<T> orderedTick) {
+-        long l = ChunkPos.asLong(orderedTick.pos());
+-        LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(l);
+-        if (levelChunkTicks == null) {
+-            Util.pauseInIde(new IllegalStateException("Trying to schedule tick in not loaded position " + orderedTick.pos()));
+-        } else {
+-            levelChunkTicks.schedule(orderedTick);
++        final long stamp = this.ticksLock.readLock();
++        try{
++            long l = ChunkPos.asLong(orderedTick.pos());
++            LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(l);
++            if (levelChunkTicks == null) {
++                Util.pauseInIde(new IllegalStateException("Trying to schedule tick in not loaded position " + orderedTick.pos()));
++            } else {
++                levelChunkTicks.schedule(orderedTick);
++            }
++        }finally {
++            this.ticksLock.unlockRead(stamp);
+         }
+     }
+ 
+@@ -95,38 +108,40 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+     }
+ 
+     private void sortContainersToTick(long time) {
+-        ObjectIterator<Long2LongMap.Entry> objectIterator = Long2LongMaps.fastIterator(this.nextTickForContainer);
+-
+-        while(objectIterator.hasNext()) {
+-            Long2LongMap.Entry entry = objectIterator.next();
+-            long l = entry.getLongKey();
+-            long m = entry.getLongValue();
+-            if (m <= time) {
+-                LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(l);
+-                if (levelChunkTicks == null) {
+-                    objectIterator.remove();
+-                } else {
+-                    ScheduledTick<T> scheduledTick = levelChunkTicks.peek();
+-                    if (scheduledTick == null) {
+-                        objectIterator.remove();
+-                    } else if (scheduledTick.triggerTick() > time) {
+-                        entry.setValue(scheduledTick.triggerTick());
+-                    } else if (this.tickCheck.test(l)) {
++        final long stamp = this.ticksLock.writeLock();
++        try {
++            ObjectIterator<Long2LongMap.Entry> objectIterator = Long2LongMaps.fastIterator(this.nextTickForContainer);
++            while(objectIterator.hasNext()) {
++                Long2LongMap.Entry entry = objectIterator.next();
++                long l = entry.getLongKey();
++                long m = entry.getLongValue();
++                if (m <= time) {
++                    LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(l);
++                    if (levelChunkTicks == null) {
+                         objectIterator.remove();
+-                        synchronized (this.containersToTick){
++                    } else {
++                        ScheduledTick<T> scheduledTick = levelChunkTicks.peek();
++                        if (scheduledTick == null) {
++                            objectIterator.remove();
++                        } else if (scheduledTick.triggerTick() > time) {
++                            entry.setValue(scheduledTick.triggerTick());
++                        } else if (this.tickCheck.test(l)) {
++                            objectIterator.remove();
+                             this.containersToTick.add(levelChunkTicks);
+                         }
+                     }
+                 }
+             }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+-
+     }
+ 
+     private void drainContainers(long time, int maxTicks) {
+-        LevelChunkTicks<T> levelChunkTicks;
+-        synchronized (this.containersToTick){
+-            while(this.canScheduleMoreTicks(maxTicks) && (levelChunkTicks = this.containersToTick.poll()) != null) {
++        final long stamp = this.ticksLock.writeLock();
++        try {
++            LevelChunkTicks<T> levelChunkTicks;
++            while (this.canScheduleMoreTicks(maxTicks) && (levelChunkTicks = this.containersToTick.poll()) != null) {
+                 ScheduledTick<T> scheduledTick = levelChunkTicks.poll();
+                 this.scheduleForThisTick(scheduledTick);
+                 this.drainFromCurrentContainer(this.containersToTick, levelChunkTicks, time, maxTicks);
+@@ -139,14 +154,29 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+                     }
+                 }
+             }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+     }
+ 
+     private void rescheduleLeftoverContainers() {
+-        synchronized (this.containersToTick){
+-            for(LevelChunkTicks<T> levelChunkTicks : this.containersToTick) {
++        final List<LevelChunkTicks<T>> cop = new ArrayList<>();
++        long stamp = this.ticksLock.readLock();
++        try {
++            for (LevelChunkTicks<T> levelChunkTicks : this.containersToTick) {
++                cop.add(levelChunkTicks);
++            }
++        }finally {
++            this.ticksLock.unlockRead(stamp);
++        }
++
++        stamp = this.ticksLock.writeLock();
++        try {
++            for (LevelChunkTicks<T> levelChunkTicks : cop){
+                 this.updateContainerScheduling(levelChunkTicks.peek());
+             }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+     }
+ 
+@@ -181,44 +211,81 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+     }
+ 
+     private void runCollectedTicks(BiConsumer<BlockPos, T> ticker) {
+-        while(!this.toRunThisTick.isEmpty()) {
+-            ScheduledTick<T> scheduledTick = this.toRunThisTick.poll();
+-            if (!this.toRunThisTickSet.isEmpty()) {
+-                this.toRunThisTickSet.remove(scheduledTick);
++        ScheduledTick[] cop;
++
++        long stamp = this.ticksLock.writeLock();
++        try {
++            cop = new ScheduledTick[this.toRunThisTick.size()];
++            int counter = 0;
++            while(!this.toRunThisTick.isEmpty()) {
++                ScheduledTick<T> scheduledTick = this.toRunThisTick.poll();
++                if (!this.toRunThisTickSet.isEmpty()) {
++                    this.toRunThisTickSet.remove(scheduledTick);
++                }
++                cop[counter] = scheduledTick;
++                counter++;
+             }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
++        }
+ 
+-            this.alreadyRunThisTick.add(scheduledTick);
++        for (ScheduledTick<T> scheduledTick : cop){
+             ticker.accept(scheduledTick.pos(), scheduledTick.type());
+         }
+ 
++        stamp = this.ticksLock.writeLock();
++        try {
++            for (ScheduledTick<T> scheduledTick : cop){
++                this.alreadyRunThisTick.add(scheduledTick);
++            }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
++        }
+     }
+ 
+     private void cleanupAfterTick() {
+-        this.toRunThisTick.clear();
+-        synchronized (this.containersToTick){
++        final long stamp = this.ticksLock.writeLock();
++        try {
++            this.toRunThisTick.clear();
+             this.containersToTick.clear();
++            this.alreadyRunThisTick.clear();
++            this.toRunThisTickSet.clear();
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+-        this.alreadyRunThisTick.clear();
+-        this.toRunThisTickSet.clear();
+     }
+ 
+     @Override
+     public boolean hasScheduledTick(BlockPos pos, T type) {
+-        LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(ChunkPos.asLong(pos));
+-        return levelChunkTicks != null && levelChunkTicks.hasScheduledTick(pos, type);
++        final long stamp = this.ticksLock.readLock();
++        try {
++            LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(ChunkPos.asLong(pos));
++            return levelChunkTicks != null && levelChunkTicks.hasScheduledTick(pos, type);
++        }finally {
++            this.ticksLock.unlockRead(stamp);
++        }
+     }
+ 
+     @Override
+     public boolean willTickThisTick(BlockPos pos, T type) {
+         this.calculateTickSetIfNeeded();
+-        return this.toRunThisTickSet.contains(ScheduledTick.probe(type, pos));
++        final long stamp = this.ticksLock.readLock();
++        try {
++            return this.toRunThisTickSet.contains(ScheduledTick.probe(type, pos));
++        }finally {
++            this.ticksLock.unlockRead(stamp);
++        }
+     }
+ 
+     private void calculateTickSetIfNeeded() {
+-        if (this.toRunThisTickSet.isEmpty() && !this.toRunThisTick.isEmpty()) {
+-            this.toRunThisTickSet.addAll(this.toRunThisTick);
++        final long stamp = this.ticksLock.writeLock();
++        try{
++            if (this.toRunThisTickSet.isEmpty() && !this.toRunThisTick.isEmpty()) {
++                this.toRunThisTickSet.addAll(this.toRunThisTick);
++            }
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
+         }
+-
+     }
+ 
+     private void forContainersInArea(BoundingBox box, LevelTicks.PosAndContainerConsumer<T> visitor) {
+@@ -230,7 +297,20 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+         for(int m = i; m <= k; ++m) {
+             for(int n = j; n <= l; ++n) {
+                 long o = ChunkPos.asLong(m, n);
+-                LevelChunkTicks<T> levelChunkTicks = this.allContainers.get(o);
++                LevelChunkTicks<T> levelChunkTicks;
++
++                long stamp = this.ticksLock.tryOptimisticRead();
++                if (this.ticksLock.validate(stamp)){
++                    levelChunkTicks = this.allContainers.get(o);
++                }else{
++                    stamp = this.ticksLock.readLock();
++                    try {
++                        levelChunkTicks = this.allContainers.get(o);
++                    }finally {
++                        this.ticksLock.unlockRead(stamp);
++                    }
++                }
++
+                 if (levelChunkTicks != null) {
+                     visitor.accept(o, levelChunkTicks);
+                 }
+@@ -240,24 +320,32 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+     }
+ 
+     public void clearArea(BoundingBox box) {
+-        Predicate<ScheduledTick<T>> predicate = (tick) -> {
+-            return box.isInside(tick.pos());
+-        };
++        Predicate<ScheduledTick<T>> predicate = (tick) -> box.isInside(tick.pos());
+         this.forContainersInArea(box, (chunkPos, chunkTickScheduler) -> {
+-            ScheduledTick<T> scheduledTick = chunkTickScheduler.peek();
+-            chunkTickScheduler.removeIf(predicate);
+-            ScheduledTick<T> scheduledTick2 = chunkTickScheduler.peek();
+-            if (scheduledTick2 != scheduledTick) {
+-                if (scheduledTick2 != null) {
+-                    this.updateContainerScheduling(scheduledTick2);
+-                } else {
+-                    this.nextTickForContainer.remove(chunkPos);
++            final long stamp = this.ticksLock.writeLock();
++            try {
++                ScheduledTick<T> scheduledTick = chunkTickScheduler.peek();
++                chunkTickScheduler.removeIf(predicate);
++                ScheduledTick<T> scheduledTick2 = chunkTickScheduler.peek();
++                if (scheduledTick2 != scheduledTick) {
++                    if (scheduledTick2 != null) {
++                        this.updateContainerScheduling(scheduledTick2);
++                    } else {
++                        this.nextTickForContainer.remove(chunkPos);
++                    }
+                 }
++            }finally {
++                this.ticksLock.unlockWrite(stamp);
+             }
+-
+         });
+-        this.alreadyRunThisTick.removeIf(predicate);
+-        this.toRunThisTick.removeIf(predicate);
++
++        final long stamp = this.ticksLock.writeLock();
++        try {
++            this.alreadyRunThisTick.removeIf(predicate);
++            this.toRunThisTick.removeIf(predicate);
++        }finally {
++            this.ticksLock.unlockWrite(stamp);
++        }
+     }
+ 
+     public void copyArea(BoundingBox box, Vec3i offset) {
+@@ -265,22 +353,34 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+         Predicate<ScheduledTick<T>> predicate = (tick) -> {
+             return box.isInside(tick.pos());
+         };
+-        this.alreadyRunThisTick.stream().filter(predicate).forEach(list::add);
+-        this.toRunThisTick.stream().filter(predicate).forEach(list::add);
+-        this.forContainersInArea(box, (chunkPos, chunkTickScheduler) -> {
+-            chunkTickScheduler.getAll().filter(predicate).forEach(list::add);
+-        });
+-        LongSummaryStatistics longSummaryStatistics = list.stream().mapToLong(ScheduledTick::subTickOrder).summaryStatistics();
+-        long l = longSummaryStatistics.getMin();
+-        long m = longSummaryStatistics.getMax();
+-        list.forEach((tick) -> {
+-            this.schedule(new ScheduledTick<>(tick.type(), tick.pos().offset(offset), tick.triggerTick(), tick.priority(), tick.subTickOrder() - l + m + 1L));
+-        });
++
++        long l;
++        long m;
++
++        final long stamp = this.ticksLock.readLock();
++        try {
++            this.alreadyRunThisTick.stream().filter(predicate).forEach(list::add);
++            this.toRunThisTick.stream().filter(predicate).forEach(list::add);
++            this.forContainersInArea(box, (chunkPos, chunkTickScheduler) -> {
++                chunkTickScheduler.getAll().filter(predicate).forEach(list::add);
++            });
++            LongSummaryStatistics longSummaryStatistics = list.stream().mapToLong(ScheduledTick::subTickOrder).summaryStatistics();
++            l = longSummaryStatistics.getMin();
++            m = longSummaryStatistics.getMax();
++        }finally {
++            this.ticksLock.unlockRead(stamp);
++        }
++        list.forEach((tick) -> this.schedule(new ScheduledTick<>(tick.type(), tick.pos().offset(offset), tick.triggerTick(), tick.priority(), tick.subTickOrder() - l + m + 1L)));
+     }
+ 
+     @Override
+     public int count() {
+-        return this.allContainers.values().stream().mapToInt(TickAccess::count).sum();
++        final long stamp = this.ticksLock.readLock();
++        try {
++            return this.allContainers.values().stream().mapToInt(TickAccess::count).sum();
++        }finally {
++            this.ticksLock.unlockRead(stamp);
++        }
+     }
+ 
+     @FunctionalInterface

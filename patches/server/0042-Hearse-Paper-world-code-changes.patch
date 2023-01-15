@@ -1,0 +1,763 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 15 Jan 2023 09:54:18 +0800
+Subject: [PATCH] Hearse: Paper world code changes
+
+Original license: MIT
+Original project: https://github.com/NaturalCodeClub/Hearse
+
+diff --git a/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java b/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java
+index 470402573bc31106d5a63e415b958fb7f9c36aa9..e831738a2988746fe4e065f6ded811a8bdf5dabe 100644
+--- a/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java
++++ b/src/main/java/io/papermc/paper/util/misc/Delayed26WayDistancePropagator3D.java
+@@ -94,24 +94,42 @@ public final class Delayed26WayDistancePropagator3D {
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte level) {
+         final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelIncreaseWorkQueues[level];
+-        queue.queuedCoordinates.enqueue(coordinate);
+-        queue.queuedLevels.enqueue(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << level);
+     }
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte index, final byte level) {
+         final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelIncreaseWorkQueues[index];
+-        queue.queuedCoordinates.enqueue(coordinate);
+-        queue.queuedLevels.enqueue(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << index);
+     }
+ 
+     protected final void addToRemoveWorkQueue(final long coordinate, final byte level) {
+         final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelRemoveWorkQueues[level];
+-        queue.queuedCoordinates.enqueue(coordinate);
+-        queue.queuedLevels.enqueue(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelRemoveWorkQueueBitset |= (1L << level);
+     }
+@@ -163,9 +181,20 @@ public final class Delayed26WayDistancePropagator3D {
+              this.levelIncreaseWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelIncreaseWorkQueueBitset)) {
+ 
+             final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelIncreaseWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirstLong();
+-                byte level = queue.queuedLevels.removeFirstByte();
++            while (true) {
++
++                long coordinate;
++                byte level;
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final boolean neighbourCheck = level < 0;
+ 
+@@ -232,9 +261,19 @@ public final class Delayed26WayDistancePropagator3D {
+              this.levelRemoveWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelRemoveWorkQueueBitset)) {
+ 
+             final Delayed8WayDistancePropagator2D.WorkQueue queue = this.levelRemoveWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirstLong();
+-                final byte level = queue.queuedLevels.removeFirstByte();
++            while (true) {
++                long coordinate;
++                byte level;
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final byte currentLevel = this.levels.removeIfGreaterOrEqual(coordinate, level);
+                 if (currentLevel == 0) {
+diff --git a/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java b/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java
+index 808d1449ac44ae86a650932365081fbaf178d141..0fa95d81bafc7fe5c1bede7a0608b54795a78fa0 100644
+--- a/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java
++++ b/src/main/java/io/papermc/paper/util/misc/Delayed8WayDistancePropagator2D.java
+@@ -1,12 +1,14 @@
+ package io.papermc.paper.util.misc;
+ 
++import io.papermc.paper.util.MCUtil;
+ import it.unimi.dsi.fastutil.HashCommon;
+-import it.unimi.dsi.fastutil.bytes.ByteArrayFIFOQueue;
+ import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+-import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+ import it.unimi.dsi.fastutil.longs.LongIterator;
+ import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
+-import io.papermc.paper.util.MCUtil;
++
++import java.util.Deque;
++import java.util.concurrent.ConcurrentLinkedDeque;
++import java.util.concurrent.locks.StampedLock;
+ 
+ public final class Delayed8WayDistancePropagator2D {
+ 
+@@ -356,24 +358,42 @@ public final class Delayed8WayDistancePropagator2D {
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte level) {
+         final WorkQueue queue = this.levelIncreaseWorkQueues[level];
+-        queue.queuedCoordinates.enqueue(coordinate);
+-        queue.queuedLevels.enqueue(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << level);
+     }
+ 
+     protected final void addToIncreaseWorkQueue(final long coordinate, final byte index, final byte level) {
+         final WorkQueue queue = this.levelIncreaseWorkQueues[index];
+-        queue.queuedCoordinates.enqueue(coordinate);
+-        queue.queuedLevels.enqueue(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelIncreaseWorkQueueBitset |= (1L << index);
+     }
+ 
+     protected final void addToRemoveWorkQueue(final long coordinate, final byte level) {
+         final WorkQueue queue = this.levelRemoveWorkQueues[level];
+-        queue.queuedCoordinates.enqueue(coordinate);
+-        queue.queuedLevels.enqueue(level);
++
++        final long id = queue.lock.writeLock();
++        try {
++            queue.queuedCoordinates.add(coordinate);
++            queue.queuedLevels.add(level);
++        }finally {
++            queue.lock.unlockWrite(id);
++        }
+ 
+         this.levelRemoveWorkQueueBitset |= (1L << level);
+     }
+@@ -425,9 +445,19 @@ public final class Delayed8WayDistancePropagator2D {
+              this.levelIncreaseWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelIncreaseWorkQueueBitset)) {
+ 
+             final WorkQueue queue = this.levelIncreaseWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirstLong();
+-                byte level = queue.queuedLevels.removeFirstByte();
++            while (true) {
++                byte level;
++                long coordinate;
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final boolean neighbourCheck = level < 0;
+ 
+@@ -491,9 +521,20 @@ public final class Delayed8WayDistancePropagator2D {
+              this.levelRemoveWorkQueueBitset ^= (1L << queueIndex), queueIndex = 63 ^ Long.numberOfLeadingZeros(this.levelRemoveWorkQueueBitset)) {
+ 
+             final WorkQueue queue = this.levelRemoveWorkQueues[queueIndex];
+-            while (!queue.queuedLevels.isEmpty()) {
+-                final long coordinate = queue.queuedCoordinates.removeFirstLong();
+-                final byte level = queue.queuedLevels.removeFirstByte();
++            while (true) {
++                long coordinate;
++                byte level;
++
++                final long id = queue.lock.writeLock();
++                try {
++                    if (queue.queuedLevels.isEmpty()){
++                        break;
++                    }
++                    coordinate = queue.queuedCoordinates.removeFirst();
++                    level = queue.queuedLevels.removeFirst();
++                }finally {
++                    queue.lock.unlockWrite(id);
++                }
+ 
+                 final byte currentLevel = this.levels.removeIfGreaterOrEqual(coordinate, level);
+                 if (currentLevel == 0) {
+@@ -678,41 +719,9 @@ public final class Delayed8WayDistancePropagator2D {
+     }
+ 
+     protected static final class WorkQueue {
+-
+-        public final NoResizeLongArrayFIFODeque queuedCoordinates = new NoResizeLongArrayFIFODeque();
+-        public final NoResizeByteArrayFIFODeque queuedLevels = new NoResizeByteArrayFIFODeque();
+-
++        public final Deque<Long> queuedCoordinates = new ConcurrentLinkedDeque<>();
++        public final Deque<Byte> queuedLevels = new ConcurrentLinkedDeque<>();
++        public final StampedLock lock = new StampedLock();
+     }
+ 
+-    protected static final class NoResizeLongArrayFIFODeque extends LongArrayFIFOQueue {
+-
+-        /**
+-         * Assumes non-empty. If empty, undefined behaviour.
+-         */
+-        public long removeFirstLong() {
+-            // copied from superclass
+-            long t = this.array[this.start];
+-            if (++this.start == this.length) {
+-                this.start = 0;
+-            }
+-
+-            return t;
+-        }
+-    }
+-
+-    protected static final class NoResizeByteArrayFIFODeque extends ByteArrayFIFOQueue {
+-
+-        /**
+-         * Assumes non-empty. If empty, undefined behaviour.
+-         */
+-        public byte removeFirstByte() {
+-            // copied from superclass
+-            byte t = this.array[this.start];
+-            if (++this.start == this.length) {
+-                this.start = 0;
+-            }
+-
+-            return t;
+-        }
+-    }
+ }
+diff --git a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+index f597d65d56964297eeeed6c7e77703764178fee0..b12c02962e9dad92ae79d762887c65db10765488 100644
+--- a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
++++ b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+@@ -2,8 +2,8 @@ package io.papermc.paper.world;
+ 
+ import com.destroystokyo.paper.util.maplist.EntityList;
+ import io.papermc.paper.chunk.system.entity.EntityLookup;
+-import io.papermc.paper.util.TickThread;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
++import it.unimi.dsi.fastutil.objects.Reference2ObjectMaps;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
+ import net.minecraft.nbt.CompoundTag;
+ import net.minecraft.server.level.ChunkHolder;
+@@ -20,8 +20,8 @@ import net.minecraft.world.phys.AABB;
+ import org.bukkit.craftbukkit.event.CraftEventFactory;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+-import java.util.Iterator;
+ import java.util.List;
++import java.util.concurrent.locks.StampedLock;
+ import java.util.function.Predicate;
+ 
+ public final class ChunkEntitySlices {
+@@ -31,15 +31,15 @@ public final class ChunkEntitySlices {
+     public final int chunkX;
+     public final int chunkZ;
+     protected final ServerLevel world;
+-
++    protected final StampedLock accessLock = new StampedLock(); //Hearse -- fix some entity can't be removed
+     protected final EntityCollectionBySection allEntities;
+     protected final EntityCollectionBySection hardCollidingEntities;
+-    protected final Reference2ObjectOpenHashMap<Class<? extends Entity>, EntityCollectionBySection> entitiesByClass;
++    protected final Reference2ObjectMap<Class<? extends Entity>, EntityCollectionBySection> entitiesByClass;
+     protected final EntityList entities = new EntityList();
+ 
+-    public ChunkHolder.FullChunkStatus status;
++    public volatile ChunkHolder.FullChunkStatus status;
+ 
+-    protected boolean isTransient;
++    protected volatile boolean isTransient;
+ 
+     public boolean isTransient() {
+         return this.isTransient;
+@@ -61,13 +61,12 @@ public final class ChunkEntitySlices {
+ 
+         this.allEntities = new EntityCollectionBySection(this);
+         this.hardCollidingEntities = new EntityCollectionBySection(this);
+-        this.entitiesByClass = new Reference2ObjectOpenHashMap<>();
++        this.entitiesByClass = Reference2ObjectMaps.synchronize(new Reference2ObjectOpenHashMap<>());
+ 
+         this.status = status;
+     }
+ 
+-    // Paper start - optimise CraftChunk#getEntities
+-    public org.bukkit.entity.Entity[] getChunkEntities() {
++    private org.bukkit.entity.Entity[] getChunkEntitiesUnsafe(){
+         List<org.bukkit.entity.Entity> ret = new java.util.ArrayList<>();
+         final Entity[] entities = this.entities.getRawData();
+         for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
+@@ -80,11 +79,25 @@ public final class ChunkEntitySlices {
+                 ret.add(bukkit);
+             }
+         }
+-
+         return ret.toArray(new org.bukkit.entity.Entity[0]);
+     }
+ 
+-    public CompoundTag save() {
++    // Paper start - optimise CraftChunk#getEntities
++    public org.bukkit.entity.Entity[] getChunkEntities() {
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)) {
++            return this.getChunkEntitiesUnsafe();
++        }
++
++        id = this.accessLock.readLock();
++        try {
++            return this.getChunkEntitiesUnsafe();
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
++    }
++
++    private CompoundTag saveUnsafe(){
+         final int len = this.entities.size();
+         if (len == 0) {
+             return null;
+@@ -106,11 +119,36 @@ public final class ChunkEntitySlices {
+         return EntityStorage.saveEntityChunk(collectedEntities, new ChunkPos(this.chunkX, this.chunkZ), this.world);
+     }
+ 
++    public CompoundTag save() {
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            return this.saveUnsafe();
++        }
++        id = this.accessLock.readLock();
++        try {
++            return this.saveUnsafe();
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
++    }
++
+     // returns true if this chunk has transient entities remaining
+     public boolean unload() {
+-        final int len = this.entities.size();
+-        final Entity[] collectedEntities = Arrays.copyOf(this.entities.getRawData(), len);
+-
++        Entity[] collectedEntities;
++        int len;
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            len = this.entities.size();
++            collectedEntities = Arrays.copyOf(this.entities.getRawData(), len);
++        }else {
++            id = this.accessLock.readLock();
++            try {
++                len = this.entities.size();
++                collectedEntities = Arrays.copyOf(this.entities.getRawData(), len);
++            } finally {
++                this.accessLock.unlockRead(id);
++            }
++        }
+         for (int i = 0; i < len; ++i) {
+             final Entity entity = collectedEntities[i];
+             if (entity.isRemoved()) {
+@@ -128,7 +166,6 @@ public final class ChunkEntitySlices {
+                 }
+             }
+         }
+-
+         return this.entities.size() != 0;
+     }
+ 
+@@ -140,53 +177,98 @@ public final class ChunkEntitySlices {
+ 
+         final Entity[] rawData = this.entities.getRawData();
+         final List<Entity> collectedEntities = new ArrayList<>(len);
+-        for (int i = 0; i < len; ++i) {
+-            collectedEntities.add(rawData[i]);
+-        }
++        collectedEntities.addAll(Arrays.asList(rawData).subList(0, len));
+ 
+         return collectedEntities;
+     }
+ 
+     public void callEntitiesLoadEvent() {
+-        CraftEventFactory.callEntitiesLoadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            CraftEventFactory.callEntitiesLoadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            CraftEventFactory.callEntitiesLoadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+ 
+     public void callEntitiesUnloadEvent() {
+-        CraftEventFactory.callEntitiesUnloadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            CraftEventFactory.callEntitiesUnloadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            CraftEventFactory.callEntitiesUnloadEvent(this.world, new ChunkPos(this.chunkX, this.chunkZ), this.getAllEntities());
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+     // Paper end - optimise CraftChunk#getEntities
+ 
+     public boolean isEmpty() {
+-        return this.entities.size() == 0;
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            return this.entities.size() == 0;
++        }
++        id = this.accessLock.readLock();
++        try {
++            return this.entities.size() == 0;
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+ 
+     public void mergeInto(final ChunkEntitySlices slices) {
+-        final Entity[] entities = this.entities.getRawData();
+-        for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
+-            final Entity entity = entities[i];
++        final List<Entity> cop = new ArrayList<>();
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            final Entity[] entities = this.entities.getRawData();
++            for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
++                final Entity entity = entities[i];
++                cop.add(entity);
++            }
++        }else {
++            id = this.accessLock.readLock();
++            try {
++                final Entity[] entities = this.entities.getRawData();
++                for (int i = 0, size = Math.min(entities.length, this.entities.size()); i < size; ++i) {
++                    final Entity entity = entities[i];
++                    cop.add(entity);
++                }
++            } finally {
++                this.accessLock.unlockRead(id);
++            }
++        }
++        for (Entity entity : cop){
+             slices.addEntity(entity, entity.sectionY);
+         }
+     }
+ 
+-    private boolean preventStatusUpdates;
+-    public boolean startPreventingStatusUpdates() {
+-        final boolean ret = this.preventStatusUpdates;
+-        this.preventStatusUpdates = true;
+-        return ret;
+-    }
+-
+-    public void stopPreventingStatusUpdates(final boolean prev) {
+-        this.preventStatusUpdates = prev;
+-    }
+-
+     public void updateStatus(final ChunkHolder.FullChunkStatus status, final EntityLookup lookup) {
+         this.status = status;
+ 
+-        final Entity[] entities = this.entities.getRawData();
++        Entity[] entities;
++
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            entities = Arrays.copyOf(this.entities.getRawData(), this.entities.getRawData().length);
++        }else {
++            id = this.accessLock.readLock();
++            try {
++                entities = Arrays.copyOf(this.entities.getRawData(), this.entities.getRawData().length);
++            } finally {
++                this.accessLock.unlockRead(id);
++            }
++        }
+ 
+-        for (int i = 0, size = this.entities.size(); i < size; ++i) {
+-            final Entity entity = entities[i];
+ 
++        for (final Entity entity : entities) {
+             final Visibility oldVisibility = EntityLookup.getEntityStatus(entity);
+             entity.chunkStatus = status;
+             final Visibility newVisibility = EntityLookup.getEntityStatus(entity);
+@@ -196,70 +278,112 @@ public final class ChunkEntitySlices {
+     }
+ 
+     public boolean addEntity(final Entity entity, final int chunkSection) {
+-        if (!this.entities.add(entity)) {
+-            return false;
+-        }
+-        entity.chunkStatus = this.status;
+-        final int sectionIndex = chunkSection - this.minSection;
+-
+-        this.allEntities.addEntity(entity, sectionIndex);
++        long id = this.accessLock.writeLock();
++        try {
++            if (!this.entities.add(entity)) {
++                return false;
++            }
++            entity.chunkStatus = this.status;
++            final int sectionIndex = chunkSection - this.minSection;
+ 
+-        if (entity.hardCollides()) {
+-            this.hardCollidingEntities.addEntity(entity, sectionIndex);
+-        }
++            this.allEntities.addEntity(entity, sectionIndex);
+ 
+-        for (final Iterator<Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection>> iterator =
+-             this.entitiesByClass.reference2ObjectEntrySet().fastIterator(); iterator.hasNext();) {
+-            final Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection> entry = iterator.next();
++            if (entity.hardCollides()) {
++                this.hardCollidingEntities.addEntity(entity, sectionIndex);
++            }
+ 
+-            if (entry.getKey().isInstance(entity)) {
+-                entry.getValue().addEntity(entity, sectionIndex);
++            for (final Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection> entry : this.entitiesByClass.reference2ObjectEntrySet()) {
++                if (entry.getKey().isInstance(entity)) {
++                    entry.getValue().addEntity(entity, sectionIndex);
++                }
+             }
++        } finally {
++            this.accessLock.unlockWrite(id);
+         }
+-
+         return true;
+     }
+ 
+     public boolean removeEntity(final Entity entity, final int chunkSection) {
+-        if (!this.entities.remove(entity)) {
+-            return false;
+-        }
+-        entity.chunkStatus = null;
+-        final int sectionIndex = chunkSection - this.minSection;
+-
+-        this.allEntities.removeEntity(entity, sectionIndex);
++        long id = this.accessLock.writeLock();
++        try {
++            if (!this.entities.remove(entity)) {
++                return false;
++            }
++            entity.chunkStatus = null;
++            final int sectionIndex = chunkSection - this.minSection;
+ 
+-        if (entity.hardCollides()) {
+-            this.hardCollidingEntities.removeEntity(entity, sectionIndex);
+-        }
++            this.allEntities.removeEntity(entity, sectionIndex);
+ 
+-        for (final Iterator<Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection>> iterator =
+-             this.entitiesByClass.reference2ObjectEntrySet().fastIterator(); iterator.hasNext();) {
+-            final Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection> entry = iterator.next();
++            if (entity.hardCollides()) {
++                this.hardCollidingEntities.removeEntity(entity, sectionIndex);
++            }
+ 
+-            if (entry.getKey().isInstance(entity)) {
+-                entry.getValue().removeEntity(entity, sectionIndex);
++            for (final Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection> entry : this.entitiesByClass.reference2ObjectEntrySet()) {
++                if (entry.getKey().isInstance(entity)) {
++                    entry.getValue().removeEntity(entity, sectionIndex);
++                }
+             }
++        } finally {
++            this.accessLock.unlockWrite(id);
+         }
+-
+         return true;
+     }
+ 
+     public void getHardCollidingEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-        this.hardCollidingEntities.getEntities(except, box, into, predicate);
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.hardCollidingEntities.getEntities(except, box, into, predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            this.hardCollidingEntities.getEntities(except, box, into, predicate);
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+ 
+     public void getEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-        this.allEntities.getEntitiesWithEnderDragonParts(except, box, into, predicate);
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.allEntities.getEntitiesWithEnderDragonParts(except, box, into, predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            this.allEntities.getEntitiesWithEnderDragonParts(except, box, into, predicate);
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+ 
+     public void getEntitiesWithoutDragonParts(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+-        this.allEntities.getEntities(except, box, into, predicate);
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.allEntities.getEntities(except, box, into, predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            this.allEntities.getEntities(except, box, into, predicate);
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+ 
+     public <T extends Entity> void getEntities(final EntityType<?> type, final AABB box, final List<? super T> into,
+                                                final Predicate<? super T> predicate) {
+-        this.allEntities.getEntities(type, box, (List)into, (Predicate)predicate);
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            this.allEntities.getEntities(type, box, (List) into, (Predicate) predicate);
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            this.allEntities.getEntities(type, box, (List) into, (Predicate) predicate);
++        } finally {
++            this.accessLock.unlockRead(id);
++        }
+     }
+ 
+     protected EntityCollectionBySection initClass(final Class<? extends Entity> clazz) {
+@@ -287,12 +411,28 @@ public final class ChunkEntitySlices {
+ 
+     public <T extends Entity> void getEntities(final Class<? extends T> clazz, final Entity except, final AABB box, final List<? super T> into,
+                                                final Predicate<? super T> predicate) {
+-        EntityCollectionBySection collection = this.entitiesByClass.get(clazz);
+-        if (collection != null) {
+-            collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List)into, (Predicate)predicate);
+-        } else {
+-            this.entitiesByClass.putIfAbsent(clazz, collection = this.initClass(clazz));
+-            collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List)into, (Predicate)predicate);
++        long id = this.accessLock.tryOptimisticRead();
++        if (this.accessLock.validate(id)){
++            EntityCollectionBySection collection = this.entitiesByClass.get(clazz);
++            if (collection != null) {
++                collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List) into, (Predicate) predicate);
++            } else {
++                this.entitiesByClass.putIfAbsent(clazz, collection = this.initClass(clazz));
++                collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List) into, (Predicate) predicate);
++            }
++            return;
++        }
++        id = this.accessLock.readLock();
++        try {
++            EntityCollectionBySection collection = this.entitiesByClass.get(clazz);
++            if (collection != null) {
++                collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List) into, (Predicate) predicate);
++            } else {
++                this.entitiesByClass.putIfAbsent(clazz, collection = this.initClass(clazz));
++                collection.getEntitiesWithEnderDragonParts(except, clazz, box, (List) into, (Predicate) predicate);
++            }
++        } finally {
++            this.accessLock.unlockRead(id);
+         }
+     }
+ 
+@@ -309,7 +449,7 @@ public final class ChunkEntitySlices {
+         }
+ 
+         public BasicEntityList(final int cap) {
+-            this.storage = (E[])(cap <= 0 ? EMPTY : new Entity[cap]);
++            this.storage = (E[]) (cap <= 0 ? EMPTY : new Entity[cap]);
+         }
+ 
+         public boolean isEmpty() {
+@@ -322,7 +462,7 @@ public final class ChunkEntitySlices {
+ 
+         private void resize() {
+             if (this.storage == EMPTY) {
+-                this.storage = (E[])new Entity[DEFAULT_CAPACITY];
++                this.storage = (E[]) new Entity[DEFAULT_CAPACITY];
+             } else {
+                 this.storage = Arrays.copyOf(this.storage, this.storage.length * 2);
+             }
+@@ -492,7 +632,7 @@ public final class ChunkEntitySlices {
+                     } // else: continue to test the ender dragon parts
+ 
+                     if (entity instanceof EnderDragon) {
+-                        for (final EnderDragonPart part : ((EnderDragon)entity).subEntities) {
++                        for (final EnderDragonPart part : ((EnderDragon) entity).subEntities) {
+                             if (part == except || !part.getBoundingBox().intersects(box)) {
+                                 continue;
+                             }
+@@ -543,7 +683,7 @@ public final class ChunkEntitySlices {
+                     } // else: continue to test the ender dragon parts
+ 
+                     if (entity instanceof EnderDragon) {
+-                        for (final EnderDragonPart part : ((EnderDragon)entity).subEntities) {
++                        for (final EnderDragonPart part : ((EnderDragon) entity).subEntities) {
+                             if (part == except || !part.getBoundingBox().intersects(box) || !clazz.isInstance(part)) {
+                                 continue;
+                             }
+@@ -589,11 +729,11 @@ public final class ChunkEntitySlices {
+                         continue;
+                     }
+ 
+-                    if (predicate != null && !predicate.test((T)entity)) {
++                    if (predicate != null && !predicate.test((T) entity)) {
+                         continue;
+                     }
+ 
+-                    into.add((T)entity);
++                    into.add((T) entity);
+                 }
+             }
+         }
