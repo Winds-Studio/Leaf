@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Mon, 16 Jan 2023 19:41:50 +0800
+Subject: [PATCH] Hearse: Fix a sorting exception in NearestLivingEntitySensor
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/co/earthme/hearse/util/EntityPositionCache.java b/src/main/java/co/earthme/hearse/util/EntityPositionCache.java
+index 0ff6ef85758c4f5780860178572e128080470d04..b7ec86d5cb2bb8d62d1a54f5e7b394e992a2b870 100644
+--- a/src/main/java/co/earthme/hearse/util/EntityPositionCache.java
++++ b/src/main/java/co/earthme/hearse/util/EntityPositionCache.java
+@@ -1,17 +1,48 @@
+ package co.earthme.hearse.util;
+ 
+ import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.phys.Vec3;
+ 
+ public class EntityPositionCache {
+     private final double x;
+     private final double y;
+     private final double z;
++    private final LivingEntity currentEntity;
+ 
+-    public EntityPositionCache(Entity entity){
++    public EntityPositionCache(LivingEntity entity){
+         this.x = entity.getX();
+         this.y = entity.getY();
+         this.z = entity.getZ();
++        this.currentEntity = entity;
++    }
++
++    public LivingEntity getCurrentEntity() {
++        return this.currentEntity;
++    }
++
++    public double getX() {
++        return this.x;
++    }
++
++    public double getY() {
++        return this.y;
++    }
++
++    public double getZ() {
++        return this.z;
++    }
++
++    public double distanceToSqr(double x, double y, double z) {
++        double d3 = this.x - x;
++        double d4 = this.y - y;
++        double d5 = this.z - z;
++
++        return d3 * d3 + d4 * d4 + d5 * d5;
++    }
++
++    public double distanceToSqr(Entity entity) {
++        return this.distanceToSqr(entity.position());
+     }
+ 
+     public double distanceToSqr(Vec3 vector) {
+@@ -21,4 +52,8 @@ public class EntityPositionCache {
+ 
+         return d0 * d0 + d1 * d1 + d2 * d2;
+     }
++
++    public double distanceToSqr(EntityPositionCache entityPositionCache) {
++        return this.distanceToSqr(entityPositionCache.getX(),entityPositionCache.getY(),entityPositionCache.getZ());
++    }
+ }
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index c72920a17178059a29d21e96aeef398f6e0bbbdc..2658334ba2a22e808c747bbf81475ecb18a958d2 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.entity;
+ 
++import co.earthme.hearse.util.EntityPositionCache;
+ import com.destroystokyo.paper.event.player.PlayerArmorChangeEvent; // Paper
+ import com.google.common.base.Objects;
+ import com.google.common.collect.ImmutableList;
+@@ -878,6 +879,10 @@ public abstract class LivingEntity extends Entity {
+     private boolean isTickingEffects = false;
+     private List<ProcessableEffect> effectsToProcess = Lists.newCopyOnWriteArrayList();
+ 
++    public double distanceToSqr(EntityPositionCache entityPositionCache) {
++        return this.distanceToSqr(entityPositionCache.getX(),entityPositionCache.getY(),entityPositionCache.getZ());
++    }
++
+     private static class ProcessableEffect {
+ 
+         private MobEffect type;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+index d8cf99a3014a4b8152ae819fa663c2fdf34dce57..714cc41d6358ea57a23e2e663422fdba28efcf4d 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+@@ -1,10 +1,17 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
++import co.earthme.hearse.util.EntityPositionCache;
+ import com.google.common.collect.ImmutableSet;
+ import java.util.Comparator;
+ import java.util.List;
+ import java.util.Set;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.server.level.ServerLevel;
++import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.entity.ai.Brain;
+ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+@@ -12,16 +19,28 @@ import net.minecraft.world.entity.ai.memory.NearestVisibleLivingEntities;
+ import net.minecraft.world.phys.AABB;
+ 
+ public class NearestLivingEntitySensor<T extends LivingEntity> extends Sensor<T> {
++    private final List<EntityPositionCache> entitiesCache = ObjectLists.synchronize(new ObjectArrayList<>());
++    private final AtomicBoolean calling = new AtomicBoolean(false);
++
+     @Override
+     protected void doTick(ServerLevel world, T entity) {
+-        AABB aABB = entity.getBoundingBox().inflate((double)this.radiusXZ(), (double)this.radiusY(), (double)this.radiusXZ());
+-        List<LivingEntity> list = world.getEntitiesOfClass(LivingEntity.class, aABB, (e) -> {
+-            return e != entity && e.isAlive();
+-        });
+-        list.sort(Comparator.comparingDouble(entity::distanceToSqr));
+-        Brain<?> brain = entity.getBrain();
+-        brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES, list);
+-        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(entity, list));
++        if (!this.calling.get()){
++            this.calling.set(true);
++            try {
++                AABB aABB = entity.getBoundingBox().inflate(this.radiusXZ(), this.radiusY(), this.radiusXZ());
++                this.entitiesCache.clear();
++                this.entitiesCache.addAll(world.getEntitiesOfClass(LivingEntity.class, aABB, (e) -> e != entity && e.isAlive()).stream().map(EntityPositionCache::new).toList());
++                final EntityPositionCache compareCache = new EntityPositionCache(entity);
++                this.entitiesCache.sort(Comparator.comparingDouble(compareCache::distanceToSqr));
++
++                Brain<?> brain = entity.getBrain();
++                final List<LivingEntity> list = this.entitiesCache.stream().map(EntityPositionCache::getCurrentEntity).toList();
++                brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES,list);
++                brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(entity, list));
++            }finally {
++                this.calling.set(false);
++            }
++        }
+     }
+ 
+     protected int radiusXZ() {

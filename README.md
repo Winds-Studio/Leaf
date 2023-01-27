@@ -64,4 +64,4 @@ Credits:
 - [Petal](https://github.com/Bloom-host/Petal)
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
 - [VMP](https://github.com/RelativityMC/VMP-fabric)
-- [Hearse](https://github.com/NaturalCodeClub/Hearse)
+- [Hearse](https://github.com/Era4FunMC/Hearse)

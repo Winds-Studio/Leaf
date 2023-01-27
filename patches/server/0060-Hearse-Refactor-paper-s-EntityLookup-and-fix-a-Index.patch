@@ -1,0 +1,285 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Tue, 17 Jan 2023 18:41:51 +0800
+Subject: [PATCH] Hearse: Refactor paper's EntityLookup and fix a
+ IndexOutOfBoundsException
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index d183eb5ba934236469855b374904ef72a09b869f..09a85daaf8cb40b49fe264e999778b49160fe12a 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -2,42 +2,31 @@ package io.papermc.paper.chunk.system.entity;
+ 
+ import com.destroystokyo.paper.util.maplist.EntityList;
+ import com.mojang.logging.LogUtils;
++import io.papermc.paper.chunk.system.ChunkSystem;
+ import io.papermc.paper.util.CoordinateUtils;
+ import io.papermc.paper.util.TickThread;
+ import io.papermc.paper.util.WorldUtil;
+ import io.papermc.paper.world.ChunkEntitySlices;
+-import it.unimi.dsi.fastutil.ints.Int2ReferenceMap;
+-import it.unimi.dsi.fastutil.ints.Int2ReferenceMaps;
+-import it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap;
++import it.unimi.dsi.fastutil.longs.Long2ObjectArrayMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+-import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+-import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;
+-import it.unimi.dsi.fastutil.objects.Object2ReferenceMaps;
+-import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.core.BlockPos;
+-import io.papermc.paper.chunk.system.ChunkSystem;
+ import net.minecraft.server.level.ChunkHolder;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.util.AbortableIterationConsumer;
+ import net.minecraft.util.Mth;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.EntityType;
+-import net.minecraft.world.level.entity.EntityInLevelCallback;
+-import net.minecraft.world.level.entity.EntityTypeTest;
+-import net.minecraft.world.level.entity.LevelCallback;
+-import net.minecraft.world.level.entity.LevelEntityGetter;
+-import net.minecraft.world.level.entity.Visibility;
++import net.minecraft.world.level.entity.*;
+ import net.minecraft.world.phys.AABB;
+ import org.jetbrains.annotations.NotNull;
+ import org.jetbrains.annotations.Nullable;
+ import org.slf4j.Logger;
+-import java.util.ArrayList;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.NoSuchElementException;
+-import java.util.UUID;
+-import java.util.concurrent.locks.*;
++
++import java.util.*;
++import java.util.concurrent.locks.ReadWriteLock;
++import java.util.concurrent.locks.ReentrantReadWriteLock;
+ import java.util.function.Consumer;
+ import java.util.function.Predicate;
+ 
+@@ -51,17 +40,14 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+     public final ServerLevel world;
+ 
+-    private final StampedLock entityByLock = new StampedLock();
+-    private final Lock entityGetChunkLock = new ReentrantLock();
+     private final ReadWriteLock chunkEntitySlicesLock = new ReentrantReadWriteLock();
+ 
+-    protected final Long2ObjectMap<ChunkSlicesRegion> regions = new Long2ObjectOpenHashMap<>(128, 0.5f);
++    protected final Long2ObjectMap<ChunkSlicesRegion> regions = new Long2ObjectArrayMap<>();
+ 
+     private final int minSection; // inclusive
+     private final int maxSection; // inclusive
+     private final LevelCallback<Entity> worldCallback;
+-    private final Int2ReferenceMap<Entity> entityById = new Int2ReferenceOpenHashMap<>();
+-    private final Object2ReferenceMap<UUID, Entity> entityByUUID = new Object2ReferenceOpenHashMap<>();
++    private final List<Entity> addedEntities = ObjectLists.synchronize(new ObjectArrayList<>());
+     private final EntityList accessibleEntities = new EntityList();
+ 
+     public EntityLookup(final ServerLevel world, final LevelCallback<Entity> worldCallback) {
+@@ -82,52 +68,23 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     @Nullable
+     @Override
+     public Entity get(final int id) {
+-        final long attempt = this.entityByLock.tryOptimisticRead();
+-        if (attempt != 0L) {
+-            try {
+-                final Entity ret = this.entityById.get(id);
+-
+-                if (this.entityByLock.validate(attempt)) {
+-                    return maskNonAccessible(ret);
+-                }
+-            } catch (final Error error) {
+-                throw error;
+-            } catch (final Throwable thr) {
+-                // ignore
++        for (Entity entity : this.addedEntities){
++            if (id == entity.getId()){
++                return entity;
+             }
+         }
+-
+-        this.entityByLock.readLock();
+-        try {
+-            return maskNonAccessible(this.entityById.get(id));
+-        } finally {
+-            this.entityByLock.tryUnlockRead();
+-        }
++        return null;
+     }
+ 
+     @Nullable
+     @Override
+     public Entity get(final UUID id) {
+-        final long attempt = this.entityByLock.tryOptimisticRead();
+-        if (attempt != 0L) {
+-            try {
+-                final Entity ret = this.entityByUUID.get(id);
+-                if (this.entityByLock.validate(attempt)) {
+-                    return maskNonAccessible(ret);
+-                }
+-            } catch (final Error error) {
+-                throw error;
+-            } catch (final Throwable thr) {
+-                // ignore
++        for (Entity entity : this.addedEntities){
++            if (entity.getUUID().equals(id)){
++                return entity;
+             }
+         }
+-
+-        this.entityByLock.readLock();
+-        try {
+-            return maskNonAccessible(this.entityByUUID.get(id));
+-        } finally {
+-            this.entityByLock.tryUnlockRead();
+-        }
++        return null;
+     }
+ 
+     public boolean hasEntity(final UUID uuid) {
+@@ -142,7 +99,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         }finally {
+             this.chunkEntitySlicesLock.readLock().unlock();
+         }
+-        return "count_id:" + this.entityById.size() + ",count_uuid:" + this.entityByUUID.size() + ",region_count:" + reginSize;
++        return "count:" + this.addedEntities.size() +",region_count:" + reginSize;
+     }
+ 
+     static final class ArrayIterable<T> implements Iterable<T> {
+@@ -205,7 +162,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+     @Override
+     public <U extends Entity> void get(final EntityTypeTest<Entity, U> filter, final AbortableIterationConsumer<U> action) {
+-        for (final Entity entity : this.entityById.values()) {
++        for (final Entity entity : this.addedEntities) {
+             final Visibility visibility = EntityLookup.getEntityStatus(entity);
+             if (!visibility.isAccessible()) {
+                 continue;
+@@ -342,33 +299,16 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             }
+         }
+ 
+-        this.entityByLock.writeLock();
+-        try {
+-            if (this.entityById.containsKey(entity.getId())) {
+-                LOGGER.warn("Entity id already exists: " + entity.getId() + ", mapped to " + this.entityById.get(entity.getId()) + ", can't add " + entity);
+-                return false;
+-            }
+-            if (this.entityByUUID.containsKey(entity.getUUID())) {
+-                LOGGER.warn("Entity uuid already exists: " + entity.getUUID() + ", mapped to " + this.entityByUUID.get(entity.getUUID()) + ", can't add " + entity);
++            if (this.addedEntities.contains(entity)) {
++                LOGGER.warn("Entity already exists: " + entity);
+                 return false;
+             }
+-            this.entityById.put(entity.getId(), entity);
+-            this.entityByUUID.put(entity.getUUID(), entity);
+-        } finally {
+-            this.entityByLock.tryUnlockWrite();
+-        }
++            this.addedEntities.add(entity);
+ 
+         entity.sectionX = sectionX;
+         entity.sectionY = sectionY;
+         entity.sectionZ = sectionZ;
+-        ChunkEntitySlices slices;
+-
+-        this.entityGetChunkLock.lock();
+-        try {
+-            slices = this.getOrCreateChunk(sectionX, sectionZ);
+-        }finally {
+-            this.entityGetChunkLock.unlock();
+-        }
++        ChunkEntitySlices slices  = this.getOrCreateChunk(sectionX, sectionZ);
+ 
+         if (!slices.addEntity(entity, sectionY)) {
+             LOGGER.warn("Entity " + entity + " added to world '" + this.world.getWorld().getName() + "', but was already contained in entity chunk (" + sectionX + "," + sectionZ + ")");
+@@ -389,13 +329,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         if (!entity.isRemoved()) {
+             throw new IllegalStateException("Only call Entity#setRemoved to remove an entity");
+         }
+-        ChunkEntitySlices slices;
+-        this.entityGetChunkLock.lock();
+-        try {
+-            slices = this.getChunk(sectionX, sectionZ);
+-        }finally {
+-            this.entityGetChunkLock.unlock();
+-        }
++        ChunkEntitySlices slices = this.getChunk(sectionX, sectionZ);
+         // all entities should be in a chunk
+         if (slices == null) {
+             LOGGER.warn("Cannot remove entity " + entity + " from null entity slices (" + sectionX + "," + sectionZ + ")");
+@@ -406,17 +340,9 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+         entity.sectionX = entity.sectionY = entity.sectionZ = Integer.MIN_VALUE;
+ 
+-        this.entityByLock.writeLock();
+-        try {
+-            if (!this.entityById.remove(entity.getId(), entity)) {
+-                LOGGER.warn("Failed to remove entity " + entity + " by id, current entity mapped: " + this.entityById.get(entity.getId()));
++            if (!this.addedEntities.remove(entity)) {
++                LOGGER.warn("Failed to remove entity " + entity);
+             }
+-            if (!this.entityByUUID.remove(entity.getUUID(), entity)) {
+-                LOGGER.warn("Failed to remove entity " + entity + " by uuid, current entity mapped: " + this.entityByUUID.get(entity.getUUID()));
+-            }
+-        } finally {
+-            this.entityByLock.tryUnlockWrite();
+-        }
+     }
+ 
+     private ChunkEntitySlices moveEntity(final Entity entity) {
+@@ -438,17 +364,8 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         // ensure the old section is owned by this tick thread
+         TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main");
+ 
+-        ChunkEntitySlices old;
+-        ChunkEntitySlices slices;
+-
+-        this.entityGetChunkLock.lock();
+-        try {
+-            old = this.getChunk(entity.sectionX, entity.sectionZ);
+-            slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+-        }finally {
+-            this.entityGetChunkLock.unlock();
+-        }
+-
++        ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
++        ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
+         if (!old.removeEntity(entity, entity.sectionY)) {
+             LOGGER.warn("Could not remove entity " + entity + " from its old chunk section (" + entity.sectionX + "," + entity.sectionY + "," + entity.sectionZ + ") since it was not contained in the section");
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 20a4fbbc25b670ba89b428dd4b14725469c9bc96..91eb39a7e23149bff16129f9f7622c44cfcb7afe 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -400,7 +400,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+     // Paper end
+ 
+     // Paper start - optimise checkDespawn
+-    public final List<ServerPlayer> playersAffectingSpawning = new java.util.ArrayList<>();
++    public final List<ServerPlayer> playersAffectingSpawning = Lists.newCopyOnWriteArrayList();
+     // Paper end - optimise checkDespawn
+     // Paper start - optimise get nearest players for entity AI
+     @Override
+diff --git a/src/main/java/net/minecraft/world/entity/Mob.java b/src/main/java/net/minecraft/world/entity/Mob.java
+index 29fa9ad2223de668c15a5e5b433704b2c4765610..eea8ac88339c7ef58b8411a9c5357db8ae9f9289 100644
+--- a/src/main/java/net/minecraft/world/entity/Mob.java
++++ b/src/main/java/net/minecraft/world/entity/Mob.java
+@@ -831,7 +831,9 @@ public abstract class Mob extends LivingEntity {
+             // Paper start - optimise checkDespawn
+             Player entityhuman = this.level.findNearbyPlayer(this, level.paperConfig().entities.spawning.despawnRanges.get(this.getType().getCategory()).hard() + 1, EntitySelector.PLAYER_AFFECTS_SPAWNING); // Paper
+             if (entityhuman == null) {
+-                entityhuman = ((ServerLevel)this.level).playersAffectingSpawning.isEmpty() ? null : ((ServerLevel)this.level).playersAffectingSpawning.get(0);
++                synchronized (((ServerLevel) this.level).playersAffectingSpawning) {
++                    entityhuman = ((ServerLevel) this.level).playersAffectingSpawning.isEmpty() ? null : ((ServerLevel) this.level).playersAffectingSpawning.get(0);
++                }
+             }
+             // Paper end - optimise checkDespawn
+ 

@@ -1,0 +1,317 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 15 Jan 2023 22:35:45 +0800
+Subject: [PATCH] Hearse: Use a new queue in thread pool
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java b/src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java
+index c0e7a9cf79ddf00827daba0aa9c7a32fa76b0c7c..8baccccee52b6e47bf51e51d976ad76920270ef4 100644
+--- a/src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java
++++ b/src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java
+@@ -5,6 +5,7 @@ import co.earthme.hearse.HearseConfig;
+ import co.earthme.hearse.concurrent.WorkerThreadFactory;
+ import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
+ import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
++import co.earthme.hearse.util.ArrayListBlockingQueue;
+ import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.Entity;
+@@ -40,7 +41,7 @@ public class ServerEntityTickHook {
+                     workerCount,
+                     0L,
+                     TimeUnit.MILLISECONDS,
+-                    new LinkedBlockingQueue<>(),
++                    new ArrayListBlockingQueue<>(),
+                     defFactory
+             );
+             Hearse.getWorkerManager().addWorker("entity",worker);
+diff --git a/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java b/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
+index 8085eb700d8e5c20ebb5bfeceb78198c6e973019..987c98ea108d49c1335238bc529f782d3ec5b5e6 100644
+--- a/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
++++ b/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
+@@ -5,6 +5,7 @@ import co.earthme.hearse.HearseConfig;
+ import co.earthme.hearse.concurrent.WorkerThread;
+ import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
+ import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
++import co.earthme.hearse.util.ArrayListBlockingQueue;
+ import net.minecraft.CrashReport;
+ import net.minecraft.ReportedException;
+ import net.minecraft.server.MinecraftServer;
+@@ -12,6 +13,7 @@ import net.minecraft.server.level.ServerLevel;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.Logger;
+ 
++import java.util.concurrent.ArrayBlockingQueue;
+ import java.util.concurrent.LinkedBlockingQueue;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicInteger;
+@@ -34,7 +36,7 @@ public class ServerLevelTickHook {
+                     MinecraftServer.getServer().levels.size(),
+                     Long.MAX_VALUE,
+                     TimeUnit.MILLISECONDS,
+-                    new LinkedBlockingQueue<>(),
++                    new ArrayListBlockingQueue<>(),
+                     workerFactory
+             );
+             worker.allowCoreThreadTimeOut(true);
+diff --git a/src/main/java/co/earthme/hearse/util/ArrayListBlockingQueue.java b/src/main/java/co/earthme/hearse/util/ArrayListBlockingQueue.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b2cea65ecfb8a41248e7ee74357b4127106f1d0a
+--- /dev/null
++++ b/src/main/java/co/earthme/hearse/util/ArrayListBlockingQueue.java
+@@ -0,0 +1,253 @@
++package co.earthme.hearse.util;
++
++import java.util.*;
++import java.util.concurrent.*;
++import java.util.concurrent.locks.*;
++
++public class ArrayListBlockingQueue<T> implements BlockingQueue<T> {
++    private final List<T> internalList = new ArrayList<>();
++    private final StampedLock editLock = new StampedLock();
++
++    @Override
++    public boolean add(T t) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.add(t);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public boolean offer(T t) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.add(t);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public T remove() {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.remove(0);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public T poll() {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.isEmpty() ? null : this.internalList.remove(0);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public T element() {
++        long id = this.editLock.readLock();
++        try {
++            if (this.internalList.isEmpty()){
++                throw new NoSuchElementException();
++            }
++            return this.internalList.get(0);
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public T peek() {
++        long id = this.editLock.readLock();
++        try {
++            if (this.internalList.isEmpty()){
++                throw new NoSuchElementException();
++            }
++            return this.internalList.get(0);
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public void put(T t) {
++        final long id = this.editLock.writeLock();
++        try {
++            this.internalList.add(t);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public boolean offer(T t, long timeout, TimeUnit unit) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.add(t);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public T take() throws InterruptedException {
++        T t;
++        while ((t = this.poll()) == null){
++            synchronized (this){
++                this.wait(1);
++            }
++        }
++        return t;
++    }
++
++    @Override
++    public T poll(long timeout, TimeUnit unit) throws InterruptedException {
++        T t;
++        while ((t = this.poll()) == null){
++            if (timeout == 0){
++                break;
++            }
++            synchronized (this){
++                unit.sleep(1);
++            }
++            timeout--;
++        }
++        return t;
++    }
++
++    @Override
++    public int remainingCapacity() {
++        throw new UnsupportedOperationException("remainingCapacity");
++    }
++
++    @Override
++    public boolean remove(Object o) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.remove(o);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public boolean containsAll(Collection<?> c) {
++        final long id = this.editLock.writeLock();
++        try {
++            return new HashSet<>(this.internalList).containsAll(c);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public boolean addAll(Collection<? extends T> c) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.addAll(c);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public boolean removeAll(Collection<?> c) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.removeAll(c);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public boolean retainAll(Collection<?> c) {
++        final long id = this.editLock.writeLock();
++        try {
++            return this.internalList.retainAll(c);
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public void clear() {
++        final long id = this.editLock.writeLock();
++        try {
++            this.internalList.clear();
++        }finally {
++            this.editLock.unlockWrite(id);
++        }
++    }
++
++    @Override
++    public int size() {
++        long id = this.editLock.readLock();
++        try {
++            return this.internalList.size();
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public boolean isEmpty() {
++        long id = this.editLock.readLock();
++        try {
++            return this.internalList.isEmpty();
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public boolean contains(Object o) {
++        long id = this.editLock.readLock();
++        try {
++            return this.internalList.contains(o);
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public Iterator<T> iterator() {
++        throw new UnsupportedOperationException("Iterator");
++    }
++
++    @Override
++    public Object[] toArray() {
++        long id = this.editLock.readLock();
++        try {
++            return this.internalList.toArray();
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public <T1> T1[] toArray(T1[] a) {
++        long id = this.editLock.readLock();
++        try {
++            return this.internalList.toArray(a);
++        }finally {
++            this.editLock.unlockRead(id);
++        }
++    }
++
++    @Override
++    public int drainTo(Collection<? super T> c) {
++        throw new UnsupportedOperationException("drainTo");
++    }
++
++    @Override
++    public int drainTo(Collection<? super T> c, int maxElements) {
++        throw new UnsupportedOperationException("drainTo");
++    }
++}
++

@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Wed, 18 Jan 2023 20:08:55 +0800
+Subject: [PATCH] Hearse: Add config for multithreaded tracker
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 0f18f7ce182e35ee6f3f385553e1bdb5ee4ad587..cf97584215e4b0fcb3b4b92942eaf1f6c8682f54 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.server.level;
+ 
++import co.earthme.hearse.HearseConfig;
+ import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
+ import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
+ import com.google.common.collect.*;
+@@ -61,6 +62,7 @@ import java.io.Writer;
+ import java.nio.file.Path;
+ import java.util.*;
+ import java.util.concurrent.*;
++import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.function.*;
+ 
+@@ -1197,18 +1199,43 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+             TimeUnit.SECONDS,
+             new LinkedBlockingQueue<>(),
+             new DefaultWorkerFactory("tracker-async"));
+-    private final Executor concurrentTrackWorker = new WorkerThreadPoolExecutor(
+-            Runtime.getRuntime().availableProcessors(),
+-            Runtime.getRuntime().availableProcessors(),
+-            5L,
+-            TimeUnit.SECONDS,
+-            new LinkedBlockingQueue<>(),
+-            new DefaultWorkerFactory("tracker-concurrent"));
+-
+-    private final AtomicInteger totalRunning = new AtomicInteger();
++    private static Executor concurrentTrackWorker = null;
++    private final AtomicInteger totalRunning = new AtomicInteger(0);
++    private static final AtomicBoolean isInited = new AtomicBoolean(false);
++    private static final AtomicBoolean enabled = new AtomicBoolean();
++
++    public static void tryInitIfNotInited(){
++        if (!isInited.get()){
++            enabled.set(HearseConfig.getBoolean("optimizations.enable-multithreaded-tracker",true));
++            if (enabled.get()){
++                final int threadCount = HearseConfig.getInt("optimizations.multithreaded-tracker-thread-count",Runtime.getRuntime().availableProcessors());
++                concurrentTrackWorker = new WorkerThreadPoolExecutor(
++                        threadCount,
++                        threadCount,
++                        5L,
++                        TimeUnit.SECONDS,
++                        new LinkedBlockingQueue<>(),
++                        new DefaultWorkerFactory("tracker-concurrent"));
++            }
++            isInited.set(true);
++        }
++    }
+ 
+     // Paper start - optimised tracker
+     private final void processTrackQueue() {
++        tryInitIfNotInited();
++
++        if (!enabled.get()){
++            for (TrackedEntity tracker : this.entityMap.values()) {
++                tracker.updatePlayers(tracker.entity.getPlayersInTrackRange());
++            }
++
++            for (TrackedEntity tracker : this.entityMap.values()) {
++                tracker.serverEntity.sendChanges();
++            }
++            return;
++        }
++
+         if(this.totalRunning.get() > 0){
+             return;
+         }
+@@ -1222,7 +1249,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                         .stream()
+                         .map(tracker -> CompletableFuture.runAsync(()->{
+                             tracker.updatePlayers(tracker.entity.getPlayersInTrackRange());
+-                        },this.concurrentTrackWorker))
++                        },concurrentTrackWorker))
+                         .toArray(CompletableFuture[]::new)).join();
+             } finally {
+                 //this.level.timings.tracker1.stopTiming(); // Purpur

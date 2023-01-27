@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Wed, 18 Jan 2023 19:58:12 +0800
+Subject: [PATCH] Hearse: Fix some sort problems in some sensors
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java
+index 2c4517850a9692f1c2b1332b58e8312fe1166772..bee1aa7eded53b3302f39053bfd9c4af5f3008c3 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java
+@@ -27,12 +27,11 @@ public class NearestItemSensor extends Sensor<Mob> {
+         List<ItemEntity> list = world.getEntitiesOfClass(ItemEntity.class, entity.getBoundingBox().inflate(32.0D, 16.0D, 32.0D), (itemEntity) -> {
+             return itemEntity.closerThan(entity, 9.0D) && entity.wantsToPickUp(itemEntity.getItem()); // Paper - move predicate into getEntities
+         });
+-        list.sort((e1, e2) -> Double.compare(entity.distanceToSqr(e1), entity.distanceToSqr(e2))); // better to take the sort perf hit than using line of sight more than we need to.
++        list.sort(Comparator.comparingDouble(entity::distanceToSqr)); // better to take the sort perf hit than using line of sight more than we need to.
+         // Paper start - remove streams
+         // Paper start - remove streams in favour of lists
+         ItemEntity nearest = null;
+-        for (int i = 0; i < list.size(); i++) {
+-            ItemEntity entityItem = list.get(i);
++        for (ItemEntity entityItem : list) {
+             if (entity.hasLineOfSight(entityItem)) {
+                 // Paper end - remove streams
+                 nearest = entityItem;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
+index 75d9c4f011b5a97def215784c92bb57bbb35d06b..af6dcbd8f531705c356780cc79aa1868a10cfaf9 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
+@@ -1,11 +1,14 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
++import co.earthme.hearse.util.EntityPositionCache;
+ import com.google.common.collect.ImmutableSet;
+-import java.util.Comparator;
+-import java.util.List;
+-import java.util.Optional;
+-import java.util.Set;
++
++import java.util.*;
++import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.stream.Collectors;
++
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.EntitySelector;
+ import net.minecraft.world.entity.LivingEntity;
+@@ -14,6 +17,9 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+ import net.minecraft.world.entity.player.Player;
+ 
+ public class PlayerSensor extends Sensor<LivingEntity> {
++    private final List<Player> playerList = ObjectLists.synchronize(new ObjectArrayList<>());
++    private final AtomicBoolean calling = new AtomicBoolean();
++
+     @Override
+     public Set<MemoryModuleType<?>> requires() {
+         return ImmutableSet.of(MemoryModuleType.NEAREST_PLAYERS, MemoryModuleType.NEAREST_VISIBLE_PLAYER, MemoryModuleType.NEAREST_VISIBLE_ATTACKABLE_PLAYER);
+@@ -21,30 +27,51 @@ public class PlayerSensor extends Sensor<LivingEntity> {
+ 
+     @Override
+     protected void doTick(ServerLevel world, LivingEntity entity) {
+-        // Paper start - remove streams
+-        List<Player> players = (List)world.getNearbyPlayers(entity, entity.getX(), entity.getY(), entity.getZ(), 16.0D, EntitySelector.NO_SPECTATORS);
+-        players.sort((e1, e2) -> Double.compare(entity.distanceToSqr(e1), entity.distanceToSqr(e2)));
+-        Brain<?> brain = entity.getBrain();
+-
+-        brain.setMemory(MemoryModuleType.NEAREST_PLAYERS, players);
+-
+-        Player firstTargetable = null;
+-        Player firstAttackable = null;
+-        for (int index = 0, len = players.size(); index < len; ++index) {
+-            Player player = players.get(index);
+-            if (firstTargetable == null && isEntityTargetable(entity, player)) {
+-                firstTargetable = player;
+-            }
+-            if (firstAttackable == null && isEntityAttackable(entity, player)) {
+-                firstAttackable = player;
+-            }
++        if (this.calling.get()){
++            return;
++        }
++
++        this.calling.set(true);
++        try {
++            // Paper start - remove streams
++            List<EntityPositionCache> playersPosCaches = new ArrayList<>(List.of(world
++                    .getNearbyPlayers(entity, entity.getX(), entity.getY(), entity.getZ(), 16.0D, EntitySelector.NO_SPECTATORS)
++                    .stream()
++                    .map(EntityPositionCache::new)
++                    .toArray(EntityPositionCache[]::new)));
++
++            final EntityPositionCache entityPositionCache = new EntityPositionCache(entity);
++
++            playersPosCaches.sort(Comparator.comparingDouble(entityPositionCache::distanceToSqr));
++
++            final List<Player> players = playersPosCaches
++                    .stream()
++                    .map(cache -> ((Player) cache.getCurrentEntity()))
++                    .toList();
++
++            Brain<?> brain = entity.getBrain();
++
++            brain.setMemory(MemoryModuleType.NEAREST_PLAYERS, players);
++
++            Player firstTargetable = null;
++            Player firstAttackable = null;
++            for (Player player : players) {
++                if (firstTargetable == null && isEntityTargetable(entity, player)) {
++                    firstTargetable = player;
++                }
++                if (firstAttackable == null && isEntityAttackable(entity, player)) {
++                    firstAttackable = player;
++                }
+ 
+-            if (firstAttackable != null && firstTargetable != null) {
+-                break;
++                if (firstAttackable != null && firstTargetable != null) {
++                    break;
++                }
+             }
++            brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_PLAYER, firstTargetable);
++            brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_ATTACKABLE_PLAYER, Optional.ofNullable(firstAttackable));
++            // Paper end - remove streams
++        }finally {
++            this.calling.set(false);
+         }
+-        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_PLAYER, firstTargetable);
+-        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_ATTACKABLE_PLAYER, Optional.ofNullable(firstAttackable));
+-        // Paper end - remove streams
+     }
+ }
