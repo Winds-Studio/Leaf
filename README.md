@@ -52,11 +52,12 @@ Yes, this also includes all API provided by Paper, Spigot, and Bukkit.
 
 Credits:
 -------------
+Thanks to these projects below. Leaf just mix some of their patches together. If these excellent projects haven't appear, Leaf will not be great.
 
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Gale](https://github.com/GaleMC/Gale)
 - [Purpur](https://github.com/PurpurMC/Purpur)
-- [KeYi](https://github.com/KeYiMC/KeYi)
+- [KeYi](https://github.com/KeYiMC/KeYi) (R.I.P.)
 - [KTP](https://github.com/lynxplay/ktp)
 - [Patina](https://github.com/PatinaMC/Patina)
 - [Yatopia](https://github.com/YatopiaMC/Yatopia)
@@ -65,3 +66,5 @@ Credits:
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
 - [VMP](https://github.com/RelativityMC/VMP-fabric)
 - [Hearse](https://github.com/Era4FunMC/Hearse)
+- [MikuServer](https://github.com/MikuMC/MikuServer)
+- [Slice](https://github.com/Cryptite/Slice)
