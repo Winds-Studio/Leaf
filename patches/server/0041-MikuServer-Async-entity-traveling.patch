@@ -1,0 +1,791 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Fri, 27 Jan 2023 19:38:48 +0800
+Subject: [PATCH] MikuServer: Async entity traveling
+
+Original license: MIT
+Original project: https://github.com/MikuMC/MikuServer
+
+diff --git a/src/main/java/co/m2ek4u/aoame/AnotherTickThread.java b/src/main/java/co/m2ek4u/aoame/AnotherTickThread.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d5fe52beb25e7a95549cdf0ae19edf6029f10642
+--- /dev/null
++++ b/src/main/java/co/m2ek4u/aoame/AnotherTickThread.java
+@@ -0,0 +1,13 @@
++package co.m2ek4u.aoame;
++
++import io.papermc.paper.util.TickThread;
++
++public class AnotherTickThread extends TickThread {
++    public AnotherTickThread(String name) {
++        super(name);
++    }
++
++    public AnotherTickThread(Runnable run, String name) {
++        super(run, name);
++    }
++}
+diff --git a/src/main/java/co/m2ek4u/aoame/CallbackExecutor.java b/src/main/java/co/m2ek4u/aoame/CallbackExecutor.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b861405a7626ba8fa677c455bf6507253b33c157
+--- /dev/null
++++ b/src/main/java/co/m2ek4u/aoame/CallbackExecutor.java
+@@ -0,0 +1,99 @@
++package co.m2ek4u.aoame;
++
++import org.jetbrains.annotations.NotNull;
++import java.util.Queue;
++import java.util.concurrent.*;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.locks.LockSupport;
++
++public class CallbackExecutor extends ThreadPoolExecutor {
++    private final AtomicBoolean isSubmittingStarted = new AtomicBoolean(false);
++    private final Queue<TaskEntry> submittedTasks = new ConcurrentLinkedDeque<>();
++
++    public CallbackExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, @NotNull TimeUnit unit, @NotNull BlockingQueue<Runnable> workQueue) {
++        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue);
++    }
++
++    public CallbackExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, @NotNull TimeUnit unit, @NotNull BlockingQueue<Runnable> workQueue, @NotNull ThreadFactory threadFactory) {
++        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory);
++    }
++
++    public CallbackExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, @NotNull TimeUnit unit, @NotNull BlockingQueue<Runnable> workQueue, @NotNull RejectedExecutionHandler handler) {
++        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, handler);
++    }
++
++    public CallbackExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, @NotNull TimeUnit unit, @NotNull BlockingQueue<Runnable> workQueue, @NotNull ThreadFactory threadFactory, @NotNull RejectedExecutionHandler handler) {
++        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory, handler);
++    }
++
++    public void startSubmitting(){
++        if (this.isSubmittingStarted.get()){
++            throw new IllegalStateException();
++        }
++        this.isSubmittingStarted.set(true);
++    }
++
++    public void awaitSubmittingEnd(){
++        while (this.isSubmittingStarted.get()){
++            LockSupport.parkNanos(this,1);
++        }
++    }
++
++    public void executeWithCallBack(Runnable command,Runnable callBack){
++        if (this.isSubmittingStarted.get()){
++            TaskEntry newTask = new TaskEntry(command,callBack);
++            this.execute(newTask::runMainTask);
++            this.submittedTasks.add(newTask);
++            return;
++        }
++        throw new IllegalStateException();
++    }
++
++    public boolean isSubmittingStarted(){
++        return this.isSubmittingStarted.get();
++    }
++
++    public void stopSubmitting(){
++        if (!this.isSubmittingStarted.get()){
++            throw new IllegalStateException();
++        }
++        this.isSubmittingStarted.set(false);
++        TaskEntry task;
++        while ((task = this.submittedTasks.poll())!=null){
++            while (!task.runSubTask()){
++                LockSupport.parkNanos(this,1);
++            }
++        }
++    }
++
++    private static class TaskEntry{
++        private final Runnable mainTask;
++        private final Runnable subTask;
++        private volatile boolean mainTaskFinished = false;
++
++        public TaskEntry(Runnable mainTask,Runnable subTask){
++            this.mainTask = mainTask;
++            this.subTask = subTask;
++        }
++
++        public void runMainTask(){
++            try {
++                this.mainTask.run();
++            }finally {
++                this.mainTaskFinished = true;
++            }
++        }
++
++        public boolean runSubTask(){
++            if (!this.mainTaskFinished){
++                return false;
++            }
++            try {
++                this.subTask.run();
++            }catch (Exception e){
++                e.printStackTrace();
++            }
++            return true;
++        }
++    }
++}
+diff --git a/src/main/java/com/destroystokyo/paper/util/maplist/EntityList.java b/src/main/java/com/destroystokyo/paper/util/maplist/EntityList.java
+index 0133ea6feb1ab88f021f66855669f58367e7420b..b128433d2888a98bce55052e821626c0478748dd 100644
+--- a/src/main/java/com/destroystokyo/paper/util/maplist/EntityList.java
++++ b/src/main/java/com/destroystokyo/paper/util/maplist/EntityList.java
+@@ -1,6 +1,9 @@
+ package com.destroystokyo.paper.util.maplist;
+ 
+ import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.world.entity.Entity;
+ import java.util.Arrays;
+ import java.util.Iterator;
+@@ -12,117 +15,42 @@ import java.util.NoSuchElementException;
+  */
+ public final class EntityList implements Iterable<Entity> {
+ 
+-    protected final Int2IntOpenHashMap entityToIndex = new Int2IntOpenHashMap(2, 0.8f);
+-    {
+-        this.entityToIndex.defaultReturnValue(Integer.MIN_VALUE);
+-    }
+-
+-    protected static final Entity[] EMPTY_LIST = new Entity[0];
+-
+-    protected Entity[] entities = EMPTY_LIST;
+-    protected int count;
++    private final ObjectList<Entity> objectList = ObjectLists.synchronize(new ObjectArrayList<>());
+ 
+     public int size() {
+-        return this.count;
++        return this.objectList.size();
+     }
+ 
+     public boolean contains(final Entity entity) {
+-        return this.entityToIndex.containsKey(entity.getId());
++        return this.objectList.contains(entity);
+     }
+ 
+     public boolean remove(final Entity entity) {
+-        final int index = this.entityToIndex.remove(entity.getId());
+-        if (index == Integer.MIN_VALUE) {
+-            return false;
+-        }
+-
+-        // move the entity at the end to this index
+-        final int endIndex = --this.count;
+-        final Entity end = this.entities[endIndex];
+-        if (index != endIndex) {
+-            // not empty after this call
+-            this.entityToIndex.put(end.getId(), index); // update index
+-        }
+-        this.entities[index] = end;
+-        this.entities[endIndex] = null;
+-
+-        return true;
++        return this.objectList.remove(entity);
+     }
+ 
+     public boolean add(final Entity entity) {
+-        final int count = this.count;
+-        final int currIndex = this.entityToIndex.putIfAbsent(entity.getId(), count);
+-
+-        if (currIndex != Integer.MIN_VALUE) {
+-            return false; // already in this list
+-        }
+-
+-        Entity[] list = this.entities;
+-
+-        if (list.length == count) {
+-            // resize required
+-            list = this.entities = Arrays.copyOf(list, (int)Math.max(4L, count * 2L)); // overflow results in negative
+-        }
+-
+-        list[count] = entity;
+-        this.count = count + 1;
+-
+-        return true;
++        return this.objectList.add(entity);
+     }
+ 
+     public Entity getChecked(final int index) {
+-        if (index < 0 || index >= this.count) {
+-            throw new IndexOutOfBoundsException("Index: " + index + " is out of bounds, size: " + this.count);
+-        }
+-        return this.entities[index];
++        return this.objectList.get(index);
+     }
+ 
+     public Entity getUnchecked(final int index) {
+-        return this.entities[index];
++        return this.objectList.get(index);
+     }
+ 
+     public Entity[] getRawData() {
+-        return this.entities;
++        return this.objectList.toArray(Entity[]::new);
+     }
+ 
+     public void clear() {
+-        this.entityToIndex.clear();
+-        Arrays.fill(this.entities, 0, this.count, null);
+-        this.count = 0;
++        this.objectList.clear();
+     }
+ 
+     @Override
+     public Iterator<Entity> iterator() {
+-        return new Iterator<Entity>() {
+-
+-            Entity lastRet;
+-            int current;
+-
+-            @Override
+-            public boolean hasNext() {
+-                return this.current < EntityList.this.count;
+-            }
+-
+-            @Override
+-            public Entity next() {
+-                if (this.current >= EntityList.this.count) {
+-                    throw new NoSuchElementException();
+-                }
+-                return this.lastRet = EntityList.this.entities[this.current++];
+-            }
+-
+-            @Override
+-            public void remove() {
+-                final Entity lastRet = this.lastRet;
+-
+-                if (lastRet == null) {
+-                    throw new IllegalStateException();
+-                }
+-                this.lastRet = null;
+-
+-                EntityList.this.remove(lastRet);
+-                --this.current;
+-            }
+-        };
++        return this.objectList.iterator();
+     }
+ }
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 61c170555c8854b102c640b0b6a615f9f732edbf..ec90ff5c2581706180498b74dbbf960d52d47209 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -6,8 +6,14 @@ import io.papermc.paper.util.CoordinateUtils;
+ import io.papermc.paper.util.TickThread;
+ import io.papermc.paper.util.WorldUtil;
+ import io.papermc.paper.world.ChunkEntitySlices;
++import it.unimi.dsi.fastutil.ints.Int2ReferenceMap;
++import it.unimi.dsi.fastutil.ints.Int2ReferenceMaps;
+ import it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap;
++import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
++import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
++import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;
++import it.unimi.dsi.fastutil.objects.Object2ReferenceMaps;
+ import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
+ import net.minecraft.core.BlockPos;
+ import io.papermc.paper.chunk.system.ChunkSystem;
+@@ -26,11 +32,8 @@ import net.minecraft.world.phys.AABB;
+ import org.jetbrains.annotations.NotNull;
+ import org.jetbrains.annotations.Nullable;
+ import org.slf4j.Logger;
+-import java.util.ArrayList;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.NoSuchElementException;
+-import java.util.UUID;
++
++import java.util.*;
+ import java.util.concurrent.locks.StampedLock;
+ import java.util.function.Consumer;
+ import java.util.function.Predicate;
+@@ -46,15 +49,15 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     public final ServerLevel world;
+ 
+     private final StampedLock stateLock = new StampedLock();
+-    protected final Long2ObjectOpenHashMap<ChunkSlicesRegion> regions = new Long2ObjectOpenHashMap<>(128, 0.5f);
++    protected final Long2ObjectMap<ChunkSlicesRegion> regions = Long2ObjectMaps.synchronize(new Long2ObjectOpenHashMap<>(128, 0.5f));
+ 
+     private final int minSection; // inclusive
+     private final int maxSection; // inclusive
+     private final LevelCallback<Entity> worldCallback;
+ 
+     private final StampedLock entityByLock = new StampedLock();
+-    private final Int2ReferenceOpenHashMap<Entity> entityById = new Int2ReferenceOpenHashMap<>();
+-    private final Object2ReferenceOpenHashMap<UUID, Entity> entityByUUID = new Object2ReferenceOpenHashMap<>();
++    private final Map<Integer,Entity> entityById = Int2ReferenceMaps.synchronize(new Int2ReferenceOpenHashMap<>());
++    private final Object2ReferenceMap<UUID, Entity> entityByUUID = Object2ReferenceMaps.synchronize(new Object2ReferenceOpenHashMap<>());
+     private final EntityList accessibleEntities = new EntityList();
+ 
+     public EntityLookup(final ServerLevel world, final LevelCallback<Entity> worldCallback) {
+@@ -208,8 +211,8 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     public void get(final AABB box, final Consumer<Entity> action) {
+         List<Entity> entities = new ArrayList<>();
+         this.getEntitiesWithoutDragonParts(null, box, entities, null);
+-        for (int i = 0, len = entities.size(); i < len; ++i) {
+-            action.accept(entities.get(i));
++        for (Entity entity : entities) {
++            action.accept(entity);
+         }
+     }
+ 
+@@ -217,8 +220,8 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     public <U extends Entity> void get(final EntityTypeTest<Entity, U> filter, final AABB box, final AbortableIterationConsumer<U> action) {
+         List<Entity> entities = new ArrayList<>();
+         this.getEntitiesWithoutDragonParts(null, box, entities, null);
+-        for (int i = 0, len = entities.size(); i < len; ++i) {
+-            final U casted = filter.tryCast(entities.get(i));
++        for (Entity entity : entities) {
++            final U casted = filter.tryCast(entity);
+             if (casted != null && action.accept(casted).shouldAbort()) {
+                 break;
+             }
+@@ -231,14 +234,14 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+         if (entity.updatingSectionStatus) {
+             // recursive status update
+-            LOGGER.error("Cannot recursively update entity chunk status for entity " + entity, new Throwable());
++            LOGGER.warn("Cannot recursively update entity chunk status for entity " + entity);
+             return;
+         }
+ 
+         final boolean entityStatusUpdateBefore = slices == null ? false : slices.startPreventingStatusUpdates();
+ 
+         if (entityStatusUpdateBefore) {
+-            LOGGER.error("Cannot update chunk status for entity " + entity + " since entity chunk (" + slices.chunkX + "," + slices.chunkZ + ") is receiving update", new Throwable());
++            LOGGER.warn("Cannot update chunk status for entity " + entity + " since entity chunk (" + slices.chunkX + "," + slices.chunkZ + ") is receiving update");
+             return;
+         }
+ 
+@@ -347,7 +350,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+ 
+         if (entity.updatingSectionStatus) {
+-            LOGGER.warn("Entity " + entity + " is currently prevented from being added/removed to world since it is processing section status updates", new Throwable());
++            LOGGER.warn("Entity " + entity + " is currently prevented from being added/removed to world since it is processing section status updates");
+             return false;
+         }
+ 
+diff --git a/src/main/java/io/papermc/paper/util/CachedLists.java b/src/main/java/io/papermc/paper/util/CachedLists.java
+index e08f4e39db4ee3fed62e37364d17dcc5c5683504..22a5470862acfa470c9acd97c96fea29aede0b68 100644
+--- a/src/main/java/io/papermc/paper/util/CachedLists.java
++++ b/src/main/java/io/papermc/paper/util/CachedLists.java
+@@ -1,5 +1,6 @@
+ package io.papermc.paper.util;
+ 
++import com.google.common.collect.Lists;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.phys.AABB;
+ import org.bukkit.Bukkit;
+@@ -8,50 +9,18 @@ import java.util.List;
+ 
+ public final class CachedLists {
+ 
+-    // Paper start - optimise collisions
+-    static final UnsafeList<AABB> TEMP_COLLISION_LIST = new UnsafeList<>(1024);
+-    static boolean tempCollisionListInUse;
+-
+-    public static UnsafeList<AABB> getTempCollisionList() {
+-        if (!Bukkit.isPrimaryThread() || tempCollisionListInUse) {
+-            return new UnsafeList<>(16);
+-        }
+-        tempCollisionListInUse = true;
+-        return TEMP_COLLISION_LIST;
+-    }
+-
+-    public static void returnTempCollisionList(List<AABB> list) {
+-        if (list != TEMP_COLLISION_LIST) {
+-            return;
+-        }
+-        ((UnsafeList)list).setSize(0);
+-        tempCollisionListInUse = false;
++    public static List<AABB> getTempCollisionList() {
++        return Lists.newCopyOnWriteArrayList();
+     }
+ 
+-    static final UnsafeList<Entity> TEMP_GET_ENTITIES_LIST = new UnsafeList<>(1024);
+-    static boolean tempGetEntitiesListInUse;
++    public static void returnTempCollisionList(List<AABB> list) {}
+ 
+-    public static UnsafeList<Entity> getTempGetEntitiesList() {
+-        if (!Bukkit.isPrimaryThread() || tempGetEntitiesListInUse) {
+-            return new UnsafeList<>(16);
+-        }
+-        tempGetEntitiesListInUse = true;
+-        return TEMP_GET_ENTITIES_LIST;
++    public static List<Entity> getTempGetEntitiesList() {
++        return Lists.newCopyOnWriteArrayList();
+     }
+ 
+-    public static void returnTempGetEntitiesList(List<Entity> list) {
+-        if (list != TEMP_GET_ENTITIES_LIST) {
+-            return;
+-        }
+-        ((UnsafeList)list).setSize(0);
+-        tempGetEntitiesListInUse = false;
+-    }
++    public static void returnTempGetEntitiesList(List<Entity> list) {}
+     // Paper end - optimise collisions
+ 
+-    public static void reset() {
+-        // Paper start - optimise collisions
+-        TEMP_COLLISION_LIST.completeReset();
+-        TEMP_GET_ENTITIES_LIST.completeReset();
+-        // Paper end - optimise collisions
+-    }
++    public static void reset() {}
+ }
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 3b7e4b724e86518ea57f5ed5ef0b8b3741d10f6f..9601de5775667c2d94e07b89bb7605b1e03d413d 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1,5 +1,7 @@
+ package net.minecraft.server;
+ 
++import co.m2ek4u.aoame.AnotherTickThread;
++import co.m2ek4u.aoame.CallbackExecutor;
+ import com.google.common.base.Splitter;
+ import com.google.common.collect.ImmutableList;
+ import co.aikar.timings.Timings;
+@@ -41,9 +43,8 @@ import java.util.Map.Entry;
+ import java.util.Objects;
+ import java.util.Optional;
+ import java.util.Set;
+-import java.util.concurrent.CompletableFuture;
+-import java.util.concurrent.Executor;
+-import java.util.concurrent.RejectedExecutionException;
++import java.util.concurrent.*;
++import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.atomic.AtomicReference;
+ import java.util.function.BooleanSupplier;
+ import java.util.function.Consumer;
+@@ -284,6 +285,20 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     protected WorldData worldData;
+     private volatile boolean isSaving;
+ 
++    private final AtomicInteger threadId = new AtomicInteger();
++    public final CallbackExecutor asyncExecutor = new CallbackExecutor(
++            Runtime.getRuntime().availableProcessors(),
++            Runtime.getRuntime().availableProcessors(),
++            50,
++            TimeUnit.MILLISECONDS,
++            new LinkedBlockingQueue<>(),
++            task -> {
++                AnotherTickThread worker = new AnotherTickThread(task,"Entity-Async-Worker # "+threadId.getAndIncrement());
++                worker.setDaemon(true);
++                return worker;
++            }
++    );
++
+     // CraftBukkit start
+     public final WorldLoader.DataLoadContext worldLoader;
+     public org.bukkit.craftbukkit.CraftServer server;
+@@ -1333,17 +1348,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         } else {
+             boolean ret = false; // Paper - force execution of all worlds, do not just bias the first
+             if (this.haveTime()) {
+-                Iterator iterator = this.getAllLevels().iterator();
+-
+-                while (iterator.hasNext()) {
+-                    ServerLevel worldserver = (ServerLevel) iterator.next();
+-
++                for (ServerLevel worldserver : this.getAllLevels()) {
+                     if (worldserver.getChunkSource().pollTask()) {
+                         ret = true; // Paper - force execution of all worlds, do not just bias the first
+                     }
+                 }
+             }
+-
+             return ret; // Paper - force execution of all worlds, do not just bias the first
+         }
+     }
+@@ -1393,6 +1403,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     public void onServerExit() {}
+ 
+     public void tickServer(BooleanSupplier shouldKeepTicking) {
++        if (this.asyncExecutor.isSubmittingStarted()){
++            this.asyncExecutor.stopSubmitting();
++        }
+         //co.aikar.timings.TimingsManager.FULL_SERVER_TICK.startTiming(); // Paper // Purpur
+         long i = Util.getNanos();
+ 
+@@ -1406,6 +1419,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         new com.destroystokyo.paper.event.server.ServerTickStartEvent(this.tickCount+1).callEvent(); // Paper
+ 
+         ++this.tickCount;
++        this.asyncExecutor.startSubmitting();
+         this.tickChildren(shouldKeepTicking);
+         if (i - this.lastServerStatus >= 5000000000L) {
+             this.lastServerStatus = i;
+@@ -1522,11 +1536,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         //MinecraftTimings.timeUpdateTimer.stopTiming(); // Spigot // Paper // Purpur
+ 
+         this.isIteratingOverLevels = true; // Paper
+-        Iterator iterator = this.getAllLevels().iterator(); // Paper - move down
+-        while (iterator.hasNext()) {
+-            ServerLevel worldserver = (ServerLevel) iterator.next();
+-            worldserver.hasPhysicsEvent =  org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper
+-            worldserver.hasEntityMoveEvent =  io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper
++        for (ServerLevel worldserver : this.getAllLevels()) {
++            worldserver.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper
++            worldserver.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper
+             net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = worldserver.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper
+ 
+             /*this.profiler.push(() -> { // Purpur
+@@ -1557,7 +1569,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                 try {
+                     crashreport = CrashReport.forThrowable(throwable, "Exception ticking world");
+                 } catch (Throwable t) {
+-                    if (throwable instanceof ThreadDeath) { throw (ThreadDeath)throwable; } // Paper
++                    if (throwable instanceof ThreadDeath) {
++                        throw (ThreadDeath) throwable;
++                    } // Paper
+                     throw new RuntimeException("Error generating crash report", t);
+                 }
+                 // Spigot End
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 03b8ef3409fd5f7a4d4b06e13cf8eb22b3bbf8a1..824f26db01750866a2d9bbeefe17457f84d19504 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.server.level;
+ 
++import co.m2ek4u.aoame.AnotherTickThread;
+ import com.google.common.annotations.VisibleForTesting;
+ import co.aikar.timings.TimingHistory; // Paper
+ import com.google.common.collect.Lists;
+@@ -269,7 +270,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+ 
+     public final void loadChunksForMoveAsync(AABB axisalignedbb, ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor.Priority priority,
+                                              java.util.function.Consumer<List<net.minecraft.world.level.chunk.ChunkAccess>> onLoad) {
+-        if (Thread.currentThread() != this.thread) {
++        if (Thread.currentThread() != this.thread && !(Thread.currentThread() instanceof AnotherTickThread)) {
+             this.getChunkSource().mainThreadProcessor.execute(() -> {
+                 this.loadChunksForMoveAsync(axisalignedbb, priority, onLoad);
+             });
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index 40dbf933504a46aa358ca4280c578fabf0651315..619730e2013b4c8907ba7b7e6927b57b4ac76ec7 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -44,6 +44,7 @@ import net.minecraft.network.syncher.EntityDataAccessor;
+ import net.minecraft.network.syncher.EntityDataSerializers;
+ import net.minecraft.network.syncher.SynchedEntityData;
+ import net.minecraft.resources.ResourceLocation;
++import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerChunkCache;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+@@ -3420,51 +3421,102 @@ public abstract class LivingEntity extends Entity {
+         this.updateFallFlying();
+         AABB axisalignedbb = this.getBoundingBox();
+ 
+-        // SpigotTimings.timerEntityAIMove.startTiming(); // Spigot // Paper
+-        this.travel(new Vec3((double) this.xxa, (double) this.yya, (double) this.zza));
+-        // SpigotTimings.timerEntityAIMove.stopTiming(); // Spigot // Paper
+-        //this.level.getProfiler().pop(); // Purpur
+-        //this.level.getProfiler().push("freezing"); // Purpur
+-        boolean flag1 = this.getType().is(EntityTypeTags.FREEZE_HURTS_EXTRA_TYPES);
+-        int i;
++        if (this instanceof net.minecraft.world.entity.player.Player) {
++            // SpigotTimings.timerEntityAIMove.startTiming(); // Spigot // Paper
++            this.travel(new Vec3((double) this.xxa, (double) this.yya, (double) this.zza));
++            // SpigotTimings.timerEntityAIMove.stopTiming(); // Spigot // Paper
++            //this.level.getProfiler().pop(); // Purpur
++            //this.level.getProfiler().push("freezing"); // Purpur
++            boolean flag1 = this.getType().is(EntityTypeTags.FREEZE_HURTS_EXTRA_TYPES);
++            int i;
+ 
+-        if (!this.level.isClientSide && !this.isDeadOrDying() && !freezeLocked) { // Paper - Freeze Tick Lock API
+-            i = this.getTicksFrozen();
+-            if (this.isInPowderSnow && this.canFreeze()) {
+-                this.setTicksFrozen(Math.min(this.getTicksRequiredToFreeze(), i + 1));
+-            } else {
+-                this.setTicksFrozen(Math.max(0, i - 2));
++            if (!this.level.isClientSide && !this.isDeadOrDying() && !freezeLocked) { // Paper - Freeze Tick Lock API
++                i = this.getTicksFrozen();
++                if (this.isInPowderSnow && this.canFreeze()) {
++                    this.setTicksFrozen(Math.min(this.getTicksRequiredToFreeze(), i + 1));
++                } else {
++                    this.setTicksFrozen(Math.max(0, i - 2));
++                }
+             }
+-        }
+ 
+-        this.removeFrost();
+-        this.tryAddFrost();
+-        if (!this.level.isClientSide && this.tickCount % 40 == 0 && this.isFullyFrozen() && this.canFreeze()) {
+-            i = flag1 ? 5 : 1;
+-            this.hurt(DamageSource.FREEZE, (float) i);
+-        }
++            this.removeFrost();
++            this.tryAddFrost();
++            if (!this.level.isClientSide && this.tickCount % 40 == 0 && this.isFullyFrozen() && this.canFreeze()) {
++                i = flag1 ? 5 : 1;
++                this.hurt(DamageSource.FREEZE, (float) i);
++            }
+ 
+-        //this.level.getProfiler().pop(); // Purpur
+-        //this.level.getProfiler().push("push"); // Purpur
+-        if (this.autoSpinAttackTicks > 0) {
+-            --this.autoSpinAttackTicks;
+-            this.checkAutoSpinAttack(axisalignedbb, this.getBoundingBox());
+-        }
++            //this.level.getProfiler().pop(); // Purpur
++            //this.level.getProfiler().push("push"); // Purpur
++            if (this.autoSpinAttackTicks > 0) {
++                --this.autoSpinAttackTicks;
++                this.checkAutoSpinAttack(axisalignedbb, this.getBoundingBox());
++            }
+ 
+-        this.pushEntities();
+-        //this.level.getProfiler().pop(); // Purpur
+-        // Paper start
+-        if (((ServerLevel) this.level).hasEntityMoveEvent && !(this instanceof net.minecraft.world.entity.player.Player)) {
+-            if (this.xo != getX() || this.yo != this.getY() || this.zo != this.getZ() || this.yRotO != this.getYRot() || this.xRotO != this.getXRot()) {
+-                Location from = new Location(this.level.getWorld(), this.xo, this.yo, this.zo, this.yRotO, this.xRotO);
+-                Location to = new Location (this.level.getWorld(), this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot());
+-                io.papermc.paper.event.entity.EntityMoveEvent event = new io.papermc.paper.event.entity.EntityMoveEvent(this.getBukkitLivingEntity(), from, to.clone());
+-                if (!event.callEvent()) {
+-                    absMoveTo(from.getX(), from.getY(), from.getZ(), from.getYaw(), from.getPitch());
+-                } else if (!to.equals(event.getTo())) {
+-                    absMoveTo(event.getTo().getX(), event.getTo().getY(), event.getTo().getZ(), event.getTo().getYaw(), event.getTo().getPitch());
++            this.pushEntities();
++            //this.level.getProfiler().pop(); // Purpur
++            // Paper start
++            if (((ServerLevel) this.level).hasEntityMoveEvent && !(this instanceof net.minecraft.world.entity.player.Player)) {
++                if (this.xo != getX() || this.yo != this.getY() || this.zo != this.getZ() || this.yRotO != this.getYRot() || this.xRotO != this.getXRot()) {
++                    Location from = new Location(this.level.getWorld(), this.xo, this.yo, this.zo, this.yRotO, this.xRotO);
++                    Location to = new Location(this.level.getWorld(), this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot());
++                    io.papermc.paper.event.entity.EntityMoveEvent event = new io.papermc.paper.event.entity.EntityMoveEvent(this.getBukkitLivingEntity(), from, to.clone());
++                    if (!event.callEvent()) {
++                        absMoveTo(from.getX(), from.getY(), from.getZ(), from.getYaw(), from.getPitch());
++                    } else if (!to.equals(event.getTo())) {
++                        absMoveTo(event.getTo().getX(), event.getTo().getY(), event.getTo().getZ(), event.getTo().getYaw(), event.getTo().getPitch());
++                    }
+                 }
+             }
++        } else {
++            MinecraftServer.getServer().asyncExecutor.executeWithCallBack(() -> {
++                // SpigotTimings.timerEntityAIMove.startTiming(); // Spigot // Paper
++                this.travel(new Vec3((double) this.xxa, (double) this.yya, (double) this.zza));
++                // SpigotTimings.timerEntityAIMove.stopTiming(); // Spigot // Paper
++                //this.level.getProfiler().pop(); // Purpur
++                //this.level.getProfiler().push("freezing"); // Purpur
++                boolean flag1 = this.getType().is(EntityTypeTags.FREEZE_HURTS_EXTRA_TYPES);
++                int i;
++
++                if (!this.level.isClientSide && !this.isDeadOrDying() && !freezeLocked) { // Paper - Freeze Tick Lock API
++                    i = this.getTicksFrozen();
++                    if (this.isInPowderSnow && this.canFreeze()) {
++                        this.setTicksFrozen(Math.min(this.getTicksRequiredToFreeze(), i + 1));
++                    } else {
++                        this.setTicksFrozen(Math.max(0, i - 2));
++                    }
++                }
++
++                this.removeFrost();
++                this.tryAddFrost();
++                if (!this.level.isClientSide && this.tickCount % 40 == 0 && this.isFullyFrozen() && this.canFreeze()) {
++                    i = flag1 ? 5 : 1;
++                    this.hurt(DamageSource.FREEZE, (float) i);
++                }
++
++                //this.level.getProfiler().pop(); // Purpur
++                //this.level.getProfiler().push("push"); // Purpur
++                if (this.autoSpinAttackTicks > 0) {
++                    --this.autoSpinAttackTicks;
++                    this.checkAutoSpinAttack(axisalignedbb, this.getBoundingBox());
++                }
++
++                this.pushEntities();
++                //this.level.getProfiler().pop(); // Purpur
++            }, () -> {
++                if (((ServerLevel) this.level).hasEntityMoveEvent && !(this instanceof net.minecraft.world.entity.player.Player)) {
++                    if (this.xo != getX() || this.yo != this.getY() || this.zo != this.getZ() || this.yRotO != this.getYRot() || this.xRotO != this.getXRot()) {
++                        Location from = new Location(this.level.getWorld(), this.xo, this.yo, this.zo, this.yRotO, this.xRotO);
++                        Location to = new Location(this.level.getWorld(), this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot());
++                        io.papermc.paper.event.entity.EntityMoveEvent event = new io.papermc.paper.event.entity.EntityMoveEvent(this.getBukkitLivingEntity(), from, to.clone());
++                        if (!event.callEvent()) {
++                            absMoveTo(from.getX(), from.getY(), from.getZ(), from.getYaw(), from.getPitch());
++                        } else if (!to.equals(event.getTo())) {
++                            absMoveTo(event.getTo().getX(), event.getTo().getY(), event.getTo().getZ(), event.getTo().getYaw(), event.getTo().getPitch());
++                        }
++                    }
++                }
++            });
+         }
+         // Paper end
+         if (!this.level.isClientSide && this.isSensitiveToWater() && this.isInWaterRainOrBubble()) {
+diff --git a/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiSection.java b/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiSection.java
+index 9f138bc471b5c2a4fa813ff943dbe34018b8df74..5c8a90f8536c9291df5891d8c75de963b75ec4bd 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiSection.java
++++ b/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiSection.java
+@@ -7,6 +7,7 @@ import com.mojang.logging.LogUtils;
+ import com.mojang.serialization.Codec;
+ import com.mojang.serialization.codecs.RecordCodecBuilder;
+ import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
++import it.unimi.dsi.fastutil.shorts.Short2ObjectMaps;
+ import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
+ import java.util.List;
+ import java.util.Map;
+@@ -25,8 +26,9 @@ import org.slf4j.Logger;
+ 
+ public class PoiSection {
+     private static final Logger LOGGER = LogUtils.getLogger();
+-    private final Short2ObjectMap<PoiRecord> records = new Short2ObjectOpenHashMap<>();
+-    private final Map<Holder<PoiType>, Set<PoiRecord>> byType = Maps.newHashMap(); public final Map<Holder<PoiType>, Set<PoiRecord>> getData() { return this.byType; } // Paper - public accessor
++    private final Short2ObjectMap<PoiRecord> records = Short2ObjectMaps.synchronize(new Short2ObjectOpenHashMap<>());
++    private final Map<Holder<PoiType>, Set<PoiRecord>> byType = Maps.newConcurrentMap();
++    public final Map<Holder<PoiType>, Set<PoiRecord>> getData() { return this.byType; } // Paper - public accessor
+     private final Runnable setDirty;
+     private boolean isValid;
+     public final Optional<PoiSection> noAllocateOptional = Optional.of(this); // Paper - rewrite chunk system
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java b/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java
+index daa03360dd7044f10b20f36023b305dc7e0bb7df..f11cf0c0701247692075da2f2db7602e72ef1ec8 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java
+@@ -19,17 +19,17 @@ public class LegacyRandomSource implements BitRandomSource {
+     }
+ 
+     @Override
+-    public RandomSource fork() {
++    public synchronized RandomSource fork() {
+         return new LegacyRandomSource(this.nextLong());
+     }
+ 
+     @Override
+-    public PositionalRandomFactory forkPositional() {
++    public synchronized PositionalRandomFactory forkPositional() {
+         return new LegacyRandomSource.LegacyPositionalRandomFactory(this.nextLong());
+     }
+ 
+     @Override
+-    public void setSeed(long seed) {
++    public synchronized void setSeed(long seed) {
+         if (!this.seed.compareAndSet(this.seed.get(), (seed ^ 25214903917L) & 281474976710655L)) {
+             throw ThreadingDetector.makeThreadingException("LegacyRandomSource", (Thread)null);
+         } else {
+@@ -38,7 +38,7 @@ public class LegacyRandomSource implements BitRandomSource {
+     }
+ 
+     @Override
+-    public int next(int bits) {
++    public synchronized int next(int bits) {
+         long l = this.seed.get();
+         long m = l * 25214903917L + 11L & 281474976710655L;
+         if (!this.seed.compareAndSet(l, m)) {
+@@ -49,7 +49,7 @@ public class LegacyRandomSource implements BitRandomSource {
+     }
+ 
+     @Override
+-    public double nextGaussian() {
++    public synchronized double nextGaussian() {
+         return this.gaussianSource.nextGaussian();
+     }
+ 

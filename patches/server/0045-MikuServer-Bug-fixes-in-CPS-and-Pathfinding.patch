@@ -1,0 +1,254 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Fri, 27 Jan 2023 20:31:46 +0800
+Subject: [PATCH] MikuServer: Bug fixes in CPS and Pathfinding
+
+Original license: MIT
+Original project: https://github.com/MikuMC/MikuServer
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index 686852f5cb6303381c45a673a0daf79a2d3a9dfe..d023e6347e78bde17c67ed299504a081fe895858 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -843,12 +843,11 @@ public class ServerChunkCache extends ChunkSource {
+             if (chunkMap.playerMobDistanceMap != null && _pufferfish_spawnCountsReady.getAndSet(false)) {
+                 net.minecraft.server.MinecraftServer.getServer().mobSpawnExecutor.submit(() -> {
+                     int mapped = distanceManager.getNaturalSpawnChunkCount();
+-                    io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet.Iterator<Entity> objectiterator =
+-                            level.entityTickList.entities.iterator(io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet.ITERATOR_FLAG_SEE_ADDITIONS);
++                    Iterator<Entity> objectiterator =
++                            level.entityTickList.entities.iterator();
+                     gg.pufferfish.pufferfish.util.IterableWrapper<Entity> wrappedIterator =
+                             new gg.pufferfish.pufferfish.util.IterableWrapper<>(objectiterator);
+                     lastSpawnState = NaturalSpawner.createState(mapped, wrappedIterator, this::getFullChunk, null, true);
+-                    objectiterator.finishedIterating();
+                     _pufferfish_spawnCountsReady.set(true);
+                 });
+             }
+@@ -1031,9 +1030,11 @@ public class ServerChunkCache extends ChunkSource {
+         @Override
+         // CraftBukkit start - process pending Chunk loadCallback() and unloadCallback() after each run task
+         public boolean pollTask() {
+-            ServerChunkCache.this.chunkMap.playerChunkManager.tickMidTick();
+-            if (ServerChunkCache.this.runDistanceManagerUpdates()) {
+-                return true;
++            synchronized (this){
++                ServerChunkCache.this.chunkMap.playerChunkManager.tickMidTick();
++                if (ServerChunkCache.this.runDistanceManagerUpdates()) {
++                    return true;
++                }
+             }
+             return super.pollTask() | ServerChunkCache.this.level.chunkTaskScheduler.executeMainThreadTask(); // Paper - rewrite chunk system
+         }
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index 619730e2013b4c8907ba7b7e6927b57b4ac76ec7..f5aff6d724185e1ada8736bdb6dd12b143812e83 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -3029,7 +3029,7 @@ public abstract class LivingEntity extends Entity {
+         }
+ 
+         if (!this.isRemoved()) {
+-            this.aiStep();
++            MinecraftServer.getServer().asyncExecutor.executeWithCallBack(this::aiStep,()->{});
+         }
+ 
+         double d0 = this.getX() - this.xo;
+diff --git a/src/main/java/net/minecraft/world/entity/Mob.java b/src/main/java/net/minecraft/world/entity/Mob.java
+index 9071abd67c421a528514a6437a1b8dde02e068ed..ed645b74bfc6e3cffe75cb4e30277cd5e98ca9c1 100644
+--- a/src/main/java/net/minecraft/world/entity/Mob.java
++++ b/src/main/java/net/minecraft/world/entity/Mob.java
+@@ -881,43 +881,42 @@ public abstract class Mob extends LivingEntity {
+         if (i % 10 == 0) this.sensing.tick(); // petal - only refresh line of sight cache every half second
+         //this.level.getProfiler().pop(); // Purpur
+ 
+-        MinecraftServer.getServer().asyncExecutor.executeWithCallBack(() -> {
+-            if (i % 2 != 0 && this.tickCount > 1) {
+-                //this.level.getProfiler().push("targetSelector"); // Purpur
+-                if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-                    this.targetSelector.tickRunningGoals(false);
+-                //this.level.getProfiler().pop(); // Purpur
+-                //this.level.getProfiler().push("goalSelector"); // Purpur
+-                if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-                    this.goalSelector.tickRunningGoals(false);
+-                //this.level.getProfiler().pop(); // Purpur
+-            } else {
+-                //this.level.getProfiler().push("targetSelector"); // Purpur
+-                if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-                    this.targetSelector.tick();
+-                //this.level.getProfiler().pop(); // Purpur
+-                //this.level.getProfiler().push("goalSelector"); // Purpur
+-                if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-                    this.goalSelector.tick();
+-                //this.level.getProfiler().pop(); // Purpur
+-            }
+-
+-            //this.level.getProfiler().push("navigation"); // Purpur
+-            this.navigation.tick();
++        if (i % 2 != 0 && this.tickCount > 1) {
++            //this.level.getProfiler().push("targetSelector"); // Purpur
++            if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++                this.targetSelector.tickRunningGoals(false);
+             //this.level.getProfiler().pop(); // Purpur
+-            //this.level.getProfiler().push("mob tick"); // Purpur
+-            this.customServerAiStep();
++            //this.level.getProfiler().push("goalSelector"); // Purpur
++            if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++                this.goalSelector.tickRunningGoals(false);
+             //this.level.getProfiler().pop(); // Purpur
+-            //this.level.getProfiler().push("controls"); // Purpur
+-            //this.level.getProfiler().push("move"); // Purpur
+-            this.moveControl.tick();
+-            //this.level.getProfiler().popPush("look"); // Purpur
+-            this.lookControl.tick();
+-            //this.level.getProfiler().popPush("jump"); // Purpur
+-            this.jumpControl.tick();
++        } else {
++            //this.level.getProfiler().push("targetSelector"); // Purpur
++            if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++                this.targetSelector.tick();
+             //this.level.getProfiler().pop(); // Purpur
++            //this.level.getProfiler().push("goalSelector"); // Purpur
++            if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++                this.goalSelector.tick();
+             //this.level.getProfiler().pop(); // Purpur
+-        }, this::sendDebugPackets);
++        }
++
++        //this.level.getProfiler().push("navigation"); // Purpur
++        this.navigation.tick();
++        //this.level.getProfiler().pop(); // Purpur
++        //this.level.getProfiler().push("mob tick"); // Purpur
++        this.customServerAiStep();
++        //this.level.getProfiler().pop(); // Purpur
++        //this.level.getProfiler().push("controls"); // Purpur
++        //this.level.getProfiler().push("move"); // Purpur
++        this.moveControl.tick();
++        //this.level.getProfiler().popPush("look"); // Purpur
++        this.lookControl.tick();
++        //this.level.getProfiler().popPush("jump"); // Purpur
++        this.jumpControl.tick();
++        //this.level.getProfiler().pop(); // Purpur
++        //this.level.getProfiler().pop(); // Purpur
++        this.sendDebugPackets();
+     }
+ 
+     protected void sendDebugPackets() {
+diff --git a/src/main/java/net/minecraft/world/entity/Mob.java.rej b/src/main/java/net/minecraft/world/entity/Mob.java.rej
+new file mode 100644
+index 0000000000000000000000000000000000000000..68eddcd9c30a0b4ab690fc54de481847107cef00
+--- /dev/null
++++ b/src/main/java/net/minecraft/world/entity/Mob.java.rej
+@@ -0,0 +1,59 @@
++diff a/src/main/java/net/minecraft/world/entity/Mob.java b/src/main/java/net/minecraft/world/entity/Mob.java	(rejected hunks)
++@@ -910,32 +910,31 @@ public abstract class Mob extends LivingEntity {
++         //this.level.getProfiler().pop(); // Purpur
++         int i = this.level.getServer().getTickCount() + this.getId();
++ 
++-        MinecraftServer.getServer().asyncExecutor.executeWithCallBack(()->{
++-            if (i % 2 != 0 && this.tickCount > 1) {
++-                //this.level.getProfiler().push("targetSelector"); // Purpur
++-                if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++-                    this.targetSelector.tickRunningGoals(false);
++-                //this.level.getProfiler().pop(); // Purpur
++-                //this.level.getProfiler().push("goalSelector"); // Purpur
++-                if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++-                    this.goalSelector.tickRunningGoals(false);
++-                //this.level.getProfiler().pop(); // Purpur
++-            } else {
++-                //this.level.getProfiler().push("targetSelector"); // Purpur
++-                if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++-                    this.targetSelector.tick();
++-                //this.level.getProfiler().pop(); // Purpur
++-                //this.level.getProfiler().push("goalSelector"); // Purpur
++-                if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
++-                    this.goalSelector.tick();
++-                //this.level.getProfiler().pop(); // Purpur
++-            }
++-            this.navigation.tick();
++-            this.customServerAiStep();
++-            this.moveControl.tick();
++-            this.lookControl.tick();
++-            this.jumpControl.tick();
++-        }, this::sendDebugPackets);
+++        if (i % 2 != 0 && this.tickCount > 1) {
+++            //this.level.getProfiler().push("targetSelector"); // Purpur
+++            if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+++                this.targetSelector.tickRunningGoals(false);
+++            //this.level.getProfiler().pop(); // Purpur
+++            //this.level.getProfiler().push("goalSelector"); // Purpur
+++            if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+++                this.goalSelector.tickRunningGoals(false);
+++            //this.level.getProfiler().pop(); // Purpur
+++        } else {
+++            //this.level.getProfiler().push("targetSelector"); // Purpur
+++            if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+++                this.targetSelector.tick();
+++            //this.level.getProfiler().pop(); // Purpur
+++            //this.level.getProfiler().push("goalSelector"); // Purpur
+++            if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+++                this.goalSelector.tick();
+++            //this.level.getProfiler().pop(); // Purpur
+++        }
+++        this.navigation.tick();
+++        this.customServerAiStep();
+++        this.moveControl.tick();
+++        this.lookControl.tick();
+++        this.jumpControl.tick();
+++        this.sendDebugPackets();
++     }
++ 
++     protected void sendDebugPackets() {
+diff --git a/src/main/java/net/minecraft/world/level/entity/EntityTickList.java b/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
+index 57fcf3910f45ce371ac2e237b277b1034caaac4e..13f5950bfffe49ffc3b9e57b5f6f674c70ba5e80 100644
+--- a/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
++++ b/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
+@@ -1,14 +1,18 @@
+ package net.minecraft.world.level.entity;
+ 
++import com.google.common.collect.Lists;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
++
++import java.util.Iterator;
++import java.util.List;
+ import java.util.function.Consumer;
+ import javax.annotation.Nullable;
+ import net.minecraft.world.entity.Entity;
+ 
+ public class EntityTickList {
+-    public final io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet<Entity> entities = new io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet<>(true); // Paper - rewrite this, always keep this updated - why would we EVER tick an entity that's not ticking? // Pufferfish - private->public
++    public final List<Entity> entities = Lists.newCopyOnWriteArrayList();
+ 
+     private void ensureActiveIsNotIterated() {
+         // Paper - replace with better logic, do not delay removals
+@@ -36,13 +40,9 @@ public class EntityTickList {
+         // Paper start - replace with better logic, do not delay removals/additions
+         // To ensure nothing weird happens with dimension travelling, do not iterate over new entries...
+         // (by dfl iterator() is configured to not iterate over new entries)
+-        io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet.Iterator<Entity> iterator = this.entities.iterator();
+-        try {
+-            while (iterator.hasNext()) {
+-                action.accept(iterator.next());
+-            }
+-        } finally {
+-            iterator.finishedIterating();
++        Iterator<Entity> iterator = this.entities.iterator();
++        while (iterator.hasNext()) {
++            action.accept(iterator.next());
+         }
+         // Paper end - replace with better logic, do not delay removals/additions
+     }
+diff --git a/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java b/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java
+index a8af51a25b0f99c3a64d9150fdfcd6b818aa7581..cd2592552339a79361d2a4e7936731330e15f6fa 100644
+--- a/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java
++++ b/src/main/java/net/minecraft/world/level/pathfinder/PathFinder.java
+@@ -31,7 +31,7 @@ public class PathFinder {
+     }
+ 
+     @Nullable
+-    public Path findPath(PathNavigationRegion world, Mob mob, Set<BlockPos> positions, float followRange, int distance, float rangeMultiplier) {
++    public synchronized Path findPath(PathNavigationRegion world, Mob mob, Set<BlockPos> positions, float followRange, int distance, float rangeMultiplier) {
+         this.openSet.clear();
+         this.nodeEvaluator.prepare(world, mob);
+         Node node = this.nodeEvaluator.getStart();

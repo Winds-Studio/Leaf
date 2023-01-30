@@ -1,0 +1,627 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 28 Jan 2023 12:23:31 +0800
+Subject: [PATCH] MikuServer: Fix some issue in Entity sensing and aiStep
+
+Original license: MIT
+Original project: https://github.com/MikuMC/MikuServer
+
+diff --git a/src/main/java/co/m2ek4u/aoame/CallbackExecutor.java b/src/main/java/co/mikumc/mikuserver/concurrent/CallbackExecutor.java
+similarity index 98%
+rename from src/main/java/co/m2ek4u/aoame/CallbackExecutor.java
+rename to src/main/java/co/mikumc/mikuserver/concurrent/CallbackExecutor.java
+index b861405a7626ba8fa677c455bf6507253b33c157..678b389ef829bcda55ea06f5f19b96c81f78bd9b 100644
+--- a/src/main/java/co/m2ek4u/aoame/CallbackExecutor.java
++++ b/src/main/java/co/mikumc/mikuserver/concurrent/CallbackExecutor.java
+@@ -1,4 +1,4 @@
+-package co.m2ek4u.aoame;
++package co.mikumc.mikuserver.concurrent;
+ 
+ import org.jetbrains.annotations.NotNull;
+ import java.util.Queue;
+diff --git a/src/main/java/co/m2ek4u/aoame/AnotherTickThread.java b/src/main/java/co/mikumc/mikuserver/utils/AnotherTickThread.java
+similarity index 87%
+rename from src/main/java/co/m2ek4u/aoame/AnotherTickThread.java
+rename to src/main/java/co/mikumc/mikuserver/utils/AnotherTickThread.java
+index d5fe52beb25e7a95549cdf0ae19edf6029f10642..8dd4423fb1477c901e88c07537ca736eb4f9a8cc 100644
+--- a/src/main/java/co/m2ek4u/aoame/AnotherTickThread.java
++++ b/src/main/java/co/mikumc/mikuserver/utils/AnotherTickThread.java
+@@ -1,4 +1,4 @@
+-package co.m2ek4u.aoame;
++package co.mikumc.mikuserver.utils;
+ 
+ import io.papermc.paper.util.TickThread;
+ 
+diff --git a/src/main/java/co/mikumc/mikuserver/utils/EntityPositionCache.java b/src/main/java/co/mikumc/mikuserver/utils/EntityPositionCache.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..245fd68d040a46f58bebbbebe11ab6fa2072f08b
+--- /dev/null
++++ b/src/main/java/co/mikumc/mikuserver/utils/EntityPositionCache.java
+@@ -0,0 +1,60 @@
++package co.mikumc.mikuserver.utils;
++
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.phys.Vec3;
++import org.jetbrains.annotations.NotNull;
++
++public class EntityPositionCache {
++    private final double x;
++    private final double y;
++    private final double z;
++    private final LivingEntity currentEntity;
++
++    public EntityPositionCache(@NotNull LivingEntity entity){
++        this.x = entity.getX();
++        this.y = entity.getY();
++        this.z = entity.getZ();
++        this.currentEntity = entity;
++    }
++
++    public LivingEntity getCurrentEntity() {
++        return this.currentEntity;
++    }
++
++    public double getX() {
++        return this.x;
++    }
++
++    public double getY() {
++        return this.y;
++    }
++
++    public double getZ() {
++        return this.z;
++    }
++
++    public double distanceToSqr(double x, double y, double z) {
++        double d3 = this.x - x;
++        double d4 = this.y - y;
++        double d5 = this.z - z;
++
++        return d3 * d3 + d4 * d4 + d5 * d5;
++    }
++
++    public double distanceToSqr(Entity entity) {
++        return this.distanceToSqr(entity.position());
++    }
++
++    public double distanceToSqr(Vec3 vector) {
++        double d0 = this.x - vector.x;
++        double d1 = this.y - vector.y;
++        double d2 = this.z - vector.z;
++
++        return d0 * d0 + d1 * d1 + d2 * d2;
++    }
++
++    public double distanceToSqr(EntityPositionCache entityPositionCache) {
++        return this.distanceToSqr(entityPositionCache.getX(),entityPositionCache.getY(),entityPositionCache.getZ());
++    }
++}
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 9601de5775667c2d94e07b89bb7605b1e03d413d..28af12b2e670ab2a2d4dc96f340da49da0071737 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1,12 +1,9 @@
+ package net.minecraft.server;
+ 
+-import co.m2ek4u.aoame.AnotherTickThread;
+-import co.m2ek4u.aoame.CallbackExecutor;
++import co.mikumc.mikuserver.utils.AnotherTickThread;
++import co.mikumc.mikuserver.concurrent.CallbackExecutor;
+ import com.google.common.base.Splitter;
+ import com.google.common.collect.ImmutableList;
+-import co.aikar.timings.Timings;
+-import com.destroystokyo.paper.event.server.PaperServerListPingEvent;
+-import com.google.common.base.Stopwatch;
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Maps;
+ import com.google.common.collect.Sets;
+@@ -86,7 +83,6 @@ import net.minecraft.server.level.ServerChunkCache;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+ import net.minecraft.server.level.ServerPlayerGameMode;
+-import net.minecraft.server.level.TicketType;
+ import net.minecraft.server.level.progress.ChunkProgressListener;
+ import net.minecraft.server.level.progress.ChunkProgressListenerFactory;
+ import net.minecraft.server.network.ServerConnectionListener;
+@@ -110,17 +106,14 @@ import net.minecraft.util.NativeModuleLister;
+ import net.minecraft.util.ProgressListener;
+ import net.minecraft.util.RandomSource;
+ import net.minecraft.util.SignatureValidator;
+-import net.minecraft.util.Unit;
+ import net.minecraft.util.datafix.DataFixers;
+ import net.minecraft.util.profiling.EmptyProfileResults;
+ import net.minecraft.util.profiling.ProfileResults;
+ import net.minecraft.util.profiling.ProfilerFiller;
+ import net.minecraft.util.profiling.ResultField;
+-import net.minecraft.util.profiling.SingleTickProfiler;
+ import net.minecraft.util.profiling.jfr.JvmProfiler;
+ import net.minecraft.util.profiling.jfr.callback.ProfiledDuration;
+ import net.minecraft.util.profiling.metrics.profiling.ActiveMetricsRecorder;
+-import net.minecraft.util.profiling.metrics.profiling.InactiveMetricsRecorder;
+ import net.minecraft.util.profiling.metrics.profiling.MetricsRecorder;
+ import net.minecraft.util.profiling.metrics.profiling.ServerMetricsSamplersProvider;
+ import net.minecraft.util.profiling.metrics.storage.MetricsPersister;
+@@ -184,12 +177,6 @@ import net.minecraft.world.level.levelgen.PatrolSpawner;
+ import net.minecraft.world.level.levelgen.PhantomSpawner;
+ import net.minecraft.world.level.levelgen.WorldDimensions;
+ import net.minecraft.world.level.levelgen.presets.WorldPresets;
+-import org.bukkit.Bukkit;
+-import org.bukkit.craftbukkit.CraftServer;
+-import org.bukkit.craftbukkit.Main;
+-import org.bukkit.craftbukkit.util.CraftChatMessage;
+-import org.bukkit.craftbukkit.util.LazyPlayerSet;
+-import org.bukkit.event.player.AsyncPlayerChatPreviewEvent;
+ import org.bukkit.event.server.ServerLoadEvent;
+ // CraftBukkit end
+ 
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 824f26db01750866a2d9bbeefe17457f84d19504..32ce19ff00d6a31b7dc994d3320ad967f96d4f61 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -1,6 +1,6 @@
+ package net.minecraft.server.level;
+ 
+-import co.m2ek4u.aoame.AnotherTickThread;
++import co.mikumc.mikuserver.utils.AnotherTickThread;
+ import com.google.common.annotations.VisibleForTesting;
+ import co.aikar.timings.TimingHistory; // Paper
+ import com.google.common.collect.Lists;
+@@ -51,7 +51,6 @@ import net.minecraft.core.particles.ParticleOptions;
+ import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.core.registries.Registries;
+ import net.minecraft.network.chat.Component;
+-import net.minecraft.network.chat.MutableComponent;
+ import net.minecraft.network.protocol.Packet;
+ import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
+ import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
+@@ -77,7 +76,6 @@ import net.minecraft.util.CsvOutput;
+ import net.minecraft.util.Mth;
+ import net.minecraft.util.ProgressListener;
+ import net.minecraft.util.Unit;
+-import net.minecraft.util.profiling.ProfilerFiller;
+ import net.minecraft.world.DifficultyInstance;
+ import net.minecraft.world.damagesource.DamageSource;
+ import net.minecraft.world.entity.Entity;
+@@ -129,12 +127,10 @@ import net.minecraft.world.level.chunk.storage.EntityStorage;
+ import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
+ import net.minecraft.world.level.dimension.LevelStem;
+ import net.minecraft.world.level.dimension.end.EndDragonFight;
+-import net.minecraft.world.level.entity.EntityPersistentStorage;
+ import net.minecraft.world.level.entity.EntityTickList;
+ import net.minecraft.world.level.entity.EntityTypeTest;
+ import net.minecraft.world.level.entity.LevelCallback;
+ import net.minecraft.world.level.entity.LevelEntityGetter;
+-import net.minecraft.world.level.entity.PersistentEntitySectionManager;
+ import net.minecraft.world.level.gameevent.DynamicGameEventListener;
+ import net.minecraft.world.level.gameevent.GameEvent;
+ import net.minecraft.world.level.gameevent.GameEventDispatcher;
+@@ -161,16 +157,13 @@ import net.minecraft.world.phys.shapes.VoxelShape;
+ import net.minecraft.world.ticks.LevelTicks;
+ import org.slf4j.Logger;
+ import org.bukkit.Bukkit;
+-import org.bukkit.Location;
+ import org.bukkit.WeatherType;
+ import org.bukkit.craftbukkit.event.CraftEventFactory;
+ import org.bukkit.craftbukkit.generator.CustomWorldChunkManager;
+-import org.bukkit.craftbukkit.util.CraftNamespacedKey;
+ import org.bukkit.craftbukkit.util.WorldUUID;
+ import org.bukkit.event.entity.CreatureSpawnEvent;
+ import org.bukkit.event.server.MapInitializeEvent;
+ import org.bukkit.event.weather.LightningStrikeEvent;
+-import org.bukkit.event.world.GenericGameEvent;
+ import org.bukkit.event.world.TimeSkipEvent;
+ // CraftBukkit end
+ import it.unimi.dsi.fastutil.ints.IntArrayList; // Paper
+@@ -994,7 +987,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         if (this.canSleepThroughNights()) {
+             if (!this.getServer().isSingleplayer() || this.getServer().isPublished()) {
+                 int i = this.getGameRules().getInt(GameRules.RULE_PLAYERS_SLEEPING_PERCENTAGE);
+-                MutableComponent ichatmutablecomponent;
++                Component ichatmutablecomponent;
+ 
+                 if (this.sleepStatus.areEnoughSleeping(i)) {
+                     ichatmutablecomponent = Component.translatable("sleep.skipping_night");
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index f5aff6d724185e1ada8736bdb6dd12b143812e83..cb5a4e6a071977fcf82b6b0384735a4bec3564fc 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -3029,7 +3029,13 @@ public abstract class LivingEntity extends Entity {
+         }
+ 
+         if (!this.isRemoved()) {
+-            MinecraftServer.getServer().asyncExecutor.executeWithCallBack(this::aiStep,()->{});
++            //MikuServer start --async AI
++            if(this instanceof net.minecraft.world.entity.player.Player){
++                this.aiStep(); //Skip player
++            }else {
++                MinecraftServer.getServer().asyncExecutor.executeWithCallBack(this::aiStep,()->{});
++            }
++            //MikuServer end
+         }
+ 
+         double d0 = this.getX() - this.xo;
+@@ -3406,9 +3412,11 @@ public abstract class LivingEntity extends Entity {
+                 this.jumpInLiquid(FluidTags.LAVA);
+             } else if ((this.onGround || flag && d7 <= d8) && this.noJumpDelay == 0) {
+                 if (new com.destroystokyo.paper.event.entity.EntityJumpEvent(getBukkitLivingEntity()).callEvent()) { // Paper
+-                this.jumpFromGround();
+-                this.noJumpDelay = 10;
+-                } else { this.setJumping(false); } // Paper - setJumping(false) stops a potential loop
++                    this.jumpFromGround();
++                    this.noJumpDelay = 10;
++                } else {
++                    this.setJumping(false);
++                } // Paper - setJumping(false) stops a potential loop
+             }
+         } else {
+             this.noJumpDelay = 0;
+@@ -3421,102 +3429,51 @@ public abstract class LivingEntity extends Entity {
+         this.updateFallFlying();
+         AABB axisalignedbb = this.getBoundingBox();
+ 
+-        if (this instanceof net.minecraft.world.entity.player.Player) {
+-            // SpigotTimings.timerEntityAIMove.startTiming(); // Spigot // Paper
+-            this.travel(new Vec3((double) this.xxa, (double) this.yya, (double) this.zza));
+-            // SpigotTimings.timerEntityAIMove.stopTiming(); // Spigot // Paper
+-            //this.level.getProfiler().pop(); // Purpur
+-            //this.level.getProfiler().push("freezing"); // Purpur
+-            boolean flag1 = this.getType().is(EntityTypeTags.FREEZE_HURTS_EXTRA_TYPES);
+-            int i;
++        // SpigotTimings.timerEntityAIMove.startTiming(); // Spigot // Paper
++        this.travel(new Vec3((double) this.xxa, (double) this.yya, (double) this.zza));
++        // SpigotTimings.timerEntityAIMove.stopTiming(); // Spigot // Paper
++        //this.level.getProfiler().pop(); // Purpur
++        //this.level.getProfiler().push("freezing"); // Purpur
++        boolean flag1 = this.getType().is(EntityTypeTags.FREEZE_HURTS_EXTRA_TYPES);
++        int i;
+ 
+-            if (!this.level.isClientSide && !this.isDeadOrDying() && !freezeLocked) { // Paper - Freeze Tick Lock API
+-                i = this.getTicksFrozen();
+-                if (this.isInPowderSnow && this.canFreeze()) {
+-                    this.setTicksFrozen(Math.min(this.getTicksRequiredToFreeze(), i + 1));
+-                } else {
+-                    this.setTicksFrozen(Math.max(0, i - 2));
+-                }
++        if (!this.level.isClientSide && !this.isDeadOrDying() && !freezeLocked) { // Paper - Freeze Tick Lock API
++            i = this.getTicksFrozen();
++            if (this.isInPowderSnow && this.canFreeze()) {
++                this.setTicksFrozen(Math.min(this.getTicksRequiredToFreeze(), i + 1));
++            } else {
++                this.setTicksFrozen(Math.max(0, i - 2));
+             }
++        }
+ 
+-            this.removeFrost();
+-            this.tryAddFrost();
+-            if (!this.level.isClientSide && this.tickCount % 40 == 0 && this.isFullyFrozen() && this.canFreeze()) {
+-                i = flag1 ? 5 : 1;
+-                this.hurt(DamageSource.FREEZE, (float) i);
+-            }
++        this.removeFrost();
++        this.tryAddFrost();
++        if (!this.level.isClientSide && this.tickCount % 40 == 0 && this.isFullyFrozen() && this.canFreeze()) {
++            i = flag1 ? 5 : 1;
++            this.hurt(DamageSource.FREEZE, (float) i);
++        }
+ 
+-            //this.level.getProfiler().pop(); // Purpur
+-            //this.level.getProfiler().push("push"); // Purpur
+-            if (this.autoSpinAttackTicks > 0) {
+-                --this.autoSpinAttackTicks;
+-                this.checkAutoSpinAttack(axisalignedbb, this.getBoundingBox());
+-            }
++        //this.level.getProfiler().pop(); // Purpur
++        //this.level.getProfiler().push("push"); // Purpur
++        if (this.autoSpinAttackTicks > 0) {
++            --this.autoSpinAttackTicks;
++            this.checkAutoSpinAttack(axisalignedbb, this.getBoundingBox());
++        }
+ 
+-            this.pushEntities();
+-            //this.level.getProfiler().pop(); // Purpur
+-            // Paper start
+-            if (((ServerLevel) this.level).hasEntityMoveEvent && !(this instanceof net.minecraft.world.entity.player.Player)) {
+-                if (this.xo != getX() || this.yo != this.getY() || this.zo != this.getZ() || this.yRotO != this.getYRot() || this.xRotO != this.getXRot()) {
+-                    Location from = new Location(this.level.getWorld(), this.xo, this.yo, this.zo, this.yRotO, this.xRotO);
+-                    Location to = new Location(this.level.getWorld(), this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot());
+-                    io.papermc.paper.event.entity.EntityMoveEvent event = new io.papermc.paper.event.entity.EntityMoveEvent(this.getBukkitLivingEntity(), from, to.clone());
+-                    if (!event.callEvent()) {
+-                        absMoveTo(from.getX(), from.getY(), from.getZ(), from.getYaw(), from.getPitch());
+-                    } else if (!to.equals(event.getTo())) {
+-                        absMoveTo(event.getTo().getX(), event.getTo().getY(), event.getTo().getZ(), event.getTo().getYaw(), event.getTo().getPitch());
+-                    }
++        this.pushEntities();
++        //this.level.getProfiler().pop(); // Purpur
++        // Paper start
++        if (((ServerLevel) this.level).hasEntityMoveEvent && !(this instanceof net.minecraft.world.entity.player.Player)) {
++            if (this.xo != getX() || this.yo != this.getY() || this.zo != this.getZ() || this.yRotO != this.getYRot() || this.xRotO != this.getXRot()) {
++                Location from = new Location(this.level.getWorld(), this.xo, this.yo, this.zo, this.yRotO, this.xRotO);
++                Location to = new Location(this.level.getWorld(), this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot());
++                io.papermc.paper.event.entity.EntityMoveEvent event = new io.papermc.paper.event.entity.EntityMoveEvent(this.getBukkitLivingEntity(), from, to.clone());
++                if (!event.callEvent()) {
++                    absMoveTo(from.getX(), from.getY(), from.getZ(), from.getYaw(), from.getPitch());
++                } else if (!to.equals(event.getTo())) {
++                    absMoveTo(event.getTo().getX(), event.getTo().getY(), event.getTo().getZ(), event.getTo().getYaw(), event.getTo().getPitch());
+                 }
+             }
+-        } else {
+-            MinecraftServer.getServer().asyncExecutor.executeWithCallBack(() -> {
+-                // SpigotTimings.timerEntityAIMove.startTiming(); // Spigot // Paper
+-                this.travel(new Vec3((double) this.xxa, (double) this.yya, (double) this.zza));
+-                // SpigotTimings.timerEntityAIMove.stopTiming(); // Spigot // Paper
+-                //this.level.getProfiler().pop(); // Purpur
+-                //this.level.getProfiler().push("freezing"); // Purpur
+-                boolean flag1 = this.getType().is(EntityTypeTags.FREEZE_HURTS_EXTRA_TYPES);
+-                int i;
+-
+-                if (!this.level.isClientSide && !this.isDeadOrDying() && !freezeLocked) { // Paper - Freeze Tick Lock API
+-                    i = this.getTicksFrozen();
+-                    if (this.isInPowderSnow && this.canFreeze()) {
+-                        this.setTicksFrozen(Math.min(this.getTicksRequiredToFreeze(), i + 1));
+-                    } else {
+-                        this.setTicksFrozen(Math.max(0, i - 2));
+-                    }
+-                }
+-
+-                this.removeFrost();
+-                this.tryAddFrost();
+-                if (!this.level.isClientSide && this.tickCount % 40 == 0 && this.isFullyFrozen() && this.canFreeze()) {
+-                    i = flag1 ? 5 : 1;
+-                    this.hurt(DamageSource.FREEZE, (float) i);
+-                }
+-
+-                //this.level.getProfiler().pop(); // Purpur
+-                //this.level.getProfiler().push("push"); // Purpur
+-                if (this.autoSpinAttackTicks > 0) {
+-                    --this.autoSpinAttackTicks;
+-                    this.checkAutoSpinAttack(axisalignedbb, this.getBoundingBox());
+-                }
+-
+-                this.pushEntities();
+-                //this.level.getProfiler().pop(); // Purpur
+-            }, () -> {
+-                if (((ServerLevel) this.level).hasEntityMoveEvent && !(this instanceof net.minecraft.world.entity.player.Player)) {
+-                    if (this.xo != getX() || this.yo != this.getY() || this.zo != this.getZ() || this.yRotO != this.getYRot() || this.xRotO != this.getXRot()) {
+-                        Location from = new Location(this.level.getWorld(), this.xo, this.yo, this.zo, this.yRotO, this.xRotO);
+-                        Location to = new Location(this.level.getWorld(), this.getX(), this.getY(), this.getZ(), this.getYRot(), this.getXRot());
+-                        io.papermc.paper.event.entity.EntityMoveEvent event = new io.papermc.paper.event.entity.EntityMoveEvent(this.getBukkitLivingEntity(), from, to.clone());
+-                        if (!event.callEvent()) {
+-                            absMoveTo(from.getX(), from.getY(), from.getZ(), from.getYaw(), from.getPitch());
+-                        } else if (!to.equals(event.getTo())) {
+-                            absMoveTo(event.getTo().getX(), event.getTo().getY(), event.getTo().getZ(), event.getTo().getYaw(), event.getTo().getPitch());
+-                        }
+-                    }
+-                }
+-            });
+         }
+         // Paper end
+         if (!this.level.isClientSide && this.isSensitiveToWater() && this.isInWaterRainOrBubble()) {
+diff --git a/src/main/java/net/minecraft/world/entity/Mob.java.rej b/src/main/java/net/minecraft/world/entity/Mob.java.rej
+deleted file mode 100644
+index 68eddcd9c30a0b4ab690fc54de481847107cef00..0000000000000000000000000000000000000000
+--- a/src/main/java/net/minecraft/world/entity/Mob.java.rej
++++ /dev/null
+@@ -1,59 +0,0 @@
+-diff a/src/main/java/net/minecraft/world/entity/Mob.java b/src/main/java/net/minecraft/world/entity/Mob.java	(rejected hunks)
+-@@ -910,32 +910,31 @@ public abstract class Mob extends LivingEntity {
+-         //this.level.getProfiler().pop(); // Purpur
+-         int i = this.level.getServer().getTickCount() + this.getId();
+- 
+--        MinecraftServer.getServer().asyncExecutor.executeWithCallBack(()->{
+--            if (i % 2 != 0 && this.tickCount > 1) {
+--                //this.level.getProfiler().push("targetSelector"); // Purpur
+--                if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+--                    this.targetSelector.tickRunningGoals(false);
+--                //this.level.getProfiler().pop(); // Purpur
+--                //this.level.getProfiler().push("goalSelector"); // Purpur
+--                if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+--                    this.goalSelector.tickRunningGoals(false);
+--                //this.level.getProfiler().pop(); // Purpur
+--            } else {
+--                //this.level.getProfiler().push("targetSelector"); // Purpur
+--                if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+--                    this.targetSelector.tick();
+--                //this.level.getProfiler().pop(); // Purpur
+--                //this.level.getProfiler().push("goalSelector"); // Purpur
+--                if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+--                    this.goalSelector.tick();
+--                //this.level.getProfiler().pop(); // Purpur
+--            }
+--            this.navigation.tick();
+--            this.customServerAiStep();
+--            this.moveControl.tick();
+--            this.lookControl.tick();
+--            this.jumpControl.tick();
+--        }, this::sendDebugPackets);
+-+        if (i % 2 != 0 && this.tickCount > 1) {
+-+            //this.level.getProfiler().push("targetSelector"); // Purpur
+-+            if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-+                this.targetSelector.tickRunningGoals(false);
+-+            //this.level.getProfiler().pop(); // Purpur
+-+            //this.level.getProfiler().push("goalSelector"); // Purpur
+-+            if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-+                this.goalSelector.tickRunningGoals(false);
+-+            //this.level.getProfiler().pop(); // Purpur
+-+        } else {
+-+            //this.level.getProfiler().push("targetSelector"); // Purpur
+-+            if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-+                this.targetSelector.tick();
+-+            //this.level.getProfiler().pop(); // Purpur
+-+            //this.level.getProfiler().push("goalSelector"); // Purpur
+-+            if (this.goalSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
+-+                this.goalSelector.tick();
+-+            //this.level.getProfiler().pop(); // Purpur
+-+        }
+-+        this.navigation.tick();
+-+        this.customServerAiStep();
+-+        this.moveControl.tick();
+-+        this.lookControl.tick();
+-+        this.jumpControl.tick();
+-+        this.sendDebugPackets();
+-     }
+- 
+-     protected void sendDebugPackets() {
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+index d8cf99a3014a4b8152ae819fa663c2fdf34dce57..e14d02c04dde5030c0dff3faea9294c87c40910d 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+@@ -1,9 +1,13 @@
+ package net.minecraft.world.entity.ai.sensing;
+-
++import co.mikumc.mikuserver.utils.EntityPositionCache;
+ import com.google.common.collect.ImmutableSet;
+ import java.util.Comparator;
+ import java.util.List;
+ import java.util.Set;
++import java.util.concurrent.atomic.AtomicBoolean;
++import com.google.common.collect.Lists;
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.entity.ai.Brain;
+@@ -12,16 +16,29 @@ import net.minecraft.world.entity.ai.memory.NearestVisibleLivingEntities;
+ import net.minecraft.world.phys.AABB;
+ 
+ public class NearestLivingEntitySensor<T extends LivingEntity> extends Sensor<T> {
++    private final List<EntityPositionCache> entitiesCache = ObjectLists.synchronize(new ObjectArrayList<>());
++    private final AtomicBoolean calling = new AtomicBoolean(false);
++
+     @Override
+     protected void doTick(ServerLevel world, T entity) {
+-        AABB aABB = entity.getBoundingBox().inflate((double)this.radiusXZ(), (double)this.radiusY(), (double)this.radiusXZ());
+-        List<LivingEntity> list = world.getEntitiesOfClass(LivingEntity.class, aABB, (e) -> {
+-            return e != entity && e.isAlive();
+-        });
+-        list.sort(Comparator.comparingDouble(entity::distanceToSqr));
+-        Brain<?> brain = entity.getBrain();
+-        brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES, list);
+-        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(entity, list));
++        if (!this.calling.get()){
++            this.calling.set(true);
++            try {
++                AABB aABB = entity.getBoundingBox().inflate(this.radiusXZ(), this.radiusY(), this.radiusXZ());
++                this.entitiesCache.clear();
++                this.entitiesCache.addAll(world.getEntitiesOfClass(LivingEntity.class, aABB, (e) -> e != entity && e.isAlive()).stream().map(EntityPositionCache::new).toList());
++                final EntityPositionCache compareCache = new EntityPositionCache(entity);
++                this.entitiesCache.sort(Comparator.comparingDouble(compareCache::distanceToSqr));
++
++                Brain<?> brain = entity.getBrain();
++                final List<LivingEntity> list = Lists.newCopyOnWriteArrayList();
++                list.addAll(this.entitiesCache.stream().map(EntityPositionCache::getCurrentEntity).toList());
++                brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES,list);
++                brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(entity, list));
++            }finally {
++                this.calling.set(false);
++            }
++        }
+     }
+ 
+     protected int radiusXZ() {
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
+index 75d9c4f011b5a97def215784c92bb57bbb35d06b..2a3d5085b47824c310cfaa5feec3a50965f804b0 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
+@@ -1,11 +1,11 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
++import co.mikumc.mikuserver.utils.EntityPositionCache;
+ import com.google.common.collect.ImmutableSet;
+-import java.util.Comparator;
+-import java.util.List;
+-import java.util.Optional;
+-import java.util.Set;
+-import java.util.stream.Collectors;
++import java.util.*;
++import java.util.concurrent.atomic.AtomicBoolean;
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.EntitySelector;
+ import net.minecraft.world.entity.LivingEntity;
+@@ -14,6 +14,9 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+ import net.minecraft.world.entity.player.Player;
+ 
+ public class PlayerSensor extends Sensor<LivingEntity> {
++    private final List<Player> playerList = ObjectLists.synchronize(new ObjectArrayList<>());
++    private final AtomicBoolean calling = new AtomicBoolean();
++
+     @Override
+     public Set<MemoryModuleType<?>> requires() {
+         return ImmutableSet.of(MemoryModuleType.NEAREST_PLAYERS, MemoryModuleType.NEAREST_VISIBLE_PLAYER, MemoryModuleType.NEAREST_VISIBLE_ATTACKABLE_PLAYER);
+@@ -21,30 +24,51 @@ public class PlayerSensor extends Sensor<LivingEntity> {
+ 
+     @Override
+     protected void doTick(ServerLevel world, LivingEntity entity) {
+-        // Paper start - remove streams
+-        List<Player> players = (List)world.getNearbyPlayers(entity, entity.getX(), entity.getY(), entity.getZ(), 16.0D, EntitySelector.NO_SPECTATORS);
+-        players.sort((e1, e2) -> Double.compare(entity.distanceToSqr(e1), entity.distanceToSqr(e2)));
+-        Brain<?> brain = entity.getBrain();
+-
+-        brain.setMemory(MemoryModuleType.NEAREST_PLAYERS, players);
+-
+-        Player firstTargetable = null;
+-        Player firstAttackable = null;
+-        for (int index = 0, len = players.size(); index < len; ++index) {
+-            Player player = players.get(index);
+-            if (firstTargetable == null && isEntityTargetable(entity, player)) {
+-                firstTargetable = player;
+-            }
+-            if (firstAttackable == null && isEntityAttackable(entity, player)) {
+-                firstAttackable = player;
+-            }
++        if (this.calling.get()){
++            return;
++        }
++
++        this.calling.set(true);
++        try {
++            // Paper start - remove streams
++            List<EntityPositionCache> playersPosCaches = new ArrayList<>(List.of(world
++                    .getNearbyPlayers(entity, entity.getX(), entity.getY(), entity.getZ(), 16.0D, EntitySelector.NO_SPECTATORS)
++                    .stream()
++                    .map(EntityPositionCache::new)
++                    .toArray(EntityPositionCache[]::new)));
++
++            final EntityPositionCache entityPositionCache = new EntityPositionCache(entity);
++
++            playersPosCaches.sort(Comparator.comparingDouble(entityPositionCache::distanceToSqr));
++
++            final List<Player> players = playersPosCaches
++                    .stream()
++                    .map(cache -> ((Player) cache.getCurrentEntity()))
++                    .toList();
++
++            Brain<?> brain = entity.getBrain();
++
++            brain.setMemory(MemoryModuleType.NEAREST_PLAYERS, players);
++
++            Player firstTargetable = null;
++            Player firstAttackable = null;
++            for (Player player : players) {
++                if (firstTargetable == null && isEntityTargetable(entity, player)) {
++                    firstTargetable = player;
++                }
++                if (firstAttackable == null && isEntityAttackable(entity, player)) {
++                    firstAttackable = player;
++                }
+ 
+-            if (firstAttackable != null && firstTargetable != null) {
+-                break;
++                if (firstAttackable != null && firstTargetable != null) {
++                    break;
++                }
+             }
++            brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_PLAYER, firstTargetable);
++            brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_ATTACKABLE_PLAYER, Optional.ofNullable(firstAttackable));
++            // Paper end - remove streams
++        }finally {
++            this.calling.set(false);
+         }
+-        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_PLAYER, firstTargetable);
+-        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_ATTACKABLE_PLAYER, Optional.ofNullable(firstAttackable));
+-        // Paper end - remove streams
+     }
+ }
