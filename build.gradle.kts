@@ -64,7 +64,7 @@ paperweight {
 
     useStandardUpstream("Pufferfish") {
         url.set(github("pufferfish-gg", "Pufferfish"))
-        ref.set(providers.gradleProperty("PufferfishCommit"))
+        ref.set(providers.gradleProperty("pufferfishCommit"))
 
         withStandardPatcher {
             apiSourceDirPath.set("pufferfish-api")
