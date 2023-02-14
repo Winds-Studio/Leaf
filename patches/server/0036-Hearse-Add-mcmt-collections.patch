@@ -1,0 +1,4502 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 15 Jan 2023 09:56:52 +0800
+Subject: [PATCH] Hearse: Add mcmt collections
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentArrayDeque.java b/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentArrayDeque.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..3c29129dc02ddcfaad026d1f81e5da879a0d64cb
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentArrayDeque.java
+@@ -0,0 +1,4 @@
++package net.himeki.mcmtfabric.parallelised;
++
++public class ConcurrentArrayDeque {
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentCollections.java b/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentCollections.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..67dd5fe624fe4428d8907000cb23a33485fd6bd9
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentCollections.java
+@@ -0,0 +1,41 @@
++package net.himeki.mcmtfabric.parallelised;
++
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
++
++import java.util.*;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ConcurrentLinkedDeque;
++import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.stream.Collector;
++import java.util.stream.Collectors;
++
++public class ConcurrentCollections {
++
++    private static final Logger LOGGER = LogManager.getLogger();
++
++    public static <T> Set<T> newHashSet() {
++        //LOGGER.info("Concurrent hash set created");
++        return Collections.newSetFromMap(new ConcurrentHashMap<T, Boolean>());
++    }
++
++    public static <T, U> Map<T, U> newHashMap() {
++        //LOGGER.info("Concurrent hash map created");
++        return new ConcurrentHashMap<T, U>();
++    }
++
++    public static <T> List<T> newLinkedList() {
++        LOGGER.info("Concurrent \"linked\" list created");
++        return new CopyOnWriteArrayList<T>();
++    }
++
++    public static <T> Collector<T, ?, List<T>> toList() {
++        return Collectors.toCollection(CopyOnWriteArrayList::new);
++    }
++
++    public static <T> Queue<T> newArrayDeque() {
++        LOGGER.info("Concurrent \"array\" deque created");
++        return new ConcurrentLinkedDeque<T>();
++    }
++
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentDoublyLinkedList.java b/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentDoublyLinkedList.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..fec1f280c72c5b519173017877812ec3f7149ec5
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/ConcurrentDoublyLinkedList.java
+@@ -0,0 +1,937 @@
++package net.himeki.mcmtfabric.parallelised;
++
++/*
++ * From: http://www.java2s.com/Code/Java/Collections-Data-Structure/ConcurrentDoublyLinkedList.htm
++ *
++ * Written by Doug Lea with assistance from members of JCP JSR-166
++ * Expert Group and released to the public domain, as explained at
++ * http://creativecommons.org/licenses/publicdomain
++ *
++ * Modified to actually implement List<E>
++ */
++
++import org.apache.commons.lang3.NotImplementedException;
++
++import java.util.*;
++import java.util.concurrent.atomic.AtomicReference;
++
++/**
++ * A concurrent linked-list implementation of a {@link Deque} (double-ended
++ * queue). Concurrent insertion, removal, and access operations execute safely
++ * across multiple threads. Iterators are <i>weakly consistent</i>, returning
++ * elements reflecting the state of the deque at some point at or since the
++ * creation of the iterator. They do <em>not</em> throw
++ * {@link ConcurrentModificationException}, and may proceed concurrently with
++ * other operations.
++ *
++ * <p>
++ * This class and its iterators implement all of the <em>optional</em> methods
++ * of the {@link Collection} and {@link Iterator} interfaces. Like most other
++ * concurrent collection implementations, this class does not permit the use of
++ * <tt>null</tt> elements. because some null arguments and return values cannot
++ * be reliably distinguished from the absence of elements. Arbitrarily, the
++ * {@link Collection#remove} method is mapped to <tt>removeFirstOccurrence</tt>,
++ * and {@link Collection#add} is mapped to <tt>addLast</tt>.
++ *
++ * <p>
++ * Beware that, unlike in most collections, the <tt>size</tt> method is
++ * <em>NOT</em> a constant-time operation. Because of the asynchronous nature of
++ * these deques, determining the current number of elements requires a traversal
++ * of the elements.
++ *
++ * <p>
++ * This class is <tt>Serializable</tt>, but relies on default serialization
++ * mechanisms. Usually, it is a better idea for any serializable class using a
++ * <tt>ConcurrentLinkedDeque</tt> to instead serialize a snapshot of the
++ * elements obtained by method <tt>toArray</tt>.
++ *
++ * @author Doug Lea
++ * @param <E> the type of elements held in this collection
++ */
++
++public class ConcurrentDoublyLinkedList<E> extends AbstractCollection<E> implements List<E>, java.io.Serializable {
++
++    /*
++     * This is an adaptation of an algorithm described in Paul Martin's "A Practical
++     * Lock-Free Doubly-Linked List". Sun Labs Tech report. The basic idea is to
++     * primarily rely on next-pointers to ensure consistency. Prev-pointers are in
++     * part optimistic, reconstructed using forward pointers as needed. The main
++     * forward list uses a variant of HM-list algorithm similar to the one used in
++     * ConcurrentSkipListMap class, but a little simpler. It is also basically
++     * similar to the approach in Edya Ladan-Mozes and Nir Shavit "An Optimistic
++     * Approach to Lock-Free FIFO Queues" in DISC04.
++     *
++     * Quoting a summary in Paul Martin's tech report:
++     *
++     * All cleanups work to maintain these invariants: (1) forward pointers are the
++     * ground truth. (2) forward pointers to dead nodes can be improved by swinging
++     * them further forward around the dead node. (2.1) forward pointers are still
++     * correct when pointing to dead nodes, and forward pointers from dead nodes are
++     * left as they were when the node was deleted. (2.2) multiple dead nodes may
++     * point forward to the same node. (3) backward pointers were correct when they
++     * were installed (3.1) backward pointers are correct when pointing to any node
++     * which points forward to them, but since more than one forward pointer may
++     * point to them, the live one is best. (4) backward pointers that are out of
++     * date due to deletion point to a deleted node, and need to point further back
++     * until they point to the live node that points to their source. (5) backward
++     * pointers that are out of date due to insertion point too far backwards, so
++     * shortening their scope (by searching forward) fixes them. (6) backward
++     * pointers from a dead node cannot be "improved" since there may be no live
++     * node pointing forward to their origin. (However, it does no harm to try to
++     * improve them while racing with a deletion.)
++     *
++     *
++     * Notation guide for local variables n, b, f : a node, its predecessor, and
++     * successor s : some other successor
++     */
++
++    // Minor convenience utilities
++
++    /**
++     * Returns true if given reference is non-null and isn't a header, trailer, or
++     * marker.
++     *
++     * @param n (possibly null) node
++     * @return true if n exists as a user node
++     */
++    private static boolean usable(Node<?> n) {
++        return n != null && !n.isSpecial();
++    }
++
++    /**
++     * Throws NullPointerException if argument is null
++     *
++     * @param v the element
++     */
++    private static void checkNullArg(Object v) {
++        if (v == null)
++            throw new NullPointerException();
++    }
++
++    /**
++     * Returns element unless it is null, in which case throws
++     * NoSuchElementException.
++     *
++     * @param v the element
++     * @return the element
++     */
++    private E screenNullResult(E v) {
++        if (v == null)
++            throw new NoSuchElementException();
++        return v;
++    }
++
++    /**
++     * Creates an array list and fills it with elements of this list. Used by
++     * toArray.
++     *
++     * @return the arrayList
++     */
++    private ArrayList<E> toArrayList() {
++        ArrayList<E> c = new ArrayList<E>();
++        for (Node<E> n = header.forward(); n != null; n = n.forward())
++            c.add(n.element);
++        return c;
++    }
++
++    // Fields and constructors
++
++    private static final long serialVersionUID = 876323262645176354L;
++
++    /**
++     * List header. First usable node is at header.forward().
++     */
++    private final Node<E> header;
++
++    /**
++     * List trailer. Last usable node is at trailer.back().
++     */
++    private final Node<E> trailer;
++
++    /**
++     * Constructs an empty deque.
++     */
++    public ConcurrentDoublyLinkedList() {
++        Node<E> h = new Node<E>(null, null, null);
++        Node<E> t = new Node<E>(null, null, h);
++        h.setNext(t);
++        header = h;
++        trailer = t;
++    }
++
++    /**
++     * Constructs a deque containing the elements of the specified collection, in
++     * the order they are returned by the collection's iterator.
++     *
++     * @param c the collection whose elements are to be placed into this deque.
++     * @throws NullPointerException if <tt>c</tt> or any element within it is
++     *                              <tt>null</tt>
++     */
++    public ConcurrentDoublyLinkedList(Collection<? extends E> c) {
++        this();
++        addAll(c);
++    }
++
++    /**
++     * Prepends the given element at the beginning of this deque.
++     *
++     * @param o the element to be inserted at the beginning of this deque.
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public void addFirst(E o) {
++        checkNullArg(o);
++        while (header.append(o) == null)
++            ;
++    }
++
++    /**
++     * Appends the given element to the end of this deque. This is identical in
++     * function to the <tt>add</tt> method.
++     *
++     * @param o the element to be inserted at the end of this deque.
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public void addLast(E o) {
++        checkNullArg(o);
++        while (trailer.prepend(o) == null)
++            ;
++    }
++
++    /**
++     * Prepends the given element at the beginning of this deque.
++     *
++     * @param o the element to be inserted at the beginning of this deque.
++     * @return <tt>true</tt> always
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public boolean offerFirst(E o) {
++        addFirst(o);
++        return true;
++    }
++
++    /**
++     * Appends the given element to the end of this deque. (Identical in function to
++     * the <tt>add</tt> method; included only for consistency.)
++     *
++     * @param o the element to be inserted at the end of this deque.
++     * @return <tt>true</tt> always
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public boolean offerLast(E o) {
++        addLast(o);
++        return true;
++    }
++
++    /**
++     * Retrieves, but does not remove, the first element of this deque, or returns
++     * null if this deque is empty.
++     *
++     * @return the first element of this queue, or <tt>null</tt> if empty.
++     */
++    public E peekFirst() {
++        Node<E> n = header.successor();
++        return (n == null) ? null : n.element;
++    }
++
++    /**
++     * Retrieves, but does not remove, the last element of this deque, or returns
++     * null if this deque is empty.
++     *
++     * @return the last element of this deque, or <tt>null</tt> if empty.
++     */
++    public E peekLast() {
++        Node<E> n = trailer.predecessor();
++        return (n == null) ? null : n.element;
++    }
++
++    /**
++     * Returns the first element in this deque.
++     *
++     * @return the first element in this deque.
++     * @throws NoSuchElementException if this deque is empty.
++     */
++    public E getFirst() {
++        return screenNullResult(peekFirst());
++    }
++
++    /**
++     * Returns the last element in this deque.
++     *
++     * @return the last element in this deque.
++     * @throws NoSuchElementException if this deque is empty.
++     */
++    public E getLast() {
++        return screenNullResult(peekLast());
++    }
++
++    /**
++     * Retrieves and removes the first element of this deque, or returns null if
++     * this deque is empty.
++     *
++     * @return the first element of this deque, or <tt>null</tt> if empty.
++     */
++    public E pollFirst() {
++        for (;;) {
++            Node<E> n = header.successor();
++            if (!usable(n))
++                return null;
++            if (n.delete())
++                return n.element;
++        }
++    }
++
++    /**
++     * Retrieves and removes the last element of this deque, or returns null if this
++     * deque is empty.
++     *
++     * @return the last element of this deque, or <tt>null</tt> if empty.
++     */
++    public E pollLast() {
++        for (;;) {
++            Node<E> n = trailer.predecessor();
++            if (!usable(n))
++                return null;
++            if (n.delete())
++                return n.element;
++        }
++    }
++
++    /**
++     * Removes and returns the first element from this deque.
++     *
++     * @return the first element from this deque.
++     * @throws NoSuchElementException if this deque is empty.
++     */
++    public E removeFirst() {
++        return screenNullResult(pollFirst());
++    }
++
++    /**
++     * Removes and returns the last element from this deque.
++     *
++     * @return the last element from this deque.
++     * @throws NoSuchElementException if this deque is empty.
++     */
++    public E removeLast() {
++        return screenNullResult(pollLast());
++    }
++
++    // *** Queue and stack methods ***
++    public boolean offer(E e) {
++        return offerLast(e);
++    }
++
++    public boolean add(E e) {
++        return offerLast(e);
++    }
++
++    public E poll() {
++        return pollFirst();
++    }
++
++    public E remove() {
++        return removeFirst();
++    }
++
++    public E peek() {
++        return peekFirst();
++    }
++
++    public E element() {
++        return getFirst();
++    }
++
++    public void push(E e) {
++        addFirst(e);
++    }
++
++    public E pop() {
++        return removeFirst();
++    }
++
++    /**
++     * Removes the first element <tt>e</tt> such that <tt>o.equals(e)</tt>, if such
++     * an element exists in this deque. If the deque does not contain the element,
++     * it is unchanged.
++     *
++     * @param o element to be removed from this deque, if present.
++     * @return <tt>true</tt> if the deque contained the specified element.
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public boolean removeFirstOccurrence(Object o) {
++        checkNullArg(o);
++        for (;;) {
++            Node<E> n = header.forward();
++            for (;;) {
++                if (n == null)
++                    return false;
++                if (o.equals(n.element)) {
++                    if (n.delete())
++                        return true;
++                    else
++                        break; // restart if interference
++                }
++                n = n.forward();
++            }
++        }
++    }
++
++    /**
++     * Removes the last element <tt>e</tt> such that <tt>o.equals(e)</tt>, if such
++     * an element exists in this deque. If the deque does not contain the element,
++     * it is unchanged.
++     *
++     * @param o element to be removed from this deque, if present.
++     * @return <tt>true</tt> if the deque contained the specified element.
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public boolean removeLastOccurrence(Object o) {
++        checkNullArg(o);
++        for (;;) {
++            Node<E> s = trailer;
++            for (;;) {
++                Node<E> n = s.back();
++                if (s.isDeleted() || (n != null && n.successor() != s))
++                    break; // restart if pred link is suspect.
++                if (n == null)
++                    return false;
++                if (o.equals(n.element)) {
++                    if (n.delete())
++                        return true;
++                    else
++                        break; // restart if interference
++                }
++                s = n;
++            }
++        }
++    }
++
++    /**
++     * Returns <tt>true</tt> if this deque contains at least one element <tt>e</tt>
++     * such that <tt>o.equals(e)</tt>.
++     *
++     * @param o element whose presence in this deque is to be tested.
++     * @return <tt>true</tt> if this deque contains the specified element.
++     */
++    public boolean contains(Object o) {
++        if (o == null)
++            return false;
++        for (Node<E> n = header.forward(); n != null; n = n.forward())
++            if (o.equals(n.element))
++                return true;
++        return false;
++    }
++
++    /**
++     * Returns <tt>true</tt> if this collection contains no elements.
++     * <p>
++     *
++     * @return <tt>true</tt> if this collection contains no elements.
++     */
++    public boolean isEmpty() {
++        return !usable(header.successor());
++    }
++
++    /**
++     * Returns the number of elements in this deque. If this deque contains more
++     * than <tt>Integer.MAX_VALUE</tt> elements, it returns
++     * <tt>Integer.MAX_VALUE</tt>.
++     *
++     * <p>
++     * Beware that, unlike in most collections, this method is <em>NOT</em> a
++     * constant-time operation. Because of the asynchronous nature of these deques,
++     * determining the current number of elements requires traversing them all to
++     * count them. Additionally, it is possible for the size to change during
++     * execution of this method, in which case the returned result will be
++     * inaccurate. Thus, this method is typically not very useful in concurrent
++     * applications.
++     *
++     * @return the number of elements in this deque.
++     */
++    public int size() {
++        long count = 0;
++        for (Node<E> n = header.forward(); n != null; n = n.forward())
++            ++count;
++        return (count >= Integer.MAX_VALUE) ? Integer.MAX_VALUE : (int) count;
++    }
++
++    /**
++     * Removes the first element <tt>e</tt> such that <tt>o.equals(e)</tt>, if such
++     * an element exists in this deque. If the deque does not contain the element,
++     * it is unchanged.
++     *
++     * @param o element to be removed from this deque, if present.
++     * @return <tt>true</tt> if the deque contained the specified element.
++     * @throws NullPointerException if the specified element is <tt>null</tt>
++     */
++    public boolean remove(Object o) {
++        return removeFirstOccurrence(o);
++    }
++
++    /**
++     * Appends all of the elements in the specified collection to the end of this
++     * deque, in the order that they are returned by the specified collection's
++     * iterator. The behavior of this operation is undefined if the specified
++     * collection is modified while the operation is in progress. (This implies that
++     * the behavior of this call is undefined if the specified Collection is this
++     * deque, and this deque is nonempty.)
++     *
++     * @param c the elements to be inserted into this deque.
++     * @return <tt>true</tt> if this deque changed as a result of the call.
++     * @throws NullPointerException if <tt>c</tt> or any element within it is
++     *                              <tt>null</tt>
++     */
++    public boolean addAll(Collection<? extends E> c) {
++        Iterator<? extends E> it = c.iterator();
++        if (!it.hasNext())
++            return false;
++        do {
++            addLast(it.next());
++        } while (it.hasNext());
++        return true;
++    }
++
++    /**
++     * Removes all of the elements from this deque.
++     */
++    public void clear() {
++        while (pollFirst() != null)
++            ;
++    }
++
++    /**
++     * Returns an array containing all of the elements in this deque in the correct
++     * order.
++     *
++     * @return an array containing all of the elements in this deque in the correct
++     *         order.
++     */
++    public Object[] toArray() {
++        return toArrayList().toArray();
++    }
++
++    /**
++     * Returns an array containing all of the elements in this deque in the correct
++     * order; the runtime type of the returned array is that of the specified array.
++     * If the deque fits in the specified array, it is returned therein. Otherwise,
++     * a new array is allocated with the runtime type of the specified array and the
++     * size of this deque.
++     * <p>
++     *
++     * If the deque fits in the specified array with room to spare (i.e., the array
++     * has more elements than the deque), the element in the array immediately
++     * following the end of the collection is set to null. This is useful in
++     * determining the length of the deque <i>only</i> if the caller knows that the
++     * deque does not contain any null elements.
++     *
++     * @param a the array into which the elements of the deque are to be stored, if
++     *          it is big enough; otherwise, a new array of the same runtime type is
++     *          allocated for this purpose.
++     * @return an array containing the elements of the deque.
++     * @throws ArrayStoreException  if the runtime type of a is not a supertype of
++     *                              the runtime type of every element in this deque.
++     * @throws NullPointerException if the specified array is null.
++     */
++    public <T> T[] toArray(T[] a) {
++        return toArrayList().toArray(a);
++    }
++
++    /**
++     * Returns a weakly consistent iterator over the elements in this deque, in
++     * first-to-last order. The <tt>next</tt> method returns elements reflecting the
++     * state of the deque at some point at or since the creation of the iterator.
++     * The method does <em>not</em> throw {@link ConcurrentModificationException},
++     * and may proceed concurrently with other operations.
++     *
++     * @return an iterator over the elements in this deque
++     */
++    public Iterator<E> iterator() {
++        return new CLDIterator();
++    }
++
++    final class CLDIterator implements Iterator<E> {
++        Node<E> last;
++
++        Node<E> next = header.forward();
++
++        public boolean hasNext() {
++            return next != null;
++        }
++
++        public E next() {
++            Node<E> l = last = next;
++            if (l == null)
++                throw new NoSuchElementException();
++            next = next.forward();
++            return l.element;
++        }
++
++        public void remove() {
++            Node<E> l = last;
++            if (l == null)
++                throw new IllegalStateException();
++            while (!l.delete() && !l.isDeleted())
++                ;
++        }
++    }
++
++    @Override
++    public boolean addAll(int index, Collection<? extends E> c) {
++        throw new NotImplementedException("TODO");
++    }
++
++    @Override
++    public E get(int index) {
++        Node<E> current = header.successor();
++        if (current == null) {
++            throw new IndexOutOfBoundsException();
++        }
++        for (; index > 0; index --) {
++            current = current.successor();
++            if (current == null) {
++                throw new IndexOutOfBoundsException();
++            }
++        }
++        return current.element;
++    }
++
++    @Override
++    public E set(int index, E element) {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public void add(int index, E element) {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public E remove(int index) {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public int indexOf(Object o) {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public int lastIndexOf(Object o) {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public ListIterator<E> listIterator() {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public ListIterator<E> listIterator(int index) {
++        throw new NotImplementedException("INVALID");
++    }
++
++    @Override
++    public List<E> subList(int fromIndex, int toIndex) {
++        throw new NotImplementedException("INVALID");
++    }
++
++}
++
++/**
++ * Linked Nodes. As a minor efficiency hack, this class opportunistically
++ * inherits from AtomicReference, with the atomic ref used as the "next" link.
++ *
++ * Nodes are in doubly-linked lists. There are three kinds of special nodes,
++ * distinguished by: * The list header has a null prev link * The list trailer
++ * has a null next link * A deletion marker has a prev link pointing to itself.
++ * All three kinds of special nodes have null element fields.
++ *
++ * Regular nodes have non-null element, next, and prev fields. To avoid visible
++ * inconsistencies when deletions overlap element replacement, replacements are
++ * done by replacing the node, not just setting the element.
++ *
++ * Nodes can be traversed by read-only ConcurrentLinkedDeque class operations
++ * just by following raw next pointers, so long as they ignore any special nodes
++ * seen along the way. (This is automated in method forward.) However, traversal
++ * using prev pointers is not guaranteed to see all live nodes since a prev
++ * pointer of a deleted node can become unrecoverably stale.
++ */
++
++class Node<E> extends AtomicReference<Node<E>> {
++
++    private static final long serialVersionUID = 6640557564507962862L;
++
++    private volatile Node<E> prev;
++
++    final E element;
++
++    /** Creates a node with given contents */
++    Node(E element, Node<E> next, Node<E> prev) {
++        super(next);
++        this.prev = prev;
++        this.element = element;
++    }
++
++    /** Creates a marker node with given successor */
++    Node(Node<E> next) {
++        super(next);
++        this.prev = this;
++        this.element = null;
++    }
++
++    /**
++     * Gets next link (which is actually the value held as atomic reference).
++     */
++    private Node<E> getNext() {
++        return get();
++    }
++
++    /**
++     * Sets next link
++     *
++     * @param n the next node
++     */
++    void setNext(Node<E> n) {
++        set(n);
++    }
++
++    /**
++     * compareAndSet next link
++     */
++    private boolean casNext(Node<E> cmp, Node<E> val) {
++        return compareAndSet(cmp, val);
++    }
++
++    /**
++     * Gets prev link
++     */
++    private Node<E> getPrev() {
++        return prev;
++    }
++
++    /**
++     * Sets prev link
++     *
++     * @param b the previous node
++     */
++    void setPrev(Node<E> b) {
++        prev = b;
++    }
++
++    /**
++     * Returns true if this is a header, trailer, or marker node
++     */
++    boolean isSpecial() {
++        return element == null;
++    }
++
++    /**
++     * Returns true if this is a trailer node
++     */
++    boolean isTrailer() {
++        return getNext() == null;
++    }
++
++    /**
++     * Returns true if this is a header node
++     */
++    boolean isHeader() {
++        return getPrev() == null;
++    }
++
++    /**
++     * Returns true if this is a marker node
++     */
++    boolean isMarker() {
++        return getPrev() == this;
++    }
++
++    /**
++     * Returns true if this node is followed by a marker, meaning that it is
++     * deleted.
++     *
++     * @return true if this node is deleted
++     */
++    boolean isDeleted() {
++        Node<E> f = getNext();
++        return f != null && f.isMarker();
++    }
++
++    /**
++     * Returns next node, ignoring deletion marker
++     */
++    private Node<E> nextNonmarker() {
++        Node<E> f = getNext();
++        return (f == null || !f.isMarker()) ? f : f.getNext();
++    }
++
++    /**
++     * Returns the next non-deleted node, swinging next pointer around any
++     * encountered deleted nodes, and also patching up successor''s prev link to
++     * point back to this. Returns null if this node is trailer so has no successor.
++     *
++     * @return successor, or null if no such
++     */
++    Node<E> successor() {
++        Node<E> f = nextNonmarker();
++        for (;;) {
++            if (f == null)
++                return null;
++            if (!f.isDeleted()) {
++                if (f.getPrev() != this && !isDeleted())
++                    f.setPrev(this); // relink f's prev
++                return f;
++            }
++            Node<E> s = f.nextNonmarker();
++            if (f == getNext())
++                casNext(f, s); // unlink f
++            f = s;
++        }
++    }
++
++    /**
++     * Returns the apparent predecessor of target by searching forward for it
++     * starting at this node, patching up pointers while traversing. Used by
++     * predecessor().
++     *
++     * @return target's predecessor, or null if not found
++     */
++    private Node<E> findPredecessorOf(Node<E> target) {
++        Node<E> n = this;
++        for (;;) {
++            Node<E> f = n.successor();
++            if (f == target)
++                return n;
++            if (f == null)
++                return null;
++            n = f;
++        }
++    }
++
++    /**
++     * Returns the previous non-deleted node, patching up pointers as needed.
++     * Returns null if this node is header so has no successor. May also return null
++     * if this node is deleted, so doesn't have a distinct predecessor.
++     *
++     * @return predecessor or null if not found
++     */
++    Node<E> predecessor() {
++        Node<E> n = this;
++        for (;;) {
++            Node<E> b = n.getPrev();
++            if (b == null)
++                return n.findPredecessorOf(this);
++            Node<E> s = b.getNext();
++            if (s == this)
++                return b;
++            if (s == null || !s.isMarker()) {
++                Node<E> p = b.findPredecessorOf(this);
++                if (p != null)
++                    return p;
++            }
++            n = b;
++        }
++    }
++
++    /**
++     * Returns the next node containing a nondeleted user element. Use for forward
++     * list traversal.
++     *
++     * @return successor, or null if no such
++     */
++    Node<E> forward() {
++        Node<E> f = successor();
++        return (f == null || f.isSpecial()) ? null : f;
++    }
++
++    /**
++     * Returns previous node containing a nondeleted user element, if possible. Use
++     * for backward list traversal, but beware that if this method is called from a
++     * deleted node, it might not be able to determine a usable predecessor.
++     *
++     * @return predecessor, or null if no such could be found
++     */
++    Node<E> back() {
++        Node<E> f = predecessor();
++        return (f == null || f.isSpecial()) ? null : f;
++    }
++
++    /**
++     * Tries to insert a node holding element as successor, failing if this node is
++     * deleted.
++     *
++     * @param element the element
++     * @return the new node, or null on failure.
++     */
++    Node<E> append(E element) {
++        for (;;) {
++            Node<E> f = getNext();
++            if (f == null || f.isMarker())
++                return null;
++            Node<E> x = new Node<E>(element, f, this);
++            if (casNext(f, x)) {
++                f.setPrev(x); // optimistically link
++                return x;
++            }
++        }
++    }
++
++    /**
++     * Tries to insert a node holding element as predecessor, failing if no live
++     * predecessor can be found to link to.
++     *
++     * @param element the element
++     * @return the new node, or null on failure.
++     */
++    Node<E> prepend(E element) {
++        for (;;) {
++            Node<E> b = predecessor();
++            if (b == null)
++                return null;
++            Node<E> x = new Node<E>(element, this, b);
++            if (b.casNext(this, x)) {
++                setPrev(x); // optimistically link
++                return x;
++            }
++        }
++    }
++
++    /**
++     * Tries to mark this node as deleted, failing if already deleted or if this
++     * node is header or trailer
++     *
++     * @return true if successful
++     */
++    boolean delete() {
++        Node<E> b = getPrev();
++        Node<E> f = getNext();
++        if (b != null && f != null && !f.isMarker() && casNext(f, new Node<E>(f))) {
++            if (b.casNext(this, f))
++                f.setPrev(b);
++            return true;
++        }
++        return false;
++    }
++
++    /**
++     * Tries to insert a node holding element to replace this node. failing if
++     * already deleted.
++     *
++     * @param newElement the new element
++     * @return the new node, or null on failure.
++     */
++    Node<E> replace(E newElement) {
++        for (;;) {
++            Node<E> b = getPrev();
++            Node<E> f = getNext();
++            if (b == null || f == null || f.isMarker())
++                return null;
++            Node<E> x = new Node<E>(newElement, f, b);
++            if (casNext(f, new Node<E>(x))) {
++                b.successor(); // to relink b
++                x.successor(); // to relink f
++                return x;
++            }
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentLongLinkedOpenHashSet.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentLongLinkedOpenHashSet.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..586b3c87dcf010e2401933c5ec2338f59b9edad3
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentLongLinkedOpenHashSet.java
+@@ -0,0 +1,230 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.longs.*;
++
++import java.util.Collection;
++import java.util.Iterator;
++import java.util.concurrent.ConcurrentSkipListSet;
++
++public class ConcurrentLongLinkedOpenHashSet extends LongLinkedOpenHashSet {
++
++    private static final long serialVersionUID = -5532128240738069111L;
++
++    private final ConcurrentSkipListSet<Long> backing;
++
++    public ConcurrentLongLinkedOpenHashSet() {
++        //backing = new ConcurrentLinkedDeque<Long>();
++        backing = new ConcurrentSkipListSet<Long>();
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final int initial) {
++        //backing = new ConcurrentLinkedDeque<Long>();
++        backing = new ConcurrentSkipListSet<Long>();
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final int initial, final float dnc) {
++        this(initial);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final LongCollection c) {
++        this(c.size());
++        addAll(c);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final LongCollection c, final float f) {
++        this(c.size(), f);
++        addAll(c);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final LongIterator i, final float f) {
++        this(16, f);
++        while (i.hasNext())
++            add(i.nextLong());
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final LongIterator i) {
++        this(i, -1);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final Iterator<?> i, final float f) {
++        this(LongIterators.asLongIterator(i), f);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final Iterator<?> i) {
++        this(LongIterators.asLongIterator(i));
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final long[] a, final int offset, final int length, final float f) {
++        this(length < 0 ? 0 : length, f);
++        LongArrays.ensureOffsetLength(a, offset, length);
++        for (int i = 0; i < length; i++)
++            add(a[offset + i]);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final long[] a, final int offset, final int length) {
++        this(a, offset, length, DEFAULT_LOAD_FACTOR);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final long[] a, final float f) {
++        this(a, 0, a.length, f);
++    }
++
++    public ConcurrentLongLinkedOpenHashSet(final long[] a) {
++        this(a, -1);
++    }
++
++    @Override
++    public boolean add(final long k) {
++        boolean out = backing.add(k);
++		/*
++		if (!firstDef) {
++			first = k;
++			firstDef = true;
++		}
++		last = k;
++		*/
++        return out;
++    }
++
++    @Override
++    public boolean addAll(LongCollection c) {
++        return addAll((Collection<Long>) c);
++    }
++
++    @Override
++    public boolean addAll(Collection<? extends Long> c) {
++        return backing.addAll(c);
++    }
++
++    @Override
++    public boolean addAndMoveToFirst(final long k) {
++        boolean out = backing.add(k);
++        //first = k;
++        return out;
++    }
++
++    @Override
++    public boolean addAndMoveToLast(final long k) {
++        boolean out = backing.add(k);
++        //last = k;
++        return out;
++    }
++
++    @Override
++    public void clear() {
++        backing.clear();
++    }
++
++    @Override
++    public LongLinkedOpenHashSet clone() {
++        return new ConcurrentLongLinkedOpenHashSet(backing.iterator());
++    }
++
++    @Override
++    public LongComparator comparator() {
++        return null;
++    }
++
++    @Override
++    public boolean contains(final long k) {
++        return backing.contains(k);
++    }
++
++    @Override
++    public long firstLong() {
++		/*
++		if (backing.size() == 0) throw new NoSuchElementException();
++		return first;
++		*/
++        return backing.first();
++    }
++
++    @Override
++    public int hashCode() {
++        return backing.hashCode();
++    }
++
++    @Override
++    public LongSortedSet headSet(long to) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public LongListIterator iterator() {
++        return FastUtilHackUtil.wrap(backing.iterator());
++    }
++
++    @Override
++    public LongListIterator iterator(long from) {
++        throw new IllegalStateException();
++        //return FastUtilHackUtil.wrap(backing.iterator());
++    }
++
++    @Override
++    public long lastLong() {
++		/*
++		if (backing.size() == 0) throw new NoSuchElementException();
++		return last;
++		*/
++        return backing.last();
++    }
++
++    @Override
++    public boolean remove(final long k) {
++		/*
++		if (k == first) {
++			first = backing.iterator().next();
++		}
++		if (k == last) {
++			last = backing.iterator().next();
++		}
++		*/
++        return backing.remove(k);
++    }
++
++    @Override
++    public long removeFirstLong() {
++        long fl = this.firstLong();
++        this.remove(fl);
++        //first = backing.iterator().next();
++        return fl;
++    }
++
++    @Override
++    public long removeLastLong() {
++        long fl = this.lastLong();
++        this.remove(fl);
++        //last = backing.iterator().next();
++        return fl;
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public LongSortedSet subSet(long from, long to) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public LongSortedSet tailSet(long from) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public boolean trim() {
++        return true;
++    }
++
++    @Override
++    public boolean trim(final int n) {
++        return true;
++    }
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentLongSortedSet.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentLongSortedSet.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..93bd066ec2013e42a85fcf21344fe41f3ad69598
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentLongSortedSet.java
+@@ -0,0 +1,144 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.longs.*;
++import org.jetbrains.annotations.NotNull;
++
++import java.util.Collection;
++import java.util.concurrent.ConcurrentSkipListSet;
++
++public class ConcurrentLongSortedSet implements LongSortedSet {
++
++    ConcurrentSkipListSet<Long> back = new ConcurrentSkipListSet<>();
++
++    @Override
++    public LongBidirectionalIterator iterator(long fromElement) {
++        return null;
++    }
++
++    @Override
++    public int size() {
++        return back.size();
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return back.isEmpty();
++    }
++
++    @Override
++    public LongBidirectionalIterator iterator() {
++        return null;
++    }
++
++    @NotNull
++    @Override
++    public Object[] toArray() {
++        return back.toArray();
++    }
++
++    @NotNull
++    @Override
++    public <T> T[] toArray(@NotNull T[] ts) {
++        return null;
++    }
++
++    @Override
++    public boolean containsAll(@NotNull Collection<?> collection) {
++        return back.containsAll(collection);
++    }
++
++    @Override
++    public boolean addAll(@NotNull Collection<? extends Long> collection) {
++        return back.addAll(collection);
++    }
++
++    @Override
++    public boolean removeAll(@NotNull Collection<?> collection) {
++        return back.removeAll(collection);
++    }
++
++    @Override
++    public boolean retainAll(@NotNull Collection<?> collection) {
++        return back.retainAll(collection);
++    }
++
++    @Override
++    public void clear() {
++        back.clear();
++    }
++
++    @Override
++    public boolean add(long key) {
++        return back.add(key);
++    }
++
++    @Override
++    public boolean contains(long key) {
++        return back.contains(key);
++    }
++
++    @Override
++    public long[] toLongArray() {
++        return new long[0];
++    }
++
++    @Override
++    public long[] toArray(long[] a) {
++        return new long[0];
++    }
++
++    @Override
++    public boolean addAll(LongCollection c) {
++        return back.addAll(c);
++    }
++
++    @Override
++    public boolean containsAll(LongCollection c) {
++        return back.containsAll(c);
++    }
++
++    @Override
++    public boolean removeAll(LongCollection c) {
++        return back.removeAll(c);
++    }
++
++    @Override
++    public boolean retainAll(LongCollection c) {
++        return back.retainAll(c);
++    }
++
++    @Override
++    public boolean remove(long k) {
++        return back.remove(k);
++    }
++
++    @Override
++    public LongSortedSet subSet(long fromElement, long toElement) {
++        return new LongAVLTreeSet(back.subSet(fromElement,toElement));
++    }
++
++    @Override
++    public LongSortedSet headSet(long toElement) {
++        return new LongAVLTreeSet(back.headSet(toElement));
++    }
++
++    @Override
++    public LongSortedSet tailSet(long fromElement) {
++        return new LongAVLTreeSet(back.tailSet(fromElement));
++    }
++
++    @Override
++    public LongComparator comparator() {
++        return null;
++    }
++
++    @Override
++    public long firstLong() {
++        return back.first();
++    }
++
++    @Override
++    public long lastLong() {
++        return back.last();
++    }
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentShortHashSet.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentShortHashSet.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff1a4f87356459d3bc990a77c3081932046da5b1
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/ConcurrentShortHashSet.java
+@@ -0,0 +1,112 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.shorts.ShortCollection;
++import it.unimi.dsi.fastutil.shorts.ShortIterator;
++import it.unimi.dsi.fastutil.shorts.ShortSet;
++import org.jetbrains.annotations.NotNull;
++
++import java.util.Collection;
++import java.util.concurrent.ConcurrentHashMap;
++
++public class ConcurrentShortHashSet implements ShortSet {
++
++    ConcurrentHashMap.KeySetView<Short, Boolean> backing = ConcurrentHashMap.newKeySet();
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public ShortIterator iterator() {
++        return new FastUtilHackUtil.WrappingShortIterator(backing.iterator());
++    }
++
++    @NotNull
++    @Override
++    public Object[] toArray() {
++        return backing.toArray();
++    }
++
++    @NotNull
++    @Override
++    public <T> T[] toArray(@NotNull T[] ts) {
++        return (T[]) backing.toArray();
++    }
++
++    @Override
++    public boolean containsAll(@NotNull Collection<?> collection) {
++        return backing.containsAll(collection);
++    }
++
++    @Override
++    public boolean addAll(@NotNull Collection<? extends Short> collection) {
++        return backing.addAll(collection);
++    }
++
++    @Override
++    public boolean removeAll(@NotNull Collection<?> collection) {
++        return backing.removeAll(collection);
++    }
++
++    @Override
++    public boolean retainAll(@NotNull Collection<?> collection) {
++        return backing.retainAll(collection);
++    }
++
++    @Override
++    public void clear() {
++        backing.clear();
++
++    }
++
++    @Override
++    public boolean add(short key) {
++        return backing.add(key);
++    }
++
++    @Override
++    public boolean contains(short key) {
++        return backing.contains(key);
++    }
++
++    @Override
++    public short[] toShortArray() {
++        return new short[0];
++    }
++
++    @Override
++    public short[] toArray(short[] a) {
++        return new short[0];
++    }
++
++    @Override
++    public boolean addAll(ShortCollection c) {
++        return backing.addAll(c);
++    }
++
++    @Override
++    public boolean containsAll(ShortCollection c) {
++        return backing.containsAll(c);
++    }
++
++    @Override
++    public boolean removeAll(ShortCollection c) {
++        return backing.removeAll(c);
++    }
++
++    @Override
++    public boolean retainAll(ShortCollection c) {
++        return backing.retainAll(c);
++    }
++
++    @Override
++    public boolean remove(short k) {
++        return backing.remove(k);
++    }
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/FastUtilHackUtil.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/FastUtilHackUtil.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ca1fd9ca6f5c5d5d4a0f374440ccaf80347fb781
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/FastUtilHackUtil.java
+@@ -0,0 +1,1678 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.bytes.ByteCollection;
++import it.unimi.dsi.fastutil.bytes.ByteIterator;
++import it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry;
++import it.unimi.dsi.fastutil.ints.IntCollection;
++import it.unimi.dsi.fastutil.ints.IntIterator;
++import it.unimi.dsi.fastutil.ints.IntSet;
++import it.unimi.dsi.fastutil.longs.*;
++import it.unimi.dsi.fastutil.objects.ObjectCollection;
++import it.unimi.dsi.fastutil.objects.ObjectIterator;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++import it.unimi.dsi.fastutil.shorts.ShortIterator;
++import org.apache.commons.lang3.ArrayUtils;
++
++import java.util.*;
++import java.util.function.Function;
++import java.util.stream.Collectors;
++
++public class FastUtilHackUtil {
++
++    public static class ConvertingObjectSet<E, T> implements ObjectSet<T> {
++
++        Set<E> backing;
++        Function<E, T> forward;
++        Function<T, E> back;
++
++        public ConvertingObjectSet(Set<E> backing, Function<E, T> forward, Function<T, E> back) {
++            this.backing = backing;
++            this.forward = forward;
++            this.back = back;
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean contains(Object o) {
++            try {
++                return backing.contains(back.apply((T) o));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.stream().map(forward).toArray();
++        }
++
++        @Override
++        public <R> R[] toArray(R[] a) {
++            return backing.stream().map(forward).collect(Collectors.toSet()).toArray(a);
++        }
++
++        @Override
++        public boolean add(T e) {
++            return backing.add(back.apply(e));
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean remove(Object o) {
++            try {
++                return backing.remove(back.apply((T) o));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            try {
++                return backing.containsAll(c.stream().map(i -> back.apply((T) i)).collect(Collectors.toSet()));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends T> c) {
++            return backing.addAll(c.stream().map(i -> back.apply(i)).collect(Collectors.toSet()));
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            try {
++                return backing.removeAll(c.stream().map(i -> back.apply((T) i)).collect(Collectors.toSet()));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            try {
++                return backing.retainAll(c.stream().map(i -> back.apply((T) i)).collect(Collectors.toSet()));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++
++        }
++
++        @Override
++        public ObjectIterator<T> iterator() {
++            final Iterator<E> backg = backing.iterator();
++            return new ObjectIterator<T>() {
++
++                @Override
++                public boolean hasNext() {
++                    return backg.hasNext();
++                }
++
++                @Override
++                public T next() {
++                    return forward.apply(backg.next());
++                }
++
++                @Override
++                public void remove() {
++                    backg.remove();
++                }
++            };
++        }
++
++
++    }
++
++    public static class ConvertingObjectSetFast<E,T> implements Long2ObjectMap.FastEntrySet<T> {
++
++        Set<E> backing;
++        Function<E, Long2ObjectMap.Entry<T>> forward;
++        Function<Long2ObjectMap.Entry<T>, E> back;
++
++        public ConvertingObjectSetFast(Set<E> backing,
++                                       Function<E, Long2ObjectMap.Entry<T>> forward,
++                                       Function<Long2ObjectMap.Entry<T>, E> back) {
++            this.backing = backing;
++            this.forward = forward;
++            this.back = back;
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean contains(Object o) {
++            try {
++                return backing.contains(back.apply((Long2ObjectMap.Entry<T>)o));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.stream().map(forward).toArray();
++        }
++
++        @Override
++        public <R> R[] toArray(R[] a) {
++            return backing.stream().map(forward).collect(Collectors.toSet()).toArray(a);
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean remove(Object o) {
++            try {
++                return backing.remove(back.apply((Long2ObjectMap.Entry<T>)o));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            try {
++                return backing.containsAll(c.stream()
++                        .map(i -> back.apply((Long2ObjectMap.Entry<T>) i))
++                        .collect(Collectors.toSet()));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            try {
++                return backing.removeAll(c.stream().map(i -> back
++                                .apply((Long2ObjectMap.Entry<T>) i))
++                        .collect(Collectors.toSet()));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @SuppressWarnings("unchecked")
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            try {
++                return backing.retainAll(c.stream()
++                        .map(i -> back.apply((Long2ObjectMap.Entry<T>) i))
++                        .collect(Collectors.toSet()));
++            } catch (ClassCastException cce) {
++                return false;
++            }
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++
++        }
++
++        @Override
++        public ObjectIterator<Long2ObjectMap.Entry<T>> iterator() {
++            final Iterator<E> backg = backing.iterator();
++            return new ObjectIterator<Long2ObjectMap.Entry<T>>() {
++
++                @Override
++                public boolean hasNext() {
++                    return backg.hasNext();
++                }
++
++                @Override
++                public Long2ObjectMap.Entry<T> next() {
++                    return forward.apply(backg.next());
++                }
++
++                @Override
++                public void remove() {
++                    backg.remove();
++                }
++            };
++        }
++
++        @Override
++        public boolean add(Long2ObjectMap.Entry<T> e) {
++            return backing.add(back.apply(e));
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Long2ObjectMap.Entry<T>> c) {
++            return backing.addAll(c.stream().map(back).collect(Collectors.toList()));
++        }
++
++        @Override
++        public ObjectIterator<Long2ObjectMap.Entry<T>> fastIterator() {
++            return iterator();
++        }
++
++
++    }
++
++    private static <T> Entry<T> intEntryForwards(Map.Entry<Integer, T> entry) {
++        return new Entry<T>() {
++
++            @Override
++            public T getValue() {
++                return entry.getValue();
++            }
++
++            @Override
++            public T setValue(T value) {
++                return entry.setValue(value);
++            }
++
++            @Override
++            public int getIntKey() {
++                return entry.getKey();
++            }
++
++            @Override
++            public boolean equals(Object obj) {
++                if (obj == entry) {
++                    return true;
++                }
++                return super.equals(obj);
++            }
++
++            @Override
++            public int hashCode() {
++                return entry.hashCode();
++            }
++        };
++    }
++
++    private static <T> Map.Entry<Integer, T> intEntryBackwards(Entry<T> entry) {
++        return entry;
++    }
++
++    private static <T> Long2ObjectMap.Entry<T> longEntryForwards(Map.Entry<Long, T> entry) {
++        return new Long2ObjectMap.Entry<T>() {
++
++            @Override
++            public T getValue() {
++                return entry.getValue();
++            }
++
++            @Override
++            public T setValue(T value) {
++                return entry.setValue(value);
++            }
++
++            @Override
++            public long getLongKey() {
++                return entry.getKey();
++            }
++
++            @Override
++            public boolean equals(Object obj) {
++                if (obj == entry) {
++                    return true;
++                }
++                return super.equals(obj);
++            }
++
++            @Override
++            public int hashCode() {
++                return entry.hashCode();
++            }
++        };
++    }
++
++    private static <T> Map.Entry<Long, T> longEntryBackwards(Long2ObjectMap.Entry<T> entry) {
++        return entry;
++    }
++
++    private static Long2ByteMap.Entry longByteEntryForwards(Map.Entry<Long, Byte> entry) {
++        return new Long2ByteMap.Entry() {
++
++            @Override
++            public Byte getValue() {
++                return entry.getValue();
++            }
++
++            @Override
++            public byte setValue(byte value) {
++                return entry.setValue(value);
++            }
++
++            @Override
++            public byte getByteValue() {
++                return entry.getValue();
++            }
++
++            @Override
++            public long getLongKey() {
++                return entry.getKey();
++            }
++
++            @Override
++            public boolean equals(Object obj) {
++                if (obj == entry) {
++                    return true;
++                }
++                return super.equals(obj);
++            }
++
++            @Override
++            public int hashCode() {
++                return entry.hashCode();
++            }
++
++        };
++    }
++
++    private static <T> Map.Entry<Long, Byte> longByteEntryBackwards(Long2ByteMap.Entry entry) {
++        return entry;
++    }
++
++    private static Long2LongMap.Entry longLongEntryForwards(Map.Entry<Long, Long> entry) {
++        return new Long2LongMap.Entry() {
++
++            @Override
++            public Long getValue() {
++                return entry.getValue();
++            }
++
++            @Override
++            public long setValue(long value) {
++                return entry.setValue(value);
++            }
++
++            @Override
++            public long getLongValue() {
++                return entry.getValue();
++            }
++
++            @Override
++            public long getLongKey() {
++                return entry.getKey();
++            }
++
++            @Override
++            public boolean equals(Object obj) {
++                if (obj == entry) {
++                    return true;
++                }
++                return super.equals(obj);
++            }
++
++            @Override
++            public int hashCode() {
++                return entry.hashCode();
++            }
++
++        };
++    }
++
++    private static <T> Map.Entry<Long, Long> longLongEntryBackwards(Long2LongMap.Entry entry) {
++        return entry;
++    }
++
++    public static <T> ObjectSet<Entry<T>> entrySetIntWrap(Map<Integer, T> map) {
++        return new ConvertingObjectSet<Map.Entry<Integer, T>, Entry<T>>(map.entrySet(), FastUtilHackUtil::intEntryForwards, FastUtilHackUtil::intEntryBackwards);
++    }
++
++    public static <T> ObjectSet<Long2ObjectMap.Entry<T>> entrySetLongWrap(Map<Long, T> map) {
++        return new ConvertingObjectSet<Map.Entry<Long, T>, Long2ObjectMap.Entry<T>>(map.entrySet(), FastUtilHackUtil::longEntryForwards, FastUtilHackUtil::longEntryBackwards);
++    }
++
++    public static <T> Long2ObjectMap.FastEntrySet<T> entrySetLongWrapFast(Map<Long, T> map) {
++        return new ConvertingObjectSetFast<Map.Entry<Long, T>, T>(map.entrySet(), FastUtilHackUtil::longEntryForwards, FastUtilHackUtil::longEntryBackwards);
++    }
++
++    public static ObjectSet<Long2ByteMap.Entry> entrySetLongByteWrap(Map<Long, Byte> map) {
++        return new ConvertingObjectSet<Map.Entry<Long, Byte>, Long2ByteMap.Entry>(map.entrySet(), FastUtilHackUtil::longByteEntryForwards, FastUtilHackUtil::longByteEntryBackwards);
++    }
++
++    public static ObjectSet<Long2LongMap.Entry> entrySetLongLongWrap(Map<Long, Long> map) {
++        return new ConvertingObjectSet<Map.Entry<Long, Long>, Long2LongMap.Entry>(map.entrySet(), FastUtilHackUtil::longLongEntryForwards, FastUtilHackUtil::longLongEntryBackwards);
++    }
++
++
++    static class WrappingIntIterator implements IntIterator {
++
++        Iterator<Integer> backing;
++
++        public WrappingIntIterator(Iterator<Integer> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public boolean hasNext() {
++            return backing.hasNext();
++        }
++
++        @Override
++        public int nextInt() {
++            return backing.next();
++        }
++
++        @Override
++        public Integer next() {
++            return backing.next();
++        }
++
++        @Override
++        public void remove() {
++            backing.remove();
++        }
++
++    }
++
++    static class WrappingLongIterator implements LongIterator {
++
++        Iterator<Long> backing;
++
++        public WrappingLongIterator(Iterator<Long> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public boolean hasNext() {
++            return backing.hasNext();
++        }
++
++        @Override
++        public long nextLong() {
++            return backing.next();
++        }
++
++        @Override
++        public Long next() {
++            return backing.next();
++        }
++
++        @Override
++        public void remove() {
++            backing.remove();
++        }
++
++    }
++
++    static class WrappingShortIterator implements ShortIterator {
++
++        Iterator<Short> backing;
++
++        public WrappingShortIterator(Iterator<Short> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public boolean hasNext() {
++            return backing.hasNext();
++        }
++
++        @Override
++        public short nextShort() {
++            return backing.next();
++        }
++
++        @Override
++        public Short next() {
++            return backing.next();
++        }
++
++        @Override
++        public void remove() {
++            backing.remove();
++        }
++
++    }
++
++    public static class WrappingIntSet implements IntSet {
++
++        Set<Integer> backing;
++
++        public WrappingIntSet(Set<Integer> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public boolean add(int key) {
++            return backing.add(key);
++        }
++
++        @Override
++        public boolean contains(int key) {
++            return backing.contains(key);
++        }
++
++        @Override
++        public int[] toIntArray() {
++            return backing.stream().mapToInt(i -> i).toArray();
++        }
++
++        @Override
++        public int[] toIntArray(int[] a) {
++            if (a.length >= size()) {
++                return null;
++            } else {
++                return toIntArray();
++            }
++        }
++
++        @Override
++        public int[] toArray(int[] a) {
++            return toIntArray(a);
++        }
++
++        @Override
++        public boolean addAll(IntCollection c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean containsAll(IntCollection c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean removeAll(IntCollection c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(IntCollection c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Integer> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public IntIterator iterator() {
++            return new WrappingIntIterator(backing.iterator());
++        }
++
++        @Override
++        public boolean remove(int k) {
++            return backing.remove(k);
++        }
++
++    }
++
++    public static LongSet wrapLongSet(Set<Long> longset) {
++        return new WrappingLongSet(longset);
++    }
++
++    public static class WrappingLongSet implements LongSet {
++
++        Set<Long> backing;
++
++        public WrappingLongSet(Set<Long> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public boolean add(long key) {
++            return backing.add(key);
++        }
++
++        @Override
++        public boolean contains(long key) {
++            return backing.contains(key);
++        }
++
++        @Override
++        public long[] toLongArray() {
++            return backing.stream().mapToLong(i -> i).toArray();
++        }
++
++        @Override
++        public long[] toLongArray(long[] a) {
++            if (a.length >= size()) {
++                return null;
++            } else {
++                return toLongArray();
++            }
++        }
++
++        @Override
++        public long[] toArray(long[] a) {
++            return toLongArray(a);
++        }
++
++        @Override
++        public boolean addAll(LongCollection c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean containsAll(LongCollection c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean removeAll(LongCollection c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(LongCollection c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Long> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public LongIterator iterator() {
++            return new WrappingLongIterator(backing.iterator());
++        }
++
++        @Override
++        public boolean remove(long k) {
++            return backing.remove(k);
++        }
++
++    }
++
++    public static LongSortedSet wrapLongSortedSet(Set<Long> longset) {
++        return new WrappingLongSortedSet(longset);
++    }
++
++    public static class WrappingLongSortedSet implements LongSortedSet {
++
++        Set<Long> backing;
++
++        public WrappingLongSortedSet(Set<Long> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public boolean add(long key) {
++            return backing.add(key);
++        }
++
++        @Override
++        public boolean contains(long key) {
++            return backing.contains(key);
++        }
++
++        @Override
++        public long[] toLongArray() {
++            return backing.stream().mapToLong(i -> i).toArray();
++        }
++
++        @Override
++        public long[] toLongArray(long[] a) {
++            if (a.length >= size()) {
++                return null;
++            } else {
++                return toLongArray();
++            }
++        }
++
++        @Override
++        public long[] toArray(long[] a) {
++            return toLongArray(a);
++        }
++
++        @Override
++        public boolean addAll(LongCollection c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean containsAll(LongCollection c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean removeAll(LongCollection c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(LongCollection c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Long> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public boolean remove(long k) {
++            return backing.remove(k);
++        }
++
++        @Override
++        public LongBidirectionalIterator iterator(long fromElement) {
++            throw new UnsupportedOperationException();
++            //return FastUtilHackUtil.wrap(new LinkedList<Long>(backing).iterator());
++        }
++
++        @Override
++        public LongBidirectionalIterator iterator() {
++            return FastUtilHackUtil.wrap(new LinkedList<Long>(backing).iterator());
++        }
++
++        @Override
++        public LongSortedSet subSet(long fromElement, long toElement) {
++            throw new UnsupportedOperationException();
++        }
++
++        @Override
++        public LongSortedSet headSet(long toElement) {
++            throw new UnsupportedOperationException();
++        }
++
++        @Override
++        public LongSortedSet tailSet(long fromElement) {
++            throw new UnsupportedOperationException();
++        }
++
++        @Override
++        public LongComparator comparator() {
++            return null;
++        }
++
++        @Override
++        public long firstLong() {
++            return backing.stream().findAny().get();
++        }
++
++        @Override
++        public long lastLong() {
++            return backing.stream().findAny().get();
++        }
++
++    }
++
++    public static IntSet wrapIntSet(Set<Integer> intset) {
++        return new WrappingIntSet(intset);
++    }
++
++    public static class WrappingObjectCollection<V> implements ObjectCollection<V> {
++
++        Collection<V> backing;
++
++        public WrappingObjectCollection(Collection<V> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public boolean contains(Object o) {
++            return backing.contains(o);
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean add(V e) {
++            return backing.add(e);
++        }
++
++        @Override
++        public boolean remove(Object o) {
++            return backing.remove(o);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends V> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public ObjectIterator<V> iterator() {
++            return FastUtilHackUtil.itrWrap(backing);
++        }
++
++    }
++
++    public static <K> ObjectCollection<K> wrap(Collection<K> c) {
++        return new WrappingObjectCollection<K>(c);
++    }
++
++    public static class WrappingByteCollection implements ByteCollection {
++
++        Collection<Byte> backing;
++
++        public WrappingByteCollection(Collection<Byte> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public boolean contains(byte o) {
++            return backing.contains(o);
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean add(byte e) {
++            return backing.add(e);
++        }
++
++        @Override
++        public boolean remove(Object o) {
++            return backing.remove(o);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Byte> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public ByteIterator iterator() {
++            return FastUtilHackUtil.itrByteWrap(backing);
++        }
++
++        @Override
++        public boolean rem(byte key) {
++            return this.remove(key);
++        }
++
++        @Override
++        public byte[] toByteArray() {
++            return null;
++        }
++
++        @Override
++        public byte[] toByteArray(byte[] a) {
++            return toArray(a);
++        }
++
++        @Override
++        public byte[] toArray(byte[] a) {
++            return ArrayUtils.toPrimitive(backing.toArray(new Byte[0]));
++        }
++
++        @Override
++        public boolean addAll(ByteCollection c) {
++            return addAll((Collection<Byte>) c);
++        }
++
++        @Override
++        public boolean containsAll(ByteCollection c) {
++            return containsAll((Collection<Byte>) c);
++        }
++
++        @Override
++        public boolean removeAll(ByteCollection c) {
++            return removeAll((Collection<Byte>) c);
++        }
++
++        @Override
++        public boolean retainAll(ByteCollection c) {
++            return retainAll((Collection<Byte>) c);
++        }
++
++    }
++
++    public static ByteCollection wrapBytes(Collection<Byte> c) {
++        return new WrappingByteCollection(c);
++    }
++
++    public static class WrappingIntCollection implements IntCollection {
++
++        Collection<Integer> backing;
++
++        public WrappingIntCollection(Collection<Integer> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public boolean contains(int o) {
++            return backing.contains(o);
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean add(int e) {
++            return backing.add(e);
++        }
++
++        @Override
++        public boolean remove(Object o) {
++            return backing.remove(o);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Integer> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public IntIterator iterator() {
++            return FastUtilHackUtil.itrIntWrap(backing);
++        }
++
++        @Override
++        public boolean rem(int key) {
++            return this.remove(key);
++        }
++
++        @Override
++        public int[] toIntArray() {
++            return null;
++        }
++
++        @Override
++        public int[] toIntArray(int[] a) {
++            return toArray(a);
++        }
++
++        @Override
++        public int[] toArray(int[] a) {
++            return ArrayUtils.toPrimitive(backing.toArray(new Integer[0]));
++        }
++
++        @Override
++        public boolean addAll(IntCollection c) {
++            return addAll((Collection<Integer>) c);
++        }
++
++        @Override
++        public boolean containsAll(IntCollection c) {
++            return containsAll((Collection<Integer>) c);
++        }
++
++        @Override
++        public boolean removeAll(IntCollection c) {
++            return removeAll((Collection<Integer>) c);
++        }
++
++        @Override
++        public boolean retainAll(IntCollection c) {
++            return retainAll((Collection<Integer>) c);
++        }
++
++    }
++
++    public static IntCollection wrapInts(Collection<Integer> c) {
++        return new WrappingIntCollection(c);
++    }
++
++    public static class WrappingLongCollection implements LongCollection {
++
++        Collection<Long> backing;
++
++        public WrappingLongCollection(Collection<Long> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public int size() {
++            return backing.size();
++        }
++
++        @Override
++        public boolean isEmpty() {
++            return backing.isEmpty();
++        }
++
++        @Override
++        public boolean contains(long o) {
++            return backing.contains(o);
++        }
++
++        @Override
++        public Object[] toArray() {
++            return backing.toArray();
++        }
++
++        @Override
++        public <T> T[] toArray(T[] a) {
++            return backing.toArray(a);
++        }
++
++        @Override
++        public boolean add(long e) {
++            return backing.add(e);
++        }
++
++        @Override
++        public boolean remove(Object o) {
++            return backing.remove(o);
++        }
++
++        @Override
++        public boolean containsAll(Collection<?> c) {
++            return backing.containsAll(c);
++        }
++
++        @Override
++        public boolean addAll(Collection<? extends Long> c) {
++            return backing.addAll(c);
++        }
++
++        @Override
++        public boolean removeAll(Collection<?> c) {
++            return backing.removeAll(c);
++        }
++
++        @Override
++        public boolean retainAll(Collection<?> c) {
++            return backing.retainAll(c);
++        }
++
++        @Override
++        public void clear() {
++            backing.clear();
++        }
++
++        @Override
++        public LongIterator iterator() {
++            return FastUtilHackUtil.itrLongWrap(backing);
++        }
++
++        @Override
++        public boolean rem(long key) {
++            return this.remove(key);
++        }
++
++        @Override
++        public long[] toLongArray() {
++            return null;
++        }
++
++        @Override
++        public long[] toLongArray(long[] a) {
++            return toArray(a);
++        }
++
++        @Override
++        public long[] toArray(long[] a) {
++            return ArrayUtils.toPrimitive(backing.toArray(new Long[0]));
++        }
++
++        @Override
++        public boolean addAll(LongCollection c) {
++            return addAll((Collection<Long>) c);
++        }
++
++        @Override
++        public boolean containsAll(LongCollection c) {
++            return containsAll((Collection<Long>) c);
++        }
++
++        @Override
++        public boolean removeAll(LongCollection c) {
++            return removeAll((Collection<Long>) c);
++        }
++
++        @Override
++        public boolean retainAll(LongCollection c) {
++            return retainAll((Collection<Long>) c);
++        }
++
++    }
++
++    public static LongCollection wrapLongs(Collection<Long> c) {
++        return new WrappingLongCollection(c);
++    }
++
++
++    public static class WrappingLongListIterator implements LongListIterator {
++
++        ListIterator<Long> backing;
++
++        public WrappingLongListIterator(ListIterator<Long> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public long previousLong() {
++            return backing.previous();
++        }
++
++        @Override
++        public long nextLong() {
++            return backing.next();
++        }
++
++        @Override
++        public boolean hasNext() {
++            return backing.hasNext();
++        }
++
++        @Override
++        public boolean hasPrevious() {
++            return backing.hasPrevious();
++        }
++
++        @Override
++        public int nextIndex() {
++            return backing.nextIndex();
++        }
++
++        @Override
++        public int previousIndex() {
++            return backing.previousIndex();
++        }
++
++        @Override
++        public void add(long k) {
++            backing.add(k);
++        }
++
++        @Override
++        public void remove() {
++            backing.remove();
++        }
++
++        @Override
++        public void set(long k) {
++            backing.set(k);
++        }
++    }
++
++    public static class SlimWrappingLongListIterator implements LongListIterator {
++
++        Iterator<Long> backing;
++
++        public SlimWrappingLongListIterator(Iterator<Long> backing) {
++            this.backing = backing;
++        }
++
++        @Override
++        public long previousLong() {
++            throw new IllegalStateException();
++        }
++
++        @Override
++        public long nextLong() {
++            return backing.next();
++        }
++
++        @Override
++        public boolean hasNext() {
++            return backing.hasNext();
++        }
++
++        @Override
++        public boolean hasPrevious() {
++            throw new IllegalStateException();
++        }
++
++        @Override
++        public int nextIndex() {
++            throw new IllegalStateException();
++        }
++
++        @Override
++        public int previousIndex() {
++            throw new IllegalStateException();
++        }
++
++        @Override
++        public void add(long k) {
++            throw new IllegalStateException();
++        }
++
++        @Override
++        public void remove() {
++            backing.remove();
++        }
++
++        @Override
++        public void set(long k) {
++            throw new IllegalStateException();
++        }
++    }
++
++    public static LongListIterator wrap(ListIterator<Long> c) {
++        return new WrappingLongListIterator(c);
++    }
++
++    public static LongListIterator wrap(Iterator<Long> c) {
++        return new SlimWrappingLongListIterator(c);
++    }
++
++    public static class WrappingByteIterator implements ByteIterator {
++
++        Iterator<Byte> parent;
++
++        public WrappingByteIterator(Iterator<Byte> parent) {
++            this.parent = parent;
++        }
++
++        @Override
++        public boolean hasNext() {
++            return parent.hasNext();
++        }
++
++        @Override
++        public Byte next() {
++            return parent.next();
++        }
++
++        @Override
++        public void remove() {
++            parent.remove();
++        }
++
++        @Override
++        public byte nextByte() {
++            return next();
++        }
++
++    }
++
++    public static ByteIterator itrByteWrap(Iterator<Byte> backing) {
++        return new WrappingByteIterator(backing);
++    }
++
++    public static ByteIterator itrByteWrap(Iterable<Byte> backing) {
++        return new WrappingByteIterator(backing.iterator());
++    }
++
++    public static IntIterator itrIntWrap(Iterator<Integer> backing) {
++        return new WrappingIntIterator(backing);
++    }
++
++    public static IntIterator itrIntWrap(Iterable<Integer> backing) {
++        return new WrappingIntIterator(backing.iterator());
++    }
++
++    public static LongIterator itrLongWrap(Iterator<Long> backing) {
++        return new WrappingLongIterator(backing);
++    }
++
++    public static LongIterator itrLongWrap(Iterable<Long> backing) {
++        return new WrappingLongIterator(backing.iterator());
++    }
++
++    public static ShortIterator itrShortWrap(Iterator<Short> backing) {
++        return new WrappingShortIterator(backing);
++    }
++
++    public static ShortIterator itrShortWrap(Iterable<Short> backing) {
++        return new WrappingShortIterator(backing.iterator());
++    }
++
++    public static class WrapperObjectIterator<T> implements ObjectIterator<T> {
++
++        Iterator<T> parent;
++
++        public WrapperObjectIterator(Iterator<T> parent) {
++            this.parent = parent;
++        }
++
++        @Override
++        public boolean hasNext() {
++            return parent.hasNext();
++        }
++
++        @Override
++        public T next() {
++            return parent.next();
++        }
++
++        @Override
++        public void remove() {
++            parent.remove();
++        }
++
++    }
++
++    public static class IntWrapperEntry<T> implements Entry<T> {
++
++        Map.Entry<Integer, T> parent;
++
++        public IntWrapperEntry(Map.Entry<Integer, T> parent) {
++            this.parent = parent;
++        }
++
++        @Override
++        public T getValue() {
++            return parent.getValue();
++        }
++
++        @Override
++        public T setValue(T value) {
++            return parent.setValue(value);
++        }
++
++        @Override
++        public int getIntKey() {
++            return parent.getKey();
++        }
++
++        @Override
++        public Integer getKey() {
++            return parent.getKey();
++        }
++
++    }
++
++    public static class Long2IntWrapperEntry implements Long2IntMap.Entry {
++
++        Map.Entry<Long, Integer> parent;
++
++        public Long2IntWrapperEntry(Map.Entry<Long, Integer> parent) {
++            this.parent = parent;
++        }
++
++        @Override
++        public long getLongKey() {
++            return parent.getKey();
++        }
++
++        @Override
++        public int getIntValue() {
++            return parent.getValue();
++        }
++
++        @Override
++        public int setValue(int value) {
++            return parent.setValue(value);
++        }
++
++
++    }
++
++    public static class WrapperIntEntryObjectIterator<T> implements ObjectIterator<Entry<T>> {
++
++        Iterator<Map.Entry<Integer, T>> parent;
++
++        public WrapperIntEntryObjectIterator(Iterator<Map.Entry<Integer, T>> parent) {
++            this.parent = parent;
++        }
++
++        @Override
++        public boolean hasNext() {
++            return parent.hasNext();
++        }
++
++        @Override
++        public Entry<T> next() {
++            Map.Entry<Integer, T> val = parent.next();
++            if (val == null) return null;
++            return new IntWrapperEntry<T>(val);
++        }
++
++        @Override
++        public void remove() {
++            parent.remove();
++        }
++
++    }
++
++    public static <T> ObjectIterator<Entry<T>> intMapItrFake(Map<Integer, T> in) {
++        return new WrapperIntEntryObjectIterator<T>(in.entrySet().iterator());
++    }
++
++    public static <T> ObjectIterator<T> itrWrap(Iterator<T> in) {
++        return new WrapperObjectIterator<T>(in);
++    }
++
++    public static <T> ObjectIterator<T> itrWrap(Iterable<T> in) {
++        return new WrapperObjectIterator<T>(in.iterator());
++    }
++}
+\ No newline at end of file
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Int2ObjectConcurrentHashMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Int2ObjectConcurrentHashMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..bb6c592fd34423fdd910feae83a058d288da537a
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Int2ObjectConcurrentHashMap.java
+@@ -0,0 +1,93 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
++import it.unimi.dsi.fastutil.ints.IntSet;
++import it.unimi.dsi.fastutil.objects.ObjectCollection;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++import org.apache.commons.lang3.NotImplementedException;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++public class Int2ObjectConcurrentHashMap<V> implements Int2ObjectMap<V> {
++
++    Map<Integer, V> backing;
++
++    public Int2ObjectConcurrentHashMap() {
++        backing = new ConcurrentHashMap<Integer, V>();
++    }
++
++    @Override
++    public V get(int key) {
++        return backing.get(key);
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public boolean containsValue(Object value) {
++        return backing.containsValue(value);
++    }
++
++    @Override
++    public void putAll(Map<? extends Integer, ? extends V> m) {
++        backing.putAll(m);
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public void defaultReturnValue(V rv) {
++        throw new NotImplementedException("MCMT - Not implemented");
++    }
++
++    @Override
++    public V defaultReturnValue() {
++        return null;
++    }
++
++    @Override
++    public ObjectSet<Entry<V>> int2ObjectEntrySet() {
++        return FastUtilHackUtil.entrySetIntWrap(backing);
++    }
++
++
++    @Override
++    public IntSet keySet() {
++        return FastUtilHackUtil.wrapIntSet(backing.keySet());
++    }
++
++    @Override
++    public ObjectCollection<V> values() {
++        return FastUtilHackUtil.wrap(backing.values());
++    }
++
++    @Override
++    public boolean containsKey(int key) {
++        return backing.containsKey(key);
++    }
++
++    @Override
++    public V put(int key, V value) {
++        return backing.put(key, value);
++    }
++
++    @Override
++    public V put(Integer key, V value) {
++        return backing.put(key, value);
++    }
++
++    @Override
++    public V remove(int key) {
++        return backing.remove(key);
++    }
++
++    @Override
++    public void clear() { backing.clear(); }
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ByteConcurrentHashMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ByteConcurrentHashMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0fab16860e1be817fd10dbec684f295f2e291dd
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ByteConcurrentHashMap.java
+@@ -0,0 +1,99 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.bytes.ByteCollection;
++import it.unimi.dsi.fastutil.longs.Long2ByteMap;
++import it.unimi.dsi.fastutil.longs.LongSet;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++public class Long2ByteConcurrentHashMap implements Long2ByteMap {
++
++    Map<Long, Byte> backing;
++    byte defaultReturn = 0;
++    byte nullKey = 0;
++
++    public Long2ByteConcurrentHashMap() {
++        backing = new ConcurrentHashMap<>();
++    }
++
++    public Long2ByteConcurrentHashMap(int initialCapacity, float loadFactor) {
++        backing = new ConcurrentHashMap<>(initialCapacity, loadFactor);
++    }
++
++    @Override
++    public byte get(long key) {
++        Byte out = backing.get(key);
++        return out == null ? defaultReturn : out;
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public boolean containsValue(byte value) {
++        return backing.containsValue(value);
++    }
++
++    @Override
++    public void putAll(Map<? extends Long, ? extends Byte> m) {
++        backing.putAll(m);
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public void defaultReturnValue(byte rv) {
++        defaultReturn = rv;
++    }
++
++    @Override
++    public byte defaultReturnValue() {
++        return defaultReturn;
++    }
++
++    @Override
++    public ObjectSet<Entry> long2ByteEntrySet() {
++        return FastUtilHackUtil.entrySetLongByteWrap(backing);
++    }
++
++    @Override
++    public LongSet keySet() {
++        return FastUtilHackUtil.wrapLongSet(backing.keySet());
++    }
++
++    @Override
++    public ByteCollection values() {
++        return FastUtilHackUtil.wrapBytes(backing.values());
++    }
++
++    @Override
++    public boolean containsKey(long key) {
++        return backing.containsKey(key);
++    }
++
++    @Override
++    public byte put(long key, byte value) {
++        return put((Long) key, (Byte) value);
++    }
++
++    @Override
++    public Byte put(Long key, Byte value) {
++        Byte out = backing.put(key, value);
++        return out == null ? Byte.valueOf(defaultReturn) : out;
++    }
++
++    @Override
++    public byte remove(long key) {
++        Byte out = backing.remove(key);
++        return out == null ? defaultReturn : out;
++    }
++
++
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2IntConcurrentHashMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2IntConcurrentHashMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..261f06a88021a95b6a0500444665547aeb4ae2c1
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2IntConcurrentHashMap.java
+@@ -0,0 +1,74 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.ints.IntCollection;
++import it.unimi.dsi.fastutil.longs.Long2IntMap;
++import it.unimi.dsi.fastutil.longs.LongSet;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++public class Long2IntConcurrentHashMap implements Long2IntMap {
++
++    public Map<Long, Integer> backing = new ConcurrentHashMap<Long, Integer>();
++    int defaultRV = 0;
++
++    @Override
++    public int get(long key) {
++        if (backing.containsKey(key)) {
++            return backing.get(key);
++        } else return defaultRV;
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public void putAll(Map<? extends Long, ? extends Integer> m) {
++        backing.putAll(m);
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public void defaultReturnValue(int rv) {
++        defaultRV = rv;
++    }
++
++    @Override
++    public int defaultReturnValue() {
++        return defaultRV;
++    }
++
++    @Override
++    public ObjectSet<Entry> long2IntEntrySet() {
++        return null;
++    }
++
++    @Override
++    public LongSet keySet() {
++        return FastUtilHackUtil.wrapLongSet(backing.keySet());
++    }
++
++    @Override
++    public IntCollection values() {
++        return FastUtilHackUtil.wrapInts(backing.values());
++    }
++
++    @Override
++    public boolean containsKey(long key) {
++        return backing.containsKey(key);
++    }
++
++    @Override
++    public boolean containsValue(int value) {
++        return backing.containsValue(value);
++    }
++
++
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2IntConcurrentNonLinkedOpenMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2IntConcurrentNonLinkedOpenMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..dc2342486318721d399c7c60a0a859befb4d1c9f
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2IntConcurrentNonLinkedOpenMap.java
+@@ -0,0 +1,375 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.Hash;
++import it.unimi.dsi.fastutil.ints.IntCollection;
++import it.unimi.dsi.fastutil.longs.*;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++@SuppressWarnings("deprecation")
++public class Long2IntConcurrentNonLinkedOpenMap extends Long2IntLinkedOpenHashMap {
++
++    /**
++     *
++     */
++    private static final long serialVersionUID = -2082212127278131631L;
++
++    public Map<Long, Integer> backing = new ConcurrentHashMap<Long, Integer>();
++
++    public Long2IntConcurrentNonLinkedOpenMap(final int expected, final float f) {
++
++    }
++
++    /**
++     * Creates a new hash map with {@link Hash#DEFAULT_LOAD_FACTOR} as load factor.
++     *
++     * @param expected the expected number of elements in the hash map.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final int expected) {
++    }
++
++    /**
++     * Creates a new hash map with initial expected
++     * {@link Hash#DEFAULT_INITIAL_SIZE} entries and
++     * {@link Hash#DEFAULT_LOAD_FACTOR} as load factor.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap() {
++    }
++
++    /**
++     * Creates a new hash map copying a given one.
++     *
++     * @param m a {@link Map} to be copied into the new hash map.
++     * @param f the load factor.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final Map<? extends Long, ? extends Integer> m, final float f) {
++        putAll(m);
++    }
++
++    /**
++     * Creates a new hash map with {@link Hash#DEFAULT_LOAD_FACTOR} as load factor
++     * copying a given one.
++     *
++     * @param m a {@link Map} to be copied into the new hash map.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final Map<? extends Long, ? extends Integer> m) {
++        this(m, DEFAULT_LOAD_FACTOR);
++    }
++
++    /**
++     * Creates a new hash map copying a given type-specific one.
++     *
++     * @param m a type-specific map to be copied into the new hash map.
++     * @param f the load factor.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final Long2IntMap m, final float f) {
++        this(m.size(), f);
++        putAll(m);
++    }
++
++    /**
++     * Creates a new hash map with {@link Hash#DEFAULT_LOAD_FACTOR} as load factor
++     * copying a given type-specific one.
++     *
++     * @param m a type-specific map to be copied into the new hash map.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final Long2IntMap m) {
++        this(m, DEFAULT_LOAD_FACTOR);
++    }
++
++    /**
++     * Creates a new hash map using the elements of two parallel arrays.
++     *
++     * @param k the array of keys of the new hash map.
++     * @param v the array of corresponding values in the new hash map.
++     * @param f the load factor.
++     * @throws IllegalArgumentException if {@code k} and {@code v} have different
++     *                                  lengths.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final long[] k, final int[] v, final float f) {
++        if (k.length != v.length)
++            throw new IllegalArgumentException(
++                    "The key array and the value array have different lengths (" + k.length + " and " + v.length + ")");
++        for (int i = 0; i < k.length; i++)
++            this.put(k[i], v[i]);
++    }
++
++    /**
++     * Creates a new hash map with {@link Hash#DEFAULT_LOAD_FACTOR} as load factor
++     * using the elements of two parallel arrays.
++     *
++     * @param k the array of keys of the new hash map.
++     * @param v the array of corresponding values in the new hash map.
++     * @throws IllegalArgumentException if {@code k} and {@code v} have different
++     *                                  lengths.
++     */
++    public Long2IntConcurrentNonLinkedOpenMap(final long[] k, final int[] v) {
++        this(k, v, DEFAULT_LOAD_FACTOR);
++    }
++
++    public void putAll(Map<? extends Long, ? extends Integer> m) {
++        backing.putAll(m);
++    }
++
++    public int put(final long k, final int v) {
++        Integer out = backing.put(k, v);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int addTo(final long k, final int incr) {
++        Integer out =  backing.put(k, this.get(k)+incr);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int remove(final long k) {
++        Integer out = backing.remove(k);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int removeFirstInt() {
++        Integer out = this.remove(backing.keySet().stream().findAny().get());
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int removeLastInt() {
++        Integer out = this.remove(backing.keySet().stream().findAny().get());
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++
++    public int getAndMoveToFirst(final long k) {
++        Integer out = backing.get(k);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int getAndMoveToLast(final long k) {
++        Integer out = backing.get(k);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int putAndMoveToFirst(final long k, final int v) {
++        Integer out =  backing.put(k, v);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int putAndMoveToLast(final long k, final int v) {
++        Integer out =  backing.put(k, v);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int get(final long k) {
++        Integer out =  backing.get(k);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public boolean containsKey(final long k) {
++        return backing.containsKey(k);
++    }
++
++    public boolean containsValue(final int v) {
++        return backing.containsValue(v);
++    }
++
++    public int getOrDefault(final long k, final int defaultValue) {
++        Integer out =  backing.getOrDefault(k, defaultValue);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    public int putIfAbsent(final long k, final int v) {
++        Integer out =  backing.putIfAbsent(k, v);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++
++    public boolean remove(final long k, final int v) {
++        return backing.remove(k, v);
++    }
++
++
++    public boolean replace(final long k, final int oldValue, final int v) {
++        return  backing.replace(k, oldValue, v);
++    }
++
++
++    public int replace(final long k, final int v) {
++        Integer out = backing.replace(k, v);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++
++    public int computeIfAbsent(final long k, final java.util.function.LongToIntFunction mappingFunction) {
++        Integer out =  backing.computeIfAbsent(k, (l) -> mappingFunction.applyAsInt(l));
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++
++    public int computeIfAbsentNullable(final long k,
++                                       final java.util.function.LongFunction<? extends Integer> mappingFunction) {
++        Integer out =  backing.computeIfAbsent(k, (l) -> mappingFunction.apply(l));
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++
++    public int computeIfPresent(final long k,
++                                final java.util.function.BiFunction<? super Long, ? super Integer, ? extends Integer> remappingFunction) {
++        if (this.containsKey(k)) {
++            Integer out =  backing.put(k, remappingFunction.apply(k, backing.get(k)));
++            if (out == null) {
++                return defRetValue;
++            }
++            return out;
++        }
++        return defaultReturnValue();
++
++    }
++
++    @Override
++    public int compute(final long k,
++                       final java.util.function.BiFunction<? super Long, ? super Integer, ? extends Integer> remappingFunction) {
++        Integer out =  backing.compute(k, remappingFunction);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    @Override
++    public int merge(final long k, final int v,
++                     final java.util.function.BiFunction<? super Integer, ? super Integer, ? extends Integer> remappingFunction) {
++        Integer out =  backing.merge(k, v, remappingFunction);
++        if (out == null) {
++            return defRetValue;
++        }
++        return out;
++    }
++
++    @Override
++    public void clear() {
++        backing.clear();
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public long firstLongKey() {
++        return backing.keySet().stream().findAny().get();
++    }
++
++    @Override
++    public long lastLongKey() {
++        return backing.keySet().stream().findAny().get();
++    }
++
++    @Override
++    public Long2IntSortedMap tailMap(long from) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public Long2IntSortedMap headMap(long to) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public Long2IntSortedMap subMap(long from, long to) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public LongComparator comparator() {
++        return null;
++    }
++
++
++    @Override
++    public FastSortedEntrySet long2IntEntrySet() {
++        //TODO implement
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public LongSortedSet keySet() {
++        return FastUtilHackUtil.wrapLongSortedSet(backing.keySet());
++    }
++
++
++    @Override
++    public IntCollection values() {
++        return FastUtilHackUtil.wrapInts(backing.values());
++    }
++
++    public boolean trim() {
++        return true;
++    }
++
++    public boolean trim(final int n) {
++        return true;
++    }
++
++
++    @Override
++    public Long2IntConcurrentNonLinkedOpenMap clone() {
++        return new Long2IntConcurrentNonLinkedOpenMap(backing);
++    }
++
++    @Override
++    public int hashCode() {
++        return backing.hashCode();
++    }
++
++
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2LongConcurrentHashMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2LongConcurrentHashMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..3205d30a03f99caf7dfa05237b2bc31182b2db20
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2LongConcurrentHashMap.java
+@@ -0,0 +1,97 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.longs.Long2LongMap;
++import it.unimi.dsi.fastutil.longs.LongCollection;
++import it.unimi.dsi.fastutil.longs.LongSet;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++
++public class Long2LongConcurrentHashMap implements Long2LongMap {
++
++    public Map<Long, Long> backing = new ConcurrentHashMap<Long, Long>();
++    long defaultRV = 0;
++
++    public Long2LongConcurrentHashMap(long defaultRV) {
++        this.defaultRV = defaultRV;
++    }
++
++    @Override
++    public long get(long key) {
++        if (backing.containsKey(key)) {
++            return backing.get(key);
++        } else return defaultRV;
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public long put(final long key, final long val) {
++        backing.put(key,val);
++        return val;
++    }
++
++    @Override
++    public Long put(final Long key, final Long val) {
++        backing.put(key,val);
++        return val;
++    }
++
++    @Override
++    public long remove(final long key) {
++        return backing.remove(key);
++    }
++
++    @Override
++    public void putAll(Map<? extends Long, ? extends Long> m) {
++        backing.putAll(m);
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public void defaultReturnValue(long rv) {
++        defaultRV = rv;
++    }
++
++    @Override
++    public long defaultReturnValue() {
++        return defaultRV;
++    }
++
++    @Override
++    public ObjectSet<Entry> long2LongEntrySet() {
++        return FastUtilHackUtil.entrySetLongLongWrap(backing);
++    }
++
++
++    @Override
++    public LongSet keySet() {
++        return FastUtilHackUtil.wrapLongSet(backing.keySet());
++    }
++
++    @Override
++    public LongCollection values() {
++        return FastUtilHackUtil.wrapLongs(backing.values());
++    }
++
++    @Override
++    public boolean containsKey(long key) {
++        return backing.containsKey(key);
++    }
++
++    @Override
++    public boolean containsValue(long value) {
++        return backing.containsValue(value);
++    }
++
++
++}
+\ No newline at end of file
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ObjectConcurrentHashMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ObjectConcurrentHashMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a5ed71564d4c9a986f77cbc0397130aa38f97a91
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ObjectConcurrentHashMap.java
+@@ -0,0 +1,93 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
++import it.unimi.dsi.fastutil.longs.LongSet;
++import it.unimi.dsi.fastutil.objects.ObjectCollection;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++public class Long2ObjectConcurrentHashMap<V> implements Long2ObjectMap<V> {
++
++    Map<Long, V> backing;
++    V defaultReturn = null;
++
++    public Long2ObjectConcurrentHashMap() {
++        backing = new ConcurrentHashMap<Long, V>();
++    }
++
++    @Override
++    public V get(long key) {
++        V out = backing.get(key);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : out;
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public boolean containsValue(Object value) {
++        return backing.containsValue(value);
++    }
++
++    @Override
++    public void putAll(Map<? extends Long, ? extends V> m) {
++        backing.putAll(m);
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public void defaultReturnValue(V rv) {
++        defaultReturn = rv;
++    }
++
++    @Override
++    public V defaultReturnValue() {
++        return defaultReturn;
++    }
++
++    @Override
++    public ObjectSet<Entry<V>> long2ObjectEntrySet() {
++        return FastUtilHackUtil.entrySetLongWrap(backing);
++    }
++
++
++    @Override
++    public LongSet keySet() {
++        return FastUtilHackUtil.wrapLongSet(backing.keySet());
++    }
++
++    @Override
++    public ObjectCollection<V> values() {
++        return FastUtilHackUtil.wrap(backing.values());
++    }
++
++    @Override
++    public boolean containsKey(long key) {
++        return backing.containsKey(key);
++    }
++
++    @Override
++    public V put(long key, V value) {
++        return put((Long)key, value);
++    }
++
++    @Override
++    public V put(Long key, V value) {
++        V out = backing.put(key, value);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : backing.put(key, value);
++    }
++
++    @Override
++    public V remove(long key) {
++        V out = backing.remove(key);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : out;
++    }
++}
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ObjectOpenConcurrentHashMap.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ObjectOpenConcurrentHashMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a7d6be048ab3b8bd38231fce16eca0ac78e24690
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/Long2ObjectOpenConcurrentHashMap.java
+@@ -0,0 +1,233 @@
++package net.himeki.mcmtfabric.parallelised.fastutil;
++
++import it.unimi.dsi.fastutil.longs.Long2ObjectFunction;
++import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
++import it.unimi.dsi.fastutil.longs.LongSet;
++import it.unimi.dsi.fastutil.objects.ObjectCollection;
++import it.unimi.dsi.fastutil.objects.ObjectSet;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.function.Function;
++
++public class Long2ObjectOpenConcurrentHashMap<V> extends Long2ObjectOpenHashMap<V> {
++
++    /**
++     *
++     */
++    private static final long serialVersionUID = -121514116954680057L;
++
++    Map<Long, V> backing;
++    V defaultReturn = null;
++
++    public Long2ObjectOpenConcurrentHashMap() {
++        backing = new ConcurrentHashMap<Long, V>();
++    }
++
++    @Override
++    public V get(long key) {
++        V out = backing.get(key);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : out;
++    }
++
++    @Override
++    public V get(Object key) {
++        V out = backing.get(key);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : out;
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return backing.isEmpty();
++    }
++
++    @Override
++    public boolean containsValue(Object value) {
++        return backing.containsValue(value);
++    }
++
++    @Override
++    public void putAll(Map<? extends Long, ? extends V> m) {
++        backing.putAll(m);
++    }
++
++    @Override
++    public int size() {
++        return backing.size();
++    }
++
++    @Override
++    public void defaultReturnValue(V rv) {
++        defaultReturn = rv;
++    }
++
++    @Override
++    public V defaultReturnValue() {
++        return defaultReturn;
++    }
++
++    @Override
++    public FastEntrySet<V> long2ObjectEntrySet() {
++        return FastUtilHackUtil.entrySetLongWrapFast(backing);
++    }
++
++
++    @Override
++    public LongSet keySet() {
++        return FastUtilHackUtil.wrapLongSet(backing.keySet());
++    }
++
++    @Override
++    public ObjectCollection<V> values() {
++        return FastUtilHackUtil.wrap(backing.values());
++    }
++
++    @Override
++    public boolean containsKey(long key) {
++        return backing.containsKey(key);
++    }
++
++    @Override
++    public V put(long key, V value) {
++        return put((Long)key, value);
++    }
++
++    @Override
++    public V put(Long key, V value) {
++        V out = backing.put(key, value);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : backing.put(key, value);
++    }
++
++    @Override
++    public V remove(long key) {
++        V out = backing.remove(key);
++        return (out == null && !backing.containsKey(key)) ? defaultReturn : out;
++    }
++
++    @Override
++    public boolean trim() { return true; }
++
++    @Override
++    public boolean trim(final int n) { return true; }
++
++    @Override
++    public boolean replace(final long k, final V oldValue, final V v) {
++        return backing.replace(k, oldValue, v);
++    }
++
++    @Override
++    public V replace(final long k, final V v) {
++        return backing.replace(k, v);
++    }
++
++    @Override
++    public boolean replace(final Long k, final V oldValue, final V v) {
++        return backing.replace(k, oldValue, v);
++    }
++
++    @Override
++    public V replace(final Long k, final V v) {
++        return backing.replace(k, v);
++    }
++
++    @Override
++    public boolean remove(final long k, final Object v) {
++        return backing.remove(k, v);
++    }
++
++    @Override
++    public V putIfAbsent(final long k, final V v) {
++        return backing.putIfAbsent(k, v);
++    }
++
++    @Override
++    public V putIfAbsent(final Long k, final V v) {
++        return backing.putIfAbsent(k, v);
++    }
++
++    @Override
++    public V merge(final long k, final V v, final java.util.function.BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
++        return backing.merge(k, v, remappingFunction);
++    }
++
++    @Override
++    public V merge(Long k, final V v, final java.util.function.BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
++        return backing.merge(k, v, remappingFunction);
++    }
++
++    @Override
++    public int hashCode() {
++        return backing.hashCode();
++    }
++
++    @Override
++    public V getOrDefault(final long k, final V defaultValue) {
++        return backing.getOrDefault(k, defaultValue);
++    }
++
++    @Override
++    public V getOrDefault(Object k, final V defaultValue) {
++        return backing.getOrDefault(k, defaultValue);
++    }
++
++    @Override
++    public V computeIfPresent(final long k, final java.util.function.BiFunction<? super Long, ? super V, ? extends V> remappingFunction) {
++        return backing.computeIfPresent(k, remappingFunction);
++    }
++
++    @Override
++    public V computeIfPresent(final Long k, final java.util.function.BiFunction<? super Long, ? super V, ? extends V> remappingFunction) {
++        return backing.computeIfPresent(k, remappingFunction);
++    }
++
++    @Override
++    public V computeIfAbsent(final long k, final java.util.function.LongFunction<? extends V> mappingFunction) {
++        return backing.computeIfAbsent(k, (llong) -> mappingFunction.apply(llong));
++    }
++
++    public V computeIfAbsent(final Long k, final java.util.function.LongFunction<? extends V> mappingFunction) {
++        return backing.computeIfAbsent(k, (llong) -> mappingFunction.apply(llong));
++    }
++
++    @Override
++    public V computeIfAbsentPartial(final long key, final Long2ObjectFunction<? extends V> mappingFunction) {
++        if (!mappingFunction.containsKey(key))
++            return defaultReturn;
++        return backing.computeIfAbsent(key, (llong) -> mappingFunction.apply(llong));
++    }
++
++    @Override
++    public V compute(final long k, final java.util.function.BiFunction<? super Long, ? super V, ? extends V> remappingFunction) {
++        return backing.compute(k, remappingFunction);
++    }
++
++    @Override
++    public V compute(final Long k, final java.util.function.BiFunction<? super Long, ? super V, ? extends V> remappingFunction) {
++        return backing.compute(k, remappingFunction);
++    }
++
++    @Override
++    public Long2ObjectOpenHashMap<V> clone() {
++        throw new IllegalArgumentException();
++    }
++
++    public void clear() {
++        backing.clear();
++    }
++
++    @Override
++    public ObjectSet<Map.Entry<Long, V>> entrySet() {
++        return new FastUtilHackUtil.ConvertingObjectSet<Map.Entry<Long, V>, Map.Entry<Long, V>>(backing.entrySet(), Function.identity(), Function.identity());
++    }
++
++    @Override
++    public V remove(Object key) {
++        return backing.remove(key);
++    }
++
++    @Override
++    public boolean remove(Object key, Object value) {
++        return backing.remove(key, value);
++    }
++
++}
+\ No newline at end of file
+diff --git a/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/sync/SyncLongLinkedOpenHashSet.java b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/sync/SyncLongLinkedOpenHashSet.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1d65e9575389a170e8b8465b1221a6e319749eb1
+--- /dev/null
++++ b/src/main/java/net/himeki/mcmtfabric/parallelised/fastutil/sync/SyncLongLinkedOpenHashSet.java
+@@ -0,0 +1,190 @@
++package net.himeki.mcmtfabric.parallelised.fastutil.sync;
++
++import it.unimi.dsi.fastutil.longs.*;
++
++import java.util.Collection;
++import java.util.Iterator;
++
++public class SyncLongLinkedOpenHashSet extends LongLinkedOpenHashSet {
++
++    private static final long serialVersionUID = -5532128240738069111L;
++
++    public SyncLongLinkedOpenHashSet() {
++        super();
++    }
++
++    public SyncLongLinkedOpenHashSet(final int initial) {
++        super(initial);
++    }
++
++    public SyncLongLinkedOpenHashSet(final int initial, final float dnc) {
++        this(initial);
++    }
++
++    public SyncLongLinkedOpenHashSet(final LongCollection c) {
++        this(c.size());
++        addAll(c);
++    }
++
++    public SyncLongLinkedOpenHashSet(final LongCollection c, final float f) {
++        this(c.size(), f);
++        addAll(c);
++    }
++
++    public SyncLongLinkedOpenHashSet(final LongIterator i, final float f) {
++        this(16, f);
++        while (i.hasNext())
++            add(i.nextLong());
++    }
++
++    public SyncLongLinkedOpenHashSet(final LongIterator i) {
++        this(i, -1);
++    }
++
++    public SyncLongLinkedOpenHashSet(final Iterator<?> i, final float f) {
++        this(LongIterators.asLongIterator(i), f);
++    }
++
++    public SyncLongLinkedOpenHashSet(final Iterator<?> i) {
++        this(LongIterators.asLongIterator(i));
++    }
++
++    public SyncLongLinkedOpenHashSet(final long[] a, final int offset, final int length, final float f) {
++        this(length < 0 ? 0 : length, f);
++        LongArrays.ensureOffsetLength(a, offset, length);
++        for (int i = 0; i < length; i++)
++            add(a[offset + i]);
++    }
++
++    public SyncLongLinkedOpenHashSet(final long[] a, final int offset, final int length) {
++        this(a, offset, length, DEFAULT_LOAD_FACTOR);
++    }
++
++    public SyncLongLinkedOpenHashSet(final long[] a, final float f) {
++        this(a, 0, a.length, f);
++    }
++
++    public SyncLongLinkedOpenHashSet(final long[] a) {
++        this(a, -1);
++    }
++
++    @Override
++    public synchronized boolean add(final long k) {
++        return super.add(k);
++    }
++
++    @Override
++    public synchronized boolean addAll(LongCollection c) {
++        return super.addAll(c);
++    }
++
++    @Override
++    public synchronized boolean addAll(Collection<? extends Long> c) {
++        return super.addAll(c);
++    }
++
++    @Override
++    public synchronized boolean addAndMoveToFirst(final long k) {
++        return super.addAndMoveToFirst(k);
++    }
++
++    @Override
++    public synchronized boolean addAndMoveToLast(final long k) {
++        return super.addAndMoveToFirst(k);
++    }
++
++    @Override
++    public synchronized void clear() {
++        super.clear();
++    }
++
++    @Override
++    public synchronized LongLinkedOpenHashSet clone() {
++        return new SyncLongLinkedOpenHashSet(this);
++    }
++
++    @Override
++    public synchronized LongComparator comparator() {
++        return super.comparator();
++    }
++
++    @Override
++    public synchronized boolean contains(final long k) {
++        return super.contains(k);
++    }
++
++    @Override
++    public synchronized long firstLong() {
++        return super.firstLong();
++    }
++
++    @Override
++    public synchronized int hashCode() {
++        return super.hashCode();
++    }
++
++    @Override
++    public synchronized LongSortedSet headSet(long to) {
++        return super.headSet(to);
++    }
++
++    @Override
++    public synchronized boolean isEmpty() {
++        return super.isEmpty();
++    }
++
++    @Override
++    public synchronized LongListIterator iterator() {
++        return super.iterator();
++    }
++
++    @Override
++    public synchronized LongListIterator iterator(long from) {
++        return super.iterator(from);
++    }
++
++    @Override
++    public synchronized long lastLong() {
++        return super.lastLong();
++    }
++
++    @Override
++    public synchronized boolean remove(final long k) {
++        return super.remove(k);
++    }
++
++    @Override
++    public synchronized long removeFirstLong() {
++        return super.removeFirstLong();
++    }
++
++    @Override
++    public synchronized long removeLastLong() {
++        return super.removeLastLong();
++    }
++
++    @Override
++    public synchronized int size() {
++        return super.size();
++    }
++
++    @Override
++    public synchronized LongSortedSet subSet(long from, long to) {
++        return super.subSet(from, to);
++    }
++
++    @Override
++    public synchronized LongSortedSet tailSet(long from) {
++        return super.tailSet(from);
++    }
++
++    @Override
++    public synchronized boolean trim() {
++        return super.trim();
++    }
++
++    @Override
++    public synchronized boolean trim(final int n) {
++        return super.trim(n);
++    }
++}

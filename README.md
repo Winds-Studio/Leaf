@@ -16,7 +16,7 @@
  - Disabling the UseItemOnPacket Too Far check.
  - Update all dependencies to the latest.
  - Parallel entity ticking(Half of async)(In beta)
- - Some Purpur patches.
+ - Some Purpur‘s patches.
  - ...
 
 ## Contact
@@ -64,5 +64,4 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
 - [VMP](https://github.com/RelativityMC/VMP-fabric)
 - [Hearse](https://github.com/Era4FunMC/Hearse)
-- [MikuServer](https://github.com/MikuMC/MikuServer)
 - [Slice](https://github.com/Cryptite/Slice)

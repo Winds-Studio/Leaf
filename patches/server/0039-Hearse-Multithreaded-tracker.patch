@@ -1,0 +1,714 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Wed, 18 Jan 2023 14:39:00 +0800
+Subject: [PATCH] Hearse: Multithreaded tracker
+
+Original license: MIT
+Original project: https://github.com/Era4FunMC/Hearse
+
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index e9a114a4431cedaafef4b427a8baf5030ab60751..c45e8de3a2d46e06f2a5eaa85c789420c49a260b 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1,7 +1,6 @@
+ package net.minecraft.server;
+ 
+ import co.earthme.hearse.Hearse;
+-import co.earthme.hearse.HearseConfig;
+ import co.earthme.hearse.server.ServerEntityTickHook;
+ import co.earthme.hearse.server.ServerLevelTickHook;
+ import com.google.common.base.Splitter;
+@@ -1614,6 +1613,8 @@ public abstract class MinecraftServer extends MinecraftServerBlockableEventLoop
+             this.tickStep_recalculateRegions(worldserver);
+             this.tickStep_clearExplosionDensityCache(worldserver);
+         }
++        ServerEntityTickHook.awaitEntityTasks();
++        ServerLevelTickHook.awaitWorldTicKTasks();
+         this.tickStep_stopIteratingOverLevels();
+         this.tickStep_tickConnection();
+         this.tickStep_tickPlayerList();
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 1ff00b202b759095661617242749091b532a6711..04e869e31fce1e0f0ad0690894bcdc6597e00b85 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -2,6 +2,10 @@ package net.minecraft.server.level;
+ 
+ import co.aikar.timings.Timing; // Paper
+ import com.destroystokyo.paper.util.misc.PooledLinkedHashSets;
++import co.earthme.hearse.Hearse;
++import co.earthme.hearse.HearseConfig;
++import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
++import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
+ import com.google.common.collect.*;
+ import com.google.common.collect.ImmutableList.Builder;
+ import com.google.gson.JsonElement;
+@@ -15,10 +19,7 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.longs.*;
+-import it.unimi.dsi.fastutil.objects.ObjectIterator;
+-import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
+-import it.unimi.dsi.fastutil.objects.ReferenceSet;
+-import it.unimi.dsi.fastutil.objects.ReferenceSets;
++import it.unimi.dsi.fastutil.objects.*;
+ import net.minecraft.CrashReport;
+ import net.minecraft.CrashReportCategory;
+ import net.minecraft.ReportedException;
+@@ -72,10 +73,8 @@ import java.io.IOException;
+ import java.io.Writer;
+ import java.nio.file.Path;
+ import java.util.*;
+-import java.util.concurrent.CancellationException;
+-import java.util.concurrent.CompletableFuture;
+-import java.util.concurrent.CompletionException;
+-import java.util.concurrent.Executor;
++import java.util.concurrent.*;
++import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.function.*;
+ 
+@@ -111,7 +110,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     public final StructureTemplateManager structureTemplateManager; // Paper - rewrite chunk system
+     private final String storageName;
+     private final PlayerMap playerMap;
+-    public final Map<Integer,ChunkMap.TrackedEntity> entityMap;
++    public final Map<Integer, ChunkMap.TrackedEntity> entityMap;
+     private final Long2ByteMap chunkTypeCache;
+     private final Long2LongMap chunkSaveCooldowns;
+     private final Queue<Runnable> unloadQueue;
+@@ -140,6 +139,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     // these maps are named after spigot's uses
+     public final com.destroystokyo.paper.util.misc.PlayerAreaMap playerMobSpawnMap; // this map is absent from updateMaps since it's controlled at the start of the chunkproviderserver tick
+     public final com.destroystokyo.paper.util.misc.PlayerDistanceTrackingAreaMap playerChunkTickRangeMap; // Gale - base thread pool - chunk-sorted cache tasks
++
+     // Paper end - optimise ChunkMap#anyPlayerCloseEnoughForSpawning
+     // Paper start - use distance map to optimise tracker
+     public static boolean isLegacyTrackingEntity(Entity entity) {
+@@ -150,6 +150,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     static final org.spigotmc.TrackingRange.TrackingRangeType[] TRACKING_RANGE_TYPES = org.spigotmc.TrackingRange.TrackingRangeType.values();
+     public final com.destroystokyo.paper.util.misc.PlayerAreaMap[] playerEntityTrackerTrackMaps;
+     final int[] entityTrackerTrackRanges;
++
+     public final int getEntityTrackerRange(final int ordinal) {
+         return this.entityTrackerTrackRanges[ordinal];
+     }
+@@ -222,6 +223,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         // Paper end - use distance map to optimise entity tracker
+         this.playerGeneralAreaMap.update(player, chunkX, chunkZ, GENERAL_AREA_MAP_SQUARE_RADIUS); // Paper - optimise checkDespawn
+     }
++
+     // Paper end
+     // Paper start
+     public final List<io.papermc.paper.chunk.SingleThreadChunkRegionManager> regionManagers = new java.util.ArrayList<>();
+@@ -235,17 +237,17 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         @Override
+         public void removeFromRegion(final io.papermc.paper.chunk.SingleThreadChunkRegionManager.RegionSection section,
+                                      final io.papermc.paper.chunk.SingleThreadChunkRegionManager.Region from) {
+-            final DataRegionSectionData sectionData = (DataRegionSectionData)section.sectionData;
+-            final DataRegionData fromData = (DataRegionData)from.regionData;
++            final DataRegionSectionData sectionData = (DataRegionSectionData) section.sectionData;
++            final DataRegionData fromData = (DataRegionData) from.regionData;
+         }
+ 
+         @Override
+         public void addToRegion(final io.papermc.paper.chunk.SingleThreadChunkRegionManager.RegionSection section,
+                                 final io.papermc.paper.chunk.SingleThreadChunkRegionManager.Region oldRegion,
+                                 final io.papermc.paper.chunk.SingleThreadChunkRegionManager.Region newRegion) {
+-            final DataRegionSectionData sectionData = (DataRegionSectionData)section.sectionData;
+-            final DataRegionData oldRegionData = oldRegion == null ? null : (DataRegionData)oldRegion.regionData;
+-            final DataRegionData newRegionData = (DataRegionData)newRegion.regionData;
++            final DataRegionSectionData sectionData = (DataRegionSectionData) section.sectionData;
++            final DataRegionData oldRegionData = oldRegion == null ? null : (DataRegionData) oldRegion.regionData;
++            final DataRegionData newRegionData = (DataRegionData) newRegion.regionData;
+         }
+     }
+ 
+@@ -348,57 +350,57 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         // Paper end - use distance map to optimise entity tracker
+         // Paper start - optimise ChunkMap#anyPlayerCloseEnoughForSpawning
+         this.playerChunkTickRangeMap = new com.destroystokyo.paper.util.misc.PlayerDistanceTrackingAreaMap(this.pooledLinkedPlayerHashSets, // Gale - base thread pool - chunk-sorted cache tasks
+-            (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
+-             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
+-                ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
+-                if (playerChunk != null) {
+-                    playerChunk.playersInChunkTickRange = newState;
+-                }
+-            },
+-            (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
+-             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
+-                ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
+-                if (playerChunk != null) {
+-                    playerChunk.playersInChunkTickRange = newState;
+-                }
+-                // Gale start - base thread pool - chunk-sorted cache tasks
+-            },
+-            (int posX, int posZ, int oldNearestDistance, int newNearestDistance, PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> state) -> {
+-                this.level.chunkSource.mainThreadProcessor.onChunkDistanceChange(posX, posZ, newNearestDistance);
+-            });
++                (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
++                    ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
++                    if (playerChunk != null) {
++                        playerChunk.playersInChunkTickRange = newState;
++                    }
++                },
++                (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
++                    ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
++                    if (playerChunk != null) {
++                        playerChunk.playersInChunkTickRange = newState;
++                    }
++                    // Gale start - base thread pool - chunk-sorted cache tasks
++                },
++                (int posX, int posZ, int oldNearestDistance, int newNearestDistance, PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> state) -> {
++                    this.level.chunkSource.mainThreadProcessor.onChunkDistanceChange(posX, posZ, newNearestDistance);
++                });
+         // Gale end - base thread pool - chunk-sorted cache tasks
+         this.playerMobSpawnMap = new com.destroystokyo.paper.util.misc.PlayerAreaMap(this.pooledLinkedPlayerHashSets,
+-            (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
+-             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
+-                ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
+-                if (playerChunk != null) {
+-                    playerChunk.playersInMobSpawnRange = newState;
+-                }
+-            },
+-            (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
+-             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
+-                ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
+-                if (playerChunk != null) {
+-                    playerChunk.playersInMobSpawnRange = newState;
+-                }
+-            });
++                (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
++                    ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
++                    if (playerChunk != null) {
++                        playerChunk.playersInMobSpawnRange = newState;
++                    }
++                },
++                (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
++                    ChunkHolder playerChunk = ChunkMap.this.getUpdatingChunkIfPresent(MCUtil.getCoordinateKey(rangeX, rangeZ));
++                    if (playerChunk != null) {
++                        playerChunk.playersInMobSpawnRange = newState;
++                    }
++                });
+         // Paper end - optimise ChunkMap#anyPlayerCloseEnoughForSpawning
+         // Paper start - optimise checkDespawn
+         this.playerGeneralAreaMap = new com.destroystokyo.paper.util.misc.PlayerAreaMap(this.pooledLinkedPlayerHashSets,
+-            (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
+-             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
+-                LevelChunk chunk = ChunkMap.this.level.getChunkSource().getChunkAtIfCachedImmediately(rangeX, rangeZ);
+-                if (chunk != null) {
+-                    chunk.updateGeneralAreaCache(newState);
+-                }
+-            },
+-            (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
+-             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
+-                LevelChunk chunk = ChunkMap.this.level.getChunkSource().getChunkAtIfCachedImmediately(rangeX, rangeZ);
+-                if (chunk != null) {
+-                    chunk.updateGeneralAreaCache(newState);
+-                }
+-            });
++                (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
++                    LevelChunk chunk = ChunkMap.this.level.getChunkSource().getChunkAtIfCachedImmediately(rangeX, rangeZ);
++                    if (chunk != null) {
++                        chunk.updateGeneralAreaCache(newState);
++                    }
++                },
++                (ServerPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newState) -> {
++                    LevelChunk chunk = ChunkMap.this.level.getChunkSource().getChunkAtIfCachedImmediately(rangeX, rangeZ);
++                    if (chunk != null) {
++                        chunk.updateGeneralAreaCache(newState);
++                    }
++                });
+         // Paper end - optimise checkDespawn
+     }
+ 
+@@ -588,11 +590,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+ 
+     protected void tick(BooleanSupplier shouldKeepTicking) {
+         try (Timing ignored = this.level.timings.poiUnload.startTiming()) { // Paper
+-        this.poiManager.tick(shouldKeepTicking);
++            this.poiManager.tick(shouldKeepTicking);
+         } // Paper
+         if (!this.level.noSave()) {
+             try (Timing ignored = this.level.timings.chunkUnload.startTiming()) { // Paper
+-            this.processUnloads(shouldKeepTicking);
++                this.processUnloads(shouldKeepTicking);
+             } // Paper
+         }
+     }
+@@ -712,8 +714,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     public static boolean checkDupeUUID(ServerLevel level, Entity entity) {
+         io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode mode = level.paperConfig().entities.spawning.duplicateUuid.mode;
+         if (mode != io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode.WARN
+-            && mode != io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode.DELETE
+-            && mode != io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode.SAFE_REGEN) {
++                && mode != io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode.DELETE
++                && mode != io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode.SAFE_REGEN) {
+             return false;
+         }
+         Entity other = level.getEntity(entity.getUUID());
+@@ -723,10 +725,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+ 
+         if (mode == io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DuplicateUUID.DuplicateUUIDMode.SAFE_REGEN && other != null && !other.isRemoved()
+-            && Objects.equals(other.getEncodeId(), entity.getEncodeId())
+-            && entity.getBukkitEntity().getLocation().distance(other.getBukkitEntity().getLocation()) < level.paperConfig().entities.spawning.duplicateUuid.safeRegenDeleteRange
++                && Objects.equals(other.getEncodeId(), entity.getEncodeId())
++                && entity.getBukkitEntity().getLocation().distance(other.getBukkitEntity().getLocation()) < level.paperConfig().entities.spawning.duplicateUuid.safeRegenDeleteRange
+         ) {
+-            if (ServerLevel.DEBUG_ENTITIES) LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", deleted entity " + entity + " because it was near the duplicate and likely an actual duplicate. See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
++            if (ServerLevel.DEBUG_ENTITIES)
++                LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", deleted entity " + entity + " because it was near the duplicate and likely an actual duplicate. See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
+             entity.discard();
+             return true;
+         }
+@@ -734,21 +737,25 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+             switch (mode) {
+                 case SAFE_REGEN: {
+                     entity.setUUID(java.util.UUID.randomUUID());
+-                    if (ServerLevel.DEBUG_ENTITIES) LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", regenerated UUID for " + entity + ". See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
++                    if (ServerLevel.DEBUG_ENTITIES)
++                        LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", regenerated UUID for " + entity + ". See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
+                     break;
+                 }
+                 case DELETE: {
+-                    if (ServerLevel.DEBUG_ENTITIES) LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", deleted entity " + entity + ". See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
++                    if (ServerLevel.DEBUG_ENTITIES)
++                        LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", deleted entity " + entity + ". See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
+                     entity.discard();
+                     return true;
+                 }
+                 default:
+-                    if (ServerLevel.DEBUG_ENTITIES) LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", doing nothing to " + entity + ". See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
++                    if (ServerLevel.DEBUG_ENTITIES)
++                        LOGGER.warn("[DUPE-UUID] Duplicate UUID found used by " + other + ", doing nothing to " + entity + ". See https://github.com/PaperMC/Paper/issues/1223 for discussion on what this is about.");
+                     break;
+             }
+         }
+         return false;
+     }
++
+     // Paper end
+     public CompletableFuture<Either<LevelChunk, ChunkHolder.ChunkLoadingFailure>> prepareTickingChunk(ChunkHolder holder) {
+         throw new UnsupportedOperationException(); // Paper - rewrite chunk system
+@@ -778,6 +785,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     public void setTickViewDistance(int distance) {
+         this.playerChunkManager.setTickDistance(distance);
+     }
++
+     // Paper end - replace player loader system
+     public void setViewDistance(int watchDistance) {
+         int j = Mth.clamp(watchDistance + 1, (int) 3, (int) 33);
+@@ -853,8 +861,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         // Paper start - rewrite chunk system
+         if (!io.papermc.paper.chunk.system.io.RegionFileIOThread.isRegionFileThread()) {
+             return io.papermc.paper.chunk.system.io.RegionFileIOThread.loadData(
+-                this.level, chunkcoordintpair.x, chunkcoordintpair.z, io.papermc.paper.chunk.system.io.RegionFileIOThread.RegionFileType.CHUNK_DATA,
+-                io.papermc.paper.chunk.system.io.RegionFileIOThread.getIOBlockingPriorityForCurrentThread()
++                    this.level, chunkcoordintpair.x, chunkcoordintpair.z, io.papermc.paper.chunk.system.io.RegionFileIOThread.RegionFileType.CHUNK_DATA,
++                    io.papermc.paper.chunk.system.io.RegionFileIOThread.getIOBlockingPriorityForCurrentThread()
+             );
+         }
+         // Paper end - rewrite chunk system
+@@ -866,8 +874,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         // Paper start - rewrite chunk system
+         if (!io.papermc.paper.chunk.system.io.RegionFileIOThread.isRegionFileThread()) {
+             io.papermc.paper.chunk.system.io.RegionFileIOThread.scheduleSave(
+-                this.level, chunkcoordintpair.x, chunkcoordintpair.z, nbttagcompound,
+-                io.papermc.paper.chunk.system.io.RegionFileIOThread.RegionFileType.CHUNK_DATA);
++                    this.level, chunkcoordintpair.x, chunkcoordintpair.z, nbttagcompound,
++                    io.papermc.paper.chunk.system.io.RegionFileIOThread.RegionFileType.CHUNK_DATA);
+             return;
+         }
+         // Paper end - rewrite chunk system
+@@ -1146,10 +1154,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         org.spigotmc.AsyncCatcher.catchOp("entity track"); // Spigot
+         // Paper start - ignore and warn about illegal addEntity calls instead of crashing server
+         if (!entity.valid || entity.level != this.level || this.entityMap.containsKey(entity.getId())) {
+-            LOGGER.error("Illegal ChunkMap::addEntity for world " + this.level.getWorld().getName() + ": " + entity  + (this.entityMap.containsKey(entity.getId()) ? " ALREADY CONTAINED (This would have crashed your server)" : ""));
++            LOGGER.error("Illegal ChunkMap::addEntity for world " + this.level.getWorld().getName() + ": " + entity + (this.entityMap.containsKey(entity.getId()) ? " ALREADY CONTAINED (This would have crashed your server)" : ""));
+             return;
+         }
+-        if (entity instanceof ServerPlayer && ((ServerPlayer) entity).supressTrackerForLogin) return; // Delay adding to tracker until after list packets
++        if (entity instanceof ServerPlayer && ((ServerPlayer) entity).supressTrackerForLogin)
++            return; // Delay adding to tracker until after list packets
+         // Paper end
+         if (!(entity instanceof EnderDragonPart)) {
+             EntityType<?> entitytypes = entity.getType();
+@@ -1204,77 +1213,92 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         entity.tracker = null; // Paper - We're no longer tracked
+     }
+ 
++    private final Executor asyncTrackWorker = new WorkerThreadPoolExecutor(
++            0,
++            2,
++            5L,
++            TimeUnit.SECONDS,
++            new LinkedBlockingQueue<>(),
++            new DefaultWorkerFactory("tracker-async"));
++    private static WorkerThreadPoolExecutor concurrentTrackWorker = null;
++    private final AtomicInteger totalRunning = new AtomicInteger(0);
++    private static final AtomicBoolean isInited = new AtomicBoolean(false);
++    private static final AtomicBoolean enabled = new AtomicBoolean();
++
++    public static void tryInitIfNotInited() {
++        if (!isInited.get()) {
++            enabled.set(HearseConfig.getBoolean("optimizations.enable-multithreaded-tracker", true));
++            if (enabled.get()) {
++                final int threadCount = HearseConfig.getInt("workers.multithreaded-tracker-thread-count", Runtime.getRuntime().availableProcessors());
++                concurrentTrackWorker = new WorkerThreadPoolExecutor(
++                        threadCount,
++                        threadCount,
++                        5L,
++                        TimeUnit.SECONDS,
++                        new LinkedBlockingQueue<>(),
++                        new DefaultWorkerFactory("tracker-concurrent"));
++                Hearse.getWorkerManager().addWorker("tracker", concurrentTrackWorker);
++            }
++            isInited.set(true);
++        }
++    }
++
+     // Paper start - optimised tracker
+     private final void processTrackQueue() {
+         this.level.timings.tracker1.startTiming();
+-        try {
++        tryInitIfNotInited();
++
++        if (!enabled.get()) {
+             for (TrackedEntity tracker : this.entityMap.values()) {
+-                // update tracker entry
+                 tracker.updatePlayers(tracker.entity.getPlayersInTrackRange());
+             }
+-        } finally {
+-            this.level.timings.tracker1.stopTiming();
+-        }
+ 
+ 
+-        this.level.timings.tracker2.startTiming();
+-        try {
++            this.level.timings.tracker2.startTiming();
+             for (TrackedEntity tracker : this.entityMap.values()) {
+                 tracker.serverEntity.sendChanges();
++                return;
++            }
++            if (this.totalRunning.get() > 0) {
++                return;
+             }
+-        } finally {
+-            this.level.timings.tracker2.stopTiming();
++
++            this.totalRunning.set(2);
++
++            this.asyncTrackWorker.execute(() -> {
++                //this.level.timings.tracker1.startTiming(); // Purpur
++                try {
++                    CompletableFuture.allOf(this.entityMap.values()
++                            .stream()
++                            .map(tracker -> CompletableFuture.runAsync(() -> {
++                                tracker.updatePlayers(tracker.entity.getPlayersInTrackRange());
++                            }, concurrentTrackWorker))
++                            .toArray(CompletableFuture[]::new)).join();
++                } finally {
++                    //this.level.timings.tracker1.stopTiming(); // Purpur
++                    this.totalRunning.getAndDecrement();
++                }
++            });
++
++            this.asyncTrackWorker.execute(() -> {
++                //this.level.timings.tracker2.startTiming(); // Purpur
++                try {
++                    for (TrackedEntity tracker : this.entityMap.values()) {
++                        tracker.serverEntity.sendChanges();
++                    }
++                } finally {
++                    //this.level.timings.tracker2.stopTiming(); // Purpur
++                    this.totalRunning.getAndDecrement();
++                }
++            });
+         }
+     }
+-    // Paper end - optimised tracker
+ 
++    // Paper end - optimised tracker
+     protected void tick() {
+         // Paper start - optimized tracker
+-        if (true) {
+-            this.processTrackQueue();
+-            return;
+-        }
++        this.processTrackQueue();
+         // Paper end - optimized tracker
+-        List<ServerPlayer> list = Lists.newArrayList();
+-        List<ServerPlayer> list1 = this.level.players();
+-        Iterator objectiterator = this.entityMap.values().iterator();
+-        level.timings.tracker1.startTiming(); // Paper
+-
+-        ChunkMap.TrackedEntity playerchunkmap_entitytracker;
+-
+-        while (objectiterator.hasNext()) {
+-            playerchunkmap_entitytracker = (ChunkMap.TrackedEntity) objectiterator.next();
+-            SectionPos sectionposition = playerchunkmap_entitytracker.lastSectionPos;
+-            SectionPos sectionposition1 = SectionPos.of((EntityAccess) playerchunkmap_entitytracker.entity);
+-            boolean flag = !Objects.equals(sectionposition, sectionposition1);
+-
+-            if (flag) {
+-                playerchunkmap_entitytracker.updatePlayers(list1);
+-                Entity entity = playerchunkmap_entitytracker.entity;
+-
+-                if (entity instanceof ServerPlayer) {
+-                    list.add((ServerPlayer) entity);
+-                }
+-
+-                playerchunkmap_entitytracker.lastSectionPos = sectionposition1;
+-            }
+-
+-            if (flag || this.distanceManager.inEntityTickingRange(sectionposition1.chunk().toLong())) {
+-                playerchunkmap_entitytracker.serverEntity.sendChanges();
+-            }
+-        }
+-        level.timings.tracker1.stopTiming(); // Paper
+-
+-        if (!list.isEmpty()) {
+-            objectiterator = this.entityMap.values().iterator();
+-
+-            level.timings.tracker2.startTiming(); // Paper
+-            while (objectiterator.hasNext()) {
+-                playerchunkmap_entitytracker = (ChunkMap.TrackedEntity) objectiterator.next();
+-                playerchunkmap_entitytracker.updatePlayers(list);
+-            }
+-            level.timings.tracker2.stopTiming(); // Paper
+-        }
+ 
+     }
+ 
+@@ -1456,7 +1480,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         final Entity entity;
+         private final int range;
+         SectionPos lastSectionPos;
+-        public final Set<ServerPlayerConnection> seenBy = new ReferenceOpenHashSet<>(); // Paper - optimise map impl
++        public final Set<ServerPlayerConnection> seenBy = Sets.newConcurrentHashSet(); // Paper - optimise map impl //Hearse - multithread tracker
+ 
+         public TrackedEntity(Entity entity, int i, int j, boolean flag) {
+             this.serverEntity = new ServerEntity(ChunkMap.this.level, entity, j, flag, this::broadcast, this.seenBy); // CraftBukkit
+@@ -1474,12 +1498,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+ 
+             if (newTrackerCandidates != null) {
+                 Object[] rawData = newTrackerCandidates.getBackingSet();
+-                for (int i = 0, len = rawData.length; i < len; ++i) {
+-                    Object raw = rawData[i];
++                for (Object raw : rawData) {
+                     if (!(raw instanceof ServerPlayer)) {
+                         continue;
+                     }
+-                    ServerPlayer player = (ServerPlayer)raw;
++                    ServerPlayer player = (ServerPlayer) raw;
+                     this.updatePlayer(player);
+                 }
+             }
+@@ -1510,14 +1533,9 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+ 
+         public void broadcast(Packet<?> packet) {
+-            Iterator iterator = this.seenBy.iterator();
+-
+-            while (iterator.hasNext()) {
+-                ServerPlayerConnection serverplayerconnection = (ServerPlayerConnection) iterator.next();
+-
++            for (ServerPlayerConnection serverplayerconnection : this.seenBy) {
+                 serverplayerconnection.send(packet);
+             }
+-
+         }
+ 
+         public void broadcastAndSend(Packet<?> packet) {
+@@ -1529,14 +1547,9 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+ 
+         public void broadcastRemoved() {
+-            Iterator iterator = this.seenBy.iterator();
+-
+-            while (iterator.hasNext()) {
+-                ServerPlayerConnection serverplayerconnection = (ServerPlayerConnection) iterator.next();
+-
++            for (ServerPlayerConnection serverplayerconnection : this.seenBy) {
+                 this.serverEntity.removePairing(serverplayerconnection.getPlayer());
+             }
+-
+         }
+ 
+         public void removePlayer(ServerPlayer player) {
+@@ -1544,7 +1557,6 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+             if (this.seenBy.remove(player.connection)) {
+                 this.serverEntity.removePairing(player);
+             }
+-
+         }
+ 
+         public void updatePlayer(ServerPlayer player) {
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index c77f87cfc8043b2a1cf7514a7dc1f0f2041f0e8c..a4e371743abda5503b305decf7c682928e732cfa 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.server.level;
+ 
++import ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor;
+ import co.earthme.hearse.concurrent.thread.Worker;
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.collect.Lists;
+@@ -393,7 +394,7 @@ public class ServerChunkCache extends ChunkSource {
+     }
+     // Paper end - async chunk io
+ 
+-    private final Object workerGetChunkLock = new Object();
++    private final Object schedulingMutex = new Object();
+ 
+     @Nullable
+     @Override
+@@ -403,55 +404,44 @@ public class ServerChunkCache extends ChunkSource {
+                 return this.getChunk(x, z, leastStatus, create);
+             }, this.mainThreadProcessor.createExecutorForChunk(x, z)).join(); // Gale - base thread pool - chunk-sorted cache tasks
+         } else {
+-            if (Thread.currentThread() instanceof Worker) {
+-                synchronized (this.workerGetChunkLock) {
+-                    return this.getChunkUnsafe(x, z, leastStatus, create);
+-                }
++            final int x1 = x;
++            final int z1 = z; // Paper - conflict on variable change
++            LevelChunk ifLoaded = this.getChunkAtIfLoadedMainThread(x, z);
++            if (ifLoaded != null) {
++                return ifLoaded;
+             }
+-            return this.getChunkUnsafe(x, z, leastStatus, create);
+-        }
+-    }
+-
+-    private ChunkAccess getChunkUnsafe(int x, int z, ChunkStatus leastStatus, boolean create) {
+-        final int x1 = x;
+-        final int z1 = z; // Paper - conflict on variable change
+-        // Paper start - optimise for loaded chunks
+-        LevelChunk ifLoaded = this.getChunkAtIfLoadedMainThread(x, z);
+-        if (ifLoaded != null) {
+-            return ifLoaded;
+-        }
+-        // Paper end
+-        long k = ChunkPos.asLong(x, z);
++            long k = ChunkPos.asLong(x, z);
+ 
+-        ChunkAccess ichunkaccess;
++            ChunkAccess ichunkaccess;
+ 
+-        // Paper - rewrite chunk system - there are no correct callbacks to remove items from cache in the new chunk system
++            // Paper - rewrite chunk system - there are no correct callbacks to remove items from cache in the new chunk system
+ 
+-        CompletableFuture<Either<ChunkAccess, ChunkHolder.ChunkLoadingFailure>> completablefuture = this.getChunkFutureMainThread(x, z, leastStatus, create, true); // Paper
+-        ServerChunkCache.MainThreadExecutor chunkproviderserver_b = this.mainThreadProcessor;
++            CompletableFuture<Either<ChunkAccess, ChunkHolder.ChunkLoadingFailure>> completablefuture = this.getChunkFutureMainThread(x, z, leastStatus, create, true); // Paper
++            ServerChunkCache.MainThreadExecutor chunkproviderserver_b = this.mainThreadProcessor;
+ 
+-        Objects.requireNonNull(completablefuture);
+-        if (!completablefuture.isDone()) { // Paper
+-            // Paper start - async chunk io/loading
+-            io.papermc.paper.chunk.system.scheduling.ChunkTaskScheduler.pushChunkWait(this.level, x1, z1); // Paper - rewrite chunk system
+-            // Paper end
+-            com.destroystokyo.paper.io.SyncLoadFinder.logSyncLoad(this.level, x1, z1); // Paper - sync load info
+-            this.level.timings.syncChunkLoad.startTiming(); // Paper
+-            chunkproviderserver_b.managedYield(completablefuture); // Gale - base thread pool
+-            io.papermc.paper.chunk.system.scheduling.ChunkTaskScheduler.popChunkWait(); // Paper - async chunk debug  // Paper - rewrite chunk system
+-            this.level.timings.syncChunkLoad.stopTiming(); // Paper
+-        } // Paper
+-        ichunkaccess = (ChunkAccess) ((Either) completablefuture.join()).map((ichunkaccess1) -> {
+-            return ichunkaccess1;
+-        }, (playerchunk_failure) -> {
+-            if (create) {
+-                throw (IllegalStateException) Util.pauseInIde(new IllegalStateException("Chunk not there when requested: " + playerchunk_failure));
+-            } else {
+-                return null;
+-            }
+-        });
+-        this.storeInCache(k, ichunkaccess, leastStatus);
+-        return ichunkaccess;
++            Objects.requireNonNull(completablefuture);
++            if (!completablefuture.isDone()) { // Paper
++                // Paper start - async chunk io/loading
++                io.papermc.paper.chunk.system.scheduling.ChunkTaskScheduler.pushChunkWait(this.level, x1, z1); // Paper - rewrite chunk system
++                // Paper end
++                com.destroystokyo.paper.io.SyncLoadFinder.logSyncLoad(this.level, x1, z1); // Paper - sync load info
++                this.level.timings.syncChunkLoad.startTiming(); // Paper
++                chunkproviderserver_b.managedYield(completablefuture); // Gale - base thread pool
++                io.papermc.paper.chunk.system.scheduling.ChunkTaskScheduler.popChunkWait(); // Paper - async chunk debug  // Paper - rewrite chunk system
++                this.level.timings.syncChunkLoad.stopTiming(); // Paper
++            } // Paper
++            ichunkaccess = (ChunkAccess) ((Either) completablefuture.join()).map((ichunkaccess1) -> {
++                return ichunkaccess1;
++            }, (playerchunk_failure) -> {
++                if (create) {
++                    throw (IllegalStateException) Util.pauseInIde(new IllegalStateException("Chunk not there when requested: " + playerchunk_failure));
++                } else {
++                    return null;
++                }
++            });
++            this.storeInCache(k, ichunkaccess, leastStatus);
++            return ichunkaccess;
++        }
+     }
+ 
+     @Nullable
+@@ -522,9 +512,9 @@ public class ServerChunkCache extends ChunkSource {
+             };
+ 
+             this.level.chunkTaskScheduler.scheduleChunkLoad(
+-                chunkX, chunkZ, leastStatus, true,
+-                isUrgent ? ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor.Priority.BLOCKING : ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor.Priority.NORMAL,
+-                complete
++                    chunkX, chunkZ, leastStatus, true,
++                    isUrgent ? PrioritisedExecutor.Priority.BLOCKING : PrioritisedExecutor.Priority.NORMAL,
++                    complete
+             );
+ 
+             return ret;
+diff --git a/src/main/java/net/minecraft/server/level/ServerEntity.java b/src/main/java/net/minecraft/server/level/ServerEntity.java
+index 46dc2deb8eb066e51a03a010a7bd920486914bb2..570ed9837ee3fe075bb0de9510d5111f0158ac16 100644
+--- a/src/main/java/net/minecraft/server/level/ServerEntity.java
++++ b/src/main/java/net/minecraft/server/level/ServerEntity.java
+@@ -3,14 +3,12 @@ package net.minecraft.server.level;
+ import com.google.common.collect.Lists;
+ import com.mojang.datafixers.util.Pair;
+ import com.mojang.logging.LogUtils;
+-import java.util.Collection;
+-import java.util.Collections;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.Objects;
+-import java.util.Set;
++
++import java.util.*;
+ import java.util.function.Consumer;
+ import javax.annotation.Nullable;
++
++import it.unimi.dsi.fastutil.objects.ObjectArraySet;
+ import net.minecraft.network.protocol.Packet;
+ import net.minecraft.network.protocol.game.ClientGamePacketListener;
+ import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
+@@ -375,7 +373,7 @@ public class ServerEntity {
+         }
+ 
+         if (this.entity instanceof LivingEntity) {
+-            Set<AttributeInstance> set = ((LivingEntity) this.entity).getAttributes().getDirtyAttributes();
++            List<AttributeInstance> set = new ArrayList<>(((LivingEntity) this.entity).getAttributes().getDirtyAttributes());
+ 
+             if (!set.isEmpty()) {
+                 // CraftBukkit start - Send scaled max health
+@@ -396,6 +394,5 @@ public class ServerEntity {
+         if (this.entity instanceof ServerPlayer) {
+             ((ServerPlayer) this.entity).connection.send(packet);
+         }
+-
+     }
+ }
