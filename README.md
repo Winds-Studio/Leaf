@@ -5,11 +5,11 @@
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/ver1193.yml?branch=ver%2F1.19.3&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
-<h5>Leaf is a drop-in replacement for <a href="https://github.com/pufferfish-gg/Pufferfish">Pufferfish</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/pufferfish-gg/Pufferfish">Pufferfish</a>.</h5>
+<h5>Leaf is a drop-in replacement for <a href="https://github.com/GaleMC/Gale">Gale</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a>.</h5>
 </div>
 
 ## Features
- - Fork of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) for better performance.
+ - Fork of [Gale](https://github.com/GaleMC/Gale) for better performance.
  - Allowing all characters as username, including Chinese and other characters.
  - Allowing players connect to backend server through proxy without enabling bunngecord mode.
  - Allowing players use tripwire dupe.
@@ -52,8 +52,8 @@ Credits:
 -------------
 Thanks to these projects below. Leaf just mix some of their patches together. If these excellent projects haven't appear, Leaf will not be great.
 
-- [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Gale](https://github.com/GaleMC/Gale)
+- [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Purpur](https://github.com/PurpurMC/Purpur)
 - [KeYi](https://github.com/KeYiMC/KeYi) (R.I.P.)
 - [KTP](https://github.com/lynxplay/ktp)
@@ -62,6 +62,5 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Mirai](https://github.com/etil2jz/Mirai)
 - [Petal](https://github.com/Bloom-host/Petal)
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
-- [VMP](https://github.com/RelativityMC/VMP-fabric)
-- [Hearse](https://github.com/Era4FunMC/Hearse)
+- [VMP](https://github.com/RelativityMC/VMP-fabric) <!-- - [Hearse](https://github.com/Era4FunMC/Hearse) -->
 - [Slice](https://github.com/Cryptite/Slice)
