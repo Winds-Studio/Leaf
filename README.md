@@ -5,18 +5,19 @@
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/ver1193.yml?branch=ver%2F1.19.3&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
 [![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
 
-<h5>Leaf is a drop-in replacement for <a href="https://github.com/GaleMC/Gale">Gale</a> servers designed for fix some bugs and customize, and performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a>.</h5>
+<h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
 </div>
 
 ## Features
- - Fork of [Gale](https://github.com/GaleMC/Gale) for better performance.
- - Allowing all characters as username, including Chinese and other characters.
- - Allowing players connect to backend server through proxy without enabling bunngecord mode.
- - Allowing players use tripwire dupe.
- - Disabling the UseItemOnPacket Too Far check.
- - Update all dependencies to the latest.
- - Parallel entity ticking(Half of async)(In beta)
- - Some Purpur‘s patches.
+ - **Fork of [Gale](https://github.com/GaleMC/Gale)** for better performance.
+ - **Allows all characters as usernames**, including Chinese and other characters.
+ - **Allows** players to connect the backend under proxy without enabling bunngecord mode.
+ - **Allows tripwire dupe** by reverting tripwire bugfix patch of Paper.
+ - **Configurable UseItem distance** for anarchy server.
+ - **Latest dependencies**, keeping all dependencies in the newest version.
+ - **More customized** relying on some [Purpur](https://github.com/PurpurMC/Purpur)‘s patches.
+ - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish/blob/ver/1.19/patches/server/0005-Add-Sentry.patch) to easy track all errors coming from your server in excruciating detail.
+ - **Various optimization** blending from [other forks](https://github.com/Winds-Studio/Leaf#credits).
  - ...
 
 ## Contact
@@ -26,7 +27,7 @@
 
 ## Downloads
 
-Downloads can be obtained in the [Actions](https://github.com/Dreeam-qwq/Leaf/actions) or [Releases](https://github.com/Dreeam-qwq/Leaf/releases)
+The Reobf JAR can be obtained in the [Actions](https://github.com/Dreeam-qwq/Leaf/actions) or [Releases](https://github.com/Dreeam-qwq/Leaf/releases)
 
 
 ## Building
@@ -50,12 +51,12 @@ Yes, this also includes all API provided by Paper, Spigot, and Bukkit.
 
 Credits:
 -------------
-Thanks to these projects below. Leaf just mix some of their patches together. If these excellent projects haven't appear, Leaf will not be great.
+Thanks to these projects below. Leaf just mix some of their patches together. If these excellent projects haven't appeared, Leaf will not be great.
 
 - [Gale](https://github.com/GaleMC/Gale)
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Purpur](https://github.com/PurpurMC/Purpur)
-- [KeYi](https://github.com/KeYiMC/KeYi) (R.I.P.)
+- [KeYi](https://github.com/KeYiMC/KeYi) (R.I.P.) [(Backup)](https://github.com/MikuMC/KeYiBackup)
 - [KTP](https://github.com/lynxplay/ktp)
 - [Patina](https://github.com/PatinaMC/Patina)
 - [Yatopia](https://github.com/YatopiaMC/Yatopia)
