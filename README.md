@@ -2,8 +2,8 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/ver1193.yml?branch=ver%2F1.19.3&style=flat-square)](https://github.com/Winds-Studio/Leaf/actions)
-[![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1194.yml?branch=ver%2F1.19.4&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
+[![MIT License](https://img.shields.io/github/license/Winds-Studio/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
 </div>
@@ -27,7 +27,7 @@
 
 ## Downloads
 
-The Reobf JAR can be obtained in the [Actions](https://github.com/Dreeam-qwq/Leaf/actions) or [Releases](https://github.com/Dreeam-qwq/Leaf/releases)
+The Reobf JAR can be obtained in the [Actions](https://github.com/Winds-Studio/Leaf/actions) or [Releases](https://github.com/Winds-Studio/Leaf/releases)
 
 
 ## Building
@@ -40,7 +40,7 @@ Building a Paperclip JAR for distribution:
 
 
 ## License
-[![MIT License](https://img.shields.io/github/license/Dreeam-qwq/Leaf?style=flat-square)](LICENSE)
+[![MIT License](https://img.shields.io/github/license/Winds-Studio/Leaf?style=flat-square)](LICENSE)
 
 All patches are licensed under the MIT license, unless otherwise noted in the patch headers.
 
