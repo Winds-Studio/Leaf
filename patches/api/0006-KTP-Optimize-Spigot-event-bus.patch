@@ -6,6 +6,69 @@ Subject: [PATCH] KTP: Optimize Spigot event bus
 Original license: GPL v3
 Original project: https://github.com/lynxplay/ktp
 
+This patch contains a lot of small optimizations to the spigot event bus
+to improve its speed as much as possible, allowing for a large amount of
+events to be published by the server without impacting the overall
+performance too much.
+
+diff --git a/src/main/java/org/bukkit/event/Event.java b/src/main/java/org/bukkit/event/Event.java
+index 8ec56cd6b8e0f5c5dd8c7c88b4671e18dcf109d0..caae79275802bc5e5a5385d6a11903dfa84325d1 100644
+--- a/src/main/java/org/bukkit/event/Event.java
++++ b/src/main/java/org/bukkit/event/Event.java
+@@ -14,7 +14,7 @@ import org.jetbrains.annotations.NotNull;
+  */
+ public abstract class Event {
+     private String name;
+-    private final boolean async;
++    private final net.kyori.adventure.util.TriState async; // KTP - optimize spigot event bus
+ 
+     /**
+      * The default constructor is defined for cleaner code. This constructor
+@@ -32,9 +32,35 @@ public abstract class Event {
+      *     by default from default constructor
+      */
+     public Event(boolean isAsync) {
++        // KTP start - optimize spigot event bus
++        this(net.kyori.adventure.util.TriState.byBoolean(isAsync));
++    }
++
++    /**
++     * This constructor is used to explicitly declare an event as synchronous
++     * or asynchronous or potentially unset.
++     *
++     * @param isAsync true indicates the event will fire asynchronously, false
++     *                by default from default constructor, unset indicates that the event may be called on either the server thread or off the server
++     *                thread.
++     */
++    public Event(@NotNull final net.kyori.adventure.util.TriState isAsync) {
+         this.async = isAsync;
+     }
+ 
++    /**
++     * Returns a tristate that, when resolving to true or false, has the exact indications defined by {@link #isAsynchronous()}.
++     * <p>
++     * If the tristate resolves to NOT_SET, the event may or may not have been fired off the main thread, meaning a plugin would have
++     * to validate what thread the spigot event bus was called on.
++     *
++     * @return the tristate enum.
++     */
++    public final @NotNull net.kyori.adventure.util.TriState asynchronous() {
++        return this.async;
++    }
++    // KTP end - optimize spigot event bus
++
+     // Paper start
+     /**
+      * Calls the event and tests if cancelled.
+@@ -92,7 +118,7 @@ public abstract class Event {
+      * @return false by default, true if the event fires asynchronously
+      */
+     public final boolean isAsynchronous() {
+-        return async;
++        return this.async == net.kyori.adventure.util.TriState.TRUE; // KTP - optimize spigot event bus
+     }
+ 
+     public enum Result {
 diff --git a/src/main/java/org/bukkit/plugin/RegisteredListener.java b/src/main/java/org/bukkit/plugin/RegisteredListener.java
 index 3b3d9642a8d63798dc28f2f8df77f0466451cbff..8d3605f25e97a375971705c737bc7bacbac045cd 100644
 --- a/src/main/java/org/bukkit/plugin/RegisteredListener.java
@@ -23,25 +86,20 @@ index 3b3d9642a8d63798dc28f2f8df77f0466451cbff..8d3605f25e97a375971705c737bc7bac
                  return;
              }
          }
-diff --git a/src/main/java/org/bukkit/plugin/SimplePluginManager.java b/src/main/java/org/bukkit/plugin/SimplePluginManager.java
-index 623c683563a5fb5dcf3b8478873ef2a27307b289..e7e7a4b5ed1a1ae7b4f711daec51003514908d86 100644
---- a/src/main/java/org/bukkit/plugin/SimplePluginManager.java
-+++ b/src/main/java/org/bukkit/plugin/SimplePluginManager.java
-@@ -640,11 +640,15 @@ public final class SimplePluginManager implements PluginManager {
-         // Gale end - JettPack - skip events without listeners
+diff --git a/src/main/java/org/bukkit/plugin/java/PluginClassLoader.java b/src/main/java/org/bukkit/plugin/java/PluginClassLoader.java
+index 1758e8a89c85eea8c2161ddcb5b0e745151a1f5e..050c839f06060b16ed7c284bffa3104ac4cd7276 100644
+--- a/src/main/java/org/bukkit/plugin/java/PluginClassLoader.java
++++ b/src/main/java/org/bukkit/plugin/java/PluginClassLoader.java
+@@ -305,4 +305,12 @@ public final class PluginClassLoader extends URLClassLoader implements io.paperm
+     }
  
-         // Paper - replace callEvent by merging to below method
--        if (event.isAsynchronous() && server.isPrimaryThread()) {
-+        // KTP start - optimize spigot event bus
-+        final boolean isAsync = event.isAsynchronous();
-+        final boolean isPrimary = server.isPrimaryThread(); // Cache to prevent multiple thread object comparisons.
-+        if (isAsync && isPrimary) {
-             throw new IllegalStateException(event.getEventName() + " may only be triggered asynchronously.");
--        } else if (!event.isAsynchronous() && !server.isPrimaryThread() && !server.isStopping() ) {
-+        } else if (!isAsync && !isPrimary && !server.isStopping() ) {
-             throw new IllegalStateException(event.getEventName() + " may only be triggered synchronously.");
-         }
-+        // KTP end - optimize spigot event bus
- 
-         for (RegisteredListener registration : listeners) {
-             if (!registration.getPlugin().isEnabled()) {
+     // Paper end
++
++    // KTP start - expose addURL
++    @Override
++    public void addURL(final URL url) {
++        super.addURL(url);
++    }
++    // KTP end - expose addURL
++
+ }
