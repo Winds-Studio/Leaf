@@ -65,3 +65,4 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
 - [VMP](https://github.com/RelativityMC/VMP-fabric) <!-- - [Hearse](https://github.com/Era4FunMC/Hearse) -->
 - [Slice](https://github.com/Cryptite/Slice)
+- [Parchment](https://github.com/ProjectEdenGG/Parchment)
