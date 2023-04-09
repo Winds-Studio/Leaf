@@ -1,3 +1,4 @@
+<img src="Leaf.png" alt="Leaf logo" align="right" width="200">
 <div align="center">
 
 ## Leaf
@@ -6,6 +7,7 @@
 [![MIT License](https://img.shields.io/github/license/Winds-Studio/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
+<h8>Logo designed by <a href="https://www.bing.com/new">New Bing</a></h8>
 </div>
 
 ## Features
