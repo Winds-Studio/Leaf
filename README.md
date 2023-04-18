@@ -60,11 +60,10 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Purpur](https://github.com/PurpurMC/Purpur)
 - [KeYi](https://github.com/KeYiMC/KeYi) (R.I.P.) [(Backup)](https://github.com/MikuMC/KeYiBackup)
 - [KTP](https://github.com/lynxplay/ktp)
-- [Patina](https://github.com/PatinaMC/Patina)
-- [Yatopia](https://github.com/YatopiaMC/Yatopia)
 - [Mirai](https://github.com/etil2jz/Mirai)
 - [Petal](https://github.com/Bloom-host/Petal)
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
-- [VMP](https://github.com/RelativityMC/VMP-fabric) <!-- - [Hearse](https://github.com/Era4FunMC/Hearse) -->
+- [VMP](https://github.com/RelativityMC/VMP-fabric)
 - [Slice](https://github.com/Cryptite/Slice)
 - [Parchment](https://github.com/ProjectEdenGG/Parchment)
+- [Leaves](https://github.com/LeavesMC/Leaves)
