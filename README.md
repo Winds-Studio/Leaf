@@ -63,7 +63,6 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Mirai](https://github.com/etil2jz/Mirai)
 - [Petal](https://github.com/Bloom-host/Petal)
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
-- [VMP](https://github.com/RelativityMC/VMP-fabric)
 - [Slice](https://github.com/Cryptite/Slice)
 - [Parchment](https://github.com/ProjectEdenGG/Parchment)
 - [Leaves](https://github.com/LeavesMC/Leaves)
