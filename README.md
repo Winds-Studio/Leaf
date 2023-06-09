@@ -3,7 +3,7 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1194.yml?branch=ver%2F1.19.4&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-120.yml?branch=ver%2F1.20&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
 [![MIT License](https://img.shields.io/github/license/Winds-Studio/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
