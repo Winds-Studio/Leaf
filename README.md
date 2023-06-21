@@ -24,7 +24,7 @@
 
 ## Contact
 
-- 📫 Discord: `Dreeam#0851` | QQ: `2682173972`
+- 📫 Discord: `dreeam___` | QQ: `2682173972`
 
 
 ## Downloads
