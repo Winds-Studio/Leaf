@@ -9,7 +9,7 @@ pluginManagement {
 
 rootProject.name = "leaf"
 for (name in listOf("Leaf-API", "Leaf-Server")) {
-    val projName = name.toLowerCase(Locale.ENGLISH)
+    val projName = name.lowercase(Locale.ENGLISH)
     include(projName)
     findProject(":$projName")!!.projectDir = file(name)
 }
