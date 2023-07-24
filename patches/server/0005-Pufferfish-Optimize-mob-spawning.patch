@@ -19,138 +19,6 @@ this can result in performance gains of up to 15%, which is significant
 and, in my opinion, worth the low risk of minor mob-spawning-related
 inconsistencies.
 
-diff --git a/src/main/java/gg/pufferfish/pufferfish/PufferfishLogger.java b/src/main/java/gg/pufferfish/pufferfish/PufferfishLogger.java
-new file mode 100644
-index 0000000000000000000000000000000000000000..dd5e1381754a158c10704d525a02092008be4c56
---- /dev/null
-+++ b/src/main/java/gg/pufferfish/pufferfish/PufferfishLogger.java
-@@ -0,0 +1,17 @@
-+package gg.pufferfish.pufferfish;
-+
-+import java.util.logging.Level;
-+import java.util.logging.Logger;
-+
-+import org.bukkit.Bukkit;
-+
-+public class PufferfishLogger extends Logger {
-+    public static final PufferfishLogger LOGGER = new PufferfishLogger();
-+
-+    private PufferfishLogger() {
-+        super("Pufferfish", null);
-+
-+        setParent(Bukkit.getLogger());
-+        setLevel(Level.ALL);
-+    }
-+}
-\ No newline at end of file
-diff --git a/src/main/java/gg/pufferfish/pufferfish/util/AsyncExecutor.java b/src/main/java/gg/pufferfish/pufferfish/util/AsyncExecutor.java
-new file mode 100644
-index 0000000000000000000000000000000000000000..23c959cd4075f375887b0d6868120223a65c8980
---- /dev/null
-+++ b/src/main/java/gg/pufferfish/pufferfish/util/AsyncExecutor.java
-@@ -0,0 +1,74 @@
-+package gg.pufferfish.pufferfish.util;
-+
-+import com.google.common.collect.Queues;
-+import gg.pufferfish.pufferfish.PufferfishLogger;
-+
-+import java.util.Queue;
-+import java.util.concurrent.locks.Condition;
-+import java.util.concurrent.locks.Lock;
-+import java.util.concurrent.locks.ReentrantLock;
-+import java.util.logging.Level;
-+
-+public class AsyncExecutor implements Runnable {
-+
-+    private final Queue<Runnable> jobs = Queues.newArrayDeque();
-+    private final Lock mutex = new ReentrantLock();
-+    private final Condition cond = mutex.newCondition();
-+    private final Thread thread;
-+    private volatile boolean killswitch = false;
-+
-+    public AsyncExecutor(String threadName) {
-+        this.thread = new Thread(this, threadName);
-+    }
-+
-+    public void start() {
-+        thread.start();
-+    }
-+
-+    public void kill() {
-+        killswitch = true;
-+        cond.signalAll();
-+    }
-+
-+    public void submit(Runnable runnable) {
-+        mutex.lock();
-+        try {
-+            jobs.offer(runnable);
-+            cond.signalAll();
-+        } finally {
-+            mutex.unlock();
-+        }
-+    }
-+
-+    @Override
-+    public void run() {
-+        while (!killswitch) {
-+            try {
-+                Runnable runnable = takeRunnable();
-+                if (runnable != null) {
-+                    runnable.run();
-+                }
-+            } catch (InterruptedException e) {
-+                Thread.currentThread().interrupt();
-+            } catch (Exception e) {
-+                PufferfishLogger.LOGGER.log(Level.SEVERE, e, () -> "Failed to execute async job for thread " + thread.getName());
-+            }
-+        }
-+    }
-+
-+    private Runnable takeRunnable() throws InterruptedException {
-+        mutex.lock();
-+        try {
-+            while (jobs.isEmpty() && !killswitch) {
-+                cond.await();
-+            }
-+
-+            if (jobs.isEmpty()) return null; // We've set killswitch
-+
-+            return jobs.remove();
-+        } finally {
-+            mutex.unlock();
-+        }
-+    }
-+
-+}
-\ No newline at end of file
-diff --git a/src/main/java/gg/pufferfish/pufferfish/util/IterableWrapper.java b/src/main/java/gg/pufferfish/pufferfish/util/IterableWrapper.java
-new file mode 100644
-index 0000000000000000000000000000000000000000..65c3d2989e8140259c5720222c569129034aca6c
---- /dev/null
-+++ b/src/main/java/gg/pufferfish/pufferfish/util/IterableWrapper.java
-@@ -0,0 +1,20 @@
-+package gg.pufferfish.pufferfish.util;
-+
-+import java.util.Iterator;
-+import org.jetbrains.annotations.NotNull;
-+
-+public class IterableWrapper<T> implements Iterable<T> {
-+
-+    private final Iterator<T> iterator;
-+
-+    public IterableWrapper(Iterator<T> iterator) {
-+        this.iterator = iterator;
-+    }
-+
-+    @NotNull
-+    @Override
-+    public Iterator<T> iterator() {
-+        return iterator;
-+    }
-+
-+}
-\ No newline at end of file
 diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
 index ff5c9492f2933cc9ba5a4e15998ba756497eac89..b2cb60cfffbe2b6c5ff4b29f8d242cfb00f6ebb6 100644
 --- a/src/main/java/net/minecraft/server/MinecraftServer.java
@@ -183,19 +51,24 @@ index 8ba7f4aad1ff28d5f38b895e8eb47e141390e5ea..69c594bbd52335d6779b06f9273a1ef8
              return true;
          }
      }
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 780deea4805dfdd80d47e20ca1c2fcac17e5cabc..be9110a4ac4717956c07f37ee5ab8cbed3b771a7 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -342,7 +342,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         this.dataRegionManager = new io.papermc.paper.chunk.SingleThreadChunkRegionManager(this.level, 2, (1.0 / 3.0), 1, 6, "Data", DataRegionData::new, DataRegionSectionData::new);
+         this.regionManagers.add(this.dataRegionManager);
+         // Paper end
+-        this.playerMobDistanceMap = this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new com.destroystokyo.paper.util.misc.PlayerAreaMap(this.pooledLinkedPlayerHashSets) : null; // Paper
++        this.playerMobDistanceMap = this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new gg.pufferfish.pufferfish.util.AsyncPlayerAreaMap(this.pooledLinkedPlayerHashSets) : null; // Paper // Pufferfish
+         // Paper start - use distance map to optimise entity tracker
+         this.playerEntityTrackerTrackMaps = new com.destroystokyo.paper.util.misc.PlayerAreaMap[TRACKING_RANGE_TYPES.length];
+         this.entityTrackerTrackRanges = new int[TRACKING_RANGE_TYPES.length];
 diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
-index 3c9ff57cf8cf7e7bfca234e460ff869165bd40d3..9e743d20e9ff979ebad152f209a6ca97a533ea47 100644
+index 3c9ff57cf8cf7e7bfca234e460ff869165bd40d3..259727ca7956416afa0f425fc203103654673cef 100644
 --- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
 +++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
-@@ -48,6 +48,7 @@ import net.minecraft.world.level.storage.DimensionDataStorage;
- import net.minecraft.world.level.storage.LevelData;
- import net.minecraft.world.level.storage.LevelStorageSource;
- import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet; // Paper
-+import org.dreeam.leaf.LeafConfig;
- 
- public class ServerChunkCache extends ChunkSource {
- 
-@@ -75,6 +76,9 @@ public class ServerChunkCache extends ChunkSource {
+@@ -75,6 +75,9 @@ public class ServerChunkCache extends ChunkSource {
      final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<LevelChunk> loadedChunkMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>(8192, 0.5f);
  
      private final LevelChunk[] lastLoadedChunks = new LevelChunk[4 * 4];
@@ -205,7 +78,7 @@ index 3c9ff57cf8cf7e7bfca234e460ff869165bd40d3..9e743d20e9ff979ebad152f209a6ca97
  
      private static int getChunkCacheKey(int x, int z) {
          return x & 3 | ((z & 3) << 2);
-@@ -553,18 +557,25 @@ public class ServerChunkCache extends ChunkSource {
+@@ -553,18 +556,25 @@ public class ServerChunkCache extends ChunkSource {
              int l = this.distanceManager.getNaturalSpawnChunkCount();
              // Paper start - per player mob spawning
              if ((this.spawnFriendlies || this.spawnEnemies) && this.chunkMap.playerMobDistanceMap != null) { // don't count mobs when animals and monsters are disabled
@@ -213,7 +86,7 @@ index 3c9ff57cf8cf7e7bfca234e460ff869165bd40d3..9e743d20e9ff979ebad152f209a6ca97
 -                for (ServerPlayer player : this.level.players) {
 -                    Arrays.fill(player.mobCounts, 0);
 +                // Pufferfish start - moved down when async processing
-+                if (!LeafConfig.enableAsyncMobSpawning) {
++                if (!org.dreeam.leaf.LeafConfig.enableAsyncMobSpawning) {
 +                    // re-set mob counts
 +                    for (ServerPlayer player : this.level.players) {
 +                        Arrays.fill(player.mobCounts, 0);
@@ -237,23 +110,23 @@ index 3c9ff57cf8cf7e7bfca234e460ff869165bd40d3..9e743d20e9ff979ebad152f209a6ca97
                  // Gale start - MultiPaper - skip unnecessary mob spawning computations
              } else {
                  spawnercreature_d = null;
-@@ -604,8 +615,8 @@ public class ServerChunkCache extends ChunkSource {
+@@ -604,8 +614,8 @@ public class ServerChunkCache extends ChunkSource {
  
                  if ((true || this.level.isNaturalSpawningAllowed(chunkcoordintpair)) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, false)) { // Paper - optimise anyPlayerCloseEnoughForSpawning // Paper - the chunk is known ticking
                      chunk1.incrementInhabitedTime(j);
 -                    if (flag2AndHasNaturalSpawn && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, true)) { // Spigot // Paper - optimise anyPlayerCloseEnoughForSpawning & optimise chunk tick iteration // Gale - MultiPaper - skip unnecessary mob spawning computations
 -                        NaturalSpawner.spawnForChunk(this.level, chunk1, spawnercreature_d, this.spawnFriendlies, this.spawnEnemies, flag1);
-+                    if (flag2AndHasNaturalSpawn && (!LeafConfig.enableAsyncMobSpawning || _pufferfish_spawnCountsReady.get()) && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, true)) { // Spigot // Paper - optimise anyPlayerCloseEnoughForSpawning & optimise chunk tick iteration // Gale - MultiPaper - skip unnecessary mob spawning computations
++                    if (flag2AndHasNaturalSpawn && (!org.dreeam.leaf.LeafConfig.enableAsyncMobSpawning || _pufferfish_spawnCountsReady.get()) && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, true)) { // Spigot // Paper - optimise anyPlayerCloseEnoughForSpawning & optimise chunk tick iteration // Gale - MultiPaper - skip unnecessary mob spawning computations
 +                        NaturalSpawner.spawnForChunk(this.level, chunk1, lastSpawnState, this.spawnFriendlies, this.spawnEnemies, flag1);
                      }
  
                      if (true || this.level.shouldTickBlocksAt(chunkcoordintpair.toLong())) { // Paper - the chunk is known ticking
-@@ -663,6 +674,29 @@ public class ServerChunkCache extends ChunkSource {
+@@ -663,6 +673,29 @@ public class ServerChunkCache extends ChunkSource {
              }
              // Paper end - controlled flush for entity tracker packets
          }
 +        // Pufferfish start - optimize mob spawning
-+        if (LeafConfig.enableAsyncMobSpawning) {
++        if (org.dreeam.leaf.LeafConfig.enableAsyncMobSpawning) {
 +            for (ServerPlayer player : this.level.players) {
 +                Arrays.fill(player.mobCounts, 0);
 +            }
