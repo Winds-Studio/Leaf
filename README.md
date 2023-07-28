@@ -66,3 +66,4 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Slice](https://github.com/Cryptite/Slice)
 - [Parchment](https://github.com/ProjectEdenGG/Parchment)
 - [Leaves](https://github.com/LeavesMC/Leaves)
+- [Kaiiju](https://github.com/KaiijuMC/Kaiiju)
