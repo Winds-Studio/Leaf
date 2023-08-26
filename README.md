@@ -4,7 +4,6 @@
 ## Leaf
 
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1201.yml?branch=ver%2F1.20.1&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
-[![MIT License](https://img.shields.io/github/license/Winds-Studio/Leaf?style=flat-square)](LICENSE)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
 <h8>Logo designed by <a href="https://www.bing.com/new">New Bing</a></h8>
@@ -42,14 +41,12 @@ Building a Paperclip JAR for distribution:
 
 
 ## License
-[![MIT License](https://img.shields.io/github/license/Winds-Studio/Leaf?style=flat-square)](LICENSE)
 
-All patches are licensed under the MIT license, unless otherwise noted in the patch headers.
+Paperweight files are licensed under MIT.
+Patches are licensed under MIT, unless indicated differently in their header.
+Binaries are licensed under GPL-3.0.
 
-See [PaperMC/Paper](https://github.com/PaperMC/Paper), and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of material used by this project.
-
-Yes, this also includes all API provided by Paper, Spigot, and Bukkit.
-
+Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of some material used by this project.
 
 Credits:
 -------------
