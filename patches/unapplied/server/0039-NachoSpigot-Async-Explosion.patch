@@ -1,0 +1,178 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Sun, 3 Sep 2023 05:14:45 -0400
+Subject: [PATCH] NachoSpigot: Async Explosion
+
+Original code by CobbleSword, licensed under GPL v3
+You can find the original code on https://github.com/CobbleSword/NachoSpigot
+
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 312ba9705533f5790a95ed484d32ca46e9377887..40e8d55244f53ac867dad0f56994e60ca83a80f0 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -988,6 +988,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         }
+         // Spigot end
+ 
++        org.dreeam.leaf.async.AsyncExplosions.stopExecutor(); // Nacho
++
+         // Paper start - move final shutdown items here
+         LOGGER.info("Flushing Chunk IO");
+         io.papermc.paper.chunk.system.io.RegionFileIOThread.close(true); // Paper // Paper - rewrite chunk system
+diff --git a/src/main/java/net/minecraft/world/level/Explosion.java b/src/main/java/net/minecraft/world/level/Explosion.java
+index 63f397a5d90d7f05d17db2a5f57dbf1bc7f585fd..5b633dc15a43b5f8b0083a29063eea02fb169790 100644
+--- a/src/main/java/net/minecraft/world/level/Explosion.java
++++ b/src/main/java/net/minecraft/world/level/Explosion.java
+@@ -10,6 +10,9 @@ import java.util.Map;
+ import java.util.Optional;
+ import java.util.Set;
+ import javax.annotation.Nullable;
++
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.atomic.AtomicReference;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.particles.ParticleTypes;
+@@ -45,6 +48,7 @@ import org.bukkit.craftbukkit.event.CraftEventFactory;
+ import org.bukkit.event.entity.EntityExplodeEvent;
+ import org.bukkit.Location;
+ import org.bukkit.event.block.BlockExplodeEvent;
++import org.dreeam.leaf.async.AsyncExplosions;
+ // CraftBukkit end
+ 
+ public class Explosion {
+@@ -248,7 +252,13 @@ public class Explosion {
+                         d8 /= d11;
+                         d9 /= d11;
+                         d10 /= d11;
+-                        double d12 = this.getBlockDensity(vec3d, entity); // Paper - Optimize explosions
++                        // double d12 = this.getBlockDensity(vec3d, entity); // Paper - Optimize explosions
++
++                        double finalD8 = d8;
++                        double finalD9 = d9;
++                        double finalD10 = d10;
++                        this.getBlockDensity(vec3d, entity).thenAccept((d12) -> io.papermc.paper.util.MCUtil.ensureMain(() -> {
++
+                         double d13 = (1.0D - d7) * d12;
+ 
+                         // CraftBukkit start
+@@ -259,8 +269,8 @@ public class Explosion {
+                         // - Damaging ComplexEntityPart while forward the damage to EntityEnderDragon
+                         // - Damaging EntityEnderDragon does nothing
+                         // - EntityEnderDragon hitbock always covers the other parts and is therefore always present
+-                        if (entity instanceof EnderDragonPart) {
+-                            continue;
++                        if (!(entity instanceof EnderDragonPart)) {
++                            return;
+                         }
+ 
+                         CraftEventFactory.entityDamage = this.source;
+@@ -280,8 +290,8 @@ public class Explosion {
+                         }
+ 
+                         CraftEventFactory.entityDamage = null;
+-                        if (entity.lastDamageCancelled) { // SPIGOT-5339, SPIGOT-6252, SPIGOT-6777: Skip entity if damage event was cancelled
+-                            continue;
++                        if (!entity.lastDamageCancelled) { // SPIGOT-5339, SPIGOT-6252, SPIGOT-6777: Skip entity if damage event was cancelled
++                            return;
+                         }
+                         // CraftBukkit end
+                         double d14;
+@@ -294,10 +304,7 @@ public class Explosion {
+                             d14 = d13;
+                         }
+ 
+-                        d8 *= d14;
+-                        d9 *= d14;
+-                        d10 *= d14;
+-                        Vec3 vec3d1 = new Vec3(d8, d9, d10);
++                            Vec3 vec3d1 = new Vec3(finalD8 * d14, finalD9 * d14, finalD10 * d14);
+ 
+                         entity.setDeltaMovement(entity.getDeltaMovement().add(vec3d1));
+                         if (entity instanceof Player) {
+@@ -306,7 +313,7 @@ public class Explosion {
+                             if (!entityhuman.isSpectator() && (!entityhuman.isCreative() || !entityhuman.getAbilities().flying) && !level.paperConfig().environment.disableExplosionKnockback) { // Paper - Disable explosion knockback
+                                 this.hitPlayers.put(entityhuman, vec3d1);
+                             }
+-                        }
++                        }}));
+                     }
+                 }
+             }
+@@ -539,7 +546,8 @@ public class Explosion {
+         private BlockInteraction() {}
+     }
+     // Paper start - Optimize explosions
+-    private float getBlockDensity(Vec3 vec3d, Entity entity) {
++    private CompletableFuture<Float> getBlockDensity(Vec3 vec3d, Entity entity) {
++        return CompletableFuture.supplyAsync(() -> {
+         if (!this.level.paperConfig().environment.optimizeExplosions) {
+             return getSeenPercent(vec3d, entity);
+         }
+@@ -551,6 +559,7 @@ public class Explosion {
+         }
+ 
+         return blockDensity;
++        }, AsyncExplosions.EXECUTOR);
+     }
+ 
+     static class CacheKey {
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index 804a784cae66cdc876b94c94373478438d75fd5b..6ab032f7e5f3d4381d4135d40e20e510ceeecfed 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -485,6 +485,7 @@ public final class CraftServer implements Server {
+         }
+         datapackManager = new io.papermc.paper.datapack.PaperDatapackManager(console.getPackRepository()); // Paper
+         top.leavesmc.leaves.protocol.JadeProtocol.init(); // Leaves - Jade
++        org.dreeam.leaf.async.AsyncExplosions.initExecutor(org.dreeam.leaf.LeafConfig.useFixedPoolForTNT, org.dreeam.leaf.LeafConfig.fixedPoolSize);
+     }
+ 
+     public boolean getCommandBlockOverride(String command) {
+diff --git a/src/main/java/org/dreeam/leaf/LeafConfig.java b/src/main/java/org/dreeam/leaf/LeafConfig.java
+index 32980bd223a68e7ac2c953e953434d1fef6e0f9f..5c71d9dd8c362ca8a940a4b75d31414f03c56315 100644
+--- a/src/main/java/org/dreeam/leaf/LeafConfig.java
++++ b/src/main/java/org/dreeam/leaf/LeafConfig.java
+@@ -205,6 +205,8 @@ public class LeafConfig {
+     public static boolean enableAsyncEntityTrackerInitialized;
+     public static boolean enableSyncEventCallsOnAsyncThreads = true;
+     public static boolean enableSyncEventCallsOnAsyncThreadsInitialized;
++    public static boolean useFixedPoolForTNT = false;
++    public static int fixedPoolSize = 500;
+     private static void performance() {
+         boolean asyncMobSpawning = getBoolean("performance.enable-async-mob-spawning", enableAsyncMobSpawning,
+                 "Whether or not asynchronous mob spawning should be enabled.",
+@@ -279,6 +281,8 @@ public class LeafConfig {
+             enableSyncEventCallsOnAsyncThreadsInitialized = true;
+             enableSyncEventCallsOnAsyncThreads = syncEventCalls;
+         }
++        useFixedPoolForTNT = getBoolean("performance.async-explosion.use-fixed-pools-for-explosions", useFixedPoolForTNT);
++        fixedPoolSize = getInt("performance.async-explosion.fixed-pools-size", fixedPoolSize);
+     }
+ 
+     public static boolean jadeProtocol = false;
+diff --git a/src/main/java/org/dreeam/leaf/async/AsyncExplosions.java b/src/main/java/org/dreeam/leaf/async/AsyncExplosions.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..caacc7e1d180b13644fbfc44a1ae6eb925268fef
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/async/AsyncExplosions.java
+@@ -0,0 +1,18 @@
++package org.dreeam.leaf.async;
++import java.util.concurrent.Executors;
++import java.util.concurrent.ThreadPoolExecutor;
++
++public class AsyncExplosions {
++    public static ThreadPoolExecutor EXECUTOR;
++
++    public static void initExecutor(boolean fixed, int size) {
++        if (fixed)
++            EXECUTOR = (ThreadPoolExecutor) Executors.newFixedThreadPool(size);
++        else
++            EXECUTOR = (ThreadPoolExecutor) Executors.newCachedThreadPool();
++    }
++
++    public static void stopExecutor() {
++        if (EXECUTOR != null) EXECUTOR.shutdown();
++    }
++}
+\ No newline at end of file
