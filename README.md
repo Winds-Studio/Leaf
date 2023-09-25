@@ -3,7 +3,7 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1201.yml?branch=ver%2F1.20.1&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1202.yml?branch=ver%2F1.20.2&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
 <h8>Logo designed by <a href="https://www.bing.com/new">New Bing</a></h8>
@@ -17,7 +17,7 @@
  - **Configurable UseItem distance** for anarchy server.
  - **Latest dependencies**, keeping all dependencies in the newest version.
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur).
- - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish/blob/ver/1.19/patches/server/0005-Add-Sentry.patch) to easy track all errors coming from your server in excruciating detail.
+ - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail.
  - **Various optimization** blending from [other forks](https://github.com/Winds-Studio/Leaf#credits).
  - ...
 
