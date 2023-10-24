@@ -63,7 +63,7 @@ paperweight {
     decompileRepo.set("https://maven.quiltmc.org/")
 
     useStandardUpstream("Gale") {
-        url.set(github("GaleMC", "Gale"))
+        url.set(github("Dreeam-qwq", "Gale"))
         ref.set(providers.gradleProperty("galeCommit"))
 
         withStandardPatcher {

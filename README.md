@@ -28,7 +28,7 @@
 
 ## Downloads
 
-The Reobf JAR can be obtained in the [Actions](https://github.com/Winds-Studio/Leaf/actions) or [Releases](https://github.com/Winds-Studio/Leaf/releases)
+The Reobf JAR can be obtained in the [Releases](https://github.com/Winds-Studio/Leaf/releases)
 
 
 ## Building
