@@ -3,7 +3,8 @@
 
 ## Leaf
 
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1202.yml?branch=ver%2F1.20.2&style=flat-square)](https://github.com/Winds-Studio/Leaf/releases)
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1202.yml?&style=for-the-badge)](https://github.com/Winds-Studio/Leaf/releases)
+[![Discord](https://img.shields.io/discord/1145991395388162119?color=5865F2&label=discord&style=for-the-badge)](https://discord.gg/gfgAwdSEuM)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
 <h8>Logo designed by <a href="https://www.bing.com/new">New Bing</a></h8>
@@ -60,6 +61,7 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Mirai](https://github.com/etil2jz/Mirai)
 - [Petal](https://github.com/Bloom-host/Petal)
 - [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
+- [Akarin](https://github.com/Akarin-project/Akarin)
 - [Slice](https://github.com/Cryptite/Slice)
 - [Parchment](https://github.com/ProjectEdenGG/Parchment)
 - [Leaves](https://github.com/LeavesMC/Leaves)
