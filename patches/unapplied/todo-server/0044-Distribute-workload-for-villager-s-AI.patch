@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rafaelflromao <12960698+rafaelflromao@users.noreply.github.com>
+Date: Sat, 24 Jun 2023 13:46:45 +0100
+Subject: [PATCH] Distribute workload for villager's AI
+
+
+diff --git a/src/main/java/dev/etil/mirai/ai/WorkloadDistribution.java b/src/main/java/dev/etil/mirai/ai/WorkloadDistribution.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8cc57b5ce8f8f8e6e73880e992794e2bbca5f193
+--- /dev/null
++++ b/src/main/java/dev/etil/mirai/ai/WorkloadDistribution.java
+@@ -0,0 +1,39 @@
++package dev.etil.mirai.ai;
++
++import java.util.ArrayDeque;
++import java.util.Objects;
++
++public class WorkloadDistribution {
++
++    private final long taskTime;
++    private final long maxTasks;
++
++    private final long tickDelay;
++
++    private long desiredStart = System.nanoTime();
++    public WorkloadDistribution(long taskTime, long maxTasks, long tickDelay) {
++        this.taskTime = taskTime;
++        this.maxTasks = maxTasks;
++        this.tickDelay = tickDelay;
++    }
++    ArrayDeque<Runnable> tasks = new ArrayDeque<>();
++
++    public void addTask(Runnable task) {
++        tasks.offer(task);
++        if(tasks.size() > maxTasks) tasks.poll();
++    }
++
++    public void tick() {
++        if(tasks.isEmpty()) return;
++        if(System.nanoTime() < desiredStart) return;
++        long initialSize = tasks.size();
++        long start = System.nanoTime();
++        while(!tasks.isEmpty() && System.nanoTime() - start < taskTime) {
++            Objects.requireNonNull(tasks.poll()).run();
++        }
++        desiredStart = System.nanoTime() + tickDelay;
++        // System.out.println("Took " + (System.nanoTime() - start) + "ns to run " + (initialSize - tasks.size()) + " tasks");
++    }
++
++
++}
+diff --git a/src/main/java/net/minecraft/world/entity/ai/Brain.java b/src/main/java/net/minecraft/world/entity/ai/Brain.java
+index 9cdfe4c9d4487082c9b3577ff572675d9b8fc9b9..a2f7cdf08cfaf46204eca47fb39e08bd47049462 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/Brain.java
++++ b/src/main/java/net/minecraft/world/entity/ai/Brain.java
+@@ -14,6 +14,7 @@ import com.mojang.serialization.DynamicOps;
+ import com.mojang.serialization.MapCodec;
+ import com.mojang.serialization.MapLike;
+ import com.mojang.serialization.RecordBuilder;
++import dev.etil.mirai.ai.WorkloadDistribution;
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import java.util.Collection;
+ import java.util.List;
+@@ -43,6 +44,7 @@ public class Brain<E extends LivingEntity> {
+     static final Logger LOGGER = LogUtils.getLogger();
+     private final Supplier<Codec<Brain<E>>> codec;
+     private static final int SCHEDULE_UPDATE_DELAY = 20;
++    private final WorkloadDistribution workloadDistribution = new WorkloadDistribution(20000L, 500L, 10000L);
+     private final Map<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> memories = Maps.newHashMap();
+     private final Map<SensorType<? extends Sensor<? super E>>, Sensor<? super E>> sensors = Maps.newLinkedHashMap();
+     private final Map<Integer, Map<Activity, Set<BehaviorControl<? super E>>>> availableBehaviorsByPriority = Maps.newTreeMap();
+@@ -384,29 +386,34 @@ public class Brain<E extends LivingEntity> {
+     }
+ 
+     public void tick(ServerLevel world, E entity) {
+-        this.forgetOutdatedMemories();
+-        this.tickSensors(world, entity);
+-        this.startEachNonRunningBehavior(world, entity);
+-        this.tickEachRunningBehavior(world, entity);
++        // Mirai Start - Distribute workload
++            this.forgetOutdatedMemories();
++            this.tickSensors(world, entity);
++            this.startEachNonRunningBehavior(world, entity);
++            this.tickEachRunningBehavior(world, entity);
++            workloadDistribution.tick();
++        // Mirai End
+     }
+ 
+     private void tickSensors(ServerLevel world, E entity) {
+         for(Sensor<? super E> sensor : this.sensors.values()) {
+-            sensor.tick(world, entity);
++            workloadDistribution.addTask(() -> sensor.tick(world, entity));
+         }
+ 
+     }
+ 
+     private void forgetOutdatedMemories() {
+         for(Map.Entry<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> entry : this.memories.entrySet()) {
+-            if (entry.getValue().isPresent()) {
+-                ExpirableValue<?> expirableValue = entry.getValue().get();
+-                if (expirableValue.hasExpired()) {
+-                    this.eraseMemory(entry.getKey());
+-                }
++            workloadDistribution.addTask(() -> {
++                if (entry.getValue().isPresent()) {
++                    ExpirableValue<?> expirableValue = entry.getValue().get();
++                    if (expirableValue.hasExpired()) {
++                        this.eraseMemory(entry.getKey());
++                    }
+ 
+-                expirableValue.tick();
+-            }
++                    expirableValue.tick();
++                }
++            });
+         }
+ 
+     }
+@@ -425,14 +432,16 @@ public class Brain<E extends LivingEntity> {
+ 
+         for(Map<Activity, Set<BehaviorControl<? super E>>> map : this.availableBehaviorsByPriority.values()) {
+             for(Map.Entry<Activity, Set<BehaviorControl<? super E>>> entry : map.entrySet()) {
+-                Activity activity = entry.getKey();
+-                if (this.activeActivities.contains(activity)) {
+-                    for(BehaviorControl<? super E> behaviorControl : entry.getValue()) {
+-                        if (behaviorControl.getStatus() == Behavior.Status.STOPPED) {
+-                            behaviorControl.tryStart(world, entity, l);
++                workloadDistribution.addTask(() -> {
++                    Activity activity = entry.getKey();
++                    if (this.activeActivities.contains(activity)) {
++                        for(BehaviorControl<? super E> behaviorControl : entry.getValue()) {
++                            if (behaviorControl.getStatus() == Behavior.Status.STOPPED) {
++                                behaviorControl.tryStart(world, entity, l);
++                            }
+                         }
+                     }
+-                }
++                });
+             }
+         }
+ 
+@@ -442,7 +451,7 @@ public class Brain<E extends LivingEntity> {
+         long l = world.getGameTime();
+ 
+         for(BehaviorControl<? super E> behaviorControl : this.getRunningBehaviors()) {
+-            behaviorControl.tickOrStop(world, entity, l);
++            workloadDistribution.addTask(() -> behaviorControl.tickOrStop(world, entity, l));
+         }
+ 
+     }
