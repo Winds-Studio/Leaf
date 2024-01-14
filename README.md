@@ -20,6 +20,7 @@
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur).
  - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail.
  - **Various optimization** blending from [other forks](https://github.com/Winds-Studio/Leaf#credits).
+ - **Better Region Format** Support for the Linear region file format from [LinearPurpur](https://github.com/StupidCraft/LinearPurpur)
  - ...
 
 ## Contact
