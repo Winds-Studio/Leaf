@@ -67,6 +67,8 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [Parchment](https://github.com/ProjectEdenGG/Parchment)
 - [Leaves](https://github.com/LeavesMC/Leaves)
 - [Kaiiju](https://github.com/KaiijuMC/Kaiiju)
+- [LinearPurpur](https://github.com/StupidCraft/LinearPurpur)
+- [Polpot](https://github.com/HaHaWTH/Polpot)
 
 ## Special Thanks To:
 
