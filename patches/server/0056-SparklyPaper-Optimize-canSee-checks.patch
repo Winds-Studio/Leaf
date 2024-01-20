@@ -1,11 +1,22 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: lilingfengdev <145678359+lilingfengdev@users.noreply.github.com>
-Date: Wed, 17 Jan 2024 18:58:47 +0800
-Subject: [PATCH] Optimize canSee checks
+From: MrPowerGamerBR <git@mrpowergamerbr.com>
+Date: Thu, 23 Nov 2023 14:36:47 -0300
+Subject: [PATCH] SparklyPaper: Optimize "canSee" checks
 
+Original project: https://github.com/SparklyPower/SparklyPaper
+
+The "canSee" checks is in a hot path, invoked by each entity for each player on the server if they are in tracking range, so optimizing it is pretty nice
+
+First, we change the original "HashMap" to fastutil's "Object2ObjectOpenHashMap", because the containsKey throughput is better
+
+Then, we add a "isEmpty()" check before attempting to check if the map contains something
+
+This seems stupid, but it does seem that it improves the performance a bit, and it makes sense, "containsKey(...)" does not attempt to check the map size before attempting to check if the map contains the key
+
+We also create a "canSee" method tailored for "ChunkMap#updatePlayer()", a method without the equals check (the "updatePlayer()" already checks if the entity is the same entity) because the CraftPlayer's `equals()` check is a *bit* expensive compared to only checking the object's identity, and because the identity has already been check, we don't need to check it twice.
 
 diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
-index 38ddd6684535f9a4e6e9fb432282e0b6be0ede4c..673f0b1f8ad35559d050cb73f6593dc466d6ac0c 100644
+index 38ddd6684535f9a4e6e9fb432282e0b6be0ede4c..928d5fe7a41206d6160df4190fbaefcb516a910b 100644
 --- a/src/main/java/net/minecraft/server/level/ChunkMap.java
 +++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
 @@ -1409,7 +1409,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -13,12 +24,12 @@ index 38ddd6684535f9a4e6e9fb432282e0b6be0ede4c..673f0b1f8ad35559d050cb73f6593dc4
  
                  // CraftBukkit start - respect vanish API
 -                if (flag && !player.getBukkitEntity().canSee(this.entity.getBukkitEntity())) { // Paper - only consider hits
-+                if (flag && !player.getBukkitEntity().canSeeChunkMapUpdatePlayer(this.entity.getBukkitEntity())) { // Paper - only consider hits // Polpot - Optimize canSee checks
++                if (flag && !player.getBukkitEntity().canSeeChunkMapUpdatePlayer(this.entity.getBukkitEntity())) { // Paper - only consider hits // SparklyPaper - optimize canSee checks
                      flag = false;
                  }
                  // CraftBukkit end
 diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
-index 468ac1525c97043b53b16440fec6bb784e1e9c25..86a4a62dfb9c81078e630885f43d7bd24826e58a 100644
+index 56da11efc3be1da40dcbb7080f64bd9719517153..0461e04a889000402dce6084898a302f70ca6b67 100644
 --- a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
 +++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
 @@ -188,7 +188,7 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
@@ -26,31 +37,25 @@ index 468ac1525c97043b53b16440fec6bb784e1e9c25..86a4a62dfb9c81078e630885f43d7bd2
      private final ConversationTracker conversationTracker = new ConversationTracker();
      private final Set<String> channels = new HashSet<String>();
 -    private final Map<UUID, Set<WeakReference<Plugin>>> invertedVisibilityEntities = new HashMap<>();
-+    private final Map<UUID, Set<WeakReference<Plugin>>> invertedVisibilityEntities = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // Polpot - optimize canSee checks
++    private final Map<UUID, Set<WeakReference<Plugin>>> invertedVisibilityEntities = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // SparklyPaper - optimize canSee checks
      private final Set<UUID> unlistedEntities = new HashSet<>(); // Paper
      private static final WeakHashMap<Plugin, WeakReference<Plugin>> pluginWeakReferences = new WeakHashMap<>();
      private int hash = 0;
-@@ -2166,7 +2166,7 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
-     // Leaf - TODO
+@@ -2164,9 +2164,16 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
+ 
      @Override
      public boolean canSee(org.bukkit.entity.Entity entity) {
 -        return this.equals(entity) || entity.isVisibleByDefault() ^ this.invertedVisibilityEntities.containsKey(entity.getUniqueId()); // SPIGOT-7312: Can always see self
-+        return this.equals(entity) || entity.isVisibleByDefault() ^ (!invertedVisibilityEntities.isEmpty() && this.invertedVisibilityEntities.containsKey(entity.getUniqueId())); // SPIGOT-7312: Can always see self // Polpot - optimize canSee checks
++        return this.equals(entity) || entity.isVisibleByDefault() ^ (!invertedVisibilityEntities.isEmpty() && this.invertedVisibilityEntities.containsKey(entity.getUniqueId())); // SPIGOT-7312: Can always see self // SparklyPaper - optimize canSee checks
      }
  
-     public boolean canSee(UUID uuid) {
-@@ -2178,7 +2178,14 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
-         return (entity != null) ? this.canSee(entity) : false; // If we can't find it, we can't see it
-     }
- 
-+    // Polpot - optimize canSee checks
++    // SparklyPaper - optimize canSee checks
 +    // The check in ChunkMap#updatePlayer already rejects if it is the same entity, so we don't need to check it twice, especially because CraftPlayer's equals check is a bit expensive
 +    public boolean canSeeChunkMapUpdatePlayer(org.bukkit.entity.Entity entity) {
 +        return entity.isVisibleByDefault() ^ (!invertedVisibilityEntities.isEmpty() && this.invertedVisibilityEntities.containsKey(entity.getUniqueId())); // SPIGOT-7312: Can always see self // SparklyPaper - optimize canSee checks
 +    }
-+    // Polpot end
-     // Paper start
++    // SparklyPaper end
 +
-     @Override
-     public boolean isListed(Player other) {
-         return !this.unlistedEntities.contains(other.getUniqueId());
+     public boolean canSee(UUID uuid) {
+         org.bukkit.entity.Entity entity = this.getServer().getPlayer(uuid);
+         if (entity == null) {

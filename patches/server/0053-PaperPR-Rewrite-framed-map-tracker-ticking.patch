@@ -1,108 +1,122 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: lilingfengdev <145678359+lilingfengdev@users.noreply.github.com>
-Date: Wed, 17 Jan 2024 19:40:17 +0800
-Subject: [PATCH] SparklyPaper Rewrite-framed-map-tracker-ticking
+From: Warrior <50800980+Warriorrrr@users.noreply.github.com>
+Date: Mon, 14 Aug 2023 17:34:53 +0200
+Subject: [PATCH] PaperPR: Rewrite framed map tracker ticking
 
+Original license: GPLv3
+Original project:
+- https://github.com/PaperMC/Paper/pull/9605
+- https://github.com/SparklyPower/SparklyPaper
+
+Rewrites the tracking code for framed maps to remove the use of the tickCarriedBy method and the HoldingPlayer class.
+The tickCarriedBy method contained a lot of code that did not apply to framed maps at all, and by moving the parts
+that did elsewhere, we can essentially skip it. The only logic that's ran inside the ServerEntity#sendChanges for maps
+now is just updating dirty map/decoration data.
+
+When no bukkit renderers are added to the map, we also re-use the same packet for all players who are tracking it which avoids a lot of work.
 
 diff --git a/src/main/java/net/minecraft/server/level/ServerEntity.java b/src/main/java/net/minecraft/server/level/ServerEntity.java
-index 068dd1194016b65227ec44747b065860a48e7f1d..26a68dd4e7373291c645053990e63eb27ac41dbf 100644
+index 068dd1194016b65227ec44747b065860a48e7f1d..3c0d5fe3a5b3f77fc102e4c09645c96abca4f7e9 100644
 --- a/src/main/java/net/minecraft/server/level/ServerEntity.java
 +++ b/src/main/java/net/minecraft/server/level/ServerEntity.java
-@@ -115,23 +115,35 @@ public class ServerEntity {
+@@ -111,29 +111,42 @@ public class ServerEntity {
+ 
+         Entity entity = this.entity;
+ 
+-        if (!this.trackedPlayers.isEmpty() && entity instanceof ItemFrame) { // Paper - Only tick item frames if players can see it
++        if (!this.trackedPlayers.isEmpty() && entity instanceof ItemFrame frame && frame.cachedMapId != null) { // Paper - Only tick item frames if players can see it // Paper
              ItemFrame entityitemframe = (ItemFrame) entity;
  
              if (true || this.tickCount % 10 == 0) { // CraftBukkit - Moved below, should always enter this block
 -                ItemStack itemstack = entityitemframe.getItem();
-+                //ItemStack itemstack = entityitemframe.getItem(); // SparklyPaper
++                //ItemStack itemstack = entityitemframe.getItem(); // Paper - skip redundant getItem
  
 -                if (this.level.paperConfig().maps.itemFrameCursorUpdateInterval > 0 && this.tickCount % this.level.paperConfig().maps.itemFrameCursorUpdateInterval == 0 && itemstack.getItem() instanceof MapItem) { // CraftBukkit - Moved this.tickCounter % 10 logic here so item frames do not enter the other blocks // Paper - Make item frame map cursor update interval configurable
-+                if (this.level.paperConfig().maps.itemFrameCursorUpdateInterval > 0 && this.tickCount % this.level.paperConfig().maps.itemFrameCursorUpdateInterval == 0  /*&&itemstack.getItem() instanceof MapItem*/) { // CraftBukkit - Moved this.tickCounter % 10 logic here so item frames do not enter the other blocks // SparklyPaper - Make item frame map cursor update interval configurable
++                if (this.level.paperConfig().maps.itemFrameCursorUpdateInterval > 0 && this.tickCount % this.level.paperConfig().maps.itemFrameCursorUpdateInterval == 0 /*&& itemstack.getItem() instanceof MapItem*/) { // CraftBukkit - Moved this.tickCounter % 10 logic here so item frames do not enter the other blocks // Paper - Make item frame map cursor update interval configurable // Paper - skip redundant getItem
                      Integer integer = entityitemframe.cachedMapId; // Paper
                      MapItemSavedData worldmap = MapItem.getSavedData(integer, this.level);
  
                      if (worldmap != null) {
--                        Iterator<ServerPlayerConnection> iterator = this.trackedPlayers.iterator(); // CraftBukkit
-+                        // SparklyPaper start - re-use the same update packet when possible
++                        // Paper start - re-use the same update packet when possible
 +                        if (!worldmap.hasContextualRenderer) {
 +                            // Pass in a "random" player when a non-contextual plugin renderer is added to make sure its called
 +                            final Packet<?> updatePacket = worldmap.framedUpdatePacket(integer, worldmap.hasPluginRenderer ? com.google.common.collect.Iterables.getFirst(this.trackedPlayers, null).getPlayer() : null);
++
 +                            if (updatePacket != null) {
-+                            for (ServerPlayerConnection connection : this.trackedPlayers) {
++                                for (ServerPlayerConnection connection : this.trackedPlayers) {
 +                                    connection.send(updatePacket);
++                                }
 +                            }
-+                         }
 +                        } else {
-+                            // SparklyPaper end
-+                            Iterator<ServerPlayerConnection> iterator = this.trackedPlayers.iterator(); // CraftBukkit
++                        // Paper end
+                         Iterator<ServerPlayerConnection> iterator = this.trackedPlayers.iterator(); // CraftBukkit
  
--                        while (iterator.hasNext()) {
--                            ServerPlayer entityplayer = iterator.next().getPlayer(); // CraftBukkit
-+                            while (iterator.hasNext()) {
-+                                ServerPlayer entityplayer = iterator.next().getPlayer(); // CraftBukkit
+                         while (iterator.hasNext()) {
+                             ServerPlayer entityplayer = iterator.next().getPlayer(); // CraftBukkit
  
 -                            worldmap.tickCarriedBy(entityplayer, itemstack);
 -                            Packet<?> packet = worldmap.getUpdatePacket(integer, entityplayer);
-+                                //worldmap.tickCarriedBy(entityplayer, itemstack); // SparklyPaper
-+                                Packet<?> packet = worldmap.framedUpdatePacket(integer, entityplayer); // SparklyPaper
++                            //worldmap.tickCarriedBy(entityplayer, itemstack); // Paper
++                            Packet<?> packet = worldmap.framedUpdatePacket(integer, entityplayer); // Paper
  
--                            if (packet != null) {
--                                entityplayer.connection.send(packet);
-+                                if (packet != null) {
-+                                    entityplayer.connection.send(packet);
-+                                }
+                             if (packet != null) {
+                                 entityplayer.connection.send(packet);
                              }
                          }
++                        } // Paper
                      }
-@@ -367,7 +379,19 @@ public class ServerEntity {
-                 sender.accept(new ClientboundSetEntityLinkPacket(entityinsentient, entityinsentient.getLeashHolder()));
+                 }
+ 
+@@ -368,6 +381,19 @@ public class ServerEntity {
              }
          }
-+        // SparklyPaper start
+ 
++        // Paper start - send full map when tracked
 +        if (this.entity instanceof ItemFrame frame && frame.cachedMapId != null) {
 +            MapItemSavedData mapData = MapItem.getSavedData(frame.cachedMapId, this.level);
 +
 +            if (mapData != null) {
 +                mapData.addFrameDecoration(frame);
- 
++
 +                final Packet<?> mapPacket = mapData.fullUpdatePacket(frame.cachedMapId, mapData.hasPluginRenderer ? player : null);
 +                if (mapPacket != null)
 +                    sender.accept((Packet<ClientGamePacketListener>) mapPacket);
 +            }
 +        }
-+        // SparklyPaper end
++        // Paper end
      }
  
      private void sendDirtyEntityData() {
 diff --git a/src/main/java/net/minecraft/world/entity/decoration/ItemFrame.java b/src/main/java/net/minecraft/world/entity/decoration/ItemFrame.java
-index d728dc8a9b5fa2de0a824aaf132ee15db090b02e..37d83ae140ee07dc448a18d0061fc091785da063 100644
+index d728dc8a9b5fa2de0a824aaf132ee15db090b02e..61532177b24311cbc91d52fd460d818eedea66b0 100644
 --- a/src/main/java/net/minecraft/world/entity/decoration/ItemFrame.java
 +++ b/src/main/java/net/minecraft/world/entity/decoration/ItemFrame.java
 @@ -489,6 +489,16 @@ public class ItemFrame extends HangingEntity {
                      }
                      this.setItem(ItemStack.fromBukkitCopy(event.getItemStack()));
                      // Paper end
-+                    // SparklyPaper start - add decoration and mark everything dirty for other players who are already tracking this frame
++                    // Paper start - add decoration and mark everything dirty for other players who are already tracking this frame
 +                    final ItemStack item = this.getItem();
 +                    if (item.is(Items.FILLED_MAP)) {
 +                        final MapItemSavedData data = MapItem.getSavedData(item, this.level());
 +                        if (data != null) {
 +                            data.addFrameDecoration(this);
 +                            data.markAllDirty();
-+                            }
 +                        }
-+                    // SparklyPaper end
++                    }
++                    // Paper end
                      this.gameEvent(GameEvent.BLOCK_CHANGE, player);
                      if (!player.getAbilities().instabuild) {
                          itemstack.shrink(1);
 diff --git a/src/main/java/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java b/src/main/java/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
-index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb1b3d37a1 100644
+index 804c342783baccdc12e8ca49a362770e31596f6a..e1a251490bf18ff60e0ef9e7c7a692afa329c7f7 100644
 --- a/src/main/java/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
 +++ b/src/main/java/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
 @@ -67,6 +67,16 @@ public class MapItemSavedData extends SavedData {
      private final Map<String, MapFrame> frameMarkers = Maps.newHashMap();
      private int trackedDecorationCount;
      private org.bukkit.craftbukkit.map.RenderData vanillaRender = new org.bukkit.craftbukkit.map.RenderData(); // Paper
-+    // SparklyPaper start - shared between all players tracking this map inside an item frame
++    // Paper start - shared between all players tracking this map inside an item frame
 +    public boolean dirtyColorData;
 +    public int minDirtyX;
 +    public int minDirtyY;
@@ -111,7 +125,7 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
 +    public boolean dirtyFrameDecorations;
 +    public boolean hasPluginRenderer;
 +    public boolean hasContextualRenderer;
-+    // SparklyPaper end
++    // Paper end
      public boolean isExplorerMap; // Purpur
  
      // CraftBukkit start
@@ -119,7 +133,7 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
          }
  
          this.setDecorationsDirty();
-+        if (mapicon != null && mapicon.renderOnFrame()) this.dirtyFrameDecorations = true; // SparklyPaper
++        if (mapicon != null && mapicon.renderOnFrame()) this.dirtyFrameDecorations = true; // Paper
      }
  
      public static void addTargetDecoration(ItemStack stack, BlockPos pos, String id, MapDecoration.Type type) {
@@ -127,7 +141,7 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
              }
  
              this.setDecorationsDirty();
-+            if (type.isRenderedOnFrame() || (mapicon1 != null && mapicon.type().isRenderedOnFrame())) this.dirtyFrameDecorations = true; // SparklyPaper
++            if (type.isRenderedOnFrame() || (mapicon1 != null && mapicon.type().isRenderedOnFrame())) this.dirtyFrameDecorations = true; // Paper
          }
  
      }
@@ -135,20 +149,20 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
  
      public void setColorsDirty(int x, int z) {
          this.setDirty();
-+        // SparklyPaper start
++        // Paper start
 +        if (this.dirtyColorData) {
 +            this.minDirtyX = Math.min(this.minDirtyX, x);
 +            this.minDirtyY = Math.min(this.minDirtyY, z);
 +            this.maxDirtyX = Math.max(this.maxDirtyX, x);
 +            this.maxDirtyY = Math.max(this.maxDirtyY, z);
-+         } else {
++        } else {
 +            this.dirtyColorData = true;
 +            this.minDirtyX = x;
 +            this.minDirtyY = z;
 +            this.maxDirtyX = x;
 +            this.maxDirtyY = z;
 +        }
-+        // SparklyPaper end
++        // Paper end
          Iterator iterator = this.carriedBy.iterator();
  
          while (iterator.hasNext()) {
@@ -156,15 +170,15 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
      public void removedFromFrame(BlockPos pos, int id) {
          this.removeDecoration("frame-" + id);
          this.frameMarkers.remove(MapFrame.frameId(pos));
-+        this.dirtyFrameDecorations = true; // SparklyPaper
++        this.dirtyFrameDecorations = true; // Paper
      }
  
      public boolean updateColor(int x, int z, byte color) {
-@@ -579,7 +606,90 @@ public class MapItemSavedData extends SavedData {
-     public boolean isTrackedCountOverLimit(int iconCount) {
+@@ -580,6 +607,93 @@ public class MapItemSavedData extends SavedData {
          return this.trackedDecorationCount >= iconCount;
      }
-+    // SparklyPaper start
+ 
++    // Paper start
 +    public final @Nullable Packet<?> framedUpdatePacket(int id, @Nullable Player player) {
 +        return createUpdatePacket(id, player, false);
 +    }
@@ -174,9 +188,8 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
 +    }
 +
 +    public final @Nullable Packet<?> createUpdatePacket(int id, @Nullable Player player, boolean full) {
-+        if (!dirtyColorData && !dirtyFrameDecorations && (player == null || server.getCurrentTick() % 5 != 0) && !full) {
++        if (!dirtyColorData && !dirtyFrameDecorations && (player == null || server.getCurrentTick() % 5 != 0) && !full) // Periodically send update packets if a renderer is added
 +            return null;
-+        }
 +
 +        final org.bukkit.craftbukkit.map.RenderData render = player != null ? this.mapView.render((org.bukkit.craftbukkit.entity.CraftPlayer) player.getBukkitEntity()) : this.vanillaRender;
 +
@@ -191,18 +204,22 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
 +        }
 +
 +        Collection<MapDecoration> decorations = null;
-+        if (dirtyFrameDecorations || full || hasPluginRenderer) {
++        if (dirtyFrameDecorations || full || hasPluginRenderer) { // Always add decorations when a plugin renderer is added
 +            dirtyFrameDecorations = false;
 +            decorations = new java.util.ArrayList<>();
 +
 +            if (player == null) {
++                // We're using the vanilla renderer, add in vanilla decorations
 +                for (MapDecoration decoration : this.decorations.values()) {
++                    // Skip sending decorations that aren't rendered, i.e. player decorations.
++                    // Skipping player decorations also allows us to send the same update packet to all tracking players, the only caveat
++                    // being that it causes a slight flicker of the player decoration for anyone holding & looking at the map.
 +                    if (decoration.renderOnFrame()) {
 +                        decorations.add(decoration);
 +                    }
 +                }
 +            }
- 
++
 +            for (final org.bukkit.map.MapCursor cursor : render.cursors) {
 +                if (cursor.isVisible()) {
 +                    decorations.add(new MapDecoration(MapDecoration.Type.byIcon(cursor.getRawType()), cursor.getX(), cursor.getY(), cursor.getDirection(), PaperAdventure.asVanilla(cursor.caption()))); // Paper - Adventure
@@ -230,9 +247,8 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
 +    }
 +
 +    public void addFrameDecoration(net.minecraft.world.entity.decoration.ItemFrame frame) {
-+        if (this.trackedDecorationCount >= frame.level().paperConfig().maps.itemFrameCursorLimit || this.frameMarkers.containsKey(MapFrame.frameId(frame.getPos()))) {
++        if (this.trackedDecorationCount >= frame.level().paperConfig().maps.itemFrameCursorLimit || this.frameMarkers.containsKey(MapFrame.frameId(frame.getPos())))
 +            return;
-+        }
 +
 +        MapFrame mapFrame = new MapFrame(frame.getPos(), frame.getDirection().get2DDataValue() * 90, frame.getId());
 +        this.addDecoration(MapDecoration.Type.FRAME, frame.level(), "frame-" + frame.getId(), frame.getPos().getX(), frame.getPos().getZ(), mapFrame.getRotation(), (Component) null);
@@ -247,22 +263,23 @@ index 804c342783baccdc12e8ca49a362770e31596f6a..a0b760388407469adbd9569edfccadcb
 +        this.maxDirtyY = 127;
 +        this.dirtyFrameDecorations = true;
 +    }
-+    // SparklyPaper end
++    // Paper end
++
      public class HoldingPlayer {
  
          // Paper start
 diff --git a/src/main/java/org/bukkit/craftbukkit/map/CraftMapView.java b/src/main/java/org/bukkit/craftbukkit/map/CraftMapView.java
-index c3266c43a073cb7d7eff10d1a1b15f0a2265b859..ff3b0f8ebea13f52a1d86085e32489db86969dd1 100644
+index c3266c43a073cb7d7eff10d1a1b15f0a2265b859..4d69e345117556bac2126edc5169ab01eed97377 100644
 --- a/src/main/java/org/bukkit/craftbukkit/map/CraftMapView.java
 +++ b/src/main/java/org/bukkit/craftbukkit/map/CraftMapView.java
 @@ -108,6 +108,10 @@ public final class CraftMapView implements MapView {
              this.renderers.add(renderer);
              this.canvases.put(renderer, new HashMap<CraftPlayer, CraftMapCanvas>());
              renderer.initialize(this);
-+            // SparklyPaper start
++            // Paper start
 +            this.worldMap.hasPluginRenderer |= !(renderer instanceof CraftMapRenderer);
 +            this.worldMap.hasContextualRenderer |= renderer.isContextual();
-+            // SparklyPaper end
++            // Paper end
          }
      }
  
@@ -270,7 +287,7 @@ index c3266c43a073cb7d7eff10d1a1b15f0a2265b859..ff3b0f8ebea13f52a1d86085e32489db
                  }
              }
              this.canvases.remove(renderer);
-+            // SparklyPaper start
++            // Paper start
 +            this.worldMap.hasPluginRenderer = !(this.renderers.size() == 1 && this.renderers.get(0) instanceof CraftMapRenderer);
 +            if (renderer.isContextual()) {
 +                // Re-check all renderers
@@ -280,7 +297,7 @@ index c3266c43a073cb7d7eff10d1a1b15f0a2265b859..ff3b0f8ebea13f52a1d86085e32489db
 +                }
 +                this.worldMap.hasContextualRenderer = contextualFound;
 +            }
-+            // SparklyPaper end
++            // Paper end
              return true;
          } else {
              return false;
