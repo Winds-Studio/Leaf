@@ -6,7 +6,7 @@ pluginManagement {
 }
 
 rootProject.name = "leaf"
-for (name in listOf("Leaf-API", "Leaf-Server")) {
+for (name in listOf("Leaf-API", "Leaf-Server", "paper-api-generator")) {
     val projName = name.lowercase()
     include(projName)
     findProject(":$projName")!!.projectDir = file(name)
