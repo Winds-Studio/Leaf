@@ -83,3 +83,35 @@ paperweight {
         }
     }
 }
+
+// Dreeam TODO
+tasks.generateDevelopmentBundle {
+    apiCoordinates = "org.dreeam.leaf:leaf-api"
+    mojangApiCoordinates = "io.papermc.paper:paper-mojangapi"
+    libraryRepositories.addAll(
+        "https://repo.maven.apache.org/maven2/",
+        paperMavenPublicUrl,
+        "https://s01.oss.sonatype.org/content/repositories/snapshots/", // todo Remove when updating adventure to release
+    )
+}
+
+publishing {
+    if (project.providers.gradleProperty("publishDevBundle").isPresent) {
+        publications.create<MavenPublication>("devBundle") {
+            artifact(tasks.generateDevelopmentBundle) {
+                artifactId = "dev-bundle"
+            }
+        }
+    }
+}
+
+allprojects {
+    publishing {
+        repositories {
+            maven("https://repo.papermc.io/repository/maven-snapshots/") {
+                name = "leaf"
+                credentials(PasswordCredentials::class)
+            }
+        }
+    }
+}

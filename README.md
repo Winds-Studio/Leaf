@@ -27,11 +27,9 @@
 
 - 📫 Discord: `dreeam___` | QQ: `2682173972`
 
-
 ## Downloads
 
 The Reobf JAR can be obtained in the [Releases](https://github.com/Winds-Studio/Leaf/releases)
-
 
 ## Building
 
@@ -41,6 +39,24 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyPatches && ./gradlew createReobfPaperclipJar
 ```
 
+## API (WIP)
+
+Maven
+```xml
+<dependency>
+    <groupId>org.dreeam.leaf</groupId>
+    <artifactId>leaf-api</artifactId>
+    <version>1.20.4-R0.1-SNAPSHOT</version>
+    <scope>provided</scope>
+</dependency>
+```
+
+Gradle
+```kotlin
+dependencies {
+    compileOnly("org.dreeam.leaf.:leaf-api:1.20.4-R0.1-SNAPSHOT")
+}
+```
 
 ## License
 
