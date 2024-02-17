@@ -7,7 +7,7 @@
 [![Discord](https://img.shields.io/discord/1145991395388162119?color=5865F2&label=discord&style=for-the-badge)](https://discord.gg/gfgAwdSEuM)
 
 <h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
-<h8>Logo designed by <a href="https://www.bing.com/new">New Bing</a></h8>
+<h8>Logo designed by <a href="https://github.com/envizar">envizar</a></h8>
 </div>
 
 ## Features
