@@ -1,4 +1,4 @@
-<img src="Leaf.png" alt="Leaf logo" align="right" width="200">
+<img src="leaf_logo.png" alt="Leaf logo" align="right" width="200">
 <div align="center">
 
 ## Leaf
