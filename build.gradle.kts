@@ -86,7 +86,7 @@ paperweight {
 
 // Dreeam TODO
 tasks.generateDevelopmentBundle {
-    apiCoordinates = "org.dreeam.leaf:leaf-api"
+    apiCoordinates = "io.github.dreeam-qwq:leaf-api"
     mojangApiCoordinates = "io.papermc.paper:paper-mojangapi"
     libraryRepositories.addAll(
         "https://repo.maven.apache.org/maven2/",
@@ -108,7 +108,7 @@ publishing {
 allprojects {
     publishing {
         repositories {
-            maven("https://repo.papermc.io/repository/maven-snapshots/") {
+            maven("https://s01.oss.sonatype.org/content/repositories/snapshots/") {
                 name = "leaf"
                 credentials(PasswordCredentials::class)
             }
