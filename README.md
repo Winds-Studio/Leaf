@@ -39,7 +39,7 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyPatches && ./gradlew createReobfPaperclipJar
 ```
 
-## API (WIP)
+## API
 
 Maven
 ```xml
