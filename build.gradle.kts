@@ -84,14 +84,14 @@ paperweight {
     }
 }
 
-// Dreeam TODO
 tasks.generateDevelopmentBundle {
-    apiCoordinates = "io.github.dreeam-qwq:leaf-api"
+    apiCoordinates = "org.dreeam.leaf:leaf-api"
     mojangApiCoordinates = "io.papermc.paper:paper-mojangapi"
-    libraryRepositories.addAll(
-        "https://repo.maven.apache.org/maven2/",
-        paperMavenPublicUrl,
-        "https://s01.oss.sonatype.org/content/repositories/snapshots/", // todo Remove when updating adventure to release
+    libraryRepositories.set(
+        listOf(
+            "https://repo.maven.apache.org/maven2/",
+            paperMavenPublicUrl,
+        )
     )
 }
 
@@ -108,9 +108,18 @@ publishing {
 allprojects {
     publishing {
         repositories {
-            maven("https://s01.oss.sonatype.org/content/repositories/snapshots/") {
+            maven {
                 name = "leaf"
-                credentials(PasswordCredentials::class)
+                url = uri("https://maven.pkg.github.com/Winds-Studio/Leaf")
+
+                credentials.username = System.getenv("GITHUB_USERNAME")
+                credentials.password = System.getenv("GITHUB_TOKEN")
+            }
+
+            publications {
+                register<MavenPublication>("gpr") {
+                    from(components["java"])
+                }
             }
         }
     }
