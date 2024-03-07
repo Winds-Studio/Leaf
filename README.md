@@ -39,7 +39,7 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyPatches && ./gradlew createReobfPaperclipJar
 ```
 
-## API (WIP)
+## API
 
 Maven
 ```xml
@@ -86,7 +86,7 @@ Thanks to these projects below. Leaf just mix some of their patches together. If
 - [PandaSpigot](https://github.com/hpfxd/PandaSpigot)
 - [Plazma](https://github.com/PlazmaMC/PlazmaBukkit)
 - [SparklyPaper](https://github.com/SparklyPower/SparklyPaper)
-- [Polpot](https://github.com/PolpotMC/Polpot) (R.I.P.)
+- [Polpot](https://github.com/HaHaWTH/Polpot)
 
 ## Special Thanks To:
 

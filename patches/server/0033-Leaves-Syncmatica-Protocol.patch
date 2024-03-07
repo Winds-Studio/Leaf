@@ -1,0 +1,2053 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: violetc <58360096+s-yh-china@users.noreply.github.com>
+Date: Thu, 18 May 2023 16:16:56 +0800
+Subject: [PATCH] Leaves: Syncmatica Protocol
+
+Original license: GPLv3
+Original project: https://github.com/LeavesMC/Leaves
+
+This patch is Powered by Syncmatica(https://github.com/End-Tech/syncmatica)
+
+diff --git a/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+index 8895e7d35af8650503853b6fc7432f66e4f333db..451095afa88a2d89d33658042e9a62ef14547cc7 100644
+--- a/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java
++++ b/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+@@ -310,6 +310,7 @@ public class ServerGamePacketListenerImpl extends ServerCommonPacketListenerImpl
+         Objects.requireNonNull(server);
+         this.signedMessageDecoder = SignedMessageChain.Decoder.unsigned(uuid, server::enforceSecureProfile);
+         this.chatMessageChain = new FutureChain(server.chatExecutor); // CraftBukkit - async chat
++        this.exchangeTarget = new top.leavesmc.leaves.protocol.syncmatica.exchange.ExchangeTarget(this); // Leaves - Syncmatica Protocol
+     }
+ 
+     // CraftBukkit start - add fields
+@@ -349,6 +350,8 @@ public class ServerGamePacketListenerImpl extends ServerCommonPacketListenerImpl
+             );
+     // Purpur end
+ 
++    public final top.leavesmc.leaves.protocol.syncmatica.exchange.ExchangeTarget exchangeTarget; // Leaves - Syncmatica Protocol
++
+     @Override
+     public void tick() {
+         if (this.ackBlockChangesUpTo > -1) {
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java b/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java
+index c9736e79387d785a67d6ebe71df6553eeaf2b41d..87b5571a5ebd11ea6e64565038b1fac331cfba8e 100644
+--- a/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java
++++ b/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java
+@@ -1,5 +1,6 @@
+ package org.dreeam.leaf.config.modules.network;
+ 
++import com.electronwill.nightconfig.core.file.CommentedFileConfig;
+ import org.dreeam.leaf.config.ConfigInfo;
+ import org.dreeam.leaf.config.EnumConfigCategory;
+ import org.dreeam.leaf.config.IConfigModule;
+@@ -28,4 +29,18 @@ public class ProtocolSupport implements IConfigModule {
+     public static boolean xaeroMapProtocol = false;
+     @ConfigInfo(baseName = "xaero-map-server-id")
+     public static int xaeroMapServerID = new Random().nextInt();
++
++    @ConfigInfo(baseName = "syncmatica-enabled")
++    public static boolean syncmaticaProtocol = false;
++    @ConfigInfo(baseName = "syncmatica-quota")
++    public static boolean syncmaticaQuota = false;
++    @ConfigInfo(baseName = "syncmatica-quota-limit")
++    public static int syncmaticaQuotaLimit = 40000000;
++
++    @Override
++    public void onLoaded(CommentedFileConfig config) {
++        if (syncmaticaProtocol) {
++            top.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init();
++        }
++    }
+ }
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/CommunicationManager.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/CommunicationManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..4c2aa74795b0883f280eaa721a83ea6891ffdab2
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/CommunicationManager.java
+@@ -0,0 +1,391 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.mojang.authlib.GameProfile;
++import io.netty.buffer.Unpooled;
++import net.minecraft.core.BlockPos;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
++import net.minecraft.resources.ResourceLocation;
++import net.minecraft.server.level.ServerPlayer;
++import net.minecraft.server.network.ServerGamePacketListenerImpl;
++import net.minecraft.world.level.block.Mirror;
++import net.minecraft.world.level.block.Rotation;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.core.LeavesProtocol;
++import top.leavesmc.leaves.protocol.core.LeavesProtocolManager;
++import top.leavesmc.leaves.protocol.core.ProtocolHandler;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.DownloadExchange;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.Exchange;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.ExchangeTarget;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.ModifyExchangeServer;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.UploadExchange;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.VersionHandshakeServer;
++
++import java.io.File;
++import java.io.FileNotFoundException;
++import java.io.IOException;
++import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++@LeavesProtocol(namespace = "syncmatica")
++public class CommunicationManager {
++
++    private static final Map<UUID, List<ServerPlacement>> downloadingFile = new HashMap<>();
++    private static final Map<ExchangeTarget, ServerPlayer> playerMap = new HashMap<>();
++
++    protected static final Collection<ExchangeTarget> broadcastTargets = new ArrayList<>();
++
++    protected static final Map<UUID, Boolean> downloadState = new HashMap<>();
++    protected static final Map<UUID, Exchange> modifyState = new HashMap<>();
++
++    protected static final Rotation[] rotOrdinals = Rotation.values();
++    protected static final Mirror[] mirOrdinals = Mirror.values();
++
++    public CommunicationManager() {
++    }
++
++    public static GameProfile getGameProfile(final ExchangeTarget exchangeTarget) {
++        return playerMap.get(exchangeTarget).getGameProfile();
++    }
++
++    public void sendMessage(final @NotNull ExchangeTarget client, final MessageType type, final String identifier) {
++        if (client.getFeatureSet().hasFeature(Feature.MESSAGE)) {
++            final FriendlyByteBuf newPacketBuf = new FriendlyByteBuf(Unpooled.buffer());
++            newPacketBuf.writeUtf(type.toString());
++            newPacketBuf.writeUtf(identifier);
++            client.sendPacket(PacketType.MESSAGE.identifier, newPacketBuf);
++        } else if (playerMap.containsKey(client)) {
++            final ServerPlayer player = playerMap.get(client);
++            player.sendSystemMessage(Component.literal("Syncmatica " + type.toString() + " " + identifier));
++        }
++    }
++
++    @ProtocolHandler.PlayerJoin
++    public static void onPlayerJoin(ServerPlayer player) {
++        final ExchangeTarget newPlayer = player.connection.exchangeTarget;
++        final VersionHandshakeServer hi = new VersionHandshakeServer(newPlayer);
++        playerMap.put(newPlayer, player);
++        final GameProfile profile = player.getGameProfile();
++        SyncmaticaProtocol.getPlayerIdentifierProvider().updateName(profile.getId(), profile.getName());
++        startExchangeUnchecked(hi);
++    }
++
++    @ProtocolHandler.PlayerLeave
++    public static void onPlayerLeave(ServerPlayer player) {
++        final ExchangeTarget oldPlayer = player.connection.exchangeTarget;
++        final Collection<Exchange> potentialMessageTarget = oldPlayer.getExchanges();
++        if (potentialMessageTarget != null) {
++            for (final Exchange target : potentialMessageTarget) {
++                target.close(false);
++                handleExchange(target);
++            }
++        }
++        broadcastTargets.remove(oldPlayer);
++        playerMap.remove(oldPlayer);
++    }
++
++    @ProtocolHandler.PayloadReceiver(payload = LeavesProtocolManager.LeavesPayload.class, ignoreId = true, payloadId = "")
++    public static void onPacketGet(ServerPlayer player, LeavesProtocolManager.LeavesPayload payload) {
++        onPacket(player.connection.exchangeTarget, payload.id(), payload.data());
++    }
++
++    public static void onPacket(final @NotNull ExchangeTarget source, final ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        Exchange handler = null;
++        final Collection<Exchange> potentialMessageTarget = source.getExchanges();
++        if (potentialMessageTarget != null) {
++            for (final Exchange target : potentialMessageTarget) {
++                if (target.checkPacket(id, packetBuf)) {
++                    target.handle(id, packetBuf);
++                    handler = target;
++                    break;
++                }
++            }
++        }
++        if (handler == null) {
++            handle(source, id, packetBuf);
++        } else if (handler.isFinished()) {
++            notifyClose(handler);
++        }
++    }
++
++    protected static void handle(ExchangeTarget source, @NotNull ResourceLocation id, FriendlyByteBuf packetBuf) {
++        if (id.equals(PacketType.REQUEST_LITEMATIC.identifier)) {
++            final UUID syncmaticaId = packetBuf.readUUID();
++            final ServerPlacement placement = SyncmaticaProtocol.getSyncmaticManager().getPlacement(syncmaticaId);
++            if (placement == null) {
++                return;
++            }
++            final File toUpload = SyncmaticaProtocol.getFileStorage().getLocalLitematic(placement);
++            final UploadExchange upload;
++            try {
++                upload = new UploadExchange(placement, toUpload, source);
++            } catch (final FileNotFoundException e) {
++                e.printStackTrace();
++                return;
++            }
++            startExchange(upload);
++            return;
++        }
++        if (id.equals(PacketType.REGISTER_METADATA.identifier)) {
++            final ServerPlacement placement = receiveMetaData(packetBuf, source);
++            if (SyncmaticaProtocol.getSyncmaticManager().getPlacement(placement.getId()) != null) {
++                cancelShare(source, placement);
++                return;
++            }
++
++            final GameProfile profile = playerMap.get(source).getGameProfile();
++            final PlayerIdentifier playerIdentifier = SyncmaticaProtocol.getPlayerIdentifierProvider().createOrGet(profile);
++            if (!placement.getOwner().equals(playerIdentifier)) {
++                placement.setOwner(playerIdentifier);
++                placement.setLastModifiedBy(playerIdentifier);
++            }
++
++            if (!SyncmaticaProtocol.getFileStorage().getLocalState(placement).isLocalFileReady()) {
++                if (SyncmaticaProtocol.getFileStorage().getLocalState(placement) == LocalLitematicState.DOWNLOADING_LITEMATIC) {
++                    downloadingFile.computeIfAbsent(placement.getHash(), key -> new ArrayList<>()).add(placement);
++                    return;
++                }
++                try {
++                    download(placement, source);
++                } catch (final Exception e) {
++                    e.printStackTrace();
++                }
++                return;
++            }
++
++            addPlacement(source, placement);
++            return;
++        }
++        if (id.equals(PacketType.REMOVE_SYNCMATIC.identifier)) {
++            final UUID placementId = packetBuf.readUUID();
++            final ServerPlacement placement = SyncmaticaProtocol.getSyncmaticManager().getPlacement(placementId);
++            if (placement != null) {
++                if (!getGameProfile(source).getId().equals(placement.getOwner().uuid)) {
++                    return;
++                }
++
++                final Exchange modifier = getModifier(placement);
++                if (modifier != null) {
++                    modifier.close(true);
++                    notifyClose(modifier);
++                }
++                SyncmaticaProtocol.getSyncmaticManager().removePlacement(placement);
++                for (final ExchangeTarget client : broadcastTargets) {
++                    final FriendlyByteBuf newPacketBuf = new FriendlyByteBuf(Unpooled.buffer());
++                    newPacketBuf.writeUUID(placement.getId());
++                    client.sendPacket(PacketType.REMOVE_SYNCMATIC.identifier, newPacketBuf);
++                }
++            }
++        }
++        if (id.equals(PacketType.MODIFY_REQUEST.identifier)) {
++            final UUID placementId = packetBuf.readUUID();
++            final ModifyExchangeServer modifier = new ModifyExchangeServer(placementId, source);
++            startExchange(modifier);
++        }
++    }
++
++    protected static void handleExchange(Exchange exchange) {
++        if (exchange instanceof DownloadExchange) {
++            final ServerPlacement p = ((DownloadExchange) exchange).getPlacement();
++
++            if (exchange.isSuccessful()) {
++                addPlacement(exchange.getPartner(), p);
++                if (downloadingFile.containsKey(p.getHash())) {
++                    for (final ServerPlacement placement : downloadingFile.get(p.getHash())) {
++                        addPlacement(exchange.getPartner(), placement);
++                    }
++                }
++            } else {
++                cancelShare(exchange.getPartner(), p);
++                if (downloadingFile.containsKey(p.getHash())) {
++                    for (final ServerPlacement placement : downloadingFile.get(p.getHash())) {
++                        cancelShare(exchange.getPartner(), placement);
++                    }
++                }
++            }
++
++            downloadingFile.remove(p.getHash());
++            return;
++        }
++        if (exchange instanceof VersionHandshakeServer && exchange.isSuccessful()) {
++            broadcastTargets.add(exchange.getPartner());
++        }
++        if (exchange instanceof ModifyExchangeServer && exchange.isSuccessful()) {
++            final ServerPlacement placement = ((ModifyExchangeServer) exchange).getPlacement();
++            for (final ExchangeTarget client : broadcastTargets) {
++                if (client.getFeatureSet().hasFeature(Feature.MODIFY)) {
++                    final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
++                    buf.writeUUID(placement.getId());
++                    putPositionData(placement, buf, client);
++                    if (client.getFeatureSet().hasFeature(Feature.CORE_EX)) {
++                        buf.writeUUID(placement.getLastModifiedBy().uuid);
++                        buf.writeUtf(placement.getLastModifiedBy().getName());
++                    }
++                    client.sendPacket(PacketType.MODIFY.identifier, buf);
++                } else {
++                    final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
++                    buf.writeUUID(placement.getId());
++                    client.sendPacket(PacketType.REMOVE_SYNCMATIC.identifier, buf);
++                    final FriendlyByteBuf buf2 = new FriendlyByteBuf(Unpooled.buffer());
++                    putMetaData(placement, buf2, client);
++                    client.sendPacket(PacketType.REGISTER_METADATA.identifier, buf2);
++                }
++            }
++        }
++    }
++
++    private static void addPlacement(final ExchangeTarget t, final @NotNull ServerPlacement placement) {
++        if (SyncmaticaProtocol.getSyncmaticManager().getPlacement(placement.getId()) != null) {
++            cancelShare(t, placement);
++            return;
++        }
++        SyncmaticaProtocol.getSyncmaticManager().addPlacement(placement);
++        for (final ExchangeTarget target : broadcastTargets) {
++            sendMetaData(placement, target);
++        }
++    }
++
++    private static void cancelShare(final @NotNull ExchangeTarget source, final @NotNull ServerPlacement placement) {
++        final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++        FriendlyByteBuf.writeUUID(placement.getId());
++        source.sendPacket(PacketType.CANCEL_SHARE.identifier, FriendlyByteBuf);
++    }
++
++    public static void sendMetaData(final ServerPlacement metaData, final ExchangeTarget target) {
++        final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
++        putMetaData(metaData, buf, target);
++        target.sendPacket(PacketType.REGISTER_METADATA.identifier, buf);
++    }
++
++    public static void putMetaData(final @NotNull ServerPlacement metaData, final @NotNull FriendlyByteBuf buf, final @NotNull ExchangeTarget exchangeTarget) {
++        buf.writeUUID(metaData.getId());
++
++        buf.writeUtf(SyncmaticaProtocol.sanitizeFileName(metaData.getName()));
++        buf.writeUUID(metaData.getHash());
++
++        if (exchangeTarget.getFeatureSet().hasFeature(Feature.CORE_EX)) {
++            buf.writeUUID(metaData.getOwner().uuid);
++            buf.writeUtf(metaData.getOwner().getName());
++            buf.writeUUID(metaData.getLastModifiedBy().uuid);
++            buf.writeUtf(metaData.getLastModifiedBy().getName());
++        }
++
++        putPositionData(metaData, buf, exchangeTarget);
++    }
++
++    public static void putPositionData(final @NotNull ServerPlacement metaData, final @NotNull FriendlyByteBuf buf, final @NotNull ExchangeTarget exchangeTarget) {
++        buf.writeBlockPos(metaData.getPosition());
++        buf.writeUtf(metaData.getDimension());
++        buf.writeInt(metaData.getRotation().ordinal());
++        buf.writeInt(metaData.getMirror().ordinal());
++
++        if (exchangeTarget.getFeatureSet().hasFeature(Feature.CORE_EX)) {
++            if (metaData.getSubRegionData().getModificationData() == null) {
++                buf.writeInt(0);
++                return;
++            }
++
++            final Collection<SubRegionPlacementModification> regionData = metaData.getSubRegionData().getModificationData().values();
++            buf.writeInt(regionData.size());
++
++            for (final SubRegionPlacementModification subPlacement : regionData) {
++                buf.writeUtf(subPlacement.name);
++                buf.writeBlockPos(subPlacement.position);
++                buf.writeInt(subPlacement.rotation.ordinal());
++                buf.writeInt(subPlacement.mirror.ordinal());
++            }
++        }
++    }
++
++    public static ServerPlacement receiveMetaData(final @NotNull FriendlyByteBuf buf, final @NotNull ExchangeTarget exchangeTarget) {
++        final UUID id = buf.readUUID();
++
++        final String fileName = SyncmaticaProtocol.sanitizeFileName(buf.readUtf(32767));
++        final UUID hash = buf.readUUID();
++
++        PlayerIdentifier owner = PlayerIdentifier.MISSING_PLAYER;
++        PlayerIdentifier lastModifiedBy = PlayerIdentifier.MISSING_PLAYER;
++
++        if (exchangeTarget.getFeatureSet().hasFeature(Feature.CORE_EX)) {
++            final PlayerIdentifierProvider provider = SyncmaticaProtocol.getPlayerIdentifierProvider();
++            owner = provider.createOrGet(buf.readUUID(), buf.readUtf(32767));
++            lastModifiedBy = provider.createOrGet(buf.readUUID(), buf.readUtf(32767));
++        }
++
++        final ServerPlacement placement = new ServerPlacement(id, fileName, hash, owner);
++        placement.setLastModifiedBy(lastModifiedBy);
++
++        receivePositionData(placement, buf, exchangeTarget);
++
++        return placement;
++    }
++
++    public static void receivePositionData(final @NotNull ServerPlacement placement, final @NotNull FriendlyByteBuf buf, final @NotNull ExchangeTarget exchangeTarget) {
++        final BlockPos pos = buf.readBlockPos();
++        final String dimensionId = buf.readUtf(32767);
++        final Rotation rot = rotOrdinals[buf.readInt()];
++        final Mirror mir = mirOrdinals[buf.readInt()];
++        placement.move(dimensionId, pos, rot, mir);
++
++        if (exchangeTarget.getFeatureSet().hasFeature(Feature.CORE_EX)) {
++            final SubRegionData subRegionData = placement.getSubRegionData();
++            subRegionData.reset();
++            final int limit = buf.readInt();
++            for (int i = 0; i < limit; i++) {
++                subRegionData.modify(buf.readUtf(32767), buf.readBlockPos(), rotOrdinals[buf.readInt()], mirOrdinals[buf.readInt()]);
++            }
++        }
++    }
++
++    public static void download(final ServerPlacement syncmatic, final ExchangeTarget source) throws NoSuchAlgorithmException, IOException {
++        if (!SyncmaticaProtocol.getFileStorage().getLocalState(syncmatic).isReadyForDownload()) {
++            throw new IllegalArgumentException(syncmatic.toString() + " is not ready for download local state is: " + SyncmaticaProtocol.getFileStorage().getLocalState(syncmatic).toString());
++        }
++        final File toDownload = SyncmaticaProtocol.getFileStorage().createLocalLitematic(syncmatic);
++        final Exchange downloadExchange = new DownloadExchange(syncmatic, toDownload, source);
++        setDownloadState(syncmatic, true);
++        startExchange(downloadExchange);
++    }
++
++    public static void setDownloadState(final @NotNull ServerPlacement syncmatic, final boolean b) {
++        downloadState.put(syncmatic.getHash(), b);
++    }
++
++    public static boolean getDownloadState(final @NotNull ServerPlacement syncmatic) {
++        return downloadState.getOrDefault(syncmatic.getHash(), false);
++    }
++
++    public static void setModifier(final @NotNull ServerPlacement syncmatic, final Exchange exchange) {
++        modifyState.put(syncmatic.getHash(), exchange);
++    }
++
++    public static Exchange getModifier(final @NotNull ServerPlacement syncmatic) {
++        return modifyState.get(syncmatic.getHash());
++    }
++
++    public static void startExchange(final @NotNull Exchange newExchange) {
++        if (!broadcastTargets.contains(newExchange.getPartner())) {
++            throw new IllegalArgumentException(newExchange.getPartner().toString() + " is not a valid ExchangeTarget");
++        }
++        startExchangeUnchecked(newExchange);
++    }
++
++    protected static void startExchangeUnchecked(final @NotNull Exchange newExchange) {
++        newExchange.getPartner().getExchanges().add(newExchange);
++        newExchange.init();
++        if (newExchange.isFinished()) {
++            notifyClose(newExchange);
++        }
++    }
++
++    public static void notifyClose(final @NotNull Exchange e) {
++        e.getPartner().getExchanges().remove(e);
++        handleExchange(e);
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/Feature.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/Feature.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1125755d7d78a118d1fe407e9ca554a89f4d9a9a
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/Feature.java
+@@ -0,0 +1,23 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import org.jetbrains.annotations.Nullable;
++
++public enum Feature {
++    CORE,
++    FEATURE,
++    MODIFY,
++    MESSAGE,
++    QUOTA,
++    DEBUG,
++    CORE_EX;
++
++    @Nullable
++    public static Feature fromString(final String s) {
++        for (final Feature f : Feature.values()) {
++            if (f.toString().equals(s)) {
++                return f;
++            }
++        }
++        return null;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/FeatureSet.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/FeatureSet.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..3d851913e2016fcd384b6a8b1e91753cb8ea91ef
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/FeatureSet.java
+@@ -0,0 +1,67 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.Map;
++
++public class FeatureSet {
++
++    private static final Map<String, FeatureSet> versionFeatures;
++    private final Collection<Feature> features;
++
++    @Nullable
++    public static FeatureSet fromVersionString(@NotNull String version) {
++        if (version.matches("^\\d+(\\.\\d+){2,4}$")) {
++            final int minSize = version.indexOf(".");
++            while (version.length() > minSize) {
++                if (versionFeatures.containsKey(version)) {
++                    return versionFeatures.get(version);
++                }
++                final int lastDot = version.lastIndexOf(".");
++                version = version.substring(0, lastDot);
++            }
++        }
++        return null;
++    }
++
++    @NotNull
++    public static FeatureSet fromString(final @NotNull String features) {
++        final FeatureSet featureSet = new FeatureSet(new ArrayList<>());
++        for (final String feature : features.split("\n")) {
++            final Feature f = Feature.fromString(feature);
++            if (f != null) {
++                featureSet.features.add(f);
++            }
++        }
++        return featureSet;
++    }
++
++    @Override
++    public String toString() {
++        final StringBuilder output = new StringBuilder();
++        boolean b = false;
++        for (final Feature feature : features) {
++            output.append(b ? "\n" + feature.toString() : feature.toString());
++            b = true;
++        }
++        return output.toString();
++    }
++
++    public FeatureSet(final Collection<Feature> features) {
++        this.features = features;
++    }
++
++    public boolean hasFeature(final Feature f) {
++        return features.contains(f);
++    }
++
++    static {
++        versionFeatures = new HashMap<>();
++        versionFeatures.put("0.1", new FeatureSet(Collections.singletonList(Feature.CORE)));
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/FileStorage.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/FileStorage.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5dccbce7287fe436de9436f35a7d1ffcfc5d74ab
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/FileStorage.java
+@@ -0,0 +1,80 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import org.jetbrains.annotations.Contract;
++import org.jetbrains.annotations.NotNull;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.IOException;
++import java.util.HashMap;
++import java.util.UUID;
++
++public class FileStorage {
++
++    private final HashMap<ServerPlacement, Long> buffer = new HashMap<>();
++
++    public LocalLitematicState getLocalState(final ServerPlacement placement) {
++        final File localFile = getSchematicPath(placement);
++        if (localFile.isFile()) {
++            if (isDownloading(placement)) {
++                return LocalLitematicState.DOWNLOADING_LITEMATIC;
++            }
++            if ((buffer.containsKey(placement) && buffer.get(placement) == localFile.lastModified()) || hashCompare(localFile, placement)) {
++                return LocalLitematicState.LOCAL_LITEMATIC_PRESENT;
++            }
++            return LocalLitematicState.LOCAL_LITEMATIC_DESYNC;
++        }
++        return LocalLitematicState.NO_LOCAL_LITEMATIC;
++    }
++
++    private boolean isDownloading(final ServerPlacement placement) {
++        return SyncmaticaProtocol.getCommunicationManager().getDownloadState(placement);
++    }
++
++    public File getLocalLitematic(final ServerPlacement placement) {
++        if (getLocalState(placement).isLocalFileReady()) {
++            return getSchematicPath(placement);
++        } else {
++            return null;
++        }
++    }
++
++    public File createLocalLitematic(final ServerPlacement placement) {
++        if (getLocalState(placement).isLocalFileReady()) {
++            throw new IllegalArgumentException("");
++        }
++        final File file = getSchematicPath(placement);
++        if (file.exists()) {
++            file.delete();
++        }
++        try {
++            file.createNewFile();
++        } catch (final IOException e) {
++            e.printStackTrace();
++        }
++        return file;
++    }
++
++    private boolean hashCompare(final File localFile, final ServerPlacement placement) {
++        UUID hash = null;
++        try {
++            hash = SyncmaticaProtocol.createChecksum(new FileInputStream(localFile));
++        } catch (final Exception e) {
++            e.printStackTrace();
++        }
++
++        if (hash == null) {
++            return false;
++        }
++        if (hash.equals(placement.getHash())) {
++            buffer.put(placement, localFile.lastModified());
++            return true;
++        }
++        return false;
++    }
++
++    @Contract("_ -> new")
++    private @NotNull File getSchematicPath(final @NotNull ServerPlacement placement) {
++        return new File(SyncmaticaProtocol.getLitematicFolder(), placement.getHash().toString() + ".litematic");
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/LocalLitematicState.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/LocalLitematicState.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..82ffc8cbd1b488c8723693b685a91c2a4149fb47
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/LocalLitematicState.java
+@@ -0,0 +1,24 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++public enum LocalLitematicState {
++    NO_LOCAL_LITEMATIC(true, false),
++    LOCAL_LITEMATIC_DESYNC(true, false),
++    DOWNLOADING_LITEMATIC(false, false),
++    LOCAL_LITEMATIC_PRESENT(false, true);
++
++    private final boolean downloadReady;
++    private final boolean fileReady;
++
++    LocalLitematicState(final boolean downloadReady, final boolean fileReady) {
++        this.downloadReady = downloadReady;
++        this.fileReady = fileReady;
++    }
++
++    public boolean isReadyForDownload() {
++        return downloadReady;
++    }
++
++    public boolean isLocalFileReady() {
++        return fileReady;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/MessageType.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/MessageType.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..04d785846be3670b741d90634f5f691899127835
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/MessageType.java
+@@ -0,0 +1,8 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++public enum MessageType {
++    SUCCESS,
++    INFO,
++    WARNING,
++    ERROR
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PacketType.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PacketType.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8f3227d36da0a3055cc25e538437de58fd5730e3
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PacketType.java
+@@ -0,0 +1,30 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import net.minecraft.resources.ResourceLocation;
++
++public enum PacketType {
++    REGISTER_METADATA("register_metadata"),
++    CANCEL_SHARE("cancel_share"),
++    REQUEST_LITEMATIC("request_download"),
++    SEND_LITEMATIC("send_litematic"),
++    RECEIVED_LITEMATIC("received_litematic"),
++    FINISHED_LITEMATIC("finished_litematic"),
++    CANCEL_LITEMATIC("cancel_litematic"),
++    REMOVE_SYNCMATIC("remove_syncmatic"),
++    REGISTER_VERSION("register_version"),
++    CONFIRM_USER("confirm_user"),
++    FEATURE_REQUEST("feature_request"),
++    FEATURE("feature"),
++    MODIFY("modify"),
++    MODIFY_REQUEST("modify_request"),
++    MODIFY_REQUEST_DENY("modify_request_deny"),
++    MODIFY_REQUEST_ACCEPT("modify_request_accept"),
++    MODIFY_FINISH("modify_finish"),
++    MESSAGE("mesage");
++
++    public final ResourceLocation identifier;
++
++    PacketType(final String id) {
++        identifier = new ResourceLocation(SyncmaticaProtocol.PROTOCOL_ID, id);
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PlayerIdentifier.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PlayerIdentifier.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9ba2a41ab1e0d50bf85fd024b6d29e65b3a5cf7
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PlayerIdentifier.java
+@@ -0,0 +1,37 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++
++import java.util.UUID;
++
++public class PlayerIdentifier {
++
++    public static final UUID MISSING_PLAYER_UUID = UUID.fromString("4c1b738f-56fa-4011-8273-498c972424ea");
++    public static final PlayerIdentifier MISSING_PLAYER = new PlayerIdentifier(MISSING_PLAYER_UUID, "No Player");
++
++    public final UUID uuid;
++    private String bufferedPlayerName;
++
++    PlayerIdentifier(final UUID uuid, final String bufferedPlayerName) {
++        this.uuid = uuid;
++        this.bufferedPlayerName = bufferedPlayerName;
++    }
++
++    public String getName() {
++        return bufferedPlayerName;
++    }
++
++    public void updatePlayerName(final String name) {
++        bufferedPlayerName = name;
++    }
++
++    public JsonObject toJson() {
++        final JsonObject jsonObject = new JsonObject();
++
++        jsonObject.add("uuid", new JsonPrimitive(uuid.toString()));
++        jsonObject.add("name", new JsonPrimitive(bufferedPlayerName));
++
++        return jsonObject;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PlayerIdentifierProvider.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PlayerIdentifierProvider.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f4fc3bac20359ecf17a25d7b8e8f34cfebcf4b24
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/PlayerIdentifierProvider.java
+@@ -0,0 +1,46 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.JsonObject;
++import com.mojang.authlib.GameProfile;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.syncmatica.exchange.ExchangeTarget;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++
++public class PlayerIdentifierProvider {
++
++    private final Map<UUID, PlayerIdentifier> identifiers = new HashMap<>();
++
++    public PlayerIdentifierProvider() {
++        identifiers.put(PlayerIdentifier.MISSING_PLAYER_UUID, PlayerIdentifier.MISSING_PLAYER);
++    }
++
++    public PlayerIdentifier createOrGet(final ExchangeTarget exchangeTarget) {
++        return createOrGet(SyncmaticaProtocol.getCommunicationManager().getGameProfile(exchangeTarget));
++    }
++
++    public PlayerIdentifier createOrGet(final @NotNull GameProfile gameProfile) {
++        return createOrGet(gameProfile.getId(), gameProfile.getName());
++    }
++
++    public PlayerIdentifier createOrGet(final UUID uuid, final String playerName) {
++        return identifiers.computeIfAbsent(uuid, id -> new PlayerIdentifier(uuid, playerName));
++    }
++
++    public void updateName(final UUID uuid, final String playerName) {
++        createOrGet(uuid, playerName).updatePlayerName(playerName);
++    }
++
++    public PlayerIdentifier fromJson(final @NotNull JsonObject obj) {
++        if (!obj.has("uuid") || !obj.has("name")) {
++            return PlayerIdentifier.MISSING_PLAYER;
++        }
++
++        final UUID jsonUUID = UUID.fromString(obj.get("uuid").getAsString());
++        return identifiers.computeIfAbsent(jsonUUID,
++            key -> new PlayerIdentifier(jsonUUID, obj.get("name").getAsString())
++        );
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/ServerPlacement.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/ServerPlacement.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c5bc7d6244d6ccd9a561030fff44ccdecc1ed5c
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/ServerPlacement.java
+@@ -0,0 +1,166 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.Mirror;
++import net.minecraft.world.level.block.Rotation;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.UUID;
++
++public class ServerPlacement {
++
++    private final UUID id;
++
++    private final String fileName;
++    private final UUID hashValue;
++
++    private PlayerIdentifier owner;
++    private PlayerIdentifier lastModifiedBy;
++
++    private ServerPosition origin;
++    private Rotation rotation;
++    private Mirror mirror;
++
++    private SubRegionData subRegionData = new SubRegionData();
++
++    public ServerPlacement(final UUID id, final String fileName, final UUID hashValue, final PlayerIdentifier owner) {
++        this.id = id;
++        this.fileName = fileName;
++        this.hashValue = hashValue;
++        this.owner = owner;
++        lastModifiedBy = owner;
++    }
++
++    public UUID getId() {
++        return id;
++    }
++
++    public String getName() {
++        return fileName;
++    }
++
++    public UUID getHash() {
++        return hashValue;
++    }
++
++    public String getDimension() {
++        return origin.getDimensionId();
++    }
++
++    public BlockPos getPosition() {
++        return origin.getBlockPosition();
++    }
++
++    public ServerPosition getOrigin() {
++        return origin;
++    }
++
++    public Rotation getRotation() {
++        return rotation;
++    }
++
++    public Mirror getMirror() {
++        return mirror;
++    }
++
++    public ServerPlacement move(final String dimensionId, final BlockPos origin, final Rotation rotation, final Mirror mirror) {
++        move(new ServerPosition(origin, dimensionId), rotation, mirror);
++        return this;
++    }
++
++    public ServerPlacement move(final ServerPosition origin, final Rotation rotation, final Mirror mirror) {
++        this.origin = origin;
++        this.rotation = rotation;
++        this.mirror = mirror;
++        return this;
++    }
++
++    public PlayerIdentifier getOwner() {
++        return owner;
++    }
++
++    public void setOwner(final PlayerIdentifier playerIdentifier) {
++        owner = playerIdentifier;
++    }
++
++    public PlayerIdentifier getLastModifiedBy() {
++        return lastModifiedBy;
++    }
++
++    public void setLastModifiedBy(final PlayerIdentifier lastModifiedBy) {
++        this.lastModifiedBy = lastModifiedBy;
++    }
++
++    public SubRegionData getSubRegionData() {
++        return subRegionData;
++    }
++
++    public JsonObject toJson() {
++        final JsonObject obj = new JsonObject();
++        obj.add("id", new JsonPrimitive(id.toString()));
++
++        obj.add("file_name", new JsonPrimitive(fileName));
++        obj.add("hash", new JsonPrimitive(hashValue.toString()));
++
++        obj.add("origin", origin.toJson());
++        obj.add("rotation", new JsonPrimitive(rotation.name()));
++        obj.add("mirror", new JsonPrimitive(mirror.name()));
++
++        obj.add("owner", owner.toJson());
++        if (!owner.equals(lastModifiedBy)) {
++            obj.add("lastModifiedBy", lastModifiedBy.toJson());
++        }
++
++        if (subRegionData.isModified()) {
++            obj.add("subregionData", subRegionData.toJson());
++        }
++
++        return obj;
++    }
++
++    @Nullable
++    public static ServerPlacement fromJson(final @NotNull JsonObject obj) {
++        if (obj.has("id")
++            && obj.has("file_name")
++            && obj.has("hash")
++            && obj.has("origin")
++            && obj.has("rotation")
++            && obj.has("mirror")) {
++            final UUID id = UUID.fromString(obj.get("id").getAsString());
++            final String name = obj.get("file_name").getAsString();
++            final UUID hashValue = UUID.fromString(obj.get("hash").getAsString());
++
++            PlayerIdentifier owner = PlayerIdentifier.MISSING_PLAYER;
++            if (obj.has("owner")) {
++                owner = SyncmaticaProtocol.getPlayerIdentifierProvider().fromJson(obj.get("owner").getAsJsonObject());
++            }
++
++            final ServerPlacement newPlacement = new ServerPlacement(id, name, hashValue, owner);
++            final ServerPosition pos = ServerPosition.fromJson(obj.get("origin").getAsJsonObject());
++            if (pos == null) {
++                return null;
++            }
++            newPlacement.origin = pos;
++            newPlacement.rotation = Rotation.valueOf(obj.get("rotation").getAsString());
++            newPlacement.mirror = Mirror.valueOf(obj.get("mirror").getAsString());
++
++            if (obj.has("lastModifiedBy")) {
++                newPlacement.lastModifiedBy = SyncmaticaProtocol.getPlayerIdentifierProvider()
++                    .fromJson(obj.get("lastModifiedBy").getAsJsonObject());
++            } else {
++                newPlacement.lastModifiedBy = owner;
++            }
++
++            if (obj.has("subregionData")) {
++                newPlacement.subRegionData = SubRegionData.fromJson(obj.get("subregionData"));
++            }
++
++            return newPlacement;
++        }
++
++        return null;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/ServerPosition.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/ServerPosition.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..3f6ee21ce72943e11f8d924321eb286652c5c533
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/ServerPosition.java
+@@ -0,0 +1,51 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++import net.minecraft.core.BlockPos;
++
++public class ServerPosition {
++
++    private final BlockPos position;
++    private final String dimensionId;
++
++    public ServerPosition(final BlockPos pos, final String dim) {
++        position = pos;
++        dimensionId = dim;
++    }
++
++    public BlockPos getBlockPosition() {
++        return position;
++    }
++
++    public String getDimensionId() {
++        return dimensionId;
++    }
++
++    public JsonObject toJson() {
++        final JsonObject obj = new JsonObject();
++        final JsonArray arr = new JsonArray();
++        arr.add(new JsonPrimitive(position.getX()));
++        arr.add(new JsonPrimitive(position.getY()));
++        arr.add(new JsonPrimitive(position.getZ()));
++        obj.add("position", arr);
++        obj.add("dimension", new JsonPrimitive(dimensionId));
++        return obj;
++    }
++
++    public static ServerPosition fromJson(final JsonObject obj) {
++        if (obj.has("position") && obj.has("dimension")) {
++            final int x;
++            final int y;
++            final int z;
++            final JsonArray arr = obj.get("position").getAsJsonArray();
++            x = arr.get(0).getAsInt();
++            y = arr.get(1).getAsInt();
++            z = arr.get(2).getAsInt();
++            final BlockPos pos = new BlockPos(x, y, z);
++            return new ServerPosition(pos, obj.get("dimension").getAsString());
++        }
++        return null;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SubRegionData.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SubRegionData.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6903c26742f5e10aa75f52b7abd5273e7116600b
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SubRegionData.java
+@@ -0,0 +1,90 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.Mirror;
++import net.minecraft.world.level.block.Rotation;
++import org.jetbrains.annotations.NotNull;
++
++import java.util.HashMap;
++import java.util.Map;
++
++public class SubRegionData {
++
++    private boolean isModified;
++    private Map<String, SubRegionPlacementModification> modificationData; // is null when isModified is false
++
++    public SubRegionData() {
++        this(false, null);
++    }
++
++    public SubRegionData(final boolean isModified, final Map<String, SubRegionPlacementModification> modificationData) {
++        this.isModified = isModified;
++        this.modificationData = modificationData;
++    }
++
++    public void reset() {
++        isModified = false;
++        modificationData = null;
++    }
++
++    public void modify(final String name, final BlockPos position, final Rotation rotation, final Mirror mirror) {
++        modify(new SubRegionPlacementModification(name, position, rotation, mirror));
++    }
++
++    public void modify(final SubRegionPlacementModification subRegionPlacementModification) {
++        if (subRegionPlacementModification == null) {
++            return;
++        }
++        isModified = true;
++        if (modificationData == null) {
++            modificationData = new HashMap<>();
++        }
++        modificationData.put(subRegionPlacementModification.name, subRegionPlacementModification);
++    }
++
++    public boolean isModified() {
++        return isModified;
++    }
++
++    public Map<String, SubRegionPlacementModification> getModificationData() {
++        return modificationData;
++    }
++
++    public JsonElement toJson() {
++        return modificationDataToJson();
++    }
++
++    @NotNull
++    private JsonElement modificationDataToJson() {
++        final JsonArray arr = new JsonArray();
++
++        for (final Map.Entry<String, SubRegionPlacementModification> entry : modificationData.entrySet()) {
++            arr.add(entry.getValue().toJson());
++        }
++
++        return arr;
++    }
++
++    @NotNull
++    public static SubRegionData fromJson(final @NotNull JsonElement obj) {
++        final SubRegionData newSubRegionData = new SubRegionData();
++
++        newSubRegionData.isModified = true;
++
++        for (final JsonElement modification : obj.getAsJsonArray()) {
++            newSubRegionData.modify(SubRegionPlacementModification.fromJson(modification.getAsJsonObject()));
++        }
++
++        return newSubRegionData;
++    }
++
++    @Override
++    public String toString() {
++        if (!isModified) {
++            return "[]";
++        }
++        return modificationData == null ? "[ERROR:null]" : modificationData.toString();
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SubRegionPlacementModification.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SubRegionPlacementModification.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0d67b562ed06f8de990c2f3d545e2839837f853d
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SubRegionPlacementModification.java
+@@ -0,0 +1,65 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.Mirror;
++import net.minecraft.world.level.block.Rotation;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++public class SubRegionPlacementModification {
++
++    public final String name;
++    public final BlockPos position;
++    public final Rotation rotation;
++    public final Mirror mirror;
++
++    SubRegionPlacementModification(final String name, final BlockPos position, final Rotation rotation, final Mirror mirror) {
++        this.name = name;
++        this.position = position;
++        this.rotation = rotation;
++        this.mirror = mirror;
++    }
++
++    public JsonObject toJson() {
++        final JsonObject obj = new JsonObject();
++
++        final JsonArray arr = new JsonArray();
++        arr.add(position.getX());
++        arr.add(position.getY());
++        arr.add(position.getZ());
++        obj.add("position", arr);
++
++        obj.add("name", new JsonPrimitive(name));
++        obj.add("rotation", new JsonPrimitive(rotation.name()));
++        obj.add("mirror", new JsonPrimitive(mirror.name()));
++
++        return obj;
++    }
++
++    @Nullable
++    public static SubRegionPlacementModification fromJson(final @NotNull JsonObject obj) {
++        if (!obj.has("name") || !obj.has("position") || !obj.has("rotation") || !obj.has("mirror")) {
++            return null;
++        }
++
++        final String name = obj.get("name").getAsString();
++        final JsonArray arr = obj.get("position").getAsJsonArray();
++        if (arr.size() != 3) {
++            return null;
++        }
++
++        final BlockPos position = new BlockPos(arr.get(0).getAsInt(), arr.get(1).getAsInt(), arr.get(2).getAsInt());
++        final Rotation rotation = Rotation.valueOf(obj.get("rotation").getAsString());
++        final Mirror mirror = Mirror.valueOf(obj.get("mirror").getAsString());
++
++        return new SubRegionPlacementModification(name, position, rotation, mirror);
++    }
++
++    @Override
++    public String toString() {
++        return String.format("[name=%s, position=%s, rotation=%s, mirror=%s]", name, position, rotation, mirror);
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SyncmaticManager.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SyncmaticManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..9fbeef1ef528504276895faed4dba41ee0789e77
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SyncmaticManager.java
+@@ -0,0 +1,108 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import com.google.gson.GsonBuilder;
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import org.jetbrains.annotations.NotNull;
++
++import java.io.File;
++import java.io.FileReader;
++import java.io.FileWriter;
++import java.io.IOException;
++import java.util.Collection;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++
++public class SyncmaticManager {
++
++    public static final String PLACEMENTS_JSON_KEY = "placements";
++    private final Map<UUID, ServerPlacement> schematics = new HashMap<>();
++
++    public void addPlacement(final ServerPlacement placement) {
++        schematics.put(placement.getId(), placement);
++        updateServerPlacement();
++    }
++
++    public ServerPlacement getPlacement(final UUID id) {
++        return schematics.get(id);
++    }
++
++    public Collection<ServerPlacement> getAll() {
++        return schematics.values();
++    }
++
++    public void removePlacement(final @NotNull ServerPlacement placement) {
++        schematics.remove(placement.getId());
++        updateServerPlacement();
++    }
++
++    public void updateServerPlacement() {
++        saveServer();
++    }
++
++    public void startup() {
++        loadServer();
++    }
++
++    private void saveServer() {
++        final JsonObject obj = new JsonObject();
++        final JsonArray arr = new JsonArray();
++
++        for (final ServerPlacement p : getAll()) {
++            arr.add(p.toJson());
++        }
++
++        obj.add(PLACEMENTS_JSON_KEY, arr);
++        final File backup = new File(SyncmaticaProtocol.getLitematicFolder(), "placements.json.bak");
++        final File incoming = new File(SyncmaticaProtocol.getLitematicFolder(), "placements.json.new");
++        final File current = new File(SyncmaticaProtocol.getLitematicFolder(), "placements.json");
++
++        try (final FileWriter writer = new FileWriter(incoming)) {
++            writer.write(new GsonBuilder().setPrettyPrinting().create().toJson(obj));
++        } catch (final IOException e) {
++            e.printStackTrace();
++            return;
++        }
++
++        SyncmaticaProtocol.backupAndReplace(backup.toPath(), current.toPath(), incoming.toPath());
++    }
++
++    private void loadServer() {
++        final File f = new File(SyncmaticaProtocol.getLitematicFolder(), "placements.json");
++        if (f.exists() && f.isFile() && f.canRead()) {
++            JsonElement element = null;
++            try {
++                final JsonParser parser = new JsonParser();
++                final FileReader reader = new FileReader(f);
++
++                element = parser.parse(reader);
++                reader.close();
++
++            } catch (final Exception e) {
++                e.printStackTrace();
++            }
++            if (element == null) {
++                return;
++            }
++            try {
++                final JsonObject obj = element.getAsJsonObject();
++                if (obj == null || !obj.has(PLACEMENTS_JSON_KEY)) {
++                    return;
++                }
++                final JsonArray arr = obj.getAsJsonArray(PLACEMENTS_JSON_KEY);
++                for (final JsonElement elem : arr) {
++                    final ServerPlacement placement = ServerPlacement.fromJson(elem.getAsJsonObject());
++                    if (placement != null) {
++                        schematics.put(placement.getId(), placement);
++                    }
++                }
++
++            } catch (final IllegalStateException | NullPointerException e) {
++                e.printStackTrace();
++            }
++        }
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SyncmaticaProtocol.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SyncmaticaProtocol.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..60cec10702a0ea47d2f3181f3046a9fe2b24f5fa
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/SyncmaticaProtocol.java
+@@ -0,0 +1,122 @@
++package top.leavesmc.leaves.protocol.syncmatica;
++
++import org.jetbrains.annotations.NotNull;
++
++import java.io.File;
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.Arrays;
++import java.util.UUID;
++
++public class SyncmaticaProtocol {
++
++    public static final String PROTOCOL_ID = "syncmatica";
++    public static final String PROTOCOL_VERSION = "leaves-syncmatica-1.0.0";
++
++    private static final File litematicFolder = new File("." + File.separator + "syncmatics");
++    private static final PlayerIdentifierProvider playerIdentifierProvider = new PlayerIdentifierProvider();
++    private static final CommunicationManager communicationManager = new CommunicationManager();
++    private static final FeatureSet featureSet = new FeatureSet(Arrays.asList(Feature.values()));
++    private static final SyncmaticManager syncmaticManager = new SyncmaticManager();
++    private static final FileStorage fileStorage = new FileStorage();
++
++    public static File getLitematicFolder() {
++        return litematicFolder;
++    }
++
++    public static PlayerIdentifierProvider getPlayerIdentifierProvider() {
++        return playerIdentifierProvider;
++    }
++
++    public static CommunicationManager getCommunicationManager() {
++        return communicationManager;
++    }
++
++    public static FeatureSet getFeatureSet() {
++        return featureSet;
++    }
++
++    public static SyncmaticManager getSyncmaticManager() {
++        return syncmaticManager;
++    }
++
++    public static FileStorage getFileStorage() {
++        return fileStorage;
++    }
++
++    public static void init() {
++        litematicFolder.mkdirs();
++        syncmaticManager.startup();
++    }
++
++    @NotNull
++    public static UUID createChecksum(final @NotNull InputStream fis) throws NoSuchAlgorithmException, IOException {
++        final byte[] buffer = new byte[4096];
++        final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
++        int numRead;
++
++        do {
++            numRead = fis.read(buffer);
++            if (numRead > 0) {
++                messageDigest.update(buffer, 0, numRead);
++            }
++        } while (numRead != -1);
++
++        fis.close();
++        return UUID.nameUUIDFromBytes(messageDigest.digest());
++    }
++
++    private static final int[] ILLEGAL_CHARS = {34, 60, 62, 124, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 58, 42, 63, 92, 47};
++    private static final String ILLEGAL_PATTERNS = "(^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\\..*)?$)|(^\\.\\.*$)";
++
++    @NotNull
++    public static String sanitizeFileName(final @NotNull String badFileName) {
++        final StringBuilder sanitized = new StringBuilder();
++        final int len = badFileName.codePointCount(0, badFileName.length());
++
++        for (int i = 0; i < len; i++) {
++            final int c = badFileName.codePointAt(i);
++            if (Arrays.binarySearch(ILLEGAL_CHARS, c) < 0) {
++                sanitized.appendCodePoint(c);
++                if (sanitized.length() == 255) {
++                    break;
++                }
++            }
++        }
++
++        return sanitized.toString().replaceAll(ILLEGAL_PATTERNS, "_");
++    }
++
++    public static boolean isOverQuota(int sent) {
++        return org.dreeam.leaf.config.modules.network.ProtocolSupport.syncmaticaQuota && sent > org.dreeam.leaf.config.modules.network.ProtocolSupport.syncmaticaQuotaLimit;
++    }
++
++    public static void backupAndReplace(final Path backup, final Path current, final Path incoming) {
++        if (!Files.exists(incoming)) {
++            return;
++        }
++        if (overwrite(backup, current, 2) && !overwrite(current, incoming, 4)) {
++            overwrite(current, backup, 8);
++        }
++    }
++
++    private static boolean overwrite(final Path backup, final Path current, final int tries) {
++        if (!Files.exists(current)) {
++            return true;
++        }
++        try {
++            Files.deleteIfExists(backup);
++            Files.move(current, backup);
++        } catch (final IOException exception) {
++            if (tries <= 0) {
++                return false;
++            }
++            return overwrite(backup, current, tries - 1);
++        }
++        return true;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/AbstractExchange.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/AbstractExchange.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..625974f9ce0791b476336abafa6aa1af2f2ffbac
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/AbstractExchange.java
+@@ -0,0 +1,66 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import net.minecraft.network.FriendlyByteBuf;
++import top.leavesmc.leaves.protocol.syncmatica.CommunicationManager;
++import top.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol;
++
++import java.util.UUID;
++
++public abstract class AbstractExchange implements Exchange {
++
++    private boolean success = false;
++    private boolean finished = false;
++    private final ExchangeTarget partner;
++
++    protected AbstractExchange(final ExchangeTarget partner) {
++        this.partner = partner;
++    }
++
++    @Override
++    public ExchangeTarget getPartner() {
++        return partner;
++    }
++
++    @Override
++    public boolean isFinished() {
++        return finished;
++    }
++
++    @Override
++    public boolean isSuccessful() {
++        return success;
++    }
++
++    @Override
++    public void close(final boolean notifyPartner) {
++        finished = true;
++        success = false;
++        onClose();
++        if (notifyPartner) {
++            sendCancelPacket();
++        }
++    }
++
++    public CommunicationManager getManager() {
++        return SyncmaticaProtocol.getCommunicationManager();
++    }
++
++    protected void sendCancelPacket() {
++    }
++
++    protected void onClose() {
++    }
++
++    protected void succeed() {
++        finished = true;
++        success = true;
++        onClose();
++    }
++
++    protected static boolean checkUUID(final FriendlyByteBuf sourceBuf, final UUID targetId) {
++        final int r = sourceBuf.readerIndex();
++        final UUID sourceId = sourceBuf.readUUID();
++        sourceBuf.readerIndex(r);
++        return sourceId.equals(targetId);
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/DownloadExchange.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/DownloadExchange.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..7303769570656f36a3a76215e22020b1292007fb
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/DownloadExchange.java
+@@ -0,0 +1,125 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import io.netty.buffer.Unpooled;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.syncmatica.MessageType;
++import top.leavesmc.leaves.protocol.syncmatica.PacketType;
++import top.leavesmc.leaves.protocol.syncmatica.ServerPlacement;
++import top.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol;
++
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.security.DigestOutputStream;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.UUID;
++
++public class DownloadExchange extends AbstractExchange {
++
++    private final ServerPlacement toDownload;
++    private final OutputStream outputStream;
++    private final MessageDigest md5;
++    private final File downloadFile;
++    private int bytesSent;
++
++    public DownloadExchange(final ServerPlacement syncmatic, final File downloadFile, final ExchangeTarget partner) throws IOException, NoSuchAlgorithmException {
++        super(partner);
++        this.downloadFile = downloadFile;
++        final OutputStream os = new FileOutputStream(downloadFile);
++        toDownload = syncmatic;
++        md5 = MessageDigest.getInstance("MD5");
++        outputStream = new DigestOutputStream(os, md5);
++    }
++
++    @Override
++    public boolean checkPacket(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        if (id.equals(PacketType.SEND_LITEMATIC.identifier)
++            || id.equals(PacketType.FINISHED_LITEMATIC.identifier)
++            || id.equals(PacketType.CANCEL_LITEMATIC.identifier)) {
++            return checkUUID(packetBuf, toDownload.getId());
++        }
++        return false;
++    }
++
++    @Override
++    public void handle(final @NotNull ResourceLocation id, final @NotNull FriendlyByteBuf packetBuf) {
++        packetBuf.readUUID();
++        if (id.equals(PacketType.SEND_LITEMATIC.identifier)) {
++            final int size = packetBuf.readInt();
++            bytesSent += size;
++            if (SyncmaticaProtocol.isOverQuota(bytesSent)) {
++                close(true);
++                SyncmaticaProtocol.getCommunicationManager().sendMessage(
++                    getPartner(),
++                    MessageType.ERROR,
++                    "syncmatica.error.cancelled_transmit_exceed_quota"
++                );
++            }
++            try {
++                packetBuf.readBytes(outputStream, size);
++            } catch (final IOException e) {
++                close(true);
++                e.printStackTrace();
++                return;
++            }
++            final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++            FriendlyByteBuf.writeUUID(toDownload.getId());
++            getPartner().sendPacket(PacketType.RECEIVED_LITEMATIC.identifier, FriendlyByteBuf);
++            return;
++        }
++        if (id.equals(PacketType.FINISHED_LITEMATIC.identifier)) {
++            try {
++                outputStream.flush();
++            } catch (final IOException e) {
++                close(false);
++                e.printStackTrace();
++                return;
++            }
++            final UUID downloadHash = UUID.nameUUIDFromBytes(md5.digest());
++            if (downloadHash.equals(toDownload.getHash())) {
++                succeed();
++            } else {
++                close(false);
++            }
++            return;
++        }
++        if (id.equals(PacketType.CANCEL_LITEMATIC.identifier)) {
++            close(false);
++        }
++    }
++
++    @Override
++    public void init() {
++        final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++        FriendlyByteBuf.writeUUID(toDownload.getId());
++        getPartner().sendPacket(PacketType.REQUEST_LITEMATIC.identifier, FriendlyByteBuf);
++    }
++
++    @Override
++    protected void onClose() {
++        getManager().setDownloadState(toDownload, false);
++        try {
++            outputStream.close();
++        } catch (final IOException e) {
++            e.printStackTrace();
++        }
++        if (!isSuccessful() && downloadFile.exists()) {
++            downloadFile.delete();
++        }
++    }
++
++    @Override
++    protected void sendCancelPacket() {
++        final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++        FriendlyByteBuf.writeUUID(toDownload.getId());
++        getPartner().sendPacket(PacketType.CANCEL_LITEMATIC.identifier, FriendlyByteBuf);
++    }
++
++    public ServerPlacement getPlacement() {
++        return toDownload;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/Exchange.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/Exchange.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..26482e63b7c24c80bdc111cea51b8d7b8052d64e
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/Exchange.java
+@@ -0,0 +1,20 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++
++public interface Exchange {
++    ExchangeTarget getPartner();
++
++    boolean checkPacket(ResourceLocation id, FriendlyByteBuf packetBuf);
++
++    void handle(ResourceLocation id, FriendlyByteBuf packetBuf);
++
++    boolean isFinished();
++
++    boolean isSuccessful();
++
++    void close(boolean notifyPartner);
++
++    void init();
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/ExchangeTarget.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/ExchangeTarget.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..706680a3d7fae22f94cb86b8da2e306cfcf4cb1b
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/ExchangeTarget.java
+@@ -0,0 +1,40 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++import net.minecraft.server.network.ServerGamePacketListenerImpl;
++import top.leavesmc.leaves.protocol.core.ProtocolUtils;
++import top.leavesmc.leaves.protocol.syncmatica.FeatureSet;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.List;
++
++public class ExchangeTarget {
++
++    private final List<Exchange> ongoingExchanges = new ArrayList<>();
++    private final ServerGamePacketListenerImpl client;
++    private FeatureSet features;
++
++    public ExchangeTarget(final ServerGamePacketListenerImpl client) {
++        this.client = client;
++    }
++
++    public void sendPacket(final ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        ProtocolUtils.sendPayloadPacket(client.player, id, buf -> {
++            buf.writeBytes(packetBuf);
++        });
++    }
++
++    public FeatureSet getFeatureSet() {
++        return features;
++    }
++
++    public void setFeatureSet(final FeatureSet f) {
++        features = f;
++    }
++
++    public Collection<Exchange> getExchanges() {
++        return ongoingExchanges;
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/FeatureExchange.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/FeatureExchange.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f92739dbfa00de0e078834818dab79e34fc3d245
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/FeatureExchange.java
+@@ -0,0 +1,48 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import io.netty.buffer.Unpooled;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.syncmatica.FeatureSet;
++import top.leavesmc.leaves.protocol.syncmatica.PacketType;
++import top.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol;
++
++public abstract class FeatureExchange extends AbstractExchange {
++
++    protected FeatureExchange(final ExchangeTarget partner) {
++        super(partner);
++    }
++
++    @Override
++    public boolean checkPacket(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        return id.equals(PacketType.FEATURE_REQUEST.identifier)
++            || id.equals(PacketType.FEATURE.identifier);
++    }
++
++    @Override
++    public void handle(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        if (id.equals(PacketType.FEATURE_REQUEST.identifier)) {
++            sendFeatures();
++        } else if (id.equals(PacketType.FEATURE.identifier)) {
++            final FeatureSet fs = FeatureSet.fromString(packetBuf.readUtf(32767));
++            getPartner().setFeatureSet(fs);
++            onFeatureSetReceive();
++        }
++    }
++
++    protected void onFeatureSetReceive() {
++        succeed();
++    }
++
++    public void requestFeatureSet() {
++        getPartner().sendPacket(PacketType.FEATURE_REQUEST.identifier, new FriendlyByteBuf(Unpooled.buffer()));
++    }
++
++    private void sendFeatures() {
++        final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
++        final FeatureSet fs = SyncmaticaProtocol.getFeatureSet();
++        buf.writeUtf(fs.toString(), 32767);
++        getPartner().sendPacket(PacketType.FEATURE.identifier, buf);
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/ModifyExchangeServer.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/ModifyExchangeServer.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d87602fa78a8e599b71556f3dd103ff71ee83ae0
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/ModifyExchangeServer.java
+@@ -0,0 +1,81 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import io.netty.buffer.Unpooled;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.syncmatica.PacketType;
++import top.leavesmc.leaves.protocol.syncmatica.PlayerIdentifier;
++import top.leavesmc.leaves.protocol.syncmatica.ServerPlacement;
++import top.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol;
++
++import java.util.UUID;
++
++public class ModifyExchangeServer extends AbstractExchange {
++
++    private final ServerPlacement placement;
++    UUID placementId;
++
++    public ModifyExchangeServer(final UUID placeId, final ExchangeTarget partner) {
++        super(partner);
++        placementId = placeId;
++        placement = SyncmaticaProtocol.getSyncmaticManager().getPlacement(placementId);
++    }
++
++    @Override
++    public boolean checkPacket(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        return id.equals(PacketType.MODIFY_FINISH.identifier) && checkUUID(packetBuf, placement.getId());
++    }
++
++    @Override
++    public void handle(final @NotNull ResourceLocation id, final @NotNull FriendlyByteBuf packetBuf) {
++        packetBuf.readUUID();
++        if (id.equals(PacketType.MODIFY_FINISH.identifier)) {
++            SyncmaticaProtocol.getCommunicationManager().receivePositionData(placement, packetBuf, getPartner());
++            final PlayerIdentifier identifier = SyncmaticaProtocol.getPlayerIdentifierProvider().createOrGet(
++                getPartner()
++            );
++            placement.setLastModifiedBy(identifier);
++            SyncmaticaProtocol.getSyncmaticManager().updateServerPlacement();
++            succeed();
++        }
++    }
++
++    @Override
++    public void init() {
++        if (getPlacement() == null || SyncmaticaProtocol.getCommunicationManager().getModifier(placement) != null) {
++            close(true);
++        } else {
++            if (SyncmaticaProtocol.getPlayerIdentifierProvider().createOrGet(this.getPartner()).uuid.equals(placement.getOwner().uuid)) {
++                accept();
++            } else {
++                close(true);
++            }
++        }
++    }
++
++    private void accept() {
++        final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
++        buf.writeUUID(placement.getId());
++        getPartner().sendPacket(PacketType.MODIFY_REQUEST_ACCEPT.identifier, buf);
++        SyncmaticaProtocol.getCommunicationManager().setModifier(placement, this);
++    }
++
++    @Override
++    protected void sendCancelPacket() {
++        final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
++        buf.writeUUID(placementId);
++        getPartner().sendPacket(PacketType.MODIFY_REQUEST_DENY.identifier, buf);
++    }
++
++    public ServerPlacement getPlacement() {
++        return placement;
++    }
++
++    @Override
++    protected void onClose() {
++        if (SyncmaticaProtocol.getCommunicationManager().getModifier(placement) == this) {
++            SyncmaticaProtocol.getCommunicationManager().setModifier(placement, null);
++        }
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/UploadExchange.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/UploadExchange.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..9a1b37c69a3946b8f042a1118bf7dcf6ff0967ae
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/UploadExchange.java
+@@ -0,0 +1,101 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import io.netty.buffer.Unpooled;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.syncmatica.PacketType;
++import top.leavesmc.leaves.protocol.syncmatica.ServerPlacement;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileNotFoundException;
++import java.io.IOException;
++import java.io.InputStream;
++
++public class UploadExchange extends AbstractExchange {
++
++    private static final int BUFFER_SIZE = 16384;
++
++    private final ServerPlacement toUpload;
++    private final InputStream inputStream;
++    private final byte[] buffer = new byte[BUFFER_SIZE];
++
++    public UploadExchange(final ServerPlacement syncmatic, final File uploadFile, final ExchangeTarget partner) throws FileNotFoundException {
++        super(partner);
++        toUpload = syncmatic;
++        inputStream = new FileInputStream(uploadFile);
++    }
++
++    @Override
++    public boolean checkPacket(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        if (id.equals(PacketType.RECEIVED_LITEMATIC.identifier)
++            || id.equals(PacketType.CANCEL_LITEMATIC.identifier)) {
++            return checkUUID(packetBuf, toUpload.getId());
++        }
++        return false;
++    }
++
++    @Override
++    public void handle(final @NotNull ResourceLocation id, final @NotNull FriendlyByteBuf packetBuf) {
++        packetBuf.readUUID();
++        if (id.equals(PacketType.RECEIVED_LITEMATIC.identifier)) {
++            send();
++        }
++        if (id.equals(PacketType.CANCEL_LITEMATIC.identifier)) {
++            close(false);
++        }
++    }
++
++    private void send() {
++        final int bytesRead;
++        try {
++            bytesRead = inputStream.read(buffer);
++        } catch (final IOException e) {
++            close(true);
++            e.printStackTrace();
++            return;
++        }
++        if (bytesRead == -1) {
++            sendFinish();
++        } else {
++            sendData(bytesRead);
++        }
++    }
++
++    private void sendData(final int bytesRead) {
++        final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++        FriendlyByteBuf.writeUUID(toUpload.getId());
++        FriendlyByteBuf.writeInt(bytesRead);
++        FriendlyByteBuf.writeBytes(buffer, 0, bytesRead);
++        getPartner().sendPacket(PacketType.SEND_LITEMATIC.identifier, FriendlyByteBuf);
++    }
++
++    private void sendFinish() {
++        final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++        FriendlyByteBuf.writeUUID(toUpload.getId());
++        getPartner().sendPacket(PacketType.FINISHED_LITEMATIC.identifier, FriendlyByteBuf);
++        succeed();
++    }
++
++    @Override
++    public void init() {
++        send();
++    }
++
++    @Override
++    protected void onClose() {
++        try {
++            inputStream.close();
++        } catch (final IOException e) {
++            e.printStackTrace();
++        }
++    }
++
++    @Override
++    protected void sendCancelPacket() {
++        final FriendlyByteBuf FriendlyByteBuf = new FriendlyByteBuf(Unpooled.buffer());
++        FriendlyByteBuf.writeUUID(toUpload.getId());
++        getPartner().sendPacket(PacketType.CANCEL_LITEMATIC.identifier, FriendlyByteBuf);
++    }
++}
+diff --git a/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/VersionHandshakeServer.java b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/VersionHandshakeServer.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..448d5e8423347c0154a146906617e32e18fbc30f
+--- /dev/null
++++ b/src/main/java/top/leavesmc/leaves/protocol/syncmatica/exchange/VersionHandshakeServer.java
+@@ -0,0 +1,65 @@
++package top.leavesmc.leaves.protocol.syncmatica.exchange;
++
++import io.netty.buffer.Unpooled;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.resources.ResourceLocation;
++import org.jetbrains.annotations.NotNull;
++import top.leavesmc.leaves.protocol.syncmatica.FeatureSet;
++import top.leavesmc.leaves.protocol.syncmatica.PacketType;
++import top.leavesmc.leaves.protocol.syncmatica.ServerPlacement;
++import top.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol;
++
++import java.util.Collection;
++
++public class VersionHandshakeServer extends FeatureExchange {
++
++    public VersionHandshakeServer(final ExchangeTarget partner) {
++        super(partner);
++    }
++
++    @Override
++    public boolean checkPacket(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        return id.equals(PacketType.REGISTER_VERSION.identifier)
++            || super.checkPacket(id, packetBuf);
++    }
++
++    @Override
++    public void handle(final @NotNull ResourceLocation id, final FriendlyByteBuf packetBuf) {
++        if (id.equals(PacketType.REGISTER_VERSION.identifier)) {
++            String partnerVersion = packetBuf.readUtf(32767);
++            if (partnerVersion.equals("0.0.1")) {
++                close(false);
++                return;
++            }
++            final FeatureSet fs = FeatureSet.fromVersionString(partnerVersion);
++            if (fs == null) {
++                requestFeatureSet();
++            } else {
++                getPartner().setFeatureSet(fs);
++                onFeatureSetReceive();
++            }
++        } else {
++            super.handle(id, packetBuf);
++        }
++
++    }
++
++    @Override
++    public void onFeatureSetReceive() {
++        final FriendlyByteBuf newBuf = new FriendlyByteBuf(Unpooled.buffer());
++        final Collection<ServerPlacement> l = SyncmaticaProtocol.getSyncmaticManager().getAll();
++        newBuf.writeInt(l.size());
++        for (final ServerPlacement p : l) {
++            getManager().putMetaData(p, newBuf, getPartner());
++        }
++        getPartner().sendPacket(PacketType.CONFIRM_USER.identifier, newBuf);
++        succeed();
++    }
++
++    @Override
++    public void init() {
++        final FriendlyByteBuf newBuf = new FriendlyByteBuf(Unpooled.buffer());
++        newBuf.writeUtf(SyncmaticaProtocol.PROTOCOL_VERSION);
++        getPartner().sendPacket(PacketType.REGISTER_VERSION.identifier, newBuf);
++    }
++}
