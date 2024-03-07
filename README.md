@@ -1,4 +1,4 @@
-<img src="leaf-banner.png" alt="Leaf">
+<img src="leaf_banner.png" alt="Leaf">
 <div align="center">
  
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1204.yml?&style=for-the-badge)](https://github.com/Winds-Studio/Leaf/releases) 
