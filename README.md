@@ -1,13 +1,10 @@
-<img src="leaf_logo.png" alt="Leaf logo" align="right" width="200">
+<img src="leaf-banner.png" alt="Leaf">
 <div align="center">
-
-## Leaf
-
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1204.yml?&style=for-the-badge)](https://github.com/Winds-Studio/Leaf/releases)
+ 
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1204.yml?&style=for-the-badge)](https://github.com/Winds-Studio/Leaf/releases) 
 [![Discord](https://img.shields.io/discord/1145991395388162119?color=5865F2&label=discord&style=for-the-badge)](https://discord.gg/gfgAwdSEuM)
 
-<h5>Leaf is a drop-in replacement designed for removing some checks, customized, and high-performance built on top of <a href="https://github.com/GaleMC/Gale">Gale</a> with optimization from other forks.</h5>
-<h8>Logo designed by <a href="https://github.com/envizar">envizar</a></h8>
+**Leaf** is a drop-in replacement for [Paper](https://papermc.io/) servers designed to remove some checks, customized and high-performance, built on top of [Gale](https://github.com/GaleMC/Gale) with optimizations and fixes from other forks.
 </div>
 
 ## Features
@@ -20,7 +17,7 @@
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur).
  - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail.
  - **Various optimization** blending from [other forks](https://github.com/Winds-Studio/Leaf#credits).
- - **Better Region Format** Support for the Linear region file format from [LinearPurpur](https://github.com/StupidCraft/LinearPurpur)
+ - **Better Region Format** Support for the Linear region file format from [LinearPurpur](https://github.com/StupidCraft/LinearPurpur).
  - ...
 
 ## Contact
@@ -66,9 +63,9 @@ Binaries are licensed under GPL-3.0.
 
 Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of some material used by this project.
 
-Credits:
--------------
-Thanks to these projects below. Leaf just mix some of their patches together. If these excellent projects haven't appeared, Leaf will not be great.
+## Credits
+Thanks to these projects below. Leaf just mix some of their patches together.<br>
+If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 
 - [Gale](https://github.com/GaleMC/Gale)
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
