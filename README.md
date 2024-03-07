@@ -25,15 +25,15 @@
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
  - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail
 
-## 📫 Contact
+## 📈 bStats
+[![bStats Graph Data](https://bstats.org/signatures/server-implementation/Leaf.svg)](https://bstats.org/plugin/server-implementation/Leaf)
 
+## 📫 Contact
 - Discord: `dreeam___`
 - QQ: `2682173972`
 
 ## 📦 Building
-
 Building a Paperclip JAR for distribution:
-
 ```bash
 ./gradlew applyPatches && ./gradlew createReobfPaperclipJar
 ```
@@ -49,7 +49,6 @@ Building a Paperclip JAR for distribution:
     <scope>provided</scope>
 </dependency>
 ```
-
 ### Gradle
 ```kotlin
 dependencies {
@@ -58,7 +57,6 @@ dependencies {
 ```
 
 ## ⚖️ License
-
 Paperweight files are licensed under MIT.
 Patches are licensed under MIT, unless indicated differently in their header.
 Binaries are licensed under GPL-3.0.
@@ -88,7 +86,6 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 - [Polpot](https://github.com/HaHaWTH/Polpot)
 
 ## 🔥 Special Thanks
-
 <a href="https://cloud.swordsman.com.cn/"><img src="JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
 cloud of swordsman | 剑客云
 
