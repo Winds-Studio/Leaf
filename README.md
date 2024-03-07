@@ -1,34 +1,36 @@
 <img src="leaf_banner.png" alt="Leaf">
 <div align="center">
  
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1204.yml?&style=for-the-badge)](https://github.com/Winds-Studio/Leaf/releases) 
-[![Discord](https://img.shields.io/discord/1145991395388162119?color=5865F2&label=discord&style=for-the-badge)](https://discord.gg/gfgAwdSEuM)
+[![Github Releases](https://img.shields.io/badge/Download-Releases-blue?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/releases)⠀
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1204.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 
 **Leaf** is a drop-in replacement for [Paper](https://papermc.io/) servers designed to remove some checks, customized and high-performance, built on top of [Gale](https://github.com/GaleMC/Gale) with optimizations and fixes from other forks.
 </div>
 
-## Features
- - **Fork of [Gale](https://github.com/GaleMC/Gale)** for better performance.
- - **Allows all characters as usernames**, including Chinese and other characters.
- - **Allows** players to connect the backend under proxy without enabling bunngecord mode.
- - **Allows tripwire dupe** by reverting tripwire bugfix patch of Paper.
- - **Configurable UseItem distance** for anarchy server.
- - **Latest dependencies**, keeping all dependencies in the newest version.
- - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur).
- - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail.
- - **Various optimization** blending from [other forks](https://github.com/Winds-Studio/Leaf#credits).
- - **Better Region Format** Support for the Linear region file format from [LinearPurpur](https://github.com/StupidCraft/LinearPurpur).
- - ...
+## 🍃 Features
+ - **Fork of [Gale](https://github.com/GaleMC/Gale)** for better performance
+ - **Async** entity tracker, pathfinding and mob spawning
+ - **Linear region support** from [LinearPurpur](https://github.com/StupidCraft/LinearPurpur) to save disk space
+ - **Various optimizations** blending from [other forks](https://github.com/Winds-Studio/Leaf#-credits)
+ - **Fully compatible** with Bukkit, Spigot and Paper plugins 
+ - **Latest dependencies**, keeping all dependencies in the newest version
+ - **Allows all characters in usernames**, including Chinese and other characters
+ - **Ability to disable** useless console messages
+ - **Fixes** some Minecraft bugs
+ - **Allows** to connect the backend via a proxy server without enabling the bungeecord mode
+ - **Allows tripwire dupe** by reverting tripwire bugfix patch of Paper
+ - **Configurable UseItem distance** for anarchy servers
+ - **Mod Protocols** support
+ - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
+ - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail
 
-## Contact
+## 📫 Contact
 
-- 📫 Discord: `dreeam___` | QQ: `2682173972`
+- Discord: `dreeam___`
+- QQ: `2682173972`
 
-## Downloads
-
-The Reobf JAR can be obtained in the [Releases](https://github.com/Winds-Studio/Leaf/releases)
-
-## Building
+## 📦 Building
 
 Building a Paperclip JAR for distribution:
 
@@ -36,9 +38,9 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyPatches && ./gradlew createReobfPaperclipJar
 ```
 
-## API
+## 🧪 API
 
-Maven
+### Maven
 ```xml
 <dependency>
     <groupId>org.dreeam.leaf</groupId>
@@ -48,14 +50,14 @@ Maven
 </dependency>
 ```
 
-Gradle
+### Gradle
 ```kotlin
 dependencies {
     compileOnly("org.dreeam.leaf.:leaf-api:1.20.4-R0.1-SNAPSHOT")
 }
 ```
 
-## License
+## ⚖️ License
 
 Paperweight files are licensed under MIT.
 Patches are licensed under MIT, unless indicated differently in their header.
@@ -63,7 +65,7 @@ Binaries are licensed under GPL-3.0.
 
 Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of some material used by this project.
 
-## Credits
+## 📜 Credits
 Thanks to these projects below. Leaf just mix some of their patches together.<br>
 If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 
@@ -85,7 +87,7 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 - [SparklyPaper](https://github.com/SparklyPower/SparklyPaper)
 - [Polpot](https://github.com/HaHaWTH/Polpot)
 
-## Special Thanks To:
+## 🔥 Special Thanks
 
 <a href="https://cloud.swordsman.com.cn/"><img src="JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
 cloud of swordsman | 剑客云
