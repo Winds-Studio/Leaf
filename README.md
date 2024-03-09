@@ -19,7 +19,7 @@
  - **Ability to disable** useless console messages
  - **Fixes** some Minecraft bugs
  - **Allows** to connect the backend via a proxy server without enabling the bungeecord mode
- - **Allows tripwire dupe** by reverting tripwire bugfix patch of Paper
+ - **Configurable** tripwire dupe
  - **Configurable UseItem distance** for anarchy servers
  - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
@@ -29,7 +29,7 @@
 [![bStats Graph Data](https://bstats.org/signatures/server-implementation/Leaf.svg)](https://bstats.org/plugin/server-implementation/Leaf)
 
 ## 📫 Contact
-- Discord: `dreeam___`
+- Discord: [`https://discord.gg/gfgAwdSEuM`](https://discord.gg/gfgAwdSEuM)
 - QQ: `2682173972`
 
 ## 📦 Building
@@ -38,7 +38,7 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyPatches && ./gradlew createReobfPaperclipJar
 ```
 
-## 🧪 API
+## 🧪 API (WIP)
 
 ### Maven
 ```xml
