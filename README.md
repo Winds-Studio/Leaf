@@ -32,6 +32,11 @@
 - Discord: [`https://discord.gg/gfgAwdSEuM`](https://discord.gg/gfgAwdSEuM)
 - QQ: `2682173972`
 
+## 📥 Download
+You can find latest successful build in [GitHub Action](https://github.com/Winds-Studio/Leaf/actions) or stable build in [Releases](https://github.com/Winds-Studio/Leaf/releases)
+
+**Please note Java >= 21 is required.**
+
 ## 📦 Building
 Building a Paperclip JAR for distribution:
 ```bash
