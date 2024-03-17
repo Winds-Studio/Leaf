@@ -57,7 +57,7 @@ Building a Paperclip JAR for distribution:
 ### Gradle
 ```kotlin
 dependencies {
-    compileOnly("org.dreeam.leaf.:leaf-api:1.20.4-R0.1-SNAPSHOT")
+    compileOnly("org.dreeam.leaf:leaf-api:1.20.4-R0.1-SNAPSHOT")
 }
 ```
 
