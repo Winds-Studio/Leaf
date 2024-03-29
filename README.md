@@ -89,6 +89,7 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 - [Plazma](https://github.com/PlazmaMC/PlazmaBukkit)
 - [SparklyPaper](https://github.com/SparklyPower/SparklyPaper)
 - [Polpot](https://github.com/HaHaWTH/Polpot)
+- [Matter](https://github.com/plasmoapp/matter)
 
 ## 🔥 Special Thanks
 <a href="https://cloud.swordsman.com.cn/"><img src="JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
