@@ -704,10 +704,10 @@ index f6338904ca0961cfd67326908e9cf72e37c6e86e..21c15670c0c9b988472ac8e875a1c033
      public boolean alwaysTameInCreative = false;
 diff --git a/src/main/java/org/purpurmc/purpur/region/AbstractRegionFile.java b/src/main/java/org/purpurmc/purpur/region/AbstractRegionFile.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e6ab1ca9a699c3f57855f2acc8d08b8a005bce2f
+index 0000000000000000000000000000000000000000..4f903d384959e4353ac1b310b9a70beeb2ce7f6a
 --- /dev/null
 +++ b/src/main/java/org/purpurmc/purpur/region/AbstractRegionFile.java
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,43 @@
 +package org.purpurmc.purpur.region;
 +
 +import net.minecraft.nbt.CompoundTag;
@@ -722,21 +722,33 @@ index 0000000000000000000000000000000000000000..e6ab1ca9a699c3f57855f2acc8d08b8a
 +
 +public interface AbstractRegionFile {
 +    void flush() throws IOException;
++
 +    void clear(ChunkPos pos) throws IOException;
++
 +    void close() throws IOException;
++
 +    void setStatus(int x, int z, ChunkStatus status);
++
 +    void setOversized(int x, int z, boolean b) throws IOException;
 +
 +    boolean hasChunk(ChunkPos pos);
++
 +    boolean doesChunkExist(ChunkPos pos) throws Exception;
++
 +    boolean isOversized(int x, int z);
++
 +    boolean recalculateHeader() throws IOException;
 +
 +    DataOutputStream getChunkDataOutputStream(ChunkPos pos) throws IOException;
++
 +    DataInputStream getChunkDataInputStream(ChunkPos pos) throws IOException;
++
 +    CompoundTag getOversizedData(int x, int z) throws IOException;
++
 +    ChunkStatus getStatusIfCached(int x, int z);
++
 +    ReentrantLock getFileLock();
++
 +    Path getRegionFile();
 +}
 diff --git a/src/main/java/org/purpurmc/purpur/region/AbstractRegionFileFactory.java b/src/main/java/org/purpurmc/purpur/region/AbstractRegionFileFactory.java
@@ -776,10 +788,10 @@ index 0000000000000000000000000000000000000000..c88ff6fda185a8489cbefa51a7b09ccb
 +}
 diff --git a/src/main/java/org/purpurmc/purpur/region/LinearRegionFile.java b/src/main/java/org/purpurmc/purpur/region/LinearRegionFile.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..731a90436cae2e615c228c07f042fa112b95a8d2
+index 0000000000000000000000000000000000000000..041f97f32beabc52400f57d056de3d4d313d3e74
 --- /dev/null
 +++ b/src/main/java/org/purpurmc/purpur/region/LinearRegionFile.java
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,317 @@
 +package org.purpurmc.purpur.region;
 +
 +import com.github.luben.zstd.ZstdInputStream;
@@ -1044,7 +1056,7 @@ index 0000000000000000000000000000000000000000..731a90436cae2e615c228c07f042fa11
 +
 +    @Nullable
 +    public synchronized DataInputStream getChunkDataInputStream(ChunkPos pos) {
-+        if(this.bufferUncompressedSize[getChunkIndex(pos.x, pos.z)] != 0) {
++        if (this.bufferUncompressedSize[getChunkIndex(pos.x, pos.z)] != 0) {
 +            byte[] content = new byte[bufferUncompressedSize[getChunkIndex(pos.x, pos.z)]];
 +            this.decompressor.decompress(this.buffer[getChunkIndex(pos.x, pos.z)], 0, content, 0, bufferUncompressedSize[getChunkIndex(pos.x, pos.z)]);
 +            return new DataInputStream(new ByteArrayInputStream(content));
@@ -1086,7 +1098,8 @@ index 0000000000000000000000000000000000000000..731a90436cae2e615c228c07f042fa11
 +        return false;
 +    }
 +
-+    public void setOversized(int x, int z, boolean something) {}
++    public void setOversized(int x, int z, boolean something) {
++    }
 +
 +    public CompoundTag getOversizedData(int x, int z) throws IOException {
 +        throw new IOException("getOversizedData is a stub " + this.path);
@@ -1098,30 +1111,35 @@ index 0000000000000000000000000000000000000000..731a90436cae2e615c228c07f042fa11
 +}
 diff --git a/src/main/java/org/purpurmc/purpur/region/LinearRegionFileFlusher.java b/src/main/java/org/purpurmc/purpur/region/LinearRegionFileFlusher.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..60f8ed586676609b9be7626eebf865aaaee92ac2
+index 0000000000000000000000000000000000000000..0d3d9193e8d8f72141dc155840c5eed1a744761c
 --- /dev/null
 +++ b/src/main/java/org/purpurmc/purpur/region/LinearRegionFileFlusher.java
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,50 @@
 +package org.purpurmc.purpur.region;
 +
 +import com.google.common.util.concurrent.ThreadFactoryBuilder;
++
 +import java.util.Queue;
 +import java.util.concurrent.*;
++
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
 +import org.purpurmc.purpur.PurpurConfig;
 +import org.bukkit.Bukkit;
 +
 +public class LinearRegionFileFlusher {
++    private final Logger LOGGER = LogManager.getLogger(getClass().getName());
 +    private final Queue<LinearRegionFile> savingQueue = new LinkedBlockingQueue<>();
 +    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
-+        new ThreadFactoryBuilder()
-+            .setNameFormat("linear-flush-scheduler")
-+            .build()
++            new ThreadFactoryBuilder()
++                    .setNameFormat("linear-flush-scheduler")
++                    .build()
 +    );
 +    private final ExecutorService executor = Executors.newFixedThreadPool(
-+        PurpurConfig.linearFlushThreads,
-+        new ThreadFactoryBuilder()
-+            .setNameFormat("linear-flusher-%d")
-+            .build()
++            PurpurConfig.linearFlushThreads,
++            new ThreadFactoryBuilder()
++                    .setNameFormat("linear-flusher-%d")
++                    .build()
 +    );
 +
 +    public LinearRegionFileFlusher() {
