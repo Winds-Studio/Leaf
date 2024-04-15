@@ -24,6 +24,7 @@
  - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
  - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail
+ - And more...
 
 ## 📈 bStats
 [![bStats Graph Data](https://bstats.org/signatures/server-implementation/Leaf.svg)](https://bstats.org/plugin/server-implementation/Leaf)
