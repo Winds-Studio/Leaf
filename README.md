@@ -76,22 +76,28 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 - [Gale](https://github.com/GaleMC/Gale)
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Purpur](https://github.com/PurpurMC/Purpur)
-- [KeYi](https://github.com/KeYiMC/KeYi) (R.I.P.) [(Backup)](https://github.com/MikuMC/KeYiBackup)
-- [KTP](https://github.com/lynxplay/ktp)
-- [Mirai](https://github.com/etil2jz/Mirai)
-- [Petal](https://github.com/Bloom-host/Petal)
-- [Carpet Fixes](https://github.com/fxmorin/carpet-fixes)
-- [Akarin](https://github.com/Akarin-project/Akarin)
-- [Slice](https://github.com/Cryptite/Slice)
-- [Parchment](https://github.com/ProjectEdenGG/Parchment)
-- [Leaves](https://github.com/LeavesMC/Leaves)
-- [Kaiiju](https://github.com/KaiijuMC/Kaiiju)
-- [PandaSpigot](https://github.com/hpfxd/PandaSpigot)
-- [Plazma](https://github.com/PlazmaMC/PlazmaBukkit)
-- [SparklyPaper](https://github.com/SparklyPower/SparklyPaper)
-- [Polpot](https://github.com/HaHaWTH/Polpot)
-- [Matter](https://github.com/plasmoapp/matter)
-- [Luminol](https://github.com/LuminolMC/Luminol)
+- <details>
+    <summary>🍴 Expand to see forks that Leaf takes patches from.</summary>
+    <p>
+      • <a href="https://github.com/KeYiMC/KeYi">KeYi</a> (R.I.P.)
+        <a href="https://github.com/MikuMC/KeYiBackup">(Backup)</a><br>
+      • <a href="https://github.com/lynxplay/ktp">KTP</a><br>
+      • <a href="https://github.com/etil2jz/Mirai">Mirai</a><br>
+      • <a href="https://github.com/Bloom-host/Petal">Petal</a><br>
+      • <a href="https://github.com/fxmorin/carpet-fixes">Carpet Fixes</a><br>
+      • <a href="https://github.com/Akarin-project/Akarin">Akarin</a><br>
+      • <a href="https://github.com/Cryptite/Slice">Slice</a><br>
+      • <a href="https://github.com/ProjectEdenGG/Parchment">Parchment</a><br>
+      • <a href="https://github.com/LeavesMC/Leaves">Leaves</a><br>
+      • <a href="https://github.com/KaiijuMC/Kaiiju">Kaiiju</a><br>
+      • <a href="https://github.com/hpfxd/PandaSpigot">PandaSpigot</a><br>
+      • <a href="https://github.com/PlazmaMC/PlazmaBukkit">Plazma</a><br>
+      • <a href="https://github.com/SparklyPower/SparklyPaper">SparklyPaper</a><br>
+      • <a href="https://github.com/HaHaWTH/Polpot">Polpot</a><br>
+      • <a href="https://github.com/plasmoapp/matter">Matter</a><br>
+      • <a href="https://github.com/LuminolMC/Luminol">Luminol</a><br>
+    </p>
+</details>
 
 ## 🔥 Special Thanks
 <a href="https://cloud.swordsman.com.cn/"><img src="JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
