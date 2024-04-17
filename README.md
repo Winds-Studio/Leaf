@@ -36,7 +36,7 @@
 ## 📥 Download
 You can find latest successful build in [GitHub Action](https://github.com/Winds-Studio/Leaf/actions) or [Releases](https://github.com/Winds-Studio/Leaf/releases)
 
-**Please note Java >= 17 is required, Java >= 21 is recommended.**
+**Please note Java >= 17 is required, Java 21 is recommended.**
 
 ## 📦 Building
 Building a Paperclip JAR for distribution:
