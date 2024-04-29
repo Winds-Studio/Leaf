@@ -2,7 +2,7 @@
 <div align="center">
  
 [![Github Releases](https://img.shields.io/badge/Download-Releases-blue?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/releases)⠀
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1204.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1205.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 
 **Leaf** is a drop-in replacement for [Paper](https://papermc.io/) servers designed to remove some checks, customized and high-performance, built on top of [Gale](https://github.com/GaleMC/Gale) with optimizations and fixes from other forks.
@@ -10,8 +10,7 @@
 
 ## 🍃 Features
  - **Fork of [Gale](https://github.com/GaleMC/Gale)** for better performance
- - **Async** entity tracker, pathfinding and mob spawning
- - **Linear region support** from [LinearPurpur](https://github.com/StupidCraft/LinearPurpur) to save disk space
+ - **Async** pathfinding, mob spawning and entity tracker
  - **Various optimizations** blending from [other forks](https://github.com/Winds-Studio/Leaf#-credits)
  - **Fully compatible** with Bukkit, Spigot and Paper plugins 
  - **Latest dependencies**, keeping all dependencies in the newest version
@@ -19,7 +18,6 @@
  - **Ability to disable** useless console messages
  - **Fixes** some Minecraft bugs
  - **Allows** to connect the backend via a proxy server without enabling the bungeecord mode
- - **Configurable** tripwire dupe
  - **Configurable UseItem distance** for anarchy servers
  - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
@@ -36,12 +34,12 @@
 ## 📥 Download
 You can find latest successful build in [GitHub Action](https://github.com/Winds-Studio/Leaf/actions) or [Releases](https://github.com/Winds-Studio/Leaf/releases)
 
-**Please note Java >= 17 is required, Java 21 is recommended.**
+**Please note Java >= 21 is required.**
 
 ## 📦 Building
 Building a Paperclip JAR for distribution:
 ```bash
-./gradlew applyPatches && ./gradlew createReobfPaperclipJar
+./gradlew applyPatches && ./gradlew createMojmapPaperclipJar
 ```
 
 ## 🧪 API (WIP)
@@ -51,14 +49,14 @@ Building a Paperclip JAR for distribution:
 <dependency>
     <groupId>org.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>1.20.4-R0.1-SNAPSHOT</version>
+    <version>1.20.5-R0.1-SNAPSHOT</version>
     <scope>provided</scope>
 </dependency>
 ```
 ### Gradle
 ```kotlin
 dependencies {
-    compileOnly("org.dreeam.leaf:leaf-api:1.20.4-R0.1-SNAPSHOT")
+    compileOnly("org.dreeam.leaf:leaf-api:1.20.5-R0.1-SNAPSHOT")
 }
 ```
 
