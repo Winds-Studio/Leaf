@@ -2,7 +2,7 @@
 <div align="center">
  
 [![Github Releases](https://img.shields.io/badge/Download-Releases-blue?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/releases)⠀
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1205.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1206.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 
 **Leaf** is a drop-in replacement for [Paper](https://papermc.io/) servers designed to remove some checks, customized and high-performance, built on top of [Gale](https://github.com/GaleMC/Gale) with optimizations and fixes from other forks.
@@ -49,14 +49,14 @@ Building a Paperclip JAR for distribution:
 <dependency>
     <groupId>org.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>1.20.5-R0.1-SNAPSHOT</version>
+    <version>1.20.6-R0.1-SNAPSHOT</version>
     <scope>provided</scope>
 </dependency>
 ```
 ### Gradle
 ```kotlin
 dependencies {
-    compileOnly("org.dreeam.leaf:leaf-api:1.20.5-R0.1-SNAPSHOT")
+    compileOnly("org.dreeam.leaf:leaf-api:1.20.6-R0.1-SNAPSHOT")
 }
 ```
 
