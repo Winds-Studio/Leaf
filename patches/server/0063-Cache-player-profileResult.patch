@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Thu, 28 Mar 2024 13:36:09 -0400
+Subject: [PATCH] Cache player profileResult
+
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 7c663d28213322165245c6946c6a73cbc5cbf50b..506bdb19310291ec8770226cdcfbd0e104f5ba7e 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -30,6 +30,10 @@ dependencies {
+     }
+     // Leaf end - Legacy config
+ 
++    // Leaf start - Libraries
++    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
++    // Leaf end
++
+     // Paper start
+     implementation("org.jline:jline-terminal-jansi:3.26.0") // Leaf - Bump Dependencies
+     implementation("net.minecrell:terminalconsoleappender:1.3.0")
+diff --git a/src/main/java/net/minecraft/server/network/ServerLoginPacketListenerImpl.java b/src/main/java/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+index 1d496b2efc44065e91b4d612e17f38382489e876..d991c875c8f2965ca26e87dc11bba0d347de9c5c 100644
+--- a/src/main/java/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
++++ b/src/main/java/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+@@ -1,5 +1,7 @@
+ package net.minecraft.server.network;
+ 
++import com.github.benmanes.caffeine.cache.Cache;
++import com.github.benmanes.caffeine.cache.Caffeine;
+ import com.google.common.primitives.Ints;
+ import com.mojang.authlib.GameProfile;
+ import com.mojang.authlib.exceptions.AuthenticationUnavailableException;
+@@ -11,6 +13,7 @@ import java.net.InetSocketAddress;
+ import java.net.SocketAddress;
+ import java.security.PrivateKey;
+ import java.util.Objects;
++import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import javax.annotation.Nullable;
+ import javax.crypto.SecretKey;
+@@ -87,6 +90,11 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+     private ServerPlayer player; // CraftBukkit
+     public boolean iKnowThisMayNotBeTheBestIdeaButPleaseDisableUsernameValidation = false; // Paper - username validation overriding
+     private int velocityLoginMessageId = -1; // Paper - Add Velocity IP Forwarding Support
++    // Leaf start - Cache player profileResult
++    private final Cache<String, ProfileResult> playerProfileResultCahce = Caffeine.newBuilder()
++            .expireAfterWrite(org.dreeam.leaf.config.modules.misc.Cache.cachePlayerProfileResultTimeout, TimeUnit.MINUTES)
++            .build();
++    // Leaf end
+ 
+     public ServerLoginPacketListenerImpl(MinecraftServer server, Connection connection, boolean transferred) {
+         this.state = ServerLoginPacketListenerImpl.State.HELLO;
+@@ -314,7 +322,19 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+                 String s1 = (String) Objects.requireNonNull(ServerLoginPacketListenerImpl.this.requestedUsername, "Player name not initialized");
+ 
+                 try {
+-                    ProfileResult profileresult = ServerLoginPacketListenerImpl.this.server.getSessionService().hasJoinedServer(s1, s, this.getAddress());
++                    // Leaf start - Cache player profileResult
++                    ProfileResult profileresult;
++                    if (org.dreeam.leaf.config.modules.misc.Cache.cachePlayerProfileResult) {
++                        profileresult = playerProfileResultCahce.getIfPresent(s1);
++
++                        if (profileresult == null) {
++                            profileresult = ServerLoginPacketListenerImpl.this.server.getSessionService().hasJoinedServer(s1, s, this.getAddress());
++                            playerProfileResultCahce.put(s1, profileresult);
++                        }
++                    } else {
++                        profileresult = ServerLoginPacketListenerImpl.this.server.getSessionService().hasJoinedServer(s1, s, this.getAddress());
++                    }
++                    // Leaf end
+ 
+                     if (profileresult != null) {
+                         GameProfile gameprofile = profileresult.profile();
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/misc/Cache.java b/src/main/java/org/dreeam/leaf/config/modules/misc/Cache.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e6e0a193adb5465a24b40bda30c2b180bd93bc6e
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/modules/misc/Cache.java
+@@ -0,0 +1,29 @@
++package org.dreeam.leaf.config.modules.misc;
++
++import org.dreeam.leaf.config.ConfigInfo;
++import org.dreeam.leaf.config.EnumConfigCategory;
++import org.dreeam.leaf.config.IConfigModule;
++
++public class Cache implements IConfigModule {
++
++    @Override
++    public EnumConfigCategory getCategory() {
++        return EnumConfigCategory.MISC;
++    }
++
++    @Override
++    public String getBaseName() {
++        return "cache";
++    }
++
++    @ConfigInfo(baseName = "cache-player-profile-result", comments = """
++            Cache the player profile result on they first join.
++            It's useful if Mojang's verification server is down.
++            """)
++    public static boolean cachePlayerProfileResult = true;
++
++    @ConfigInfo(baseName = "cache-player-profile-result-timeout", comments = """
++            The timeout of the cache. Unit: Minutes.
++            """)
++    public static int cachePlayerProfileResultTimeout = 1440;
++}
