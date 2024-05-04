@@ -11,12 +11,13 @@ repositories {
     maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(configurations.paperclip.name) }
     }
+    maven("https://maven.nostal.ink/repository/maven-snapshots/")
 }
 
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.10.2:fat")
     decompiler("org.vineflower:vineflower:1.10.1")
-    paperclip("io.papermc:paperclip:3.0.4-SNAPSHOT")
+    paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT")
 }
 
 subprojects {
