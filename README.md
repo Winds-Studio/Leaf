@@ -47,7 +47,7 @@ Building a Paperclip JAR for distribution:
 ### Maven
 ```xml
 <dependency>
-    <groupId>org.dreeam.leaf</groupId>
+    <groupId>cn.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
     <version>1.20.6-R0.1-SNAPSHOT</version>
     <scope>provided</scope>
@@ -56,7 +56,7 @@ Building a Paperclip JAR for distribution:
 ### Gradle
 ```kotlin
 dependencies {
-    compileOnly("org.dreeam.leaf:leaf-api:1.20.6-R0.1-SNAPSHOT")
+    compileOnly("cn.dreeam.leaf:leaf-api:1.20.6-R0.1-SNAPSHOT")
 }
 ```
 
