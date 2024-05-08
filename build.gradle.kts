@@ -86,7 +86,7 @@ paperweight {
 }
 
 tasks.generateDevelopmentBundle {
-    apiCoordinates = "org.dreeam.leaf:leaf-api"
+    apiCoordinates = "cn.dreeam.leaf:leaf-api"
     mojangApiCoordinates = "io.papermc.paper:paper-mojangapi"
     libraryRepositories.set(
         listOf(
@@ -113,8 +113,8 @@ allprojects {
                 name = "leaf"
                 url = uri("https://maven.pkg.github.com/Winds-Studio/Leaf")
 
-                credentials.username = System.getenv("GITHUB_USERNAME")
-                credentials.password = System.getenv("GITHUB_TOKEN")
+                credentials.username = System.getenv("REPO_PASSWORD")
+                credentials.password = System.getenv("REPO_USER")
             }
 
             publications {
