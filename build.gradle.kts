@@ -1,7 +1,7 @@
 plugins {
     java
     `maven-publish`
-    id("io.papermc.paperweight.patcher") version "1.6.4-SNAPSHOT"
+    id("io.papermc.paperweight.patcher") version "1.7.2-SNAPSHOT"
 }
 
 val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
@@ -15,7 +15,7 @@ repositories {
 }
 
 dependencies {
-    remapper("net.fabricmc:tiny-remapper:0.10.2:fat")
+    remapper("net.fabricmc:tiny-remapper:0.10.3:fat")
     decompiler("org.vineflower:vineflower:1.10.1")
     paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT")
 }
@@ -86,7 +86,6 @@ paperweight {
 
 tasks.generateDevelopmentBundle {
     apiCoordinates = "cn.dreeam.leaf:leaf-api"
-    mojangApiCoordinates = "io.papermc.paper:paper-mojangapi"
     libraryRepositories.set(
         listOf(
             "https://repo.maven.apache.org/maven2/",
