@@ -1,0 +1,479 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: peaches94 <peachescu94@gmail.com>
+Date: Sat, 2 Jul 2022 00:35:56 -0500
+Subject: [PATCH] Petal: Multithreaded Tracker
+
+TODO - Dreeam: Waiting someone to refactor or fix.
+And issues waiting to check:
+https://github.com/Bloom-host/Petal/issues/26
+https://github.com/Bloom-host/Petal/issues/23
+https://github.com/Bloom-host/Petal/issues/12
+https://github.com/Bloom-host/Petal/issues/11
+https://github.com/Bloom-host/Petal/issues/5
+https://github.com/Bloom-host/Petal/issues/3
+
+Original code by Bloom-host, licensed under GPL v3
+You can find the original code on https://github.com/Bloom-host/Petal
+
+This patch was ported downstream from the Petal fork, and is derived from
+the Airplane fork by Paul Sauve
+
+Based off the Airplane multithreaded tracker, this patch properly handles
+concurrent accesses everywhere, as well as being much simpler to maintain
+
+Some things are too unsafe to run off the main thread so we don't attempt to do
+that. This multithreaded tracker remains accurate, non-breaking and fast.
+
+diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+index 06dfd0b27ac0006a2be07f54a0702519a691c6ec..9be6ddce778f47ce2c8371757ab8d30978b96888 100644
+--- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
++++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+@@ -42,6 +42,12 @@ class PaperEventManager {
+         if (isAsync && onPrimaryThread) {
+             throw new IllegalStateException(event.getEventName() + " may only be triggered asynchronously.");
+         } else if (!isAsync && !onPrimaryThread && !this.server.isStopping()) {
++            // Leaf start - petal
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                net.minecraft.server.MinecraftServer.getServer().scheduleOnMain(event::callEvent);
++                return;
++            }
++            // Leaf end - petal
+             throw new IllegalStateException(event.getEventName() + " may only be triggered synchronously.");
+         }
+         // KTP stop - Optimise spigot event bus
+diff --git a/src/main/java/io/papermc/paper/util/maplist/IteratorSafeOrderedReferenceSet.java b/src/main/java/io/papermc/paper/util/maplist/IteratorSafeOrderedReferenceSet.java
+index 0fd814f1d65c111266a2b20f86561839a4cef755..3fbf6eeb3e835269217a381f00b54a7ec43d5bd2 100644
+--- a/src/main/java/io/papermc/paper/util/maplist/IteratorSafeOrderedReferenceSet.java
++++ b/src/main/java/io/papermc/paper/util/maplist/IteratorSafeOrderedReferenceSet.java
+@@ -15,7 +15,7 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+ 
+     /* list impl */
+     protected E[] listElements;
+-    protected int listSize;
++    protected int listSize; public int getListSize() { return this.listSize; } // Leaf - petal - expose listSize
+ 
+     protected final double maxFragFactor;
+ 
+diff --git a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+index 66721a27cc9a373a12dffb72c4a403473377eff6..2fbab1b4d20c3ead0ed1a117b29679fae6776f22 100644
+--- a/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
++++ b/src/main/java/io/papermc/paper/world/ChunkEntitySlices.java
+@@ -36,7 +36,7 @@ public final class ChunkEntitySlices {
+     protected final EntityCollectionBySection allEntities;
+     protected final EntityCollectionBySection hardCollidingEntities;
+     protected final Reference2ObjectOpenHashMap<Class<? extends Entity>, EntityCollectionBySection> entitiesByClass;
+-    protected final EntityList entities = new EntityList();
++    public final EntityList entities = new EntityList(); // Leaf - petal - protected -> public
+ 
+     public FullChunkStatus status;
+ 
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index d6c089722bc4b40b9042607c465fe8e7e0a6683f..654cd1ccb5fdc32d7bedd8fd22a15e67bafca839 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -1259,8 +1259,35 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         entity.tracker = null; // Paper - We're no longer tracked
+     }
+ 
++    // Leaf start - petal - multithreaded tracker
++    private @Nullable org.dreeam.leaf.async.tracker.MultithreadedTracker multithreadedTracker;
++    private final java.util.concurrent.ConcurrentLinkedQueue<Runnable> trackerMainThreadTasks = new java.util.concurrent.ConcurrentLinkedQueue<>();
++    private boolean tracking = false;
++
++    public void runOnTrackerMainThread(final Runnable runnable) {
++        if (this.tracking) {
++            this.trackerMainThreadTasks.add(runnable);
++        } else {
++            runnable.run();
++        }
++    }
++
+     // Paper start - optimised tracker
+     private final void processTrackQueue() {
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                if (this.multithreadedTracker == null) {
++                    this.multithreadedTracker = new org.dreeam.leaf.async.tracker.MultithreadedTracker(this.level.chunkSource.entityTickingChunks, this.trackerMainThreadTasks);
++                }
++
++                this.tracking = true;
++                try {
++                    this.multithreadedTracker.processTrackQueue();
++                } finally {
++                    this.tracking = false;
++                }
++                return;
++            }
++            // Leaf end - petal
+             for (TrackedEntity tracker : this.entityMap.values()) {
+                 // update tracker entry
+                 tracker.updatePlayers(tracker.entity.getPlayersInTrackRange());
+@@ -1424,10 +1451,10 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     public class TrackedEntity {
+ 
+         public final ServerEntity serverEntity;
+-        final Entity entity;
++        public final Entity entity; // Leaf - petal - public
+         private final int range;
+         SectionPos lastSectionPos;
+-        public final Set<ServerPlayerConnection> seenBy = new ReferenceOpenHashSet<>(); // Paper - optimise map impl
++        public final Set<ServerPlayerConnection> seenBy = Sets.newConcurrentHashSet(); // Paper - Perf: optimise map impl // Leaf - Fix tracker NPE
+ 
+         public TrackedEntity(Entity entity, int i, int j, boolean flag) {
+             this.serverEntity = new ServerEntity(ChunkMap.this.level, entity, j, flag, this::broadcast, this.seenBy); // CraftBukkit
+@@ -1439,7 +1466,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         // Paper start - use distance map to optimise tracker
+         com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> lastTrackerCandidates;
+ 
+-        final void updatePlayers(com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newTrackerCandidates) {
++        public final void updatePlayers(com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> newTrackerCandidates) { // Leaf - petal - public
+             com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<ServerPlayer> oldTrackerCandidates = this.lastTrackerCandidates;
+             this.lastTrackerCandidates = newTrackerCandidates;
+ 
+@@ -1481,14 +1508,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+ 
+         public void broadcast(Packet<?> packet) {
+-            Iterator iterator = this.seenBy.iterator();
+-
+-            while (iterator.hasNext()) {
+-                ServerPlayerConnection serverplayerconnection = (ServerPlayerConnection) iterator.next();
+-
++            // Leaf start - petal - avoid NPE
++            for (ServerPlayerConnection serverplayerconnection : this.seenBy.toArray(new ServerPlayerConnection[0])) {
+                 serverplayerconnection.send(packet);
+             }
+-
++            // Leaf end - petal
+         }
+ 
+         public void broadcastAndSend(Packet<?> packet) {
+@@ -1500,18 +1524,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+ 
+         public void broadcastRemoved() {
+-            Iterator iterator = this.seenBy.iterator();
+-
+-            while (iterator.hasNext()) {
+-                ServerPlayerConnection serverplayerconnection = (ServerPlayerConnection) iterator.next();
+-
++            // Leaf start - petal - avoid NPE
++            for (ServerPlayerConnection serverplayerconnection : this.seenBy.toArray(new ServerPlayerConnection[0])) {
+                 this.serverEntity.removePairing(serverplayerconnection.getPlayer());
+             }
+-
++            // Leaf end - petal
+         }
+ 
+         public void removePlayer(ServerPlayer player) {
+-            org.spigotmc.AsyncCatcher.catchOp("player tracker clear"); // Spigot
++            //org.spigotmc.AsyncCatcher.catchOp("player tracker clear"); // Spigot // Leaf - petal - We can remove async too
+             if (this.seenBy.remove(player.connection)) {
+                 this.serverEntity.removePairing(player);
+             }
+@@ -1519,7 +1540,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+ 
+         public void updatePlayer(ServerPlayer player) {
+-            org.spigotmc.AsyncCatcher.catchOp("player tracker update"); // Spigot
++            //org.spigotmc.AsyncCatcher.catchOp("player tracker update"); // Spigot // Leaf - petal - We can update async
+             if (player != this.entity) {
+                 // Paper start - remove allocation of Vec3D here
+                 // Vec3 vec3d = player.position().subtract(this.entity.position());
+diff --git a/src/main/java/net/minecraft/server/level/ServerBossEvent.java b/src/main/java/net/minecraft/server/level/ServerBossEvent.java
+index ca42c2642a729b90d22b968af7258f3aee72e14b..fe03f0f55de978721a9d3d8446bdead2ec82f70d 100644
+--- a/src/main/java/net/minecraft/server/level/ServerBossEvent.java
++++ b/src/main/java/net/minecraft/server/level/ServerBossEvent.java
+@@ -13,7 +13,7 @@ import net.minecraft.util.Mth;
+ import net.minecraft.world.BossEvent;
+ 
+ public class ServerBossEvent extends BossEvent {
+-    private final Set<ServerPlayer> players = Sets.newHashSet();
++    private final Set<ServerPlayer> players = Sets.newConcurrentHashSet(); // Leaf - petal - players can be removed in async tracking
+     private final Set<ServerPlayer> unmodifiablePlayers = Collections.unmodifiableSet(this.players);
+     public boolean visible = true;
+ 
+diff --git a/src/main/java/net/minecraft/server/level/ServerEntity.java b/src/main/java/net/minecraft/server/level/ServerEntity.java
+index 00e522a7db9ddfd0602e8423b2793f0bbd727b35..943c27f7942459f58fe2466a043dd51772dd0237 100644
+--- a/src/main/java/net/minecraft/server/level/ServerEntity.java
++++ b/src/main/java/net/minecraft/server/level/ServerEntity.java
+@@ -277,7 +277,11 @@ public class ServerEntity {
+ 
+     public void removePairing(ServerPlayer player) {
+         this.entity.stopSeenByPlayer(player);
+-        player.connection.send(new ClientboundRemoveEntitiesPacket(new int[]{this.entity.getId()}));
++        // Leaf start - petal - ensure main thread
++        ((ServerLevel) this.entity.level()).chunkSource.chunkMap.runOnTrackerMainThread(() ->
++            player.connection.send(new ClientboundRemoveEntitiesPacket(this.entity.getId()))
++        );
++        // Leaf end - petal
+     }
+ 
+     public void addPairing(ServerPlayer player) {
+@@ -285,7 +289,7 @@ public class ServerEntity {
+ 
+         Objects.requireNonNull(list);
+         this.sendPairingData(player, list::add);
+-        player.connection.send(new ClientboundBundlePacket(list));
++        ((ServerLevel) this.entity.level()).chunkSource.chunkMap.runOnTrackerMainThread(() -> player.connection.send(new ClientboundBundlePacket(list))); // Leaf - petal - Main thread
+         this.entity.startSeenByPlayer(player);
+     }
+ 
+@@ -383,19 +387,29 @@ public class ServerEntity {
+ 
+         if (list != null) {
+             this.trackedDataValues = datawatcher.getNonDefaultValues();
+-            this.broadcastAndSend(new ClientboundSetEntityDataPacket(this.entity.getId(), list));
++            // Leaf start - petal - sync
++            ((ServerLevel) this.entity.level()).chunkSource.chunkMap.runOnTrackerMainThread(() ->
++                this.broadcastAndSend(new ClientboundSetEntityDataPacket(this.entity.getId(), list))
++            );
++            // Leaf end - petal
+         }
+ 
+         if (this.entity instanceof LivingEntity) {
+             Set<AttributeInstance> set = ((LivingEntity) this.entity).getAttributes().getDirtyAttributes();
+ 
+             if (!set.isEmpty()) {
++                // Leaf start - petal - sync
++                final Set<AttributeInstance> copy = new it.unimi.dsi.fastutil.objects.ObjectOpenHashSet<>(set);
++                ((ServerLevel) this.entity.level()).chunkSource.chunkMap.runOnTrackerMainThread(() -> {
+                 // CraftBukkit start - Send scaled max health
+                 if (this.entity instanceof ServerPlayer) {
+-                    ((ServerPlayer) this.entity).getBukkitEntity().injectScaledMaxHealth(set, false);
++                    ((ServerPlayer) this.entity).getBukkitEntity().injectScaledMaxHealth(copy, false);
+                 }
+                 // CraftBukkit end
+-                this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), set));
++                    this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), copy));
++
++                });
++                // Leaf end - petal
+             }
+ 
+             set.clear();
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index be7c1ecd78a169d2dc9f642fcddbf47ce6905439..1067077250bf942e3d8bd505cc7c3a47b505449c 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -2575,7 +2575,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+ 
+     @Override
+     public LevelEntityGetter<Entity> getEntities() {
+-        org.spigotmc.AsyncCatcher.catchOp("Chunk getEntities call"); // Spigot
++        //org.spigotmc.AsyncCatcher.catchOp("Chunk getEntities call"); // Spigot // Leaf - petal
+         return this.entityLookup; // Paper - rewrite chunk system
+     }
+ 
+diff --git a/src/main/java/org/dreeam/leaf/async/tracker/MultithreadedTracker.java b/src/main/java/org/dreeam/leaf/async/tracker/MultithreadedTracker.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..13ae86d295f22ce0c373ae1246fc7cad8ff7662d
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/async/tracker/MultithreadedTracker.java
+@@ -0,0 +1,156 @@
++package org.dreeam.leaf.async.tracker;
++
++import com.google.common.util.concurrent.ThreadFactoryBuilder;
++import io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet;
++import io.papermc.paper.world.ChunkEntitySlices;
++import net.minecraft.server.MinecraftServer;
++import net.minecraft.server.level.ChunkMap;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.level.chunk.LevelChunk;
++
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.concurrent.Executor;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.ThreadPoolExecutor;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++
++public class MultithreadedTracker {
++
++    private enum TrackerStage {
++        UPDATE_PLAYERS,
++        SEND_CHANGES
++    }
++
++    private static final Executor trackerExecutor = new ThreadPoolExecutor(
++            1,
++            org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerMaxThreads,
++            org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerKeepalive, TimeUnit.SECONDS,
++            new LinkedBlockingQueue<>(),
++            new ThreadFactoryBuilder()
++                    .setNameFormat("petal-async-tracker-thread-%d")
++                    .setPriority(Thread.NORM_PRIORITY - 2)
++                    .build());
++
++    private final IteratorSafeOrderedReferenceSet<LevelChunk> entityTickingChunks;
++    private final AtomicInteger taskIndex = new AtomicInteger();
++
++    private final ConcurrentLinkedQueue<Runnable> mainThreadTasks;
++    private final AtomicInteger finishedTasks = new AtomicInteger();
++
++    public MultithreadedTracker(IteratorSafeOrderedReferenceSet<LevelChunk> entityTickingChunks, ConcurrentLinkedQueue<Runnable> mainThreadTasks) {
++        this.entityTickingChunks = entityTickingChunks;
++        this.mainThreadTasks = mainThreadTasks;
++    }
++
++    public void processTrackQueue() {
++        int iterator = this.entityTickingChunks.createRawIterator();
++
++        if (iterator == -1) {
++            return;
++        }
++
++        // start with updating players
++        try {
++            this.taskIndex.set(iterator);
++            this.finishedTasks.set(0);
++
++            for (int i = 0; i < org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerMaxThreads; i++) {
++                trackerExecutor.execute(this::runUpdatePlayers);
++            }
++
++            while (this.taskIndex.get() < this.entityTickingChunks.getListSize()) {
++                this.runMainThreadTasks();
++                this.handleChunkUpdates(5); // assist
++            }
++
++            while (this.finishedTasks.get() != org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerMaxThreads) {
++                this.runMainThreadTasks();
++            }
++
++            this.runMainThreadTasks(); // finish any remaining tasks
++        } finally {
++            this.entityTickingChunks.finishRawIterator();
++        }
++
++        // then send changes
++        iterator = this.entityTickingChunks.createRawIterator();
++
++        if (iterator == -1) {
++            return;
++        }
++
++        try {
++            do {
++                LevelChunk chunk = this.entityTickingChunks.rawGet(iterator);
++
++                if (chunk != null) {
++                    this.updateChunkEntities(chunk, TrackerStage.SEND_CHANGES);
++                }
++            } while (++iterator < this.entityTickingChunks.getListSize());
++        } finally {
++            this.entityTickingChunks.finishRawIterator();
++        }
++    }
++
++    private void runMainThreadTasks() {
++        try {
++            Runnable task;
++            while ((task = this.mainThreadTasks.poll()) != null) {
++                task.run();
++            }
++        } catch (Throwable throwable) {
++            MinecraftServer.LOGGER.warn("Tasks failed while ticking track queue", throwable);
++        }
++    }
++
++    private void runUpdatePlayers() {
++        try {
++            while (handleChunkUpdates(10)) ;
++        } finally {
++            this.finishedTasks.incrementAndGet();
++        }
++    }
++
++    private boolean handleChunkUpdates(int tasks) {
++        int index = this.taskIndex.getAndAdd(tasks);
++
++        for (int i = index; i < index + tasks && i < this.entityTickingChunks.getListSize(); i++) {
++            LevelChunk chunk = this.entityTickingChunks.rawGet(i);
++            if (chunk != null) {
++                try {
++                    this.updateChunkEntities(chunk, TrackerStage.UPDATE_PLAYERS);
++                } catch (Throwable throwable) {
++                    MinecraftServer.LOGGER.warn("Ticking tracker failed", throwable);
++                }
++
++            }
++        }
++
++        return index < this.entityTickingChunks.getListSize();
++    }
++
++    private void updateChunkEntities(LevelChunk chunk, TrackerStage trackerStage) {
++        final ChunkEntitySlices entitySlices = chunk.level.getEntityLookup().getChunk(chunk.locX, chunk.locZ);
++        if (entitySlices == null) {
++            return;
++        }
++
++        final Entity[] rawEntities = entitySlices.entities.getRawData();
++        final ChunkMap chunkMap = chunk.level.chunkSource.chunkMap;
++
++        for (Entity entity : rawEntities) {
++            if (entity != null) {
++                ChunkMap.TrackedEntity entityTracker = chunkMap.entityMap.get(entity.getId());
++                if (entityTracker != null) {
++                    if (trackerStage == TrackerStage.SEND_CHANGES) {
++                        entityTracker.serverEntity.sendChanges();
++                    } else if (trackerStage == TrackerStage.UPDATE_PLAYERS) {
++                        entityTracker.updatePlayers(entityTracker.entity.getPlayersInTrackRange());
++                    }
++                }
++            }
++        }
++    }
++
++}
+\ No newline at end of file
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/async/MultithreadedTracker.java b/src/main/java/org/dreeam/leaf/config/modules/async/MultithreadedTracker.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4e63c8f6bf6610e655048176f58a4d5a9040c90
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/modules/async/MultithreadedTracker.java
+@@ -0,0 +1,44 @@
++package org.dreeam.leaf.config.modules.async;
++
++import com.electronwill.nightconfig.core.file.CommentedFileConfig;
++import net.minecraft.server.MinecraftServer;
++import org.dreeam.leaf.config.ConfigInfo;
++import org.dreeam.leaf.config.EnumConfigCategory;
++import org.dreeam.leaf.config.IConfigModule;
++
++public class MultithreadedTracker implements IConfigModule {
++
++    @Override
++    public EnumConfigCategory getCategory() {
++        return EnumConfigCategory.ASYNC;
++    }
++
++    @Override
++    public String getBaseName() {
++        return "async_entity_tracker";
++    }
++
++    @ConfigInfo(baseName = "enabled")
++    public static boolean enabled = false;
++    @ConfigInfo(baseName = "max-threads")
++    public static int asyncEntityTrackerMaxThreads = 0;
++    @ConfigInfo(baseName = "keepalive")
++    public static int asyncEntityTrackerKeepalive = 60;
++
++    @Override
++    public void onLoaded(CommentedFileConfig config) {
++        config.setComment("async.async_entity_tracker", """
++                WARNING! Enabling async entity tracker is not recommend currently.
++                Whether or not async entity tracking should be enabled.
++                You may encounter issues with NPCs""");
++
++        if (asyncEntityTrackerMaxThreads < 0)
++            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncEntityTrackerMaxThreads, 1);
++        else if (asyncEntityTrackerMaxThreads == 0)
++            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() / 4, 1);
++        if (!enabled)
++            asyncEntityTrackerMaxThreads = 0;
++        else
++            MinecraftServer.LOGGER.info("Using {} threads for Async Entity Tracker", asyncEntityTrackerMaxThreads);
++    }
++}
