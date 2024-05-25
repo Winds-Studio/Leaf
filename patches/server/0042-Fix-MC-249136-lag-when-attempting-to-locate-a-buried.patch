@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Thu, 22 Feb 2024 18:30:22 -0500
+Subject: [PATCH] Fix MC-249136: lag when attempting to locate a buried
+ treasure or opening/breaking a chest containing a map
+
+This patch ported from 1.20.5 snapshot - 24w04a
+Mojang issues: https://bugs.mojang.com/browse/MC-249136
+
+diff --git a/src/main/java/net/minecraft/world/level/StructureManager.java b/src/main/java/net/minecraft/world/level/StructureManager.java
+index 09c85ed428b8eaf51f8b3c6e45cce925f05ab354..07a0be7393215ce891799b444c27b4b34e2d293d 100644
+--- a/src/main/java/net/minecraft/world/level/StructureManager.java
++++ b/src/main/java/net/minecraft/world/level/StructureManager.java
+@@ -23,6 +23,7 @@ import net.minecraft.world.level.levelgen.structure.StructureCheck;
+ import net.minecraft.world.level.levelgen.structure.StructureCheckResult;
+ import net.minecraft.world.level.levelgen.structure.StructurePiece;
+ import net.minecraft.world.level.levelgen.structure.StructureStart;
++import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
+ 
+ public class StructureManager {
+     public final LevelAccessor level;
+@@ -163,9 +164,11 @@ public class StructureManager {
+         return this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_REFERENCES).getAllReferences();
+     }
+ 
+-    public StructureCheckResult checkStructurePresence(ChunkPos chunkPos, Structure structure, boolean skipExistingChunk) {
+-        return this.structureCheck.checkStart(chunkPos, structure, skipExistingChunk);
++    // Leaf start - Fix MC-249136
++    public StructureCheckResult checkStructurePresence(ChunkPos chunkPos, Structure structure, StructurePlacement placement, boolean skipExistingChunk) {
++        return this.structureCheck.checkStart(chunkPos, structure, placement, skipExistingChunk);
+     }
++    // Leaf end
+ 
+     public void addReference(StructureStart structureStart) {
+         structureStart.addReference();
+diff --git a/src/main/java/net/minecraft/world/level/chunk/ChunkGenerator.java b/src/main/java/net/minecraft/world/level/chunk/ChunkGenerator.java
+index d5c2a608e1b4c8099c96b33d9d758e968350a46d..91c1e312ca50abbe8cf04a45bb421551dba03c25 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/ChunkGenerator.java
++++ b/src/main/java/net/minecraft/world/level/chunk/ChunkGenerator.java
+@@ -302,7 +302,7 @@ public abstract class ChunkGenerator {
+                         }
+ 
+                         holder = (Holder) iterator.next();
+-                        structurecheckresult = structureAccessor.checkStructurePresence(pos, (Structure) holder.value(), skipReferencedStructures);
++                        structurecheckresult = structureAccessor.checkStructurePresence(pos, (Structure) holder.value(), placement, skipReferencedStructures); // Leaf - Fix MC-249136
+                     } while (structurecheckresult == StructureCheckResult.START_NOT_PRESENT);
+ 
+                     if (!skipReferencedStructures && structurecheckresult == StructureCheckResult.START_PRESENT) {
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/structure/StructureCheck.java b/src/main/java/net/minecraft/world/level/levelgen/structure/StructureCheck.java
+index 16356d7f388561300e794a52f3f263b8e7d9b880..1e973bcbc79de7fdbeb22e3b577ea51c8a165c79 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/structure/StructureCheck.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/structure/StructureCheck.java
+@@ -32,6 +32,7 @@ import net.minecraft.world.level.chunk.ChunkGenerator;
+ import net.minecraft.world.level.chunk.storage.ChunkScanAccess;
+ import net.minecraft.world.level.chunk.storage.ChunkStorage;
+ import net.minecraft.world.level.levelgen.RandomState;
++import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
+ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+ import org.slf4j.Logger;
+ 
+@@ -161,7 +162,7 @@ public class StructureCheck {
+         this.structureConfigs = registryManager.registryOrThrow(Registries.STRUCTURE);
+     }
+ 
+-    public StructureCheckResult checkStart(ChunkPos pos, Structure type, boolean skipReferencedStructures) {
++    public StructureCheckResult checkStart(ChunkPos pos, Structure type, StructurePlacement placement, boolean skipReferencedStructures) { // Leaf - Fix MC-249136
+         long l = pos.toLong();
+         Object2IntMap<Structure> object2IntMap = this.loadedChunksSafe.get(l); // Paper - rewrite chunk system - synchronise this class
+         if (object2IntMap != null) {
+@@ -171,6 +172,11 @@ public class StructureCheck {
+             if (structureCheckResult != null) {
+                 return structureCheckResult;
+             } else {
++                // Leaf start - Fix MC-249136
++                if (!placement.applyAdditionalChunkRestrictions(pos.x, pos.z, this.seed, null)) {
++                    return StructureCheckResult.START_NOT_PRESENT;
++                }
++                // Leaf end
+                 boolean bl = this.featureChecksSafe.computeIfAbsent(type, (structure2) -> { // Paper - rewrite chunk system - synchronise this class
+                     return new SynchronisedLong2BooleanMap(PER_FEATURE_CHECK_LIMIT); // Paper - rewrite chunk system - synchronise this class
+                 }).getOrCompute(l, (chunkPos) -> { // Paper - rewrite chunk system - synchronise this class
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java b/src/main/java/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
+index 594a2dd3b1d4c29c969d1992b8e93795da00e682..463f8f20136cc2615f4fb3fdda26c0c91254d3d9 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
+@@ -74,14 +74,20 @@ public abstract class StructurePlacement {
+             }
+         }
+         // Paper end
+-        if (!this.isPlacementChunk(calculator, chunkX, chunkZ)) {
+-            return false;
+-        } else if (this.frequency < 1.0F && !this.frequencyReductionMethod.shouldGenerate(calculator.getLevelSeed(), this.salt, chunkX, chunkZ, this.frequency, saltOverride)) { // Paper
+-            return false;
+-        } else {
+-            return !this.exclusionZone.isPresent() || !this.exclusionZone.get().isPlacementForbidden(calculator, chunkX, chunkZ);
+-        }
++        // Leaf start - Fix MC-249136
++        return this.isPlacementChunk(calculator, chunkX, chunkZ)
++                && this.applyAdditionalChunkRestrictions(chunkX, chunkZ, calculator.getLevelSeed(), saltOverride)
++                && this.applyInteractionsWithOtherStructures(calculator, chunkX, chunkZ);
++    }
++
++    public boolean applyAdditionalChunkRestrictions(int chunkX, int chunkZ, long levelSeed, Integer saltOverride) {
++        return !(this.frequency < 1.0f) || this.frequencyReductionMethod.shouldGenerate(levelSeed, this.salt, chunkX, chunkZ, this.frequency, saltOverride); // Paper - Add missing structure set seed configs
++    }
++
++    public boolean applyInteractionsWithOtherStructures(ChunkGeneratorStructureState calculator, int chunkX, int chunkZ) {
++        return this.exclusionZone.isEmpty() || !this.exclusionZone.get().isPlacementForbidden(calculator, chunkX, chunkZ);
+     }
++    // Leaf end
+ 
+     protected abstract boolean isPlacementChunk(ChunkGeneratorStructureState calculator, int chunkX, int chunkZ);
+ 
