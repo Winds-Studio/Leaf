@@ -15,15 +15,16 @@ repositories {
     maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(configurations.paperclip.name) }
     }
+    maven("https://maven.nostal.ink/repository/maven-snapshots/")
 }
 
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.8.9:fat")
     decompiler("org.vineflower:vineflower:1.9.3")
-    paperclip("io.papermc:paperclip:3.0.4-SNAPSHOT")
+    paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT")
 }
 
-subprojects {
+allprojects {
     apply(plugin = "java")
     apply(plugin = "maven-publish")
 
@@ -32,7 +33,9 @@ subprojects {
             languageVersion.set(JavaLanguageVersion.of(17))
         }
     }
+}
 
+subprojects {
     tasks.withType<JavaCompile> {
         options.encoding = Charsets.UTF_8.name()
         options.release.set(17)
