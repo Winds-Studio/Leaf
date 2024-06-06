@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spottedleaf <Spottedleaf@users.noreply.github.com>
+Date: Thu, 6 Jun 2024 22:15:25 +0800
+Subject: [PATCH] Paper: Do not perform chunk existance check for I/O
+ scheduling
+
+Original license: GPLv3
+Original project: https://github.com/PaperMC/Paper
+
+https://github.com/PaperMC/Paper/commit/4f13be937eda5ee18010b271474a91894348e3e4
+
+In order to check if a chunk exists, the RegionFile lock
+(if the RegionFile is opened) will be acquired. However,
+the RegionFile may be performing I/O operations, in which
+case will stall the acquire operation.
+
+To ensure that threads scheduling loads do not incur a stall,
+we can avoid this check entirely - the RegionFile I/O
+thread(s) will eventually perform the exist check itself.
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/io/RegionFileIOThread.java b/src/main/java/io/papermc/paper/chunk/system/io/RegionFileIOThread.java
+index be10a534a8e58e0f96c3b28dc74513e4cfff2464..ba7376d352ec8a8ee7d5473fe61f67f50ab56cf8 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/io/RegionFileIOThread.java
++++ b/src/main/java/io/papermc/paper/chunk/system/io/RegionFileIOThread.java
+@@ -812,35 +812,6 @@ public final class RegionFileIOThread extends PrioritisedQueueExecutorThread {
+         return thread.loadDataAsyncInternal(world, chunkX, chunkZ, type, onComplete, intendingToBlock, priority);
+     }
+ 
+-    private static Boolean doesRegionFileExist(final int chunkX, final int chunkZ, final boolean intendingToBlock,
+-                                               final ChunkDataController taskController) {
+-        final ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
+-        if (intendingToBlock) {
+-            return taskController.computeForRegionFile(chunkX, chunkZ, true, (final org.purpurmc.purpur.region.AbstractRegionFile file) -> { // LinearPurpur
+-                if (file == null) { // null if no regionfile exists
+-                    return Boolean.FALSE;
+-                }
+-
+-                return file.hasChunk(chunkPos) ? Boolean.TRUE : Boolean.FALSE;
+-            });
+-        } else {
+-            // first check if the region file for sure does not exist
+-            if (taskController.doesRegionFileNotExist(chunkX, chunkZ)) {
+-                return Boolean.FALSE;
+-            } // else: it either exists or is not known, fall back to checking the loaded region file
+-
+-            return taskController.computeForRegionFileIfLoaded(chunkX, chunkZ, (final org.purpurmc.purpur.region.AbstractRegionFile file) -> { // LinearPurpur
+-                if (file == null) { // null if not loaded
+-                    // not sure at this point, let the I/O thread figure it out
+-                    return Boolean.TRUE;
+-                }
+-
+-                //return file.hasChunk(chunkPos) ? Boolean.TRUE : Boolean.FALSE;
+-                return Boolean.TRUE;
+-            });
+-        }
+-    }
+-
+     Cancellable loadDataAsyncInternal(final ServerLevel world, final int chunkX, final int chunkZ,
+                                       final RegionFileType type, final BiConsumer<CompoundTag, Throwable> onComplete,
+                                       final boolean intendingToBlock, final PrioritisedExecutor.Priority priority) {
+@@ -853,20 +824,6 @@ public final class RegionFileIOThread extends PrioritisedQueueExecutorThread {
+             if (running == null) {
+                 // not scheduled
+ 
+-                if (callbackInfo.regionFileCalculation == null) {
+-                    // caller will compute this outside of compute(), to avoid holding the bin lock
+-                    callbackInfo.needsRegionFileTest = true;
+-                    return null;
+-                }
+-
+-                if (callbackInfo.regionFileCalculation == Boolean.FALSE) {
+-                    // not on disk
+-                    callbackInfo.data = null;
+-                    callbackInfo.throwable = null;
+-                    callbackInfo.completeNow = true;
+-                    return null;
+-                }
+-
+                 // set up task
+                 final ChunkDataTask newTask = new ChunkDataTask(
+                     world, chunkX, chunkZ, taskController, RegionFileIOThread.this, priority
+@@ -898,17 +855,7 @@ public final class RegionFileIOThread extends PrioritisedQueueExecutorThread {
+             return running;
+         };
+ 
+-        ChunkDataTask curr = taskController.tasks.get(key);
+-        if (curr == null) {
+-            callbackInfo.regionFileCalculation = doesRegionFileExist(chunkX, chunkZ, intendingToBlock, taskController);
+-        }
+-        ChunkDataTask ret = taskController.tasks.compute(key, compute);
+-        if (callbackInfo.needsRegionFileTest) {
+-            // curr isn't null but when we went into compute() it was
+-            callbackInfo.regionFileCalculation = doesRegionFileExist(chunkX, chunkZ, intendingToBlock, taskController);
+-            // now it should be fine
+-            ret = taskController.tasks.compute(key, compute);
+-        }
++        final ChunkDataTask ret = taskController.tasks.compute(key, compute);
+ 
+         // needs to be scheduled
+         if (callbackInfo.tasksNeedsScheduling) {
+@@ -967,8 +914,6 @@ public final class RegionFileIOThread extends PrioritisedQueueExecutorThread {
+         public Throwable throwable;
+         public boolean completeNow;
+         public boolean tasksNeedsScheduling;
+-        public boolean needsRegionFileTest;
+-        public Boolean regionFileCalculation;
+ 
+     }
+ 
