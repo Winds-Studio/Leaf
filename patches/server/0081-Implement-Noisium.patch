@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Wed, 12 Jun 2024 23:31:54 +0800
+Subject: [PATCH] Implement-Noisium
+
+
+diff --git a/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java b/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java
+index 121459fdb47904d448f86362f535765c713a4b67..93bcb7441063c56524e58c10cc7d402507524192 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -19,8 +19,8 @@ public class LevelChunkSection {
+     public static final int SECTION_HEIGHT = 16;
+     public static final int SECTION_SIZE = 4096;
+     public static final int BIOME_CONTAINER_BITS = 2;
+-    short nonEmptyBlockCount; // Paper - package private
+-    private short tickingBlockCount;
++    public short nonEmptyBlockCount; // Paper - package private // Leaf - public
++    public short tickingBlockCount; // Leaf - package private -> public
+     private short tickingFluidCount;
+     public final PalettedContainer<BlockState> states;
+     // CraftBukkit start - read/write
+@@ -233,13 +233,15 @@ public class LevelChunkSection {
+         PalettedContainer<Holder<Biome>> datapaletteblock = this.biomes.recreate();
+         boolean flag = true;
+ 
+-        for (int l = 0; l < 4; ++l) {
+-            for (int i1 = 0; i1 < 4; ++i1) {
+-                for (int j1 = 0; j1 < 4; ++j1) {
+-                    datapaletteblock.getAndSetUnchecked(l, i1, j1, biomeSupplier.getNoiseBiome(x + l, y + i1, z + j1, sampler));
++        // Leaf start - Noisium optimization
++        for (int y1 = 0; y1 < 4; ++y1) {
++            for (int z1 = 0; z1 < 4; ++z1) {
++                for (int x1 = 0; x1 < 4; ++x1) {
++                    datapaletteblock.getAndSetUnchecked(x1, y1, z1, biomeSupplier.getNoiseBiome(x + x1, y + y1, z + z1, sampler));
+                 }
+             }
+         }
++        // Leaf end
+ 
+         this.biomes = datapaletteblock;
+     }
+diff --git a/src/main/java/net/minecraft/world/level/chunk/PalettedContainer.java b/src/main/java/net/minecraft/world/level/chunk/PalettedContainer.java
+index 6402665ae8cc8664921ae0298e8b6fa4c31d8b23..471a31e60804e8315926ef706bec6128c1c33cb0 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/src/main/java/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -46,8 +46,8 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+     private final PaletteResize<T> dummyPaletteResize = (newSize, added) -> 0;
+     public final IdMap<T> registry;
+     private final T @org.jetbrains.annotations.Nullable [] presetValues; // Paper - Anti-Xray - Add preset values
+-    private volatile PalettedContainer.Data<T> data;
+-    private final PalettedContainer.Strategy strategy;
++    public volatile PalettedContainer.Data<T> data; // Leaf - private -> public
++    public final PalettedContainer.Strategy strategy; // Leaf - private -> public
+     // private final ThreadingDetector threadingDetector = new ThreadingDetector("PalettedContainer"); // Paper - unused
+ 
+     public void acquire() {
+@@ -459,7 +459,7 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+         void accept(T object, int count);
+     }
+ 
+-    static record Data<T>(PalettedContainer.Configuration<T> configuration, BitStorage storage, Palette<T> palette) {
++    public static record Data<T>(PalettedContainer.Configuration<T> configuration, BitStorage storage, Palette<T> palette) {
+         public void copyFrom(Palette<T> palette, BitStorage storage) {
+             for (int i = 0; i < storage.getSize(); i++) {
+                 T object = palette.valueFor(storage.get(i));
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java b/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+index 0b8c15b079f9b57876692e272b3535cfb125829b..07d88aad0bbb717127153dada73238ee7336b3bb 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -271,37 +271,31 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+     @Override
+     public CompletableFuture<ChunkAccess> fillFromNoise(Executor executor, Blender blender, RandomState noiseConfig, StructureManager structureAccessor, ChunkAccess chunk) {
+         NoiseSettings noisesettings = ((NoiseGeneratorSettings) this.settings.value()).noiseSettings().clampToHeightAccessor(chunk.getHeightAccessorForGeneration());
+-        int i = noisesettings.minY();
+-        int j = Mth.floorDiv(i, noisesettings.getCellHeight());
+-        int k = Mth.floorDiv(noisesettings.height(), noisesettings.getCellHeight());
++        // Leaf start - Noisium optimization
++        int minY = noisesettings.minY();
++        int minYDiv = Mth.floorDiv(minY, noisesettings.getCellHeight());
++        int cellHeightDiv = Mth.floorDiv(noisesettings.height(), noisesettings.getCellHeight());
+ 
+-        if (k <= 0) {
++        if (cellHeightDiv <= 0) {
+             return CompletableFuture.completedFuture(chunk);
+-        } else {
+-            int l = chunk.getSectionIndex(k * noisesettings.getCellHeight() - 1 + i);
+-            int i1 = chunk.getSectionIndex(i);
+-            Set<LevelChunkSection> set = Sets.newHashSet();
+-
+-            for (int j1 = l; j1 >= i1; --j1) {
+-                LevelChunkSection chunksection = chunk.getSection(j1);
+-
+-                chunksection.acquire();
+-                set.add(chunksection);
+-            }
+-
+-            return CompletableFuture.supplyAsync(Util.wrapThreadWithTaskName("wgen_fill_noise", () -> {
+-                return this.doFill(blender, structureAccessor, noiseConfig, chunk, j, k);
+-            }), executor).whenCompleteAsync((ichunkaccess1, throwable) -> { // Paper - run with supplied executor
+-                Iterator iterator = set.iterator();
+-
+-                while (iterator.hasNext()) {
+-                    LevelChunkSection chunksection1 = (LevelChunkSection) iterator.next();
++        }
+ 
+-                    chunksection1.release();
+-                }
++        int startIndex = chunk.getSectionIndex(cellHeightDiv * noisesettings.getCellHeight() - 1 + minY);
++        int minYIndex = chunk.getSectionIndex(minY);
+ 
+-            }, executor);
++        LevelChunkSection[] sections = chunk.getSections();
++        for (int i = startIndex; i >= minYIndex; --i) {
++            sections[i].acquire();
+         }
++        return CompletableFuture.supplyAsync(Util.wrapThreadWithTaskName(
++                "wgen_fill_noise",
++                () -> this.doFill(blender, structureAccessor, noiseConfig, chunk, minYDiv, cellHeightDiv)
++        ), Util.backgroundExecutor()).whenCompleteAsync((result, ignored) -> {
++            for (int i = startIndex; i >= minYIndex; --i) {
++                sections[i].release();
++            }
++        }, executor);
++        // Leaf end
+     }
+ 
+     private ChunkAccess doFill(Blender blender, StructureManager structureAccessor, RandomState noiseConfig, ChunkAccess chunk, int minimumCellY, int cellHeight) {
+@@ -367,6 +361,15 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+ 
+                                 iblockdata = this.debugPreliminarySurfaceLevel(noisechunk, j4, j3, i5, iblockdata);
+                                 if (iblockdata != NoiseBasedChunkGenerator.AIR && !SharedConstants.debugVoidTerrain(chunk.getPos())) {
++                                    // Leaf start - Noisium
++                                    chunksection.nonEmptyBlockCount++;
++                                    if (!iblockdata.getFluidState().isEmpty()) chunksection.nonEmptyBlockCount++;
++                                    if (iblockdata.isRandomlyTicking()) chunksection.tickingBlockCount++;
++                                    chunksection.states.data.storage().set(
++                                            chunksection.states.strategy.getIndex(k4, k3, j5),
++                                            chunksection.states.data.palette().idFor(iblockdata)
++                                    );
++                                    // Leaf end - Noisium
+                                     chunksection.setBlockState(k4, k3, j5, iblockdata, false);
+                                     heightmap.update(k4, j3, j5, iblockdata);
+                                     heightmap1.update(k4, j3, j5, iblockdata);
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/NoiseSettings.java b/src/main/java/net/minecraft/world/level/levelgen/NoiseSettings.java
+index 52fcf1b92854e5c67c51a83d31b4a136413b54e0..26ffc28359b18daf28212e72922be8bd3bfa7746 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/NoiseSettings.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/NoiseSettings.java
+@@ -8,7 +8,12 @@ import net.minecraft.core.QuartPos;
+ import net.minecraft.world.level.LevelHeightAccessor;
+ import net.minecraft.world.level.dimension.DimensionType;
+ 
+-public record NoiseSettings(int minY, int height, int noiseSizeHorizontal, int noiseSizeVertical) {
++// Leaf start - Noisium
++public record NoiseSettings(int minY, int height, int noiseSizeHorizontal, int noiseSizeVertical, int cellHeight, int cellWidth) {
++    public NoiseSettings(int minY, int height, int noiseSizeHorizontal, int noiseSizeVertical) {
++        this(minY, height, noiseSizeHorizontal, noiseSizeVertical, QuartPos.toBlock(noiseSizeHorizontal), QuartPos.toBlock(noiseSizeVertical));
++    }
++    // Leaf end - Noisium
+     public static final Codec<NoiseSettings> CODEC = RecordCodecBuilder.<NoiseSettings>create(
+             instance -> instance.group(
+                         Codec.intRange(DimensionType.MIN_Y, DimensionType.MAX_Y).fieldOf("min_y").forGetter(NoiseSettings::minY),
+@@ -44,11 +49,11 @@ public record NoiseSettings(int minY, int height, int noiseSizeHorizontal, int n
+     }
+ 
+     public int getCellHeight() {
+-        return QuartPos.toBlock(this.noiseSizeVertical());
++        return this.cellHeight; // Leaf - Noisium
+     }
+ 
+     public int getCellWidth() {
+-        return QuartPos.toBlock(this.noiseSizeHorizontal());
++        return this.cellWidth; // Leaf - Noisium
+     }
+ 
+     public NoiseSettings clampToHeightAccessor(LevelHeightAccessor world) {
