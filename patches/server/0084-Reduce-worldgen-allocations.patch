@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Fri, 14 Jun 2024 23:19:55 +0800
+Subject: [PATCH] Reduce-worldgen-allocations
+
+
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/SurfaceRules.java b/src/main/java/net/minecraft/world/level/levelgen/SurfaceRules.java
+index a506f3ef40ec34a89abb73a60cedf3b556585bee..c79aceb58549235a6064fa6951509d0ee77ddf1a 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/SurfaceRules.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/SurfaceRules.java
+@@ -314,8 +314,14 @@ public class SurfaceRules {
+         }
+ 
+         protected void updateY(int stoneDepthAbove, int stoneDepthBelow, int fluidHeight, int blockX, int blockY, int blockZ) {
+-            this.lastUpdateY++;
+-            this.biome = Suppliers.memoize(() -> this.biomeGetter.apply(this.pos.set(blockX, blockY, blockZ)));
++            // Leaf start - Reuse supplier object instead of creating new ones every time
++            ++this.lastUpdateY;
++            var getter = this.biome;
++            if (getter == null) {
++                this.biome = getter = new org.dreeam.leaf.util.biome.PositionalBiomeGetter(this.biomeGetter, this.pos);
++            }
++            ((org.dreeam.leaf.util.biome.PositionalBiomeGetter)getter).update(blockX, blockY, blockZ);
++            // Leaf end
+             this.blockY = blockY;
+             this.waterHeight = fluidHeight;
+             this.stoneDepthBelow = stoneDepthBelow;
+@@ -577,8 +583,12 @@ public class SurfaceRules {
+         @Nullable
+         @Override
+         public BlockState tryApply(int x, int y, int z) {
+-            for (SurfaceRules.SurfaceRule surfaceRule : this.rules) {
+-                BlockState blockState = surfaceRule.tryApply(x, y, z);
++            // Leaf start - Avoid iterator allocation
++            int size = this.rules.size();
++            //noinspection ForLoopReplaceableByForEach
++            for (int i = 0; i < size; i++) {
++                BlockState blockState = this.rules.get(i).tryApply(x, y, z);
++                // Leaf end
+                 if (blockState != null) {
+                     return blockState;
+                 }
+diff --git a/src/main/java/org/dreeam/leaf/util/biome/PositionalBiomeGetter.java b/src/main/java/org/dreeam/leaf/util/biome/PositionalBiomeGetter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..2385f09404274aa650d082e2928deab847b570a0
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/util/biome/PositionalBiomeGetter.java
+@@ -0,0 +1,36 @@
++package org.dreeam.leaf.util.biome;
++
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Holder;
++import net.minecraft.world.level.biome.Biome;
++
++import java.util.function.Function;
++import java.util.function.Supplier;
++
++public class PositionalBiomeGetter implements Supplier<Holder<Biome>> {
++    private final Function<BlockPos, Holder<Biome>> biomeGetter;
++    private final BlockPos.MutableBlockPos pos;
++    private int nextX, nextY, nextZ;
++    private volatile Holder<Biome> curBiome;
++
++    public PositionalBiomeGetter(Function<BlockPos, Holder<Biome>> biomeGetter, BlockPos.MutableBlockPos pos) {
++        this.biomeGetter = biomeGetter;
++        this.pos = pos;
++    }
++
++    public void update(int nextX, int nextY, int nextZ) {
++        this.nextX = nextX;
++        this.nextY = nextY;
++        this.nextZ = nextZ;
++        this.curBiome = null;
++    }
++
++    @Override
++    public Holder<Biome> get() {
++        var biome = curBiome;
++        if(biome == null) {
++            curBiome = biome = biomeGetter.apply(pos.set(nextX, nextY, nextZ));
++        }
++        return biome;
++    }
++}
