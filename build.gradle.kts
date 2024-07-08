@@ -17,7 +17,7 @@ repositories {
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.10.3:fat")
     decompiler("org.vineflower:vineflower:1.10.1")
-    paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT")
+    paperclip("io.papermc:paperclip:3.0.3") // Dreeam TODO - nostal's maven repo down
 }
 
 allprojects {

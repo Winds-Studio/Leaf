@@ -37,6 +37,38 @@ index f76ca394169d844a263a53c31c30e57de4381e0d..d2ea951c7e5899d0e2edb52064e35c23
              Path path1 = Paths.get("server.properties");
              DedicatedServerSettings dedicatedserversettings = new DedicatedServerSettings(optionset); // CraftBukkit - CLI argument support
  
+diff --git a/src/main/java/org/dreeam/leaf/config/ConfigModules.java b/src/main/java/org/dreeam/leaf/config/ConfigModules.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f05e1ee109a36c39857f75c296f2ff21800aba8e
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/ConfigModules.java
+@@ -0,0 +1,26 @@
++package org.dreeam.leaf.config;
++
++import java.lang.reflect.InvocationTargetException;
++import java.util.HashSet;
++import java.util.Set;
++
++public abstract class ConfigModules extends LeafConfig {
++
++    private static final Set<ConfigModules> modules = new HashSet<>();
++    public LeafGlobalConfig config;
++
++    public ConfigModules() {
++        this.config = LeafConfig.config();
++    }
++
++    public static void initModules() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
++        for (Class<?> clazz : LeafConfig.getClasses(LeafConfig.I_CONFIG_PKG)) {
++            ConfigModules module = (ConfigModules) clazz.getConstructor().newInstance();
++            module.onLoaded();
++
++            modules.add(module);
++        }
++    }
++
++    public abstract void onLoaded();
++}
 diff --git a/src/main/java/org/dreeam/leaf/config/DoNotLoad.java b/src/main/java/org/dreeam/leaf/config/DoNotLoad.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..42ce82d388336906a91547b81f6f70766f2b10f0
@@ -99,20 +131,17 @@ index 0000000000000000000000000000000000000000..f7ab1ff5f298ff1e5e16fe5396d1e9e6
 +}
 diff --git a/src/main/java/org/dreeam/leaf/config/LeafConfig.java b/src/main/java/org/dreeam/leaf/config/LeafConfig.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..599f2e0af4d8a0ec58b7c8e58bffaaf56ab8bcec
+index 0000000000000000000000000000000000000000..32e48d4dadfed734774b2722ab3a0e178c6bd64f
 --- /dev/null
 +++ b/src/main/java/org/dreeam/leaf/config/LeafConfig.java
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,175 @@
 +package org.dreeam.leaf.config;
 +
-+import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
-+import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
 +import org.jetbrains.annotations.Contract;
 +import org.jetbrains.annotations.NotNull;
 +
 +import java.io.File;
 +import java.io.IOException;
-+import java.lang.reflect.InvocationTargetException;
 +import java.net.JarURLConnection;
 +import java.net.URL;
 +import java.net.URLDecoder;
@@ -120,10 +149,7 @@ index 0000000000000000000000000000000000000000..599f2e0af4d8a0ec58b7c8e58bffaaf5
 +import java.nio.file.FileAlreadyExistsException;
 +import java.nio.file.Files;
 +import java.util.Enumeration;
-+import java.util.HashSet;
 +import java.util.LinkedHashSet;
-+import java.util.List;
-+import java.util.Map;
 +import java.util.Set;
 +import java.util.concurrent.CompletableFuture;
 +import java.util.jar.JarEntry;
@@ -136,46 +162,21 @@ index 0000000000000000000000000000000000000000..599f2e0af4d8a0ec58b7c8e58bffaaf5
 + *  Yoinked from: https://github.com/xGinko/AnarchyExploitFixes/
 + *  @author: xGinko
 + */
-+public class LeafConfig {
++public  class LeafConfig {
 +
 +    public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
-+    private static final File I_CONFIG_FOLDER = new File("config");
-+    private static final String I_CONFIG_PKG = "org.dreeam.leaf.config.modules";
-+    private static final String I_GLOBAL_CONFIG_FILE = "leaf-global.yml";
-+    private static final String I_LEVEL_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per level config
++    protected static final File I_CONFIG_FOLDER = new File("config");
++    protected static final String I_CONFIG_PKG = "org.dreeam.leaf.config.modules";
++    protected static final String I_GLOBAL_CONFIG_FILE = "leaf-global.yml";
++    protected static final String I_LEVEL_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per level config
 +
-+    private static ConfigFile configFile;
-+    private static LeafConfig config;
-+    private static final Set<Class<?>> modules = new HashSet<>();
++    private static LeafGlobalConfig leafGlobalConfig;
 +
-+    public LeafConfig(boolean init) {
-+        try {
-+            // Create config folder
-+            createDirectory(I_CONFIG_FOLDER);
-+
-+            configFile = ConfigFile.loadConfig(new File(I_CONFIG_FOLDER, I_GLOBAL_CONFIG_FILE));
-+            configFile.set("config-version", 3.0);
-+            configFile.addComments("config-version", """
-+                    Leaf Config
-+                    Github Repo: https://github.com/Winds-Studio/Leaf
-+                    Discord: dreeam___ | QQ: 2682173972""");
-+
-+            // Pre-structure to force order
-+            structureConfig();
-+
-+            // Load config modules
-+            initModules();
-+
-+            // Save config to disk
-+            saveConfig();
-+        } catch (Exception e) {
-+            LOGGER.error("Failed to load config modules!", e);
-+        }
-+    }
++    // Load & Reload
 +
 +    public static void reload() {
 +        try {
-+            config = loadConfig(false);
++            loadConfig(false);
 +        } catch (Exception e) {
 +            LOGGER.error("Failed to reload config", e);
 +        }
@@ -188,21 +189,35 @@ index 0000000000000000000000000000000000000000..599f2e0af4d8a0ec58b7c8e58bffaaf5
 +
 +    public static void loadConfig() {
 +        LOGGER.info("Loading config...");
-+        config = loadConfig(true);
++        loadConfig(true);
 +    }
 +
-+    // Load config.yml with ConfigMaster
-+    private static LeafConfig loadConfig(boolean init) {
-+        return new LeafConfig(init);
-+    }
++    // Load Global Config
 +
-+    private void structureConfig() {
-+        for (EnumConfigCategory configCate : EnumConfigCategory.getCategoryValues()) {
-+            createTitledSection(configCate.name(), configCate.getBaseKeyName());
++    private static void loadConfig(boolean init) {
++        try {
++            // Create config folder
++            createDirectory(LeafConfig.I_CONFIG_FOLDER);
++
++            leafGlobalConfig = new LeafGlobalConfig(init);
++
++            // Load config modules
++            ConfigModules.initModules();
++
++            // Save config to disk
++            leafGlobalConfig.saveConfig();
++        } catch (Exception e) {
++            LeafConfig.LOGGER.error("Failed to load config modules!", e);
 +        }
 +    }
 +
-+    private void createDirectory(File dir) throws IOException {
++    public static LeafGlobalConfig config() {
++        return leafGlobalConfig;
++    }
++
++    // Create config folder
++
++    protected static void createDirectory(File dir) throws IOException {
 +        try {
 +            Files.createDirectories(dir.toPath());
 +        } catch (FileAlreadyExistsException e) { // Thrown if dir exists but is not a directory
@@ -210,24 +225,7 @@ index 0000000000000000000000000000000000000000..599f2e0af4d8a0ec58b7c8e58bffaaf5
 +        }
 +    }
 +
-+    public void saveConfig() throws Exception {
-+        configFile.save();
-+    }
-+
-+    public LeafConfig config() {
-+        return config;
-+    }
-+
 +    // Scan classes under package util
-+
-+    private void initModules() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
-+        for (Class<?> clazz : getClasses(I_CONFIG_PKG)) {
-+            Class<?> module = (Class<?>) clazz.getConstructor().newInstance();
-+            module.getMethod("init").invoke(null);
-+
-+            modules.add(module);
-+        }
-+    }
 +
 +    public static @NotNull Set<Class<?>> getClasses(String pack) {
 +        Set<Class<?>> classes = new LinkedHashSet<>();
@@ -310,6 +308,47 @@ index 0000000000000000000000000000000000000000..599f2e0af4d8a0ec58b7c8e58bffaaf5
 +                }
 +            }
 +        }
++    }
++}
+diff --git a/src/main/java/org/dreeam/leaf/config/LeafGlobalConfig.java b/src/main/java/org/dreeam/leaf/config/LeafGlobalConfig.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e48533d36bfd88f620aeced58936639513b1d9cc
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/LeafGlobalConfig.java
+@@ -0,0 +1,110 @@
++package org.dreeam.leaf.config;
++
++import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
++import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
++
++import java.io.File;
++import java.util.List;
++import java.util.Map;
++
++public class LeafGlobalConfig {
++
++    protected static ConfigFile configFile;
++
++    public LeafGlobalConfig(boolean init) throws Exception {
++            configFile = ConfigFile.loadConfig(new File(LeafConfig.I_CONFIG_FOLDER, LeafConfig.I_GLOBAL_CONFIG_FILE));
++            configFile.set("config-version", 3.0);
++            configFile.addComments("config-version", """
++                    Leaf Config
++                    Github Repo: https://github.com/Winds-Studio/Leaf
++                    Discord: dreeam___ | QQ: 2682173972""");
++
++            // Pre-structure to force order
++            structureConfig();
++    }
++
++    protected void structureConfig() {
++        for (EnumConfigCategory configCate : EnumConfigCategory.getCategoryValues()) {
++            createTitledSection(configCate.name(), configCate.getBaseKeyName());
++        }
++    }
++
++    public void saveConfig() throws Exception {
++        configFile.save();
 +    }
 +
 +    // Config Utilities
