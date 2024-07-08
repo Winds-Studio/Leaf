@@ -118,3 +118,12 @@ for monitoring and profiling Java and .NET applications.
 YourKit is the creator of [YourKit Java Profiler](https://www.yourkit.com/java/profiler/),
 [YourKit .NET Profiler](https://www.yourkit.com/dotnet-profiler/),
 and [YourKit YouMonitor](https://www.yourkit.com/youmonitor/).
+
+Leaf Config v3
+
+I used ConfigMaster-API as config framework to refactor current Leaf Config.
+For now, the config file format is yaml/yml instead of toml.
+
+Note:
+
+Changes:
