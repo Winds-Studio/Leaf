@@ -11,13 +11,15 @@ repositories {
     maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(configurations.paperclip.name) }
     }
-    maven("https://maven.nostal.ink/repository/maven-snapshots/")
+    maven("https://maven.nostal.ink/repository/maven-snapshots/") {
+        isAllowInsecureProtocol = true // Dreeam TODO - Remove this when repo fix
+    }
 }
 
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.10.3:fat")
     decompiler("org.vineflower:vineflower:1.10.1")
-    paperclip("io.papermc:paperclip:3.0.3") // Dreeam TODO - nostal's maven repo down
+    paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT")
 }
 
 allprojects {
