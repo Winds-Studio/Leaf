@@ -11,15 +11,13 @@ repositories {
     maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(configurations.paperclip.name) }
     }
-    maven("http://maven.nostal.ink/repository/maven-snapshots/") {
-        isAllowInsecureProtocol = true // Dreeam TODO - Remove this when repo fix
-    }
+    maven("https://jitpack.io") // Dreeam TODO - Waiting repo fix
 }
 
 dependencies {
     remapper("net.fabricmc:tiny-remapper:0.10.3:fat")
     decompiler("org.vineflower:vineflower:1.10.1")
-    paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT")
+    paperclip("com.github.Winds-Studio:QuantumLeaper:59cbdeecbf") // Dreeam TODO - Waiting repo fix
 }
 
 allprojects {
