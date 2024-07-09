@@ -11,7 +11,7 @@ repositories {
     maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(configurations.paperclip.name) }
     }
-    maven("https://maven.nostal.ink/repository/maven-snapshots/") {
+    maven("http://maven.nostal.ink/repository/maven-snapshots/") {
         isAllowInsecureProtocol = true // Dreeam TODO - Remove this when repo fix
     }
 }
