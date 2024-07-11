@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Sat, 6 Apr 2024 22:57:41 -0400
+Subject: [PATCH] Optimize Minecart collisions
+
+Co-authored-by: MrHua269 <wangxyper@163.com>
+
+Skip tick collisions to to prevent lag causing by massive stacked Minecart
+Useful for anarchy server.
+
+diff --git a/src/main/java/net/minecraft/world/entity/EntitySelector.java b/src/main/java/net/minecraft/world/entity/EntitySelector.java
+index f1b9e83206cc67e6ef29ebe088351b0aaa5eb349..e0a51e269aa076def275710174d3654d07e1a7aa 100644
+--- a/src/main/java/net/minecraft/world/entity/EntitySelector.java
++++ b/src/main/java/net/minecraft/world/entity/EntitySelector.java
+@@ -63,6 +63,13 @@ public final class EntitySelector {
+     }
+     public static Predicate<Entity> pushable(Entity entity, boolean ignoreClimbing) {
+         // Paper end - Climbing should not bypass cramming gamerule
++
++        // Leaf start - Optimize Minecart collisions
++        if (entity instanceof net.minecraft.world.entity.vehicle.AbstractMinecart) {
++            return x -> true;
++        }
++        // Leaf end - Optimize Minecart collisions
++
+         PlayerTeam scoreboardteam = entity.getTeam();
+         Team.CollisionRule scoreboardteambase_enumteampush = scoreboardteam == null ? Team.CollisionRule.ALWAYS : scoreboardteam.getCollisionRule();
+ 
+diff --git a/src/main/java/net/minecraft/world/entity/vehicle/AbstractMinecart.java b/src/main/java/net/minecraft/world/entity/vehicle/AbstractMinecart.java
+index 337bd2011c471361653c317004f8380c9fddfc47..52c105f5634ec8495e2e4c05adcc8217eb352e63 100644
+--- a/src/main/java/net/minecraft/world/entity/vehicle/AbstractMinecart.java
++++ b/src/main/java/net/minecraft/world/entity/vehicle/AbstractMinecart.java
+@@ -386,15 +386,15 @@ public abstract class AbstractMinecart extends VehicleEntity {
+                 this.level().getCraftServer().getPluginManager().callEvent(new org.bukkit.event.vehicle.VehicleMoveEvent(vehicle, from, to));
+             }
+             // CraftBukkit end
+-            if (this.getMinecartType() == AbstractMinecart.Type.RIDEABLE && this.getDeltaMovement().horizontalDistanceSqr() > 0.01D) {
++            // Leaf start - Optimize Minecart collision handling
++            // The logic below is used to get list of entities around Minecart
++            // and handle behaviors for their collisions with each other
++            if (!org.dreeam.leaf.config.modules.opt.OptimizeMinecart.enabled || this.tickCount % org.dreeam.leaf.config.modules.opt.OptimizeMinecart.skipTickCount == 0) {
++            if (this.getMinecartType() == AbstractMinecart.Type.RIDEABLE && (org.dreeam.leaf.config.modules.opt.OptimizeMinecart.enabled || this.getDeltaMovement().horizontalDistanceSqr() > 0.01D)) {
+                 List<Entity> list = this.level().getEntities((Entity) this, this.getBoundingBox().inflate(0.20000000298023224D, 0.0D, 0.20000000298023224D), EntitySelector.pushableBy(this));
+ 
+                 if (!list.isEmpty()) {
+-                    Iterator iterator = list.iterator();
+-
+-                    while (iterator.hasNext()) {
+-                        Entity entity = (Entity) iterator.next();
+-
++                    for (Entity entity : list) {
+                         if (!(entity instanceof Player) && !(entity instanceof IronGolem) && !(entity instanceof AbstractMinecart) && !this.isVehicle() && !entity.isPassenger()) {
+                             // CraftBukkit start
+                             VehicleEntityCollisionEvent collisionEvent = new VehicleEntityCollisionEvent(vehicle, entity.getBukkitEntity());
+@@ -421,11 +421,7 @@ public abstract class AbstractMinecart extends VehicleEntity {
+                     }
+                 }
+             } else {
+-                Iterator iterator1 = this.level().getEntities(this, this.getBoundingBox().inflate(0.20000000298023224D, 0.0D, 0.20000000298023224D)).iterator();
+-
+-                while (iterator1.hasNext()) {
+-                    Entity entity1 = (Entity) iterator1.next();
+-
++                for (Entity entity1 : this.level().getEntities(this, this.getBoundingBox().inflate(0.20000000298023224D, 0.0D, 0.20000000298023224D))) {
+                     if (!this.hasPassenger(entity1) && entity1.isPushable() && entity1 instanceof AbstractMinecart) {
+                         // CraftBukkit start
+                         VehicleEntityCollisionEvent collisionEvent = new VehicleEntityCollisionEvent(vehicle, entity1.getBukkitEntity());
+@@ -439,6 +435,8 @@ public abstract class AbstractMinecart extends VehicleEntity {
+                     }
+                 }
+             }
++            }
++            // Leaf end
+ 
+             this.updateInWaterStateAndDoFluidPushing();
+             if (this.isInLava()) {
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/opt/OptimizeMinecart.java b/src/main/java/org/dreeam/leaf/config/modules/opt/OptimizeMinecart.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..4e7b953f1b9db2a20c88d75ba9df3fa62be70658
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/modules/opt/OptimizeMinecart.java
+@@ -0,0 +1,24 @@
++package org.dreeam.leaf.config.modules.opt;
++
++import org.dreeam.leaf.config.ConfigModules;
++import org.dreeam.leaf.config.EnumConfigCategory;
++
++public class OptimizeMinecart extends ConfigModules {
++
++    public String getBasePath() {
++        return EnumConfigCategory.PERF.getBaseKeyName() + ".optimize-minecart";
++    }
++
++    public static boolean enabled = false;
++    public static int skipTickCount = 30;
++
++    @Override
++    public void onLoaded() {
++        enabled = config.getBoolean(getBasePath() + ".enabled", enabled, """
++                Enable this feature to handle a large amount of stacked minecarts better.
++                By skipping tick collisions to reduce expensive getEntities
++                and bukkit event calls, useful for anarchy servers.
++                """);
++        skipTickCount = config.getInt(getBasePath() + ".skip-tick-count", skipTickCount);
++    }
++}

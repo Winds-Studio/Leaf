@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <fsjk947@gmail.com>
+Date: Fri, 3 May 2024 01:12:58 +0800
+Subject: [PATCH] Faster Random Generator
+
+
+diff --git a/src/main/java/net/minecraft/util/RandomSource.java b/src/main/java/net/minecraft/util/RandomSource.java
+index 7762c8186035fdf60e11d9f1844516b61f442206..c2f0b5933c61168cbde507f04674e95b78e2d7f3 100644
+--- a/src/main/java/net/minecraft/util/RandomSource.java
++++ b/src/main/java/net/minecraft/util/RandomSource.java
+@@ -6,6 +6,7 @@ import net.minecraft.world.level.levelgen.PositionalRandomFactory;
+ import net.minecraft.world.level.levelgen.RandomSupport;
+ import net.minecraft.world.level.levelgen.SingleThreadedRandomSource;
+ import net.minecraft.world.level.levelgen.ThreadSafeLegacyRandomSource;
++import org.dreeam.leaf.util.math.random.TheFasterRandom;
+ 
+ public interface RandomSource {
+     @Deprecated
+@@ -23,16 +24,16 @@ public interface RandomSource {
+ 
+     @Deprecated
+     static RandomSource createThreadSafe() {
+-        return new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
+-    }
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new TheFasterRandom(RandomSupport.generateFasterSeed()) : new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
++    } // Leaf - Faster RNG
+ 
+     static RandomSource create(long seed) {
+-        return new LegacyRandomSource(seed);
+-    }
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new TheFasterRandom(seed) : new LegacyRandomSource(seed);
++    } // Leaf - Faster RNG
+ 
+     static RandomSource createNewThreadLocalInstance() {
+-        return new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
+-    }
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new TheFasterRandom(RandomSupport.generateFasterSeed()) : new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
++    } // Leaf - Faster RNG
+ 
+     RandomSource fork();
+ 
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java b/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..996418c50cf005dbb850a9627c9c73f84f33f32a
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java
+@@ -0,0 +1,22 @@
++package org.dreeam.leaf.config.modules.opt;
++
++import org.dreeam.leaf.config.ConfigModules;
++import org.dreeam.leaf.config.EnumConfigCategory;
++
++public class FastRNG extends ConfigModules {
++
++    public String getBasePath() {
++        return EnumConfigCategory.PERF.getBaseKeyName();
++    }
++
++    public static boolean enabled = false;
++
++    @Override
++    public void onLoaded() {
++        enabled = config.getBoolean(getBasePath() + ".use-faster-random-generator", enabled, """
++                Use faster random generator? (Up to 100X faster)
++                Requires a JVM that supports RandomGenerator and the LXM generators.
++                Some JREs don't support this and will cause a crash.
++                """);
++    }
++}
+diff --git a/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java b/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c13c8e5a2fba4267eb254e75f993bc6a9b861f6e
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java
+@@ -0,0 +1,89 @@
++package org.dreeam.leaf.util.math.random;
++
++import net.minecraft.util.RandomSource;
++import net.minecraft.world.level.levelgen.BitRandomSource;
++import net.minecraft.world.level.levelgen.LegacyRandomSource;
++import net.minecraft.world.level.levelgen.PositionalRandomFactory;
++
++import java.util.random.RandomGenerator;
++import java.util.random.RandomGeneratorFactory;
++
++
++public class TheFasterRandom implements BitRandomSource {
++    private static final int INT_BITS = 48;
++    private static final long SEED_MASK = 0xFFFFFFFFFFFFL;
++    private static final long MULTIPLIER = 25214903917L;
++    private static final long INCREMENT = 11L;
++    private static final RandomGeneratorFactory<RandomGenerator.SplittableGenerator> RANDOM_GENERATOR_FACTORY = RandomGeneratorFactory.of(
++            "L64X128MixRandom");
++
++    private long seed;
++    private RandomGenerator.SplittableGenerator randomGenerator;
++
++    public TheFasterRandom(long seed) {
++        this.seed = seed;
++        this.randomGenerator = RANDOM_GENERATOR_FACTORY.create(seed);
++    }
++
++    public TheFasterRandom(long seed, RandomGenerator.SplittableGenerator randomGenerator) {
++        this.seed = seed;
++        this.randomGenerator = randomGenerator;
++    }
++
++    @Override
++    public RandomSource fork() {
++        return new TheFasterRandom(seed, randomGenerator.split());
++    }
++
++    @Override
++    public PositionalRandomFactory forkPositional() {
++        return new LegacyRandomSource.LegacyPositionalRandomFactory(this.seed);
++    }
++
++    @Override
++    public void setSeed(long seed) {
++        this.seed = seed;
++        this.randomGenerator = RANDOM_GENERATOR_FACTORY.create(seed);
++    }
++
++    @Override
++    public int next(int bits) {
++        // >>> instead of Mojang's >> fixes MC-239059
++        return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> INT_BITS - bits);
++    }
++
++    @Override
++    public int nextInt() {
++        return randomGenerator.nextInt();
++    }
++
++    @Override
++    public int nextInt(int bound) {
++        return randomGenerator.nextInt(bound);
++    }
++
++    @Override
++    public long nextLong() {
++        return randomGenerator.nextLong();
++    }
++
++    @Override
++    public boolean nextBoolean() {
++        return randomGenerator.nextBoolean();
++    }
++
++    @Override
++    public float nextFloat() {
++        return randomGenerator.nextFloat();
++    }
++
++    @Override
++    public double nextDouble() {
++        return randomGenerator.nextDouble();
++    }
++
++    @Override
++    public double nextGaussian() {
++        return randomGenerator.nextGaussian();
++    }
++}
