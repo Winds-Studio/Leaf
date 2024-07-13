@@ -1,8 +1,13 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
 Date: Sat, 13 Jul 2024 21:23:12 +0800
-Subject: [PATCH] Optimize Leaves ProtocolManager structure
+Subject: [PATCH] Optimize LeavesProtocolManager init protocol
 
+In original LeavesProtocolManager, it will init for all protocol support modules even they are disabled.
+And the "protocol support event" will be fired in every tick and when player joined to do the module enable check
+
+It is no necessary to check whether enable every tick..., so I changed the init part, it will only load enabled
+modules and will do init again when server reload or config reload
 
 diff --git a/src/main/java/org/leavesmc/leaves/protocol/AppleSkinProtocol.java b/src/main/java/org/leavesmc/leaves/protocol/AppleSkinProtocol.java
 index c496c97c99cd352c2566731d3017cf1b14ee74ec..9b54e24bd094465625dca12f6ac5724f51775adb 100644
@@ -271,7 +276,7 @@ index 9e35dfaf8bb5511b4cd0a71175d7ecb6d835042f..5ef19098512ae8a070dea270a68c2769
                  buf.writeByte(0);
                  buf.writeInt(org.dreeam.leaf.config.modules.network.ProtocolSupport.xaeroMapServerID);
 diff --git a/src/main/java/org/leavesmc/leaves/protocol/core/LeavesProtocolManager.java b/src/main/java/org/leavesmc/leaves/protocol/core/LeavesProtocolManager.java
-index e7ce2e7a1686f1775c0a2e0cd731294025d2833b..54e7d12492eefbd4ae0d5c01f447381cde8a607a 100644
+index e7ce2e7a1686f1775c0a2e0cd731294025d2833b..871971a82b36b8e106bab040030f8a8fc6b791ec 100644
 --- a/src/main/java/org/leavesmc/leaves/protocol/core/LeavesProtocolManager.java
 +++ b/src/main/java/org/leavesmc/leaves/protocol/core/LeavesProtocolManager.java
 @@ -6,33 +6,23 @@ import net.minecraft.resources.ResourceLocation;
@@ -309,32 +314,69 @@ index e7ce2e7a1686f1775c0a2e0cd731294025d2833b..54e7d12492eefbd4ae0d5c01f447381c
  public class LeavesProtocolManager {
  
      private static final Class<?>[] PAYLOAD_PARAMETER_TYPES = {ResourceLocation.class, FriendlyByteBuf.class};
-@@ -49,9 +39,23 @@ public class LeavesProtocolManager {
+@@ -48,8 +38,16 @@ public class LeavesProtocolManager {
+     private static final List<Method> RELOAD_SERVER = new ArrayList<>();
      private static final Map<LeavesProtocol, Map<ProtocolHandler.MinecraftRegister, Method>> MINECRAFT_REGISTER = new HashMap<>();
  
++    public static void reload() {
++        handleServerReload();
++        cleanProtocols(); // Do cleanup
++        init();
++    }
++
      public static void init() {
 -        for (Class<?> clazz : getClasses("org.leavesmc.leaves.protocol")) {
-+        LeavesProtocolManager.cleanProtocols(); // Do cleanup
++        boolean shouldEnable;
 +
 +        for (Class<?> clazz : LeafConfig.getClasses("org.leavesmc.leaves.protocol")) {
              final LeavesProtocol protocol = clazz.getAnnotation(LeavesProtocol.class);
              if (protocol != null) {
+                 Set<Method> methods;
+@@ -59,7 +57,12 @@ public class LeavesProtocolManager {
+                     methods = new HashSet<>(publicMethods.length + privateMethods.length, 1.0f);
+                     Collections.addAll(methods, publicMethods);
+                     Collections.addAll(methods, privateMethods);
+-                } catch (NoClassDefFoundError error) {
 +
-+                try {
 +                    Object instance = clazz.getConstructor().newInstance();
 +                    Method method = clazz.getMethod("shouldEnable");
++                    shouldEnable = (boolean) method.invoke(instance);
++                } catch (NoClassDefFoundError | InvocationTargetException | InstantiationException |
++                         IllegalAccessException | NoSuchMethodException error) {
+                     LOGGER.severe("Failed to load class " + clazz.getName() + " due to missing dependencies, " + error.getCause() + ": " + error.getMessage());
+                     return;
+                 }
+@@ -72,6 +75,16 @@ public class LeavesProtocolManager {
+ 
+                     method.setAccessible(true);
+ 
++                    final ProtocolHandler.ReloadServer reloadServer = method.getAnnotation(ProtocolHandler.ReloadServer.class);
++                    if (reloadServer != null) {
++                        RELOAD_SERVER.add(method);
++                        continue;
++                    }
 +
-+                    if (!(boolean) method.invoke(instance)) continue;
-+                } catch (NoSuchMethodException | IllegalAccessException | InstantiationException |
-+                         InvocationTargetException e) {
-+                    LOGGER.severe("Failed to load class " + clazz.getName() + " due to missing dependencies, " + e.getCause() + ": " + e.getMessage());
-+                    return;
-+                }
++                    if (!shouldEnable) {
++                        continue;
++                    }
 +
-                 Set<Method> methods;
-                 try {
-                     Method[] publicMethods = clazz.getMethods();
-@@ -155,6 +159,16 @@ public class LeavesProtocolManager {
+                     final ProtocolHandler.Init init = method.getAnnotation(ProtocolHandler.Init.class);
+                     if (init != null) {
+                         try {
+@@ -135,12 +148,6 @@ public class LeavesProtocolManager {
+                         continue;
+                     }
+ 
+-                    final ProtocolHandler.ReloadServer reloadServer = method.getAnnotation(ProtocolHandler.ReloadServer.class);
+-                    if (reloadServer != null) {
+-                        RELOAD_SERVER.add(method);
+-                        continue;
+-                    }
+-
+                     final ProtocolHandler.MinecraftRegister minecraftRegister = method.getAnnotation(ProtocolHandler.MinecraftRegister.class);
+                     if (minecraftRegister != null) {
+                         if (!MINECRAFT_REGISTER.containsKey(protocol)) {
+@@ -155,6 +162,16 @@ public class LeavesProtocolManager {
          }
      }
  
@@ -344,14 +386,14 @@ index e7ce2e7a1686f1775c0a2e0cd731294025d2833b..54e7d12492eefbd4ae0d5c01f447381c
 +        TICKERS.clear();
 +        PLAYER_JOIN.clear();
 +        PLAYER_LEAVE.clear();
-+        RELOAD_SERVER.clear();
++        //RELOAD_SERVER.clear(); // No need
 +        MINECRAFT_REGISTER.clear();
 +    }
 +
      public static LeavesCustomPayload<?> decode(ResourceLocation id, FriendlyByteBuf buf) {
          for (LeavesProtocol protocol : KNOWN_TYPES.keySet()) {
              if (!ArrayUtils.contains(protocol.namespace(), id.getNamespace())) {
-@@ -276,81 +290,6 @@ public class LeavesProtocolManager {
+@@ -276,81 +293,6 @@ public class LeavesProtocolManager {
          }
      }
  
@@ -434,7 +476,7 @@ index e7ce2e7a1686f1775c0a2e0cd731294025d2833b..54e7d12492eefbd4ae0d5c01f447381c
          @Override
          public void write(@NotNull FriendlyByteBuf buf) {
 diff --git a/src/main/java/org/leavesmc/leaves/protocol/jade/JadeProtocol.java b/src/main/java/org/leavesmc/leaves/protocol/jade/JadeProtocol.java
-index 43ad624bbe334384de4e79d0075e67389648c014..b418b705be48950587e24bb2dfb8751e7d459ff4 100644
+index 43ad624bbe334384de4e79d0075e67389648c014..a03a6e558179a1b1c81ee57143e00cd045753e9d 100644
 --- a/src/main/java/org/leavesmc/leaves/protocol/jade/JadeProtocol.java
 +++ b/src/main/java/org/leavesmc/leaves/protocol/jade/JadeProtocol.java
 @@ -103,6 +103,10 @@ public class JadeProtocol {
@@ -502,18 +544,7 @@ index 43ad624bbe334384de4e79d0075e67389648c014..b418b705be48950587e24bb2dfb8751e
          MinecraftServer server = MinecraftServer.getServer();
          server.execute(() -> {
              Level world = player.level();
-@@ -291,9 +285,7 @@ public class JadeProtocol {
- 
-     @ProtocolHandler.ReloadServer
-     public static void onServerReload() {
--        if (org.dreeam.leaf.config.modules.network.ProtocolSupport.jadeProtocol) {
--            enableAllPlayer();
--        }
-+        enableAllPlayer();
-     }
- 
-     public static void enableAllPlayer() {
-@@ -302,7 +294,8 @@ public class JadeProtocol {
+@@ -302,7 +296,8 @@ public class JadeProtocol {
          }
      }
  
@@ -523,7 +554,7 @@ index 43ad624bbe334384de4e79d0075e67389648c014..b418b705be48950587e24bb2dfb8751e
  
          private static final ResourceLocation PACKET_REQUEST_ENTITY = JadeProtocol.id("request_entity");
  
-@@ -326,7 +319,8 @@ public class JadeProtocol {
+@@ -326,7 +321,8 @@ public class JadeProtocol {
          }
      }
  
@@ -533,7 +564,7 @@ index 43ad624bbe334384de4e79d0075e67389648c014..b418b705be48950587e24bb2dfb8751e
  
          private static final ResourceLocation PACKET_REQUEST_BLOCK = JadeProtocol.id("request_block");
          private static final StreamCodec<RegistryFriendlyByteBuf, ItemStack> ITEM_STACK_CODEC = ItemStack.OPTIONAL_STREAM_CODEC;
-@@ -352,7 +346,8 @@ public class JadeProtocol {
+@@ -352,7 +348,8 @@ public class JadeProtocol {
          }
      }
  
