@@ -15,7 +15,7 @@ This patch was ported downstream from the Petal fork.
 Makes most pathfinding-related work happen asynchronously
 
 diff --git a/src/main/java/net/minecraft/world/entity/Mob.java b/src/main/java/net/minecraft/world/entity/Mob.java
-index 4e5dbee1f43b4114a07adab3c3ddc2b9be53ca9c..89ad2a439d774d18a94f66b601d3d17e0f02faaf 100644
+index 26a2dbc431146828a79c34543bdabca877b6fa42..37a7fdb543cb39d67716bdbca306d7006cf267bb 100644
 --- a/src/main/java/net/minecraft/world/entity/Mob.java
 +++ b/src/main/java/net/minecraft/world/entity/Mob.java
 @@ -297,6 +297,7 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
@@ -27,13 +27,13 @@ index 4e5dbee1f43b4114a07adab3c3ddc2b9be53ca9c..89ad2a439d774d18a94f66b601d3d17e
      }
  
 diff --git a/src/main/java/net/minecraft/world/entity/ai/behavior/AcquirePoi.java b/src/main/java/net/minecraft/world/entity/ai/behavior/AcquirePoi.java
-index 848452ba2068c9b0ec6e253da0d0ef10fdec48b0..f702131a5ac60936257816c3d6549853e6079f0b 100644
+index 4d2b6e69ed98aca98ffc50fefc6e535c1afb759d..fe7e9e194634f6bfff2aab6e496a35fb85554e5a 100644
 --- a/src/main/java/net/minecraft/world/entity/ai/behavior/AcquirePoi.java
 +++ b/src/main/java/net/minecraft/world/entity/ai/behavior/AcquirePoi.java
 @@ -85,6 +85,38 @@ public class AcquirePoi {
-                                         )
-                                         .limit(5L)
-                                         .collect(Collectors.toSet());
+                                     io.papermc.paper.util.PoiAccess.findNearestPoiPositions(poiManager, poiPredicate, predicate2, entity.blockPosition(), world.purpurConfig.villagerAcquirePoiSearchRadius, world.purpurConfig.villagerAcquirePoiSearchRadius*world.purpurConfig.villagerAcquirePoiSearchRadius, PoiManager.Occupancy.HAS_SPACE, false, 5, poiposes); // Purpur
+                                     Set<Pair<Holder<PoiType>, BlockPos>> set = new java.util.HashSet<>(poiposes);
+                                     // Paper end - optimise POI access
 +                                    // Kaiiju start - petal - Async path processing
 +                                    if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
 +                                        // await on path async
@@ -468,16 +468,16 @@ index ce7398a617abe6e800c1e014b3ac5c970eb15c8a..dbf43209417d8453ff39839392eba45b
      }
  
 diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java
-index 222c87e80cb089867ce9a7d2dceebe21b4bfe0de..e57b60f1656d80d1307f0c9b000358a2598b7c75 100644
+index 9104d7010bda6f9f73b478c11490ef9c53f76da2..7abf4ecd1153be597efaa12ec330d20e4d49039e 100644
 --- a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java
 +++ b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java
-@@ -57,6 +57,25 @@ public class NearestBedSensor extends Sensor<Mob> {
-                     holder -> holder.is(PoiTypes.HOME), predicate, entity.blockPosition(), world.purpurConfig.villagerNearestBedSensorSearchRadius, PoiManager.Occupancy.ANY
-                 )
-                 .collect(Collectors.toSet());
+@@ -57,6 +57,26 @@ public class NearestBedSensor extends Sensor<Mob> {
+             java.util.List<Pair<Holder<PoiType>, BlockPos>> poiposes = new java.util.ArrayList<>();
+             // don't ask me why it's unbounded. ask mojang.
+             io.papermc.paper.util.PoiAccess.findAnyPoiPositions(poiManager, type -> type.is(PoiTypes.HOME), predicate, entity.blockPosition(), world.purpurConfig.villagerNearestBedSensorSearchRadius, PoiManager.Occupancy.ANY, false, Integer.MAX_VALUE, poiposes); // Purpur
 +            // Kaiiju start - await on async path processing
 +            if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
-+                Path possiblePath = AcquirePoi.findPathToPois(entity, set);
++                Path possiblePath = AcquirePoi.findPathToPois(entity, new java.util.HashSet<>(poiposes));
 +                org.dreeam.leaf.async.path.AsyncPathProcessor.awaitProcessing(entity, possiblePath, path -> {
 +                    // read canReach check
 +                    if ((path == null || !path.canReach()) && this.triedCount < 5) {
@@ -494,10 +494,11 @@ index 222c87e80cb089867ce9a7d2dceebe21b4bfe0de..e57b60f1656d80d1307f0c9b000358a2
 +                });
 +            } else {
 +                // Kaiiju end
-             Path path = AcquirePoi.findPathToPois(entity, set);
++
+             Path path = AcquirePoi.findPathToPois(entity, new java.util.HashSet<>(poiposes));
+             // Paper end - optimise POI access
              if (path != null && path.canReach()) {
-                 BlockPos blockPos = path.getTarget();
-@@ -67,6 +86,7 @@ public class NearestBedSensor extends Sensor<Mob> {
+@@ -68,6 +88,7 @@ public class NearestBedSensor extends Sensor<Mob> {
              } else if (this.triedCount < 5) {
                  this.batchCache.long2LongEntrySet().removeIf(entry -> entry.getLongValue() < this.lastUpdate);
              }
@@ -1273,39 +1274,32 @@ index 0000000000000000000000000000000000000000..c0527323c42acf7e4728237e268f075e
 +}
 diff --git a/src/main/java/org/dreeam/leaf/config/modules/async/AsyncPathfinding.java b/src/main/java/org/dreeam/leaf/config/modules/async/AsyncPathfinding.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..66f28420272997d685b95c57eeee4fb70829adbb
+index 0000000000000000000000000000000000000000..b45d738fb982b0a245ee5fda8c4abd0df0441f74
 --- /dev/null
 +++ b/src/main/java/org/dreeam/leaf/config/modules/async/AsyncPathfinding.java
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,32 @@
 +package org.dreeam.leaf.config.modules.async;
 +
-+import com.electronwill.nightconfig.core.file.CommentedFileConfig;
-+import net.minecraft.server.MinecraftServer;
-+import org.dreeam.leaf.config.ConfigInfo;
++import org.dreeam.leaf.config.ConfigModules;
 +import org.dreeam.leaf.config.EnumConfigCategory;
-+import org.dreeam.leaf.config.IConfigModule;
++import org.dreeam.leaf.config.LeafConfig;
 +
-+public class AsyncPathfinding implements IConfigModule {
++public class AsyncPathfinding extends ConfigModules {
 +
-+    @Override
-+    public EnumConfigCategory getCategory() {
-+        return EnumConfigCategory.ASYNC;
++    public String getBasePath() {
++        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-pathfinding";
 +    }
 +
-+    @Override
-+    public String getBaseName() {
-+        return "async_pathfinding";
-+    }
-+
-+    @ConfigInfo(baseName = "enabled")
 +    public static boolean enabled = false;
-+    @ConfigInfo(baseName = "max-threads")
 +    public static int asyncPathfindingMaxThreads = 0;
-+    @ConfigInfo(baseName = "keepalive")
 +    public static int asyncPathfindingKeepalive = 60;
 +
 +    @Override
-+    public void onLoaded(CommentedFileConfig config) {
++    public void onLoaded() {
++        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
++        asyncPathfindingMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncPathfindingMaxThreads);
++        asyncPathfindingKeepalive = config.getInt(getBasePath() + ".keepalive", asyncPathfindingKeepalive);
++
 +        if (asyncPathfindingMaxThreads < 0)
 +            asyncPathfindingMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncPathfindingMaxThreads, 1);
 +        else if (asyncPathfindingMaxThreads == 0)
@@ -1313,6 +1307,6 @@ index 0000000000000000000000000000000000000000..66f28420272997d685b95c57eeee4fb7
 +        if (!enabled)
 +            asyncPathfindingMaxThreads = 0;
 +        else
-+            MinecraftServer.LOGGER.info("Using {} threads for Async Pathfinding", asyncPathfindingMaxThreads);
++            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", asyncPathfindingMaxThreads);
 +    }
 +}

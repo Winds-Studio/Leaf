@@ -21,6 +21,7 @@
  - **Configurable UseItem distance** for anarchy servers
  - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
+ - Support for **Linear region file format**
  - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail
  - And more...
 
@@ -28,8 +29,8 @@
 [![bStats Graph Data](https://bstats.org/signatures/server-implementation/Leaf.svg)](https://bstats.org/plugin/server-implementation/Leaf)
 
 ## 📫 Contact
-- Discord: [`https://discord.gg/gfgAwdSEuM`](https://discord.gg/gfgAwdSEuM)
-- QQ: `2682173972`
+- Discord: [`https://discord.com/invite/gfgAwdSEuM`](https://discord.com/invite/gfgAwdSEuM)
+- QQ Group: `715128273`
 
 ## 📫 Donation
 If you love my work, feel free to donate :)
