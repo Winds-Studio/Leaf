@@ -112,12 +112,6 @@ allprojects {
                 credentials.username = System.getenv("REPO_USER")
                 credentials.password = System.getenv("REPO_PASSWORD")
             }
-
-            publications {
-                register<MavenPublication>("gpr") {
-                    from(components["java"])
-                }
-            }
         }
     }
 }
