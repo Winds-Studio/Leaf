@@ -47,9 +47,15 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyPatches && ./gradlew createMojmapPaperclipJar
 ```
 
-## 🧪 API (WIP)
+## 🧪 API
 
 ### Maven
+```xml
+<repository>
+    <id>leafmc</id>
+    <url>https://maven.nostal.ink/repository/maven-snapshots/</url>
+</repository>
+```
 ```xml
 <dependency>
     <groupId>cn.dreeam.leaf</groupId>
@@ -60,8 +66,18 @@ Building a Paperclip JAR for distribution:
 ```
 ### Gradle
 ```kotlin
+repositories {
+  maven {
+    url = uri("https://maven.nostal.ink/repository/maven-snapshots/")
+  }
+}
+
 dependencies {
     compileOnly("cn.dreeam.leaf:leaf-api:1.21-R0.1-SNAPSHOT")
+}
+
+java {
+  toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 ```
 

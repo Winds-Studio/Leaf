@@ -5,13 +5,14 @@ plugins {
 }
 
 val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
+val leafMavenPublicUrl = "https://maven.nostal.ink/repository/maven-snapshots/"
 
 repositories {
     mavenCentral()
     maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(configurations.paperclip.name) }
     }
-    maven("https://maven.nostal.ink/repository/maven-snapshots/") // Quantumleaper
+    maven(leafMavenPublicUrl) // Quantumleaper
 }
 
 dependencies {
@@ -86,6 +87,7 @@ tasks.generateDevelopmentBundle {
         listOf(
             "https://repo.maven.apache.org/maven2/",
             paperMavenPublicUrl,
+            leafMavenPublicUrl
         )
     )
 }
@@ -105,10 +107,10 @@ allprojects {
         repositories {
             maven {
                 name = "leaf"
-                url = uri("https://maven.pkg.github.com/Winds-Studio/Leaf")
+                url = uri(leafMavenPublicUrl)
 
-                credentials.username = System.getenv("REPO_PASSWORD")
-                credentials.password = System.getenv("REPO_USER")
+                credentials.username = System.getenv("REPO_USER")
+                credentials.password = System.getenv("REPO_PASSWORD")
             }
 
             publications {
