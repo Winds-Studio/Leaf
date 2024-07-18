@@ -58,8 +58,7 @@ logsuffix=""
 
 # Paper updates
 if [ -n "$paperHash" ]; then
-    newHash=$(git diff gradle.properties | awk '/^+paperCommit =/{print $NF}')
-    paper=$(getCommits "PaperMC/Paper" "$paperHash" $(echo $newHash | grep . -q && echo $newHash || echo "HEAD"))
+    paper=$(getCommits "PaperMC/Paper" "$paperHash" "HEAD")
 
     # Updates found
     if [ -n "$paper" ]; then
@@ -70,7 +69,8 @@ fi
 
 # Gale updates
 if [ -n "$galeHash" ]; then
-    gale=$(getCommits "Dreeam-qwq/Gale" "$galeHash" "HEAD")
+    newHash=$(git diff gradle.properties | awk '/^+galeCommit =/{print $NF}')
+    gale=$(getCommits "Dreeam-qwq/Gale" "$galeHash" $(echo $newHash | grep . -q && echo $newHash || echo "HEAD"))
 
     # Updates found
     if [ -n "$gale" ]; then
