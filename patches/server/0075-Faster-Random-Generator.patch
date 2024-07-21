@@ -5,7 +5,7 @@ Subject: [PATCH] Faster Random Generator
 
 
 diff --git a/src/main/java/net/minecraft/util/RandomSource.java b/src/main/java/net/minecraft/util/RandomSource.java
-index 7762c8186035fdf60e11d9f1844516b61f442206..c2f0b5933c61168cbde507f04674e95b78e2d7f3 100644
+index 67d94b649148b3165f09d75d8c9db10db4cc7874..e0fffcaff4ccb8b20a85a68fa73d3076246aad0c 100644
 --- a/src/main/java/net/minecraft/util/RandomSource.java
 +++ b/src/main/java/net/minecraft/util/RandomSource.java
 @@ -6,6 +6,7 @@ import net.minecraft.world.level.levelgen.PositionalRandomFactory;
@@ -16,55 +16,101 @@ index 7762c8186035fdf60e11d9f1844516b61f442206..c2f0b5933c61168cbde507f04674e95b
  
  public interface RandomSource {
      @Deprecated
-@@ -23,16 +24,16 @@ public interface RandomSource {
+@@ -23,16 +24,28 @@ public interface RandomSource {
  
      @Deprecated
      static RandomSource createThreadSafe() {
 -        return new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
 -    }
-+        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new TheFasterRandom(RandomSupport.generateFasterSeed()) : new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled
++                ? new TheFasterRandom(RandomSupport.generateFasterSeed())
++                : new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
 +    } // Leaf - Faster RNG
  
      static RandomSource create(long seed) {
 -        return new LegacyRandomSource(seed);
--    }
-+        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new TheFasterRandom(seed) : new LegacyRandomSource(seed);
-+    } // Leaf - Faster RNG
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled
++                ? new TheFasterRandom(seed)
++                : new LegacyRandomSource(seed);
+     }
  
++    static RandomSource createForSlimeChunk(long seed) {
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled && !org.dreeam.leaf.config.modules.opt.FastRNG.useLegacyForSlimeChunk
++                ? new TheFasterRandom(seed)
++                : new LegacyRandomSource(seed);
++    } // Leaf - Faster RNG
++
      static RandomSource createNewThreadLocalInstance() {
 -        return new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
 -    }
-+        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new TheFasterRandom(RandomSupport.generateFasterSeed()) : new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled
++                ? new TheFasterRandom(RandomSupport.generateFasterSeed())
++                : new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
 +    } // Leaf - Faster RNG
  
      RandomSource fork();
  
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java b/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java
+index c6efe6faf68c7a7b1df344e2e527aa7e44bfacb8..fe89e7b7c4267ee2969d1505f83cba1ac17cb13e 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java
+@@ -69,9 +69,9 @@ public class WorldgenRandom extends LegacyRandomSource {
+     }
+ 
+     public static RandomSource seedSlimeChunk(int chunkX, int chunkZ, long worldSeed, long scrambler) {
+-        return RandomSource.create(
++        return RandomSource.createForSlimeChunk(
+             worldSeed + (long)(chunkX * chunkX * 4987142) + (long)(chunkX * 5947611) + (long)(chunkZ * chunkZ) * 4392871L + (long)(chunkZ * 389711) ^ scrambler
+-        );
++        ); // Leaf - Faster RNG
+     }
+ 
+     public static enum Algorithm {
 diff --git a/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java b/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..996418c50cf005dbb850a9627c9c73f84f33f32a
+index 0000000000000000000000000000000000000000..dff4d1955d37529403ba08e41c12774e30741b28
 --- /dev/null
 +++ b/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,41 @@
 +package org.dreeam.leaf.config.modules.opt;
 +
 +import org.dreeam.leaf.config.ConfigModules;
 +import org.dreeam.leaf.config.EnumConfigCategory;
++import org.dreeam.leaf.config.LeafConfig;
 +
 +public class FastRNG extends ConfigModules {
 +
 +    public String getBasePath() {
-+        return EnumConfigCategory.PERF.getBaseKeyName();
++        return EnumConfigCategory.PERF.getBaseKeyName() + ".faster-random-generator";
 +    }
 +
 +    public static boolean enabled = false;
++    public static boolean warnForSlimeChunk = true;
++    public static boolean useLegacyForSlimeChunk = false;
 +
 +    @Override
 +    public void onLoaded() {
-+        enabled = config.getBoolean(getBasePath() + ".use-faster-random-generator", enabled, """
++        config.addComment(getBasePath(), """
 +                Use faster random generator? (Up to 100X faster)
 +                Requires a JVM that supports RandomGenerator and the LXM generators.
 +                Some JREs don't support this and will cause a crash.
 +                """);
++
++        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
++        warnForSlimeChunk = config.getBoolean(getBasePath() + ".warn-for-slime-chunk", warnForSlimeChunk,
++                "Warn if you are not using legacy random source for slime chunk generation.");
++        useLegacyForSlimeChunk = config.getBoolean(getBasePath() + ".use-legacy-random-for-slime-chunk", useLegacyForSlimeChunk, """
++                Use legacy random source for slime chunk generation,
++                to follow vanilla behavior.""");
++
++        if (enabled && warnForSlimeChunk) {
++            LeafConfig.LOGGER.warn("You enabled faster random generator, it will offset location of slime chunk");
++            LeafConfig.LOGGER.warn("If your server has slime farms or facilities need vanilla slime chunk,");
++            LeafConfig.LOGGER.warn("set performance.faster-random-generator.use-legacy-random-for-slime-chunk " +
++                    "to true to use LegacyRandomSource for slime chunk generation.");
++            LeafConfig.LOGGER.warn("Set performance.faster-random-generator.warn-for-slime-chunk to false to " +
++                    "disable this warning.");
++        }
 +    }
 +}
 diff --git a/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java b/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java
