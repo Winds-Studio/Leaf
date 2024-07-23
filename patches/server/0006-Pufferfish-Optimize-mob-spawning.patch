@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Raneri <kevin.raneri@gmail.com>
+Date: Wed, 10 Nov 2021 00:37:03 -0500
+Subject: [PATCH] Pufferfish: Optimize mob spawning
+
+Original license: GPL v3
+Original project: https://github.com/pufferfish-gg/Pufferfish
+
+This patch aims to reduce the main-thread impact of mob spawning by
+offloading as much work as possible to other threads. It is possible for
+inconsistencies to come up, but when they happen they never interfere
+with the server's operation (they don't produce errors), and side
+effects are limited to more or less mobs being spawned in any particular
+tick.
+
+It is possible to disable this optimization if it is not required or if
+it interferes with any plugins. On servers with thousands of entities,
+this can result in performance gains of up to 15%, which is significant
+and, in my opinion, worth the low risk of minor mob-spawning-related
+inconsistencies.
+
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index e923bbd1d9b5c1783a4486cf4ed8c609b652d8fe..81c1b8b4154934d91d25527351e8f13f9208af21 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -310,6 +310,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     public volatile boolean abnormalExit = false; // Paper
+     public static final long SERVER_INIT = System.nanoTime(); // Paper - Lag compensation
+ 
++    public gg.pufferfish.pufferfish.util.AsyncExecutor mobSpawnExecutor = new gg.pufferfish.pufferfish.util.AsyncExecutor("MobSpawning"); // Pufferfish - optimize mob spawning
++
+     public static <S extends MinecraftServer> S spin(Function<Thread, S> serverFactory) {
+         AtomicReference<S> atomicreference = new AtomicReference();
+         Thread thread = new ca.spottedleaf.moonrise.common.util.TickThread(() -> { // Paper - rewrite chunk system
+diff --git a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
+index 30ddaba93a1b2bb228a9fcdf25e8abab036d9f38..3ca8a80f44ef8c3fbf55250dc1f345e2b1308376 100644
+--- a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
++++ b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
+@@ -375,6 +375,7 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+                 DedicatedServer.LOGGER.info("JMX monitoring enabled");
+             }
+ 
++            if (org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled) mobSpawnExecutor.start(); // Pufferfish
+             return true;
+         }
+     }
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index d2750fb7efbe8c1c77d4cb57f6ceec4fd968e326..a3283d6bd8654ef580274f83c7defcccba4240bb 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -127,6 +127,9 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+     // Paper end - rewrite chunk system
+     private ServerChunkCache.ChunkAndHolder[] iterationCopy; // Paper - chunk tick iteration optimisations
+ 
++    public boolean firstRunSpawnCounts = true; // Pufferfish
++    public final java.util.concurrent.atomic.AtomicBoolean _pufferfish_spawnCountsReady = new java.util.concurrent.atomic.AtomicBoolean(false); // Pufferfish - optimize countmobs
++
+     public ServerChunkCache(ServerLevel world, LevelStorageSource.LevelStorageAccess session, DataFixer dataFixer, StructureTemplateManager structureTemplateManager, Executor workerExecutor, ChunkGenerator chunkGenerator, int viewDistance, int simulationDistance, boolean dsync, ChunkProgressListener worldGenerationProgressListener, ChunkStatusUpdateListener chunkStatusChangeListener, Supplier<DimensionDataStorage> persistentStateManagerFactory) {
+         this.level = world;
+         this.mainThreadProcessor = new ServerChunkCache.MainThreadExecutor(world);
+@@ -452,6 +455,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+                 // Paper start - Optional per player mob spawns
+                 int naturalSpawnChunkCount = k;
+                 if ((this.spawnFriendlies || this.spawnEnemies) && this.level.paperConfig().entities.spawning.perPlayerMobSpawns) { // don't count mobs when animals and monsters are disabled
++                    if (!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled) { // Pufferfish - moved down when async processing
+                     // re-set mob counts
+                     for (ServerPlayer player : this.level.players) {
+                         // Paper start - per player mob spawning backoff
+@@ -466,14 +470,18 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+                         }
+                         // Paper end - per player mob spawning backoff
+                     }
+-                    spawnercreature_d = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, null, true);
++                    lastSpawnState = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, null, true); // Pufferfish - async mob spawning
++                    } // Pufferfish - (endif) moved down when async processing
+                 } else {
+-                    spawnercreature_d = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, !this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new LocalMobCapCalculator(this.chunkMap) : null, false);
++                    // Pufferfish start - async mob spawning
++                    lastSpawnState = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, !this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new LocalMobCapCalculator(this.chunkMap) : null, false);
++                    _pufferfish_spawnCountsReady.set(true);
++                    // Pufferfish end
+                 }
+                 // Paper end - Optional per player mob spawns
+                 this.level.timings.countNaturalMobs.stopTiming(); // Paper - timings
+ 
+-                this.lastSpawnState = spawnercreature_d;
++                //this.lastSpawnState = spawnercreature_d; // Pufferfish - this is managed asynchronously
+                 // Gale start - MultiPaper - skip unnecessary mob spawning computations
+                 } else {
+                     spawnercreature_d = null;
+@@ -501,8 +509,8 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+                     if (true && this.chunkMap.anyPlayerCloseEnoughForSpawning(chunkcoordintpair)) { // Paper - rewrite chunk system
+                         chunk1.incrementInhabitedTime(j);
+-                        if (flagAndHasNaturalSpawn && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(chunkcoordintpair, true)) { // Spigot // Gale - MultiPaper - skip unnecessary mob spawning computations
+-                            NaturalSpawner.spawnForChunk(this.level, chunk1, spawnercreature_d, this.spawnFriendlies, this.spawnEnemies, flag1);
++                        if (flagAndHasNaturalSpawn && (!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled || _pufferfish_spawnCountsReady.get()) && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(chunkcoordintpair, true)) { // Spigot // Gale - MultiPaper - skip unnecessary mob spawning computations // Pufferfish
++                            NaturalSpawner.spawnForChunk(this.level, chunk1, lastSpawnState, this.spawnFriendlies, this.spawnEnemies, flag1); // Pufferfish
+                         }
+ 
+                         if (true) { // Paper - rewrite chunk system
+@@ -542,6 +550,40 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+             this.level.timings.broadcastChunkUpdates.stopTiming(); // Paper - timing
+             // Paper end - chunk tick iteration optimisations
+         }
++
++        // Pufferfish start - optimize mob spawning
++        if (org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled) {
++            for (ServerPlayer player : this.level.players) {
++                // Paper start - per player mob spawning backoff
++                for (int ii = 0; ii < ServerPlayer.MOBCATEGORY_TOTAL_ENUMS; ii++) {
++                    player.mobCounts[ii] = 0;
++
++                    int newBackoff = player.mobBackoffCounts[ii] - 1; // TODO make configurable bleed // TODO use nonlinear algorithm?
++                    if (newBackoff < 0) {
++                        newBackoff = 0;
++                    }
++                    player.mobBackoffCounts[ii] = newBackoff;
++                }
++                // Paper end - per player mob spawning backoff
++            }
++            if (firstRunSpawnCounts) {
++                firstRunSpawnCounts = false;
++                _pufferfish_spawnCountsReady.set(true);
++            }
++            if (_pufferfish_spawnCountsReady.getAndSet(false)) {
++                net.minecraft.server.MinecraftServer.getServer().mobSpawnExecutor.submit(() -> {
++                    int mapped = distanceManager.getNaturalSpawnChunkCount();
++                    ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet.Iterator<Entity> objectiterator =
++                            level.entityTickList.entities.iterator(ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet.ITERATOR_FLAG_SEE_ADDITIONS);
++                    gg.pufferfish.pufferfish.util.IterableWrapper<Entity> wrappedIterator =
++                            new gg.pufferfish.pufferfish.util.IterableWrapper<>(objectiterator);
++                    lastSpawnState = NaturalSpawner.createState(mapped, wrappedIterator, this::getFullChunk, null, true);
++                    objectiterator.finishedIterating();
++                    _pufferfish_spawnCountsReady.set(true);
++                });
++            }
++        }
++        // Pufferfish end
+     }
+ 
+     // Gale start - MultiPaper - skip unnecessary mob spawning computations
+diff --git a/src/main/java/net/minecraft/world/level/entity/EntityTickList.java b/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
+index d8b4196adf955f8d414688dc451caac2d9c609d9..80a43def4912a3228cd95117d5c2aac68798b4ec 100644
+--- a/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
++++ b/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
+@@ -9,7 +9,7 @@ import javax.annotation.Nullable;
+ import net.minecraft.world.entity.Entity;
+ 
+ public class EntityTickList {
+-    private final ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet<net.minecraft.world.entity.Entity> entities = new ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet<>(); // Paper - rewrite chunk system
++    public final ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet<net.minecraft.world.entity.Entity> entities = new ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet<>(); // Paper - rewrite chunk system // Pufferfish - private->public
+ 
+     private void ensureActiveIsNotIterated() {
+         // Paper - rewrite chunk system
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/async/AsyncMobSpawning.java b/src/main/java/org/dreeam/leaf/config/modules/async/AsyncMobSpawning.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8a3726a747ff4640f9936a9eae1dca34e5203029
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/modules/async/AsyncMobSpawning.java
+@@ -0,0 +1,30 @@
++package org.dreeam.leaf.config.modules.async;
++
++import org.dreeam.leaf.config.ConfigModules;
++import org.dreeam.leaf.config.EnumConfigCategory;
++
++public class AsyncMobSpawning extends ConfigModules {
++
++    public String getBasePath() {
++        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-mob-spawning";
++    }
++
++    public static boolean enabled = true;
++    public static boolean asyncMobSpawningInitialized;
++
++    @Override
++    public void onLoaded() {
++        config.addComment(getBasePath(), """
++                Whether or not asynchronous mob spawning should be enabled.
++                On servers with many entities, this can improve performance by up to 15%. You must have
++                paper's per-player-mob-spawns setting set to true for this to work.
++                One quick note - this does not actually spawn mobs async (that would be very unsafe).
++                This just offloads some expensive calculations that are required for mob spawning.""");
++
++        // This prevents us from changing the value during a reload.
++        if (!asyncMobSpawningInitialized) {
++            asyncMobSpawningInitialized = true;
++            enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
++        }
++    }
++}

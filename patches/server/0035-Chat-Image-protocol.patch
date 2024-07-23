@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <fsjk947@gmail.com>
+Date: Wed, 13 Mar 2024 18:11:10 +0800
+Subject: [PATCH] Chat Image protocol
+
+This patch is Powered by ChatImage (https://github.com/kitUIN/ChatImage)
+
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java b/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java
+index 9bff9c7fce4fec7687940f4212ac05d460ab2ab5..6f151c185850738a9f8a575f9c09e3c469f5f9e2 100644
+--- a/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java
++++ b/src/main/java/org/dreeam/leaf/config/modules/network/ProtocolSupport.java
+@@ -13,6 +13,7 @@ public class ProtocolSupport extends ConfigModules {
+ 
+     public static boolean jadeProtocol = false;
+     public static boolean appleskinProtocol = false;
++    public static boolean chatImageProtocol = false;
+     public static boolean xaeroMapProtocol = false;
+     public static int xaeroMapServerID = new Random().nextInt();
+     public static boolean syncmaticaProtocol = false;
+@@ -23,6 +24,7 @@ public class ProtocolSupport extends ConfigModules {
+     public void onLoaded() {
+         jadeProtocol = config.getBoolean(getBasePath() + ".jade-protocol", jadeProtocol);
+         appleskinProtocol = config.getBoolean(getBasePath() + ".appleskin-protocol", appleskinProtocol);
++        chatImageProtocol = config.getBoolean(getBasePath() + ".chatimage-protocol", chatImageProtocol);
+         xaeroMapProtocol = config.getBoolean(getBasePath() + ".xaero-map-protocol", xaeroMapProtocol);
+         xaeroMapServerID = config.getInt(getBasePath() + ".xaero-map-server-id", xaeroMapServerID);
+         syncmaticaProtocol = config.getBoolean(getBasePath() + ".syncmatica-protocol", syncmaticaProtocol);
+diff --git a/src/main/java/org/leavesmc/leaves/protocol/ChatImageProtocol.java b/src/main/java/org/leavesmc/leaves/protocol/ChatImageProtocol.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..87ffe8a81a8bab7d20ff9551b105487d47616ee1
+--- /dev/null
++++ b/src/main/java/org/leavesmc/leaves/protocol/ChatImageProtocol.java
+@@ -0,0 +1,160 @@
++package org.leavesmc.leaves.protocol;
++
++import com.google.common.collect.Lists;
++import com.google.gson.Gson;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.network.protocol.Packet;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.ResourceLocation;
++import net.minecraft.server.level.ServerPlayer;
++import org.dreeam.leaf.config.modules.network.ProtocolSupport;
++import org.jetbrains.annotations.Contract;
++import org.jetbrains.annotations.NotNull;
++import org.leavesmc.leaves.protocol.chatimage.ChatImageIndex;
++import org.leavesmc.leaves.protocol.core.LeavesCustomPayload;
++import org.leavesmc.leaves.protocol.core.LeavesProtocol;
++import org.leavesmc.leaves.protocol.core.LeavesProtocolManager;
++import org.leavesmc.leaves.protocol.core.ProtocolHandler;
++
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++@LeavesProtocol(namespace = "chatimage")
++public class ChatImageProtocol {
++    public static final String PROTOCOL_ID = "chatimage";
++    private static final Map<String, HashMap<Integer, String>> SERVER_BLOCK_CACHE = new HashMap<>();
++    private static final Map<String, Integer> FILE_COUNT_MAP = new HashMap<>();
++    private static final Map<String, List<String>> USER_CACHE_MAP = new HashMap<>();
++    public static int MAX_STRING = 532767;
++    private static final Gson gson = new Gson();
++
++    public record FileInfoChannelPacket(String message) implements LeavesCustomPayload<LeavesProtocolManager.LeavesPayload> {
++        private static final ResourceLocation FILE_INFO = ChatImageProtocol.id("file_info");
++
++        @New
++        public FileInfoChannelPacket(ResourceLocation id, FriendlyByteBuf buffer) {
++            this(buffer.readUtf(MAX_STRING));
++        }
++
++        @Override
++        public void write(final FriendlyByteBuf buffer) {
++            buffer.writeUtf(message(), MAX_STRING);
++        }
++
++        @Override
++        public @NotNull ResourceLocation id() {
++            return FILE_INFO;
++        }
++    }
++
++    public record DownloadFileChannelPacket(String message) implements LeavesCustomPayload<LeavesProtocolManager.LeavesPayload> {
++        /**
++         * 发送文件分块到客户端通道(Map)
++         */
++        private static final ResourceLocation DOWNLOAD_FILE_CHANNEL = ChatImageProtocol.id("download_file_channel");
++
++        @New
++        public DownloadFileChannelPacket(ResourceLocation id, FriendlyByteBuf buffer) {
++            this(buffer.readUtf(MAX_STRING));
++        }
++
++        @Override
++        public void write(final FriendlyByteBuf buffer) {
++            buffer.writeUtf(message(), MAX_STRING);
++        }
++
++        @Override
++        public @NotNull ResourceLocation id() {
++            return DOWNLOAD_FILE_CHANNEL;
++        }
++
++    }
++
++    public record FileChannelPacket(String message) implements LeavesCustomPayload<LeavesProtocolManager.LeavesPayload> {
++        /**
++         * 客户端发送文件分块到服务器通道(Map)
++         */
++        private static final ResourceLocation FILE_CHANNEL = ChatImageProtocol.id("file_channel");
++
++        @New
++        public FileChannelPacket(ResourceLocation id, FriendlyByteBuf buffer) {
++            this(buffer.readUtf(MAX_STRING));
++        }
++
++        @Override
++        public void write(final FriendlyByteBuf buffer) {
++            buffer.writeUtf(message(), MAX_STRING);
++        }
++
++        @Override
++        public @NotNull ResourceLocation id() {
++            return FILE_CHANNEL;
++        }
++
++    }
++
++    @ProtocolHandler.PayloadReceiver(payload = FileChannelPacket.class, payloadId = "file_channel")
++    public static void serverFileChannelReceived(ServerPlayer player, String res) {
++        if (!ProtocolSupport.chatImageProtocol) return;
++        ChatImageIndex title = gson.fromJson(res, ChatImageIndex.class);
++        HashMap<Integer, String> blocks = SERVER_BLOCK_CACHE.containsKey(title.url) ? SERVER_BLOCK_CACHE.get(title.url) : new HashMap<>();
++        blocks.put(title.index, res);
++        SERVER_BLOCK_CACHE.put(title.url, blocks);
++        FILE_COUNT_MAP.put(title.url, title.total);
++        //System.out.println("[FileChannel->Server:" + title.index + "/" + title.total + "]" + title.url);
++        if (title.total == blocks.size()) {
++            if (USER_CACHE_MAP.containsKey(title.url)) {
++                // 通知之前请求但是没图片的客户端
++                List<String> names = USER_CACHE_MAP.get(title.url);
++                for (String uuid : names) {
++                    ServerPlayer serverPlayer = player.server.getPlayerList().getPlayer(UUID.fromString(uuid));
++                    if (serverPlayer != null) {
++                        sendToPlayer(new FileInfoChannelPacket("true->" + title.url), serverPlayer);
++                    }
++                    //System.out.println("[echo to client(" + uuid + ")]" + title.url);
++                }
++                USER_CACHE_MAP.put(title.url, Lists.newArrayList());
++            }
++            //System.out.println("[FileChannel->Server]" + title.url);
++        }
++    }
++
++    @ProtocolHandler.PayloadReceiver(payload = FileInfoChannelPacket.class, payloadId = "file_info")
++    public static void serverFileInfoChannelReceived(ServerPlayer player, String url) {
++        if (!ProtocolSupport.chatImageProtocol) return;
++        if (SERVER_BLOCK_CACHE.containsKey(url) && FILE_COUNT_MAP.containsKey(url)) {
++            HashMap<Integer, String> list = SERVER_BLOCK_CACHE.get(url);
++            Integer total = FILE_COUNT_MAP.get(url);
++            if (total == list.size()) {
++                // 服务器存在缓存图片,直接发送给客户端
++                for (Map.Entry<Integer, String> entry : list.entrySet()) {
++                    //System.out.println("[GetFileChannel->Client:" + entry.getKey() + "/" + (list.size() - 1) + "]" + url);
++                    sendToPlayer(new DownloadFileChannelPacket(entry.getValue()), player);
++                }
++                //System.out.println("[GetFileChannel->Client]" + url);
++                return;
++            }
++        }
++        //通知客户端无文件
++        sendToPlayer(new FileInfoChannelPacket("null->" + url), player);
++        //System.out.println("[GetFileChannel]not found in server:" + url);
++        // 记录uuid,后续有文件了推送
++        List<String> names = USER_CACHE_MAP.containsKey(url) ? USER_CACHE_MAP.get(url) : Lists.newArrayList();
++        names.add(player.getStringUUID());
++        USER_CACHE_MAP.put(url, names);
++        //System.out.println("[GetFileChannel]记录uuid:" + player.getStringUUID());
++        //System.out.println("[not found in server]" + url);
++    }
++
++    @Contract("_ -> new")
++    public static @NotNull ResourceLocation id(String path) {
++        return ResourceLocation.fromNamespaceAndPath(PROTOCOL_ID, path);
++    }
++
++    public static void sendToPlayer(CustomPacketPayload payload, ServerPlayer player) {
++        player.connection.send((Packet<?>) payload);
++    }
++
++}
+diff --git a/src/main/java/org/leavesmc/leaves/protocol/chatimage/ChatImageIndex.java b/src/main/java/org/leavesmc/leaves/protocol/chatimage/ChatImageIndex.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..369917ae4b82b6c1d480a5ac5ebd00e0c55f1fb5
+--- /dev/null
++++ b/src/main/java/org/leavesmc/leaves/protocol/chatimage/ChatImageIndex.java
+@@ -0,0 +1,15 @@
++package org.leavesmc.leaves.protocol.chatimage;
++
++public class ChatImageIndex {
++    public int index;
++    public int total;
++    public String url;
++    public String bytes;
++
++    public ChatImageIndex(int index, int total, String url, String bytes) {
++        this.index = index;
++        this.total = total;
++        this.url = url;
++        this.bytes = bytes;
++    }
++}
+\ No newline at end of file

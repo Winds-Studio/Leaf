@@ -1,0 +1,210 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <fsjk947@gmail.com>
+Date: Fri, 3 May 2024 01:12:58 +0800
+Subject: [PATCH] Faster Random Generator
+
+
+diff --git a/src/main/java/net/minecraft/util/RandomSource.java b/src/main/java/net/minecraft/util/RandomSource.java
+index 67d94b649148b3165f09d75d8c9db10db4cc7874..e0fffcaff4ccb8b20a85a68fa73d3076246aad0c 100644
+--- a/src/main/java/net/minecraft/util/RandomSource.java
++++ b/src/main/java/net/minecraft/util/RandomSource.java
+@@ -6,6 +6,7 @@ import net.minecraft.world.level.levelgen.PositionalRandomFactory;
+ import net.minecraft.world.level.levelgen.RandomSupport;
+ import net.minecraft.world.level.levelgen.SingleThreadedRandomSource;
+ import net.minecraft.world.level.levelgen.ThreadSafeLegacyRandomSource;
++import org.dreeam.leaf.util.math.random.TheFasterRandom;
+ 
+ public interface RandomSource {
+     @Deprecated
+@@ -23,16 +24,28 @@ public interface RandomSource {
+ 
+     @Deprecated
+     static RandomSource createThreadSafe() {
+-        return new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
+-    }
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled
++                ? new TheFasterRandom(RandomSupport.generateFasterSeed())
++                : new ThreadSafeLegacyRandomSource(RandomSupport.generateUniqueSeed());
++    } // Leaf - Faster RNG
+ 
+     static RandomSource create(long seed) {
+-        return new LegacyRandomSource(seed);
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled
++                ? new TheFasterRandom(seed)
++                : new LegacyRandomSource(seed);
+     }
+ 
++    static RandomSource createForSlimeChunk(long seed) {
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled && !org.dreeam.leaf.config.modules.opt.FastRNG.useLegacyForSlimeChunk
++                ? new TheFasterRandom(seed)
++                : new LegacyRandomSource(seed);
++    } // Leaf - Faster RNG
++
+     static RandomSource createNewThreadLocalInstance() {
+-        return new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
+-    }
++        return org.dreeam.leaf.config.modules.opt.FastRNG.enabled
++                ? new TheFasterRandom(RandomSupport.generateFasterSeed())
++                : new SingleThreadedRandomSource(ThreadLocalRandom.current().nextLong());
++    } // Leaf - Faster RNG
+ 
+     RandomSource fork();
+ 
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java b/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java
+index c6efe6faf68c7a7b1df344e2e527aa7e44bfacb8..fe89e7b7c4267ee2969d1505f83cba1ac17cb13e 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/WorldgenRandom.java
+@@ -69,9 +69,9 @@ public class WorldgenRandom extends LegacyRandomSource {
+     }
+ 
+     public static RandomSource seedSlimeChunk(int chunkX, int chunkZ, long worldSeed, long scrambler) {
+-        return RandomSource.create(
++        return RandomSource.createForSlimeChunk(
+             worldSeed + (long)(chunkX * chunkX * 4987142) + (long)(chunkX * 5947611) + (long)(chunkZ * chunkZ) * 4392871L + (long)(chunkZ * 389711) ^ scrambler
+-        );
++        ); // Leaf - Faster RNG
+     }
+ 
+     public static enum Algorithm {
+diff --git a/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java b/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..dff4d1955d37529403ba08e41c12774e30741b28
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/config/modules/opt/FastRNG.java
+@@ -0,0 +1,41 @@
++package org.dreeam.leaf.config.modules.opt;
++
++import org.dreeam.leaf.config.ConfigModules;
++import org.dreeam.leaf.config.EnumConfigCategory;
++import org.dreeam.leaf.config.LeafConfig;
++
++public class FastRNG extends ConfigModules {
++
++    public String getBasePath() {
++        return EnumConfigCategory.PERF.getBaseKeyName() + ".faster-random-generator";
++    }
++
++    public static boolean enabled = false;
++    public static boolean warnForSlimeChunk = true;
++    public static boolean useLegacyForSlimeChunk = false;
++
++    @Override
++    public void onLoaded() {
++        config.addComment(getBasePath(), """
++                Use faster random generator? (Up to 100X faster)
++                Requires a JVM that supports RandomGenerator and the LXM generators.
++                Some JREs don't support this and will cause a crash.
++                """);
++
++        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
++        warnForSlimeChunk = config.getBoolean(getBasePath() + ".warn-for-slime-chunk", warnForSlimeChunk,
++                "Warn if you are not using legacy random source for slime chunk generation.");
++        useLegacyForSlimeChunk = config.getBoolean(getBasePath() + ".use-legacy-random-for-slime-chunk", useLegacyForSlimeChunk, """
++                Use legacy random source for slime chunk generation,
++                to follow vanilla behavior.""");
++
++        if (enabled && warnForSlimeChunk) {
++            LeafConfig.LOGGER.warn("You enabled faster random generator, it will offset location of slime chunk");
++            LeafConfig.LOGGER.warn("If your server has slime farms or facilities need vanilla slime chunk,");
++            LeafConfig.LOGGER.warn("set performance.faster-random-generator.use-legacy-random-for-slime-chunk " +
++                    "to true to use LegacyRandomSource for slime chunk generation.");
++            LeafConfig.LOGGER.warn("Set performance.faster-random-generator.warn-for-slime-chunk to false to " +
++                    "disable this warning.");
++        }
++    }
++}
+diff --git a/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java b/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c13c8e5a2fba4267eb254e75f993bc6a9b861f6e
+--- /dev/null
++++ b/src/main/java/org/dreeam/leaf/util/math/random/TheFasterRandom.java
+@@ -0,0 +1,89 @@
++package org.dreeam.leaf.util.math.random;
++
++import net.minecraft.util.RandomSource;
++import net.minecraft.world.level.levelgen.BitRandomSource;
++import net.minecraft.world.level.levelgen.LegacyRandomSource;
++import net.minecraft.world.level.levelgen.PositionalRandomFactory;
++
++import java.util.random.RandomGenerator;
++import java.util.random.RandomGeneratorFactory;
++
++
++public class TheFasterRandom implements BitRandomSource {
++    private static final int INT_BITS = 48;
++    private static final long SEED_MASK = 0xFFFFFFFFFFFFL;
++    private static final long MULTIPLIER = 25214903917L;
++    private static final long INCREMENT = 11L;
++    private static final RandomGeneratorFactory<RandomGenerator.SplittableGenerator> RANDOM_GENERATOR_FACTORY = RandomGeneratorFactory.of(
++            "L64X128MixRandom");
++
++    private long seed;
++    private RandomGenerator.SplittableGenerator randomGenerator;
++
++    public TheFasterRandom(long seed) {
++        this.seed = seed;
++        this.randomGenerator = RANDOM_GENERATOR_FACTORY.create(seed);
++    }
++
++    public TheFasterRandom(long seed, RandomGenerator.SplittableGenerator randomGenerator) {
++        this.seed = seed;
++        this.randomGenerator = randomGenerator;
++    }
++
++    @Override
++    public RandomSource fork() {
++        return new TheFasterRandom(seed, randomGenerator.split());
++    }
++
++    @Override
++    public PositionalRandomFactory forkPositional() {
++        return new LegacyRandomSource.LegacyPositionalRandomFactory(this.seed);
++    }
++
++    @Override
++    public void setSeed(long seed) {
++        this.seed = seed;
++        this.randomGenerator = RANDOM_GENERATOR_FACTORY.create(seed);
++    }
++
++    @Override
++    public int next(int bits) {
++        // >>> instead of Mojang's >> fixes MC-239059
++        return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> INT_BITS - bits);
++    }
++
++    @Override
++    public int nextInt() {
++        return randomGenerator.nextInt();
++    }
++
++    @Override
++    public int nextInt(int bound) {
++        return randomGenerator.nextInt(bound);
++    }
++
++    @Override
++    public long nextLong() {
++        return randomGenerator.nextLong();
++    }
++
++    @Override
++    public boolean nextBoolean() {
++        return randomGenerator.nextBoolean();
++    }
++
++    @Override
++    public float nextFloat() {
++        return randomGenerator.nextFloat();
++    }
++
++    @Override
++    public double nextDouble() {
++        return randomGenerator.nextDouble();
++    }
++
++    @Override
++    public double nextGaussian() {
++        return randomGenerator.nextGaussian();
++    }
++}
