@@ -34,7 +34,7 @@
 
 ## 📫 Donation
 If you love my work, feel free to donate :)
-- Ko-Fi: 
+- afdian: https://afdian.com/a/Dreeam (For Chinese only)
 
 ## 📥 Download
 You can find latest successful build in [GitHub Action](https://github.com/Winds-Studio/Leaf/actions) or [Releases](https://github.com/Winds-Studio/Leaf/releases)
