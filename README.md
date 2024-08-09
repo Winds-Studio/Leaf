@@ -1,4 +1,4 @@
-<img src="leaf_banner.png" alt="Leaf">
+<img src="public/image/leaf_banner.png" alt="Leaf">
 <div align="center">
  
 [![Github Releases](https://img.shields.io/badge/Download-Releases-blue?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/releases)⠀
@@ -119,7 +119,7 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 </details>
 
 ## 🔥 Special Thanks
-<a href="https://cloud.swordsman.com.cn/"><img src="JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
+<a href="https://cloud.swordsman.com.cn/"><img src="public/image/JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
 cloud of swordsman | 剑客云
 
 If you want to find a cheaper, high performance, stable with lower latency, then cloud of swordsman is a good choice! Registers and purchases in [here](https://cloud.swordsman.com.cn/?i8ab42c).
