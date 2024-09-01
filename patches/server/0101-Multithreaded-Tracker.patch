@@ -3,22 +3,24 @@ From: peaches94 <peachescu94@gmail.com>
 Date: Sat, 2 Jul 2022 00:35:56 -0500
 Subject: [PATCH] Multithreaded Tracker
 
-TODO: (These need to test, check, try to replicate)
-- Visible issue related with NPC (Citizens)
-https://github.com/Bloom-host/Petal/issues/3
-
 Original license: GPL v3
 Original project: https://github.com/Bloom-host/Petal
 
-TODO: edit description
-This patch was ported downstream from the Petal fork, and is derived from
-the Airplane fork by Paul Sauve
+Original license: GPL v3
+Original project: https://github.com/TECHNOVE/Airplane-Experimental
 
-Based off the Airplane multithreaded tracker, this patch properly handles
-concurrent accesses everywhere, as well as being much simpler to maintain
+Co-authored-by: Paul Sauve <paul@technove.co>
+Co-authored-by: Kevin Raneri <kevin.raneri@gmail.com>
 
-Some things are too unsafe to run off the main thread so we don't attempt to do
-that. This multithreaded tracker remains accurate, non-breaking and fast.
+This patch refactored from original multithreaded tracker (Petal version),
+and is derived from the Airplane fork by Paul Sauve, the tree is like:
+Airplane -> Pufferfish? -> Petal -> Leaf
+
+We made much of tracking logic asynchronously, and fixed visible issue
+for the case of some NPC plugins which using real entity type, e.g. Citizens.
+
+But it is still recommending to use those packet based, virtual entity
+based NPC plugins, e.g. ZNPC Plus, Adyeshach, Fancy NPC, etc.
 
 diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
 index 6994db535d8d39a73ce54da5b7a03b579323f4a8..6d062271d31cd568cb7dfdc26d8f5811b75cfde5 100644
@@ -38,7 +40,7 @@ index 6994db535d8d39a73ce54da5b7a03b579323f4a8..6d062271d31cd568cb7dfdc26d8f5811
          }
          // KTP stop - Optimise spigot event bus
 diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
-index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..cba75d6196a639049b27b77efb36c2536332520a 100644
+index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..9f660c9cdb6258d5f659b279ac3559a780941620 100644
 --- a/src/main/java/net/minecraft/server/level/ChunkMap.java
 +++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
 @@ -906,6 +906,21 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -88,35 +90,56 @@ index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..cba75d6196a639049b27b77efb36c253
  
          // Paper start - optimise entity tracker
          private long lastChunkUpdate = -1L;
-@@ -1116,9 +1140,24 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1116,19 +1140,38 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
  
              final ServerPlayer[] playersRaw = players.getRawDataUnchecked();
  
 -            for (int i = 0, len = players.size(); i < len; ++i) {
 -                final ServerPlayer player = playersRaw[i];
 -                this.updatePlayer(player);
+-            }
 +            // Leaf start - Multithreaded tracker
 +            // Only update asynchronously for real player, and sync update for fake players
 +            // This can fix compatibility issue with NPC plugins using real entity type, like Citizens
 +            // To prevent visible issue with player type NPCs
 +            // btw, still recommend to use packet based NPC plugins, like ZNPC Plus, Adyeshach, Fancy NPC, etc.
-+            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled && this.entity instanceof ServerPlayer serverPlayer && ((ca.spottedleaf.moonrise.patches.chunk_system.player.ChunkSystemServerPlayer) serverPlayer).moonrise$isRealPlayer()) {
-+                org.dreeam.leaf.async.tracker.MultithreadedTracker.getTrackerExecutor().execute(() -> {
-+                    for (int i = 0, len = players.size(); i < len; ++i) {
-+                        final ServerPlayer player = playersRaw[i];
-+                        this.updatePlayer(player);
-+                    }
-+                });
-+            } else {
-+                // Leaf end - Multithreaded tracker
++            final boolean isServerPlayer = this.entity instanceof ServerPlayer;
++            final boolean isRealPlayer = isServerPlayer && ((ca.spottedleaf.moonrise.patches.chunk_system.player.ChunkSystemServerPlayer) this.entity).moonrise$isRealPlayer();
++            Runnable updatePlayerTasks = () -> {
 +                for (int i = 0, len = players.size(); i < len; ++i) {
 +                    final ServerPlayer player = playersRaw[i];
 +                    this.updatePlayer(player);
 +                }
-             }
  
-             if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
-@@ -1184,14 +1223,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+-            if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
+-                // need to purge any players possible not in the chunk list
+-                for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
+-                    final ServerPlayer player = conn.getPlayer();
+-                    if (!players.contains(player)) {
+-                        this.removePlayer(player);
++                if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
++                    // need to purge any players possible not in the chunk list
++                    for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
++                        final ServerPlayer player = conn.getPlayer();
++                        if (!players.contains(player)) {
++                            this.removePlayer(player);
++                        }
+                     }
+                 }
++            };
++
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                if (isRealPlayer || !isServerPlayer) {
++                    org.dreeam.leaf.async.tracker.MultithreadedTracker.getTrackerExecutor().execute(updatePlayerTasks);
++                } else {
++                    updatePlayerTasks.run();
++                }
++            } else {
++                updatePlayerTasks.run();
+             }
+         }
+ 
+@@ -1184,14 +1227,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcast(Packet<?> packet) {
@@ -134,7 +157,7 @@ index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..cba75d6196a639049b27b77efb36c253
          }
  
          public void broadcastAndSend(Packet<?> packet) {
-@@ -1203,18 +1239,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1203,18 +1243,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcastRemoved() {
@@ -157,7 +180,7 @@ index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..cba75d6196a639049b27b77efb36c253
              if (this.seenBy.remove(player.connection)) {
                  this.serverEntity.removePairing(player);
              }
-@@ -1222,7 +1255,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1222,7 +1259,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void updatePlayer(ServerPlayer player) {
