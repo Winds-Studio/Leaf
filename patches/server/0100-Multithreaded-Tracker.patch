@@ -23,13 +23,13 @@ But it is still recommending to use those packet based, virtual entity
 based NPC plugins, e.g. ZNPC Plus, Adyeshach, Fancy NPC, etc.
 
 diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
-index 6994db535d8d39a73ce54da5b7a03b579323f4a8..6d062271d31cd568cb7dfdc26d8f5811b75cfde5 100644
+index 31bb5c3058233c98cbdd919e4803dd2f2266d39d..2622a82b6e34cb636eaad239d8e6e30dc8cce589 100644
 --- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
 +++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
-@@ -46,6 +46,12 @@ class PaperEventManager {
-         if (isAsync && onPrimaryThread) {
+@@ -42,6 +42,12 @@ class PaperEventManager {
+         if (event.isAsynchronous() && this.server.isPrimaryThread()) {
              throw new IllegalStateException(event.getEventName() + " may only be triggered asynchronously.");
-         } else if (!isAsync && !onPrimaryThread && !this.server.isStopping()) {
+         } else if (!event.isAsynchronous() && !this.server.isPrimaryThread() && !this.server.isStopping()) {
 +            // Leaf start - petal - Multithreaded tracker
 +            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
 +                net.minecraft.server.MinecraftServer.getServer().scheduleOnMain(event::callEvent);
@@ -38,9 +38,9 @@ index 6994db535d8d39a73ce54da5b7a03b579323f4a8..6d062271d31cd568cb7dfdc26d8f5811
 +            // Leaf end - petal - Multithreaded tracker
              throw new IllegalStateException(event.getEventName() + " may only be triggered synchronously.");
          }
-         // KTP stop - Optimise spigot event bus
+ 
 diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
-index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..9f660c9cdb6258d5f659b279ac3559a780941620 100644
+index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..cfd9545384c0b74605115e47c390c876a61dbdd3 100644
 --- a/src/main/java/net/minecraft/server/level/ChunkMap.java
 +++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
 @@ -906,6 +906,21 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -90,56 +90,54 @@ index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..9f660c9cdb6258d5f659b279ac3559a7
  
          // Paper start - optimise entity tracker
          private long lastChunkUpdate = -1L;
-@@ -1116,19 +1140,38 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1116,6 +1140,37 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
  
              final ServerPlayer[] playersRaw = players.getRawDataUnchecked();
  
--            for (int i = 0, len = players.size(); i < len; ++i) {
--                final ServerPlayer player = playersRaw[i];
--                this.updatePlayer(player);
--            }
 +            // Leaf start - Multithreaded tracker
-+            // Only update asynchronously for real player, and sync update for fake players
-+            // This can fix compatibility issue with NPC plugins using real entity type, like Citizens
-+            // To prevent visible issue with player type NPCs
-+            // btw, still recommend to use packet based NPC plugins, like ZNPC Plus, Adyeshach, Fancy NPC, etc.
-+            final boolean isServerPlayer = this.entity instanceof ServerPlayer;
-+            final boolean isRealPlayer = isServerPlayer && ((ca.spottedleaf.moonrise.patches.chunk_system.player.ChunkSystemServerPlayer) this.entity).moonrise$isRealPlayer();
-+            Runnable updatePlayerTasks = () -> {
-+                for (int i = 0, len = players.size(); i < len; ++i) {
-+                    final ServerPlayer player = playersRaw[i];
-+                    this.updatePlayer(player);
-+                }
- 
--            if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
--                // need to purge any players possible not in the chunk list
--                for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
--                    final ServerPlayer player = conn.getPlayer();
--                    if (!players.contains(player)) {
--                        this.removePlayer(player);
-+                if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
-+                    // need to purge any players possible not in the chunk list
-+                    for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
-+                        final ServerPlayer player = conn.getPlayer();
-+                        if (!players.contains(player)) {
-+                            this.removePlayer(player);
-+                        }
-                     }
-                 }
-+            };
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled && org.dreeam.leaf.config.modules.async.MultithreadedTracker.compatModeEnabled) {
++                final boolean isServerPlayer = this.entity instanceof ServerPlayer;
++                final boolean isRealPlayer = isServerPlayer && ((ca.spottedleaf.moonrise.patches.chunk_system.player.ChunkSystemServerPlayer) this.entity).moonrise$isRealPlayer();
++                Runnable updatePlayerTasks = () -> {
++                    for (int i = 0, len = players.size(); i < len; ++i) {
++                        final ServerPlayer player = playersRaw[i];
++                        this.updatePlayer(player);
++                    }
 +
-+            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                    if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
++                        // need to purge any players possible not in the chunk list
++                        for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
++                            final ServerPlayer player = conn.getPlayer();
++                            if (!players.contains(player)) {
++                                this.removePlayer(player);
++                            }
++                        }
++                    }
++                };
++
++                // Only update asynchronously for real player, and sync update for fake players
++                // This can fix compatibility issue with NPC plugins using real entity type, like Citizens
++                // To prevent visible issue with player type NPCs
++                // btw, still recommend to use packet based NPC plugins, like ZNPC Plus, Adyeshach, Fancy NPC, etc.
 +                if (isRealPlayer || !isServerPlayer) {
 +                    org.dreeam.leaf.async.tracker.MultithreadedTracker.getTrackerExecutor().execute(updatePlayerTasks);
 +                } else {
 +                    updatePlayerTasks.run();
 +                }
 +            } else {
-+                updatePlayerTasks.run();
+             for (int i = 0, len = players.size(); i < len; ++i) {
+                 final ServerPlayer player = playersRaw[i];
+                 this.updatePlayer(player);
+@@ -1130,6 +1185,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                     }
+                 }
              }
++            }
++            // Leaf end - Multithreaded tracker
          }
  
-@@ -1184,14 +1227,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         @Override
+@@ -1184,14 +1241,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcast(Packet<?> packet) {
@@ -157,7 +155,7 @@ index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..9f660c9cdb6258d5f659b279ac3559a7
          }
  
          public void broadcastAndSend(Packet<?> packet) {
-@@ -1203,18 +1243,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1203,18 +1257,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcastRemoved() {
@@ -180,7 +178,7 @@ index 200a08d09904c6d5ea85b9e2c0228e6184f3aed1..9f660c9cdb6258d5f659b279ac3559a7
              if (this.seenBy.remove(player.connection)) {
                  this.serverEntity.removePairing(player);
              }
-@@ -1222,7 +1259,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1222,7 +1273,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void updatePlayer(ServerPlayer player) {
@@ -322,10 +320,10 @@ index 14ceb3308474e76220bd64b0254df3f2925d4206..5fc03bf452082d13c577e2fcf49288c5
      private final net.minecraft.world.entity.LivingEntity entity; // Purpur
 diff --git a/src/main/java/org/dreeam/leaf/async/tracker/MultithreadedTracker.java b/src/main/java/org/dreeam/leaf/async/tracker/MultithreadedTracker.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6b306f27a58c66f3e8a71105fce34c1a6f41390b
+index 0000000000000000000000000000000000000000..16c59bdeeaa7f114c912e4b3d6409272e0f682bf
 --- /dev/null
 +++ b/src/main/java/org/dreeam/leaf/async/tracker/MultithreadedTracker.java
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,162 @@
 +package org.dreeam.leaf.async.tracker;
 +
 +import ca.spottedleaf.moonrise.common.list.ReferenceList;
@@ -336,6 +334,7 @@ index 0000000000000000000000000000000000000000..6b306f27a58c66f3e8a71105fce34c1a
 +import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerTrackedEntity;
 +import com.google.common.util.concurrent.ThreadFactoryBuilder;
 +import net.minecraft.server.level.ChunkMap;
++import net.minecraft.server.level.ServerLevel;
 +import net.minecraft.world.entity.Entity;
 +
 +import java.util.Arrays;
@@ -364,6 +363,52 @@ index 0000000000000000000000000000000000000000..6b306f27a58c66f3e8a71105fce34c1a
 +    }
 +
 +    public static void tick(ChunkSystemServerLevel level) {
++        if (!org.dreeam.leaf.config.modules.async.MultithreadedTracker.compatModeEnabled) {
++            tickAsync(level);
++        } else {
++            tickAsyncWithCompatMode(level);
++        }
++    }
++
++    private static void tickAsync(ChunkSystemServerLevel level) {
++        final NearbyPlayers nearbyPlayers = level.moonrise$getNearbyPlayers();
++        final ServerEntityLookup entityLookup = (ServerEntityLookup) level.moonrise$getEntityLookup();
++
++        final ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
++        final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
++
++        // Move tracking to off-main
++        trackerExecutor.execute(() -> {
++            for (final Entity entity : trackerEntitiesRaw) {
++                if (entity == null) continue;
++
++                final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
++
++                if (tracker == null) continue;
++
++                ((EntityTrackerTrackedEntity) tracker).moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
++                tracker.serverEntity.sendChanges();
++            }
++        });
++
++        // process unloads
++        final ReferenceList<Entity> unloadedEntities = entityLookup.trackerUnloadedEntities;
++        final Entity[] unloadedEntitiesRaw = Arrays.copyOf(unloadedEntities.getRawDataUnchecked(), unloadedEntities.size());
++        unloadedEntities.clear();
++
++        // Move player unload to off-main
++        trackerExecutor.execute(() -> {
++            for (final Entity entity : unloadedEntitiesRaw) {
++                final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
++
++                if (tracker == null) continue;
++
++                ((EntityTrackerTrackedEntity) tracker).moonrise$clearPlayers();
++            }
++        });
++    }
++
++    private static void tickAsyncWithCompatMode(ChunkSystemServerLevel level) {
 +        final NearbyPlayers nearbyPlayers = level.moonrise$getNearbyPlayers();
 +        final ServerEntityLookup entityLookup = (ServerEntityLookup) level.moonrise$getEntityLookup();
 +
@@ -380,7 +425,7 @@ index 0000000000000000000000000000000000000000..6b306f27a58c66f3e8a71105fce34c1a
 +            if (tracker == null) continue;
 +
 +            ((EntityTrackerTrackedEntity) tracker).moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
-+            sendChangesTasks[index++] = () -> tracker.serverEntity.sendChanges();
++            sendChangesTasks[index++] = () -> tracker.serverEntity.sendChanges(); // Collect send changes to task array
 +        }
 +
 +        // batch submit tasks
@@ -407,13 +452,46 @@ index 0000000000000000000000000000000000000000..6b306f27a58c66f3e8a71105fce34c1a
 +            }
 +        });
 +    }
++
++    // Original ChunkMap#newTrackerTick of Paper
++    // Just for diff usage for future update
++    private static void tickOriginal(ServerLevel level) {
++        final ca.spottedleaf.moonrise.common.misc.NearbyPlayers nearbyPlayers = ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel) level).moonrise$getNearbyPlayers();
++        final ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup entityLookup = (ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup) ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel) level).moonrise$getEntityLookup();
++        ;
++
++        final ca.spottedleaf.moonrise.common.list.ReferenceList<net.minecraft.world.entity.Entity> trackerEntities = entityLookup.trackerEntities;
++        final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
++        for (int i = 0, len = trackerEntities.size(); i < len; ++i) {
++            final Entity entity = trackerEntitiesRaw[i];
++            final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity) entity).moonrise$getTrackedEntity();
++            if (tracker == null) {
++                continue;
++            }
++            ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerTrackedEntity) tracker).moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
++            tracker.serverEntity.sendChanges();
++        }
++
++        // process unloads
++        final ca.spottedleaf.moonrise.common.list.ReferenceList<net.minecraft.world.entity.Entity> unloadedEntities = entityLookup.trackerUnloadedEntities;
++        final Entity[] unloadedEntitiesRaw = java.util.Arrays.copyOf(unloadedEntities.getRawDataUnchecked(), unloadedEntities.size());
++        unloadedEntities.clear();
++
++        for (final Entity entity : unloadedEntitiesRaw) {
++            final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity) entity).moonrise$getTrackedEntity();
++            if (tracker == null) {
++                continue;
++            }
++            ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerTrackedEntity) tracker).moonrise$clearPlayers();
++        }
++    }
 +}
 diff --git a/src/main/java/org/dreeam/leaf/config/modules/async/MultithreadedTracker.java b/src/main/java/org/dreeam/leaf/config/modules/async/MultithreadedTracker.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..91b4919714b3e0045f81fea583b99b83229da6ba
+index 0000000000000000000000000000000000000000..2a85c1610af20fc358e94a8200c0bbda33fc3d66
 --- /dev/null
 +++ b/src/main/java/org/dreeam/leaf/config/modules/async/MultithreadedTracker.java
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,43 @@
 +package org.dreeam.leaf.config.modules.async;
 +
 +import org.dreeam.leaf.config.ConfigModules;
@@ -427,19 +505,22 @@ index 0000000000000000000000000000000000000000..91b4919714b3e0045f81fea583b99b83
 +    }
 +
 +    public static boolean enabled = true;
++    public static boolean compatModeEnabled = false;
 +    public static int asyncEntityTrackerMaxThreads = 0;
 +    public static int asyncEntityTrackerKeepalive = 60;
 +
 +    @Override
 +    public void onLoaded() {
 +        config.addComment(getBasePath(), """
-+                Make entity tracking saving asynchronously,can improve performance significantly,
++                Make entity tracking saving asynchronously, can improve performance significantly,
 +                especially in some massive entities in small area situations.
-+                Also fixed visible issue with player type NPCs of Citizens.
-+                But still recommend to use packet based NPC plugin,e.g. ZNPC Plus, Adyeshach, Fancy NPC or else.
 +                """);
 +
 +        enabled = config().getBoolean(getBasePath() + ".enabled", enabled);
++        compatModeEnabled = config.getBoolean(getBasePath() + ".compat-mode", compatModeEnabled, """
++                Enable compat mode if installed Citizens,
++                Compat mode fixed visible issue with player type NPCs of Citizens,
++                But still recommend to use packet based NPC plugin, e.g. ZNPC Plus, Adyeshach, Fancy NPC or else.""");
 +        asyncEntityTrackerMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncEntityTrackerMaxThreads);
 +        asyncEntityTrackerKeepalive = config.getInt(getBasePath() + ".keepalive", asyncEntityTrackerKeepalive);
 +
