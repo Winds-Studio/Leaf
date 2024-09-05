@@ -100,7 +100,6 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
     <p>
       • <a href="https://github.com/KeYiMC/KeYi">KeYi</a> (R.I.P.)
         <a href="https://github.com/MikuMC/KeYiBackup">(Backup)</a><br>
-      • <a href="https://github.com/lynxplay/ktp">KTP</a><br>
       • <a href="https://github.com/etil2jz/Mirai">Mirai</a><br>
       • <a href="https://github.com/Bloom-host/Petal">Petal</a><br>
       • <a href="https://github.com/fxmorin/carpet-fixes">Carpet Fixes</a><br>
