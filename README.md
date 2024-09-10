@@ -30,7 +30,7 @@
 
 ## 📫 Contact
 - Discord: [`https://discord.com/invite/gfgAwdSEuM`](https://discord.com/invite/gfgAwdSEuM)
-- QQ Group: `715128273`
+- QQ Group: `619278377`
 
 ## 📫 Donation
 If you love my work, feel free to donate :)
