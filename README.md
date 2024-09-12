@@ -30,7 +30,7 @@
 
 ## 📫 Contact
 - Discord: [`https://discord.com/invite/gfgAwdSEuM`](https://discord.com/invite/gfgAwdSEuM)
-- QQ Group: `715128273`
+- QQ Group: `619278377`
 
 ## 📫 Donation
 If you love my work, feel free to donate :)
@@ -100,7 +100,6 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
     <p>
       • <a href="https://github.com/KeYiMC/KeYi">KeYi</a> (R.I.P.)
         <a href="https://github.com/MikuMC/KeYiBackup">(Backup)</a><br>
-      • <a href="https://github.com/lynxplay/ktp">KTP</a><br>
       • <a href="https://github.com/etil2jz/Mirai">Mirai</a><br>
       • <a href="https://github.com/Bloom-host/Petal">Petal</a><br>
       • <a href="https://github.com/fxmorin/carpet-fixes">Carpet Fixes</a><br>
@@ -115,6 +114,7 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
       • <a href="https://github.com/HaHaWTH/Polpot">Polpot</a><br>
       • <a href="https://github.com/plasmoapp/matter">Matter</a><br>
       • <a href="https://github.com/LuminolMC/Luminol">Luminol</a><br>
+      • <a href="https://github.com/Gensokyo-Reimagined/Nitori">Nitori</a><br>
     </p>
 </details>
 
