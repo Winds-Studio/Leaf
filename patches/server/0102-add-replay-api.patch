@@ -155,7 +155,23 @@ diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/mai
 index 44f128f7d6741d47f9a4bbd92e147b4011447a50..588337638d27bbdbc1ff54e458d82a50486d5e8e 100644
 --- a/src/main/java/net/minecraft/server/level/ServerLevel.java
 +++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
-@@ -2546,6 +2546,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
+@@ -230,6 +230,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
+     public boolean hasEntityMoveEvent; // Paper - Add EntityMoveEvent
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+     public boolean hasRidableMoveEvent = false; // Purpur
++    final List<ServerPlayer> realPlayers; // Leaves - skip
+
+     public LevelChunk getChunkIfLoaded(int x, int z) {
+         return this.chunkSource.getChunkAtIfLoadedImmediately(x, z); // Paper - Use getChunkIfLoadedImmediately
+@@ -611,6 +612,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
+         this.chunkTaskScheduler = new ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkTaskScheduler((ServerLevel)(Object)this, ca.spottedleaf.moonrise.common.util.MoonriseCommon.WORKER_POOL);
+         // Paper end - rewrite chunk system
+         this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
++        this.realPlayers = Lists.newArrayList(); // Leaves - skip
+         this.preciseTime = this.serverLevelData.getDayTime(); // Purpur
+     }
+
+@@ -2546,6 +2548,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
              // ServerLevel.this.getChunkSource().addEntity(entity); // Paper - ignore and warn about illegal addEntity calls instead of crashing server; moved down below valid=true
              if (entity instanceof ServerPlayer entityplayer) {
                  ServerLevel.this.players.add(entityplayer);
@@ -167,7 +183,7 @@ index 44f128f7d6741d47f9a4bbd92e147b4011447a50..588337638d27bbdbc1ff54e458d82a50
                  ServerLevel.this.updateSleepingPlayerList();
              }
  
-@@ -2627,6 +2632,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
+@@ -2627,6 +2634,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
              ServerLevel.this.getChunkSource().removeEntity(entity);
              if (entity instanceof ServerPlayer entityplayer) {
                  ServerLevel.this.players.remove(entityplayer);
@@ -1336,6 +1352,7 @@ index 0000000000000000000000000000000000000000..17cd14449bde1ee7d2b5938a04ee3eeb
 +import org.bukkit.craftbukkit.CraftWorld;
 +import org.jetbrains.annotations.NotNull;
 +import org.leavesmc.leaves.LeavesLogger;
++import org.leavesmc.leaves.bot.BotStatsCounter;
 +import org.leavesmc.leaves.entity.CraftPhotographer;
 +import org.leavesmc.leaves.entity.Photographer;
 +
@@ -1360,7 +1377,6 @@ index 0000000000000000000000000000000000000000..17cd14449bde1ee7d2b5938a04ee3eeb
 +
 +    private ServerPhotographer(MinecraftServer server, ServerLevel world, GameProfile profile) {
 +        super(server, world, profile, ClientInformation.createDefault());
-+        this.gameMode = new ServerPhotographerGameMode(this);
 +        this.followPlayer = null;
 +        this.stats = new BotStatsCounter(server);
 +        this.lastPos = this.position();
@@ -1606,6 +1622,73 @@ index 0000000000000000000000000000000000000000..93f72a99595a0b1f182f3950de36f128
 +    @Override
 +    public JsonElement serialize(@NotNull UUID src, Type typeOfSrc, JsonSerializationContext context) {
 +        return new JsonPrimitive(src.toString());
++    }
++}
+\ No newline at end of file
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 8f188b137247289770b0a663124f6345a902cd8a..11949d56094523968fd47c3f6f25a627681acf97 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -161,6 +161,8 @@ import net.minecraft.world.phys.Vec3;
+ import net.minecraft.world.scores.PlayerTeam;
+ import net.minecraft.world.scores.ScoreAccess;
+ import net.minecraft.world.scores.ScoreHolder;
++import org.leavesmc.leaves.replay.ServerPhotographer;
++import org.leavesmc.leaves.replay.ServerPhotographerGameMode;
+ import org.slf4j.Logger;
+ import net.minecraft.world.Container;
+ import net.minecraft.world.InteractionHand;
+@@ -425,7 +427,7 @@ public class ServerPlayer extends net.minecraft.world.entity.player.Player imple
+             public void dataChanged(AbstractContainerMenu handler, int property, int value) {}
+         };
+         this.textFilter = server.createTextFilterForPlayer(this);
+-        this.gameMode = server.createGameModeForPlayer(this);
++        this.gameMode = this instanceof ServerPhotographer ? new ServerPhotographerGameMode((ServerPhotographer) this) : server.createGameModeForPlayer(this);
+         this.server = server;
+         this.stats = server.getPlayerList().getPlayerStats(this);
+         this.advancements = server.getPlayerList().getPlayerAdvancements(this);
+diff --git a/src/main/java/org/leavesmc/leaves/bot/BotStatsCounter.java b/src/main/java/org/leavesmc/leaves/bot/BotStatsCounter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1dfbda8b2439e3f21fea953292aa0e3e853b22e0
+--- /dev/null
++++ b/src/main/java/org/leavesmc/leaves/bot/BotStatsCounter.java
+@@ -0,0 +1,38 @@
++package org.leavesmc.leaves.bot;
++
++import com.mojang.datafixers.DataFixer;
++import net.minecraft.server.MinecraftServer;
++import net.minecraft.stats.ServerStatsCounter;
++import net.minecraft.stats.Stat;
++import net.minecraft.world.entity.player.Player;
++
++import java.io.File;
++
++public class BotStatsCounter extends ServerStatsCounter {
++
++    private static final File UNKOWN_FILE = new File("BOT_STATS_REMOVE_THIS");
++
++    public BotStatsCounter(MinecraftServer server) {
++        super(server, UNKOWN_FILE);
++    }
++
++    @Override
++    public void save() {
++
++    }
++
++    @Override
++    public void setValue(Player player, Stat<?> stat, int value) {
++
++    }
++
++    @Override
++    public void parseLocal(DataFixer dataFixer, String json) {
++
++    }
++
++    @Override
++    public int getValue(Stat<?> stat) {
++        return 0;
 +    }
 +}
 \ No newline at end of file
