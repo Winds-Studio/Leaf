@@ -5,11 +5,11 @@
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1211.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 
-**Leaf** is a drop-in replacement for [Paper](https://papermc.io/) servers designed to remove some checks, customized and high-performance, built on top of [Gale](https://github.com/GaleMC/Gale) with optimizations and fixes from other forks.
+**Leaf** is a drop-in replacement for [Paper](https://papermc.io/) servers designed to remove some checks, customized and high-performance, built on top of [Gale](https://github.com/Dreeam-qwq/Gale) with optimizations and fixes from other forks.
 </div>
 
 ## 🍃 Features
- - **Fork of [Gale](https://github.com/GaleMC/Gale)** for better performance
+ - **Fork of [Gale](https://github.com/Dreeam-qwq/Gale)** for better performance
  - **Async** pathfinding, mob spawning and entity tracker
  - **Various optimizations** blending from [other forks](https://github.com/Winds-Studio/Leaf#-credits)
  - **Fully compatible** with Bukkit, Spigot and Paper plugins 
@@ -92,7 +92,7 @@ Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperwei
 Thanks to these projects below. Leaf just mix some of their patches together.<br>
 If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 
-- [Gale](https://github.com/GaleMC/Gale)
+- [Gale](https://github.com/Dreeam-qwq/Gale) ([Original Repo](https://github.com/GaleMC/Gale))
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
 - [Purpur](https://github.com/PurpurMC/Purpur)
 - <details>
