@@ -5,19 +5,47 @@ Subject: [PATCH] Fix-MC-183518
 
 Related MC issue: https://bugs.mojang.com/browse/MC-183518
 
-diff --git a/src/main/java/net/minecraft/util/thread/BlockableEventLoop.java b/src/main/java/net/minecraft/util/thread/BlockableEventLoop.java
-index f22fb84c7e7929d6c80c44b13179cf385d8a43f9..36ee0c16f5958204276057cbe582e8cb35a5296e 100644
---- a/src/main/java/net/minecraft/util/thread/BlockableEventLoop.java
-+++ b/src/main/java/net/minecraft/util/thread/BlockableEventLoop.java
-@@ -142,8 +142,9 @@ public abstract class BlockableEventLoop<R extends Runnable> implements Profiler
-     }
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 8f5cc10bbb3d88399358b34253d3e0b540a67c72..cfcc4ab30a03e04f7e4aa0970fbde99910c4d2d2 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -312,6 +312,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
-     public void waitForTasks() {
--        Thread.yield();
--        LockSupport.parkNanos("waiting for tasks", 100000L);
+     public gg.pufferfish.pufferfish.util.AsyncExecutor mobSpawnExecutor = new gg.pufferfish.pufferfish.util.AsyncExecutor("Leaf Async Mob Spawn Thread"); // Pufferfish - optimize mob spawning // Leaf - Unify thread name
+     public final Set<Entity> entitiesWithScheduledTasks = java.util.concurrent.ConcurrentHashMap.newKeySet(); // SparklyPaper - skip EntityScheduler's executeTick checks if there isn't any tasks to be run (concurrent because plugins may schedule tasks async)
++    private boolean waitingForNextTick = false; // Leaf - Fix MC-183518
+ 
+     public static <S extends MinecraftServer> S spin(Function<Thread, S> serverFactory) {
+         AtomicReference<S> atomicreference = new AtomicReference();
+@@ -1486,9 +1487,16 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+     protected void waitUntilNextTick() {
+         long tickOversleepStart = System.nanoTime(); // Gale - YAPFA - last tick time
+-        this.managedBlock(() -> {
+-            return !this.canSleepForTickNoOversleep(); // Paper - move oversleep into full server tick
+-        });
 +        // Leaf start - Fix MC-183518
-+        LockSupport.parkNanos("waiting for tasks", 2000000L);
-+        // Leaf end
++        this.waitingForNextTick = true;
++        try {
++            this.managedBlock(() -> {
++                return !this.canSleepForTickNoOversleep(); // Paper - move oversleep into full server tick
++            });
++        } finally {
++            this.waitingForNextTick = false;
++        }
++        // Leaf end - Fix MC-183518
+         lastTickOversleepTime = (System.nanoTime() - tickOversleepStart) / 1000000L; // Gale - YAPFA - last tick time
      }
  
-     protected void doRunTask(R task) {
+@@ -1497,7 +1505,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         boolean flag = this.isTickTimeLoggingEnabled();
+         long i = flag ? Util.getNanos() : 0L;
+ 
+-        super.waitForTasks();
++        // Leaf start - Fix MC-183518
++        long ms = this.waitingForNextTick ? this.nextTickTimeNanos - Util.getNanos() : 100_000L;
++        java.util.concurrent.locks.LockSupport.parkNanos("waiting for tasks", ms);
++        // Leaf end - Fix MC-183518
+         if (flag) {
+             this.idleTimeNanos += Util.getNanos() - i;
+         }
