@@ -27,12 +27,12 @@ which can be obtained in (most) package managers such as `apt` (Debian / Ubuntu;
 you will most likely use this for WSL), `homebrew` (macOS / Linux), and more:
 
 - `git` (package `git` everywhere);
-- A Java 17 or later JDK (packages vary, use Google/DuckDuckGo/etc.).
+- A Java 21 or later JDK (packages vary, use Google/DuckDuckGo/etc.).
     - [Adoptium](https://adoptium.net/) has builds for most operating systems.
-    - Leaf requires JDK 17 to build, however, makes use of Gradle's
+    - Leaf requires JDK 21 to build, however, makes use of Gradle's
       [Toolchains](https://docs.gradle.org/current/userguide/toolchains.html)
       feature to allow building with only JRE 11 or later installed. (Gradle will
-      automatically provision JDK 17 for compilation if it cannot find an existing
+      automatically provision JDK 21 for compilation if it cannot find an existing
       install).
 
 If you're on Windows, check
@@ -42,11 +42,11 @@ If you're compiling with Docker, you can use Adoptium's
 [`eclipse-temurin`](https://hub.docker.com/_/eclipse-temurin/) images like so:
 
 ```console
-# docker run -it -v "$(pwd)":/data --rm eclipse-temurin:17.0.1_12-jdk bash
+# docker run -it -v "$(pwd)":/data --rm eclipse-temurin:21.0.3_9-jdk bash
 Pulling image...
 
 root@abcdefg1234:/# javac -version
-javac 17.0.1
+javac 21.0.3
 ```
 
 ## Understanding Patches
@@ -56,7 +56,6 @@ split into different directories which target certain parts of the code. These
 directories are:
 
 - `Leaf-API` - Modifications to `gale-api`/`Paper-API`;
-- `Leaf-MojangAPI` - An API for [Mojang's Brigadier](https://github.com/Mojang/brigadier);
 - `Leaf-Server` - Modifications to `Gale`/`Paper`.
 
 Because the entire structure is based on patches and git, a basic understanding
@@ -69,10 +68,6 @@ Assuming you have already forked the repository:
 2. Type `./gradlew applyPatches` in a terminal to apply the changes from upstream.
    On Windows, replace the `./` with `.\` at the beginning for all `gradlew` commands;
 3. cd into `Leaf-Server` for server changes, and `Leaf-API` for API changes.
-<!--You can also run `./leaf server` or `./leaf api` for these same directories
-respectively.
-1. You can also run `./leaf setup`, which allows you to type `leaf <command>`
-from anywhere in the Leaf structure in most cases.-->
 
 `Leaf-Server` and `Leaf-API` aren't git repositories in the traditional sense:
 
@@ -97,7 +92,9 @@ Your commit will be converted into a patch that you can then PR into Leaf.
 
 ## Modifying Patches
 
-Modifying previous patches is a bit more complex:
+Modifying previous patches is a bit more complex.
+Similar to adding patches, the methods to modify a patch are applied inside
+the `Leaf-Server` and/or `Leaf-API` folders.
 
 ### Method 1
 
@@ -237,6 +234,10 @@ into most IDEs and formatters by default. There are a few notes, however:
   There are exceptions, especially in Spigot-related files
 - When in doubt or the code around your change is in a clearly different style,
   use the same style as the surrounding code.
+- Usage of the `var` keyword is heavily discouraged, as it makes reading patch files
+  a lot harder  and can lead to confusion during updates due to changed return types.
+  The only exception to this is if a line would otherwise be way too long/filled with
+  hard to parse generics in a case where the base type itself is already obvious
 
 ### Imports
 When adding new imports to a class in a file not created by the current patch, use the fully qualified class name
@@ -319,7 +320,7 @@ Subject: [PATCH] revert serverside behavior of keepalives
 This patch intends to bump up the time that a client has to reply to the
 server back to 30 seconds as per pre 1.12.2, which allowed clients
 more than enough time to reply potentially allowing them to be less
-tempermental due to lag spikes on the network thread, e.g. that caused
+temperamental due to lag spikes on the network thread, e.g. that caused
 by plugins that are interacting with netty.
 
 We also add a system property to allow people to tweak how long the server

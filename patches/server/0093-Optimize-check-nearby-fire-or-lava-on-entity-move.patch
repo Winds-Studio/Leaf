@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Mon, 15 Jul 2024 22:11:35 +0800
+Subject: [PATCH] Optimize check nearby fire or lava on entity move
+
+Remove stream and remove double Mth.floor() convert
+before 1700ms, after 370ms, in massive stacked minecart test
+
+diff --git a/src/main/java/net/minecraft/world/entity/Entity.java b/src/main/java/net/minecraft/world/entity/Entity.java
+index 39be345524b621e6ae2eec9af9d46da3291c671b..6fbd848c7f6f3d722b4e8646613ce4f85e09b7f1 100644
+--- a/src/main/java/net/minecraft/world/entity/Entity.java
++++ b/src/main/java/net/minecraft/world/entity/Entity.java
+@@ -1337,9 +1337,12 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                     }
+                 }
+                 // Gale end - skip negligible planar movement multiplication
+-                if (this.level().getBlockStatesIfLoaded(this.getBoundingBox().deflate(1.0E-6D)).noneMatch((iblockdata2) -> {
+-                    return iblockdata2.is(BlockTags.FIRE) || iblockdata2.is(Blocks.LAVA);
+-                })) {
++                // Leaf start - Optimize check nearby fire or lava on entity move
++                if (nearByBlockStateNoneMatch(
++                        this.level().getBlockStatesListIfLoaded(this.getBoundingBox().deflate(1.0E-6D), new java.util.ArrayList<>()),
++                        iblockdata2 -> iblockdata2.is(BlockTags.FIRE) || iblockdata2.is(Blocks.LAVA)
++                )) {
++                    // Leaf end - Optimize check nearby fire or lava on entity move
+                     if (this.remainingFireTicks <= 0) {
+                         this.setRemainingFireTicks(-this.getFireImmuneTicks());
+                     }
+@@ -1363,6 +1366,20 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         // Paper end - detailed watchdog information
+     }
+ 
++    // Leaf start - Optimize check nearby fire or lava on entity move
++    private boolean nearByBlockStateNoneMatch(java.util.List<BlockState> into, Predicate<BlockState> predicate) {
++        if (into.isEmpty()) return true;
++
++        for (BlockState iblockdata : into) {
++            if (predicate.test(iblockdata)) {
++                return false;
++            }
++        }
++
++        return true;
++    }
++    // Leaf end - Optimize check nearby fire or lava on entity move
++
+     private boolean isStateClimbable(BlockState state) {
+         return state.is(BlockTags.CLIMBABLE) || state.is(Blocks.POWDER_SNOW);
+     }
+diff --git a/src/main/java/net/minecraft/world/level/BlockGetter.java b/src/main/java/net/minecraft/world/level/BlockGetter.java
+index 0fa131a6c98adb498fc8d534e0e39647e80c6923..b2c9a14c22eade293ff4fee71663001ff0701744 100644
+--- a/src/main/java/net/minecraft/world/level/BlockGetter.java
++++ b/src/main/java/net/minecraft/world/level/BlockGetter.java
+@@ -55,6 +55,24 @@ public interface BlockGetter extends LevelHeightAccessor {
+         return BlockPos.betweenClosedStream(box).map(this::getBlockState);
+     }
+ 
++    // Leaf start - Optimize check nearby fire or lava on entity move
++    public default java.util.List<BlockState> getBlockStatesList(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, java.util.List<BlockState> into) {
++        int rangeX = maxX - minX + 1;
++        int rangeY = maxY - minY + 1;
++        int rangeZ = maxZ - minZ + 1;
++
++        for (int x = 0; x < rangeX; x++) {
++            for (int y = 0; y < rangeY; y++) {
++                for (int z = 0; z < rangeZ; z++) {
++                    into.add(getBlockState(new BlockPos(minX + x, minY + y, minZ + z)));
++                }
++            }
++        }
++
++        return into;
++    }
++    // Leaf end - Optimize check nearby fire or lava on entity move
++
+     default BlockHitResult isBlockInLine(ClipBlockStateContext context) {
+         return (BlockHitResult) BlockGetter.traverseBlocks(context.getFrom(), context.getTo(), context, (clipblockstatecontext1, blockposition) -> {
+             BlockState iblockdata = this.getBlockState(blockposition);
+diff --git a/src/main/java/net/minecraft/world/level/LevelReader.java b/src/main/java/net/minecraft/world/level/LevelReader.java
+index 1a4dc4b2561dbaf01246b4fb46266b1ac84008b8..2946890b6d9867d8ad5f8a864f171827f28f9d57 100644
+--- a/src/main/java/net/minecraft/world/level/LevelReader.java
++++ b/src/main/java/net/minecraft/world/level/LevelReader.java
+@@ -63,6 +63,18 @@ public interface LevelReader extends ca.spottedleaf.moonrise.patches.chunk_syste
+         return this.hasChunksAt(i, k, m, j, l, n) ? this.getBlockStates(box) : Stream.empty();
+     }
+ 
++    // Leaf start - Optimize check nearby fire or lava on entity move
++    default java.util.List<BlockState> getBlockStatesListIfLoaded(AABB box, java.util.List<BlockState> into) {
++        int i = Mth.floor(box.minX);
++        int j = Mth.floor(box.maxX);
++        int k = Mth.floor(box.minY);
++        int l = Mth.floor(box.maxY);
++        int m = Mth.floor(box.minZ);
++        int n = Mth.floor(box.maxZ);
++        return this.hasChunksAt(i, k, m, j, l, n) ? this.getBlockStatesList(i, k, m, j, l, n , into) : into;
++    }
++    // Leaf end - Optimize check nearby fire or lava on entity move
++
+     @Override
+     default int getBlockTint(BlockPos pos, ColorResolver colorResolver) {
+         return colorResolver.getColor(this.getBiome(pos).value(), (double)pos.getX(), (double)pos.getZ());
