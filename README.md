@@ -15,9 +15,7 @@
  - **Fully compatible** with Bukkit, Spigot and Paper plugins 
  - **Latest dependencies**, keeping all dependencies in the newest version
  - **Allows all characters in usernames**, including Chinese and other characters
- - **Ability to disable** useless console messages
  - **Fixes** some Minecraft bugs
- - **Allows** to connect the backend via a proxy server without enabling the bungeecord mode
  - **Configurable UseItem distance** for anarchy servers
  - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
