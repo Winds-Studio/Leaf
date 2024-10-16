@@ -89,7 +89,7 @@ Binaries are licensed under GPL-3.0.
 Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of some material used by this project.
 
 ## 📜 Credits
-Thanks to these projects below. Leaf just mix some of their patches together.<br>
+Thanks to these projects below. Leaf includes some patches taken from them.<br>
 If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 
 - [Gale](https://github.com/Dreeam-qwq/Gale) ([Original Repo](https://github.com/GaleMC/Gale))
