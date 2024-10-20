@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spottedleaf <Spottedleaf@users.noreply.github.com>
+Date: Tue, 13 Aug 2024 23:53:27 -0700
+Subject: [PATCH] Moonrise: Store ticking blocks in chunk sections as positions
+ only
+
+Original license: GPLv3
+Original project: https://github.com/Tuinity/Moonrise
+
+https://github.com/Tuinity/Moonrise/commit/fc9d35c4b0869a82d1939cf306f75b048a5524b2
+
+Since we no longer use the state stored directly in the
+IBlockDataList, it makes no sense to use IBlockDataList
+at all.
+
+diff --git a/src/main/java/ca/spottedleaf/moonrise/common/list/IntList.java b/src/main/java/ca/spottedleaf/moonrise/common/list/IntList.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a26c809aea87c56adfffc696caafc691992cae2e
+--- /dev/null
++++ b/src/main/java/ca/spottedleaf/moonrise/common/list/IntList.java
+@@ -0,0 +1,79 @@
++package ca.spottedleaf.moonrise.common.list;
++
++import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
++
++import java.util.Arrays;
++
++public final class IntList {
++
++    private final Int2IntOpenHashMap map = new Int2IntOpenHashMap();
++
++    {
++        this.map.defaultReturnValue(Integer.MIN_VALUE);
++    }
++
++    private static final int[] EMPTY_LIST = new int[0];
++
++    private int[] byIndex = EMPTY_LIST;
++    private int count;
++
++    public int size() {
++        return this.count;
++    }
++
++    public void setMinCapacity(final int len) {
++        final int[] byIndex = this.byIndex;
++        if (byIndex.length < len) {
++            this.byIndex = Arrays.copyOf(byIndex, len);
++        }
++    }
++
++    public int getRaw(final int index) {
++        return this.byIndex[index];
++    }
++
++    public boolean add(final int value) {
++        final int count = this.count;
++        final int currIndex = this.map.putIfAbsent(value, count);
++
++        if (currIndex != Integer.MIN_VALUE) {
++            return false; // already in this list
++        }
++
++        int[] list = this.byIndex;
++
++        if (list.length == count) {
++            // resize required
++            list = this.byIndex = Arrays.copyOf(list, (int) Math.max(4L, count * 2L)); // overflow results in negative
++        }
++
++        list[count] = value;
++        this.count = count + 1;
++
++        return true;
++    }
++
++    public boolean remove(final int value) {
++        final int index = this.map.remove(value);
++        if (index == Integer.MIN_VALUE) {
++            return false;
++        }
++
++        // move the entry at the end to this index
++        final int endIndex = --this.count;
++        final int end = this.byIndex[endIndex];
++        if (index != endIndex) {
++            // not empty after this call
++            this.map.put(end, index);
++        }
++        this.byIndex[index] = end;
++        this.byIndex[endIndex] = 0;
++
++        return true;
++    }
++
++    public void clear() {
++        this.count = 0;
++        this.map.clear();
++    }
++}
+diff --git a/src/main/java/ca/spottedleaf/moonrise/patches/block_counting/BlockCountingChunkSection.java b/src/main/java/ca/spottedleaf/moonrise/patches/block_counting/BlockCountingChunkSection.java
+index a08ddb0598d44368af5b6bace971ee31edf9919e..0a67166b301274ef21ea4b9338b79db49a8892d4 100644
+--- a/src/main/java/ca/spottedleaf/moonrise/patches/block_counting/BlockCountingChunkSection.java
++++ b/src/main/java/ca/spottedleaf/moonrise/patches/block_counting/BlockCountingChunkSection.java
+@@ -1,11 +1,11 @@
+ package ca.spottedleaf.moonrise.patches.block_counting;
+ 
+-import ca.spottedleaf.moonrise.common.list.IBlockDataList;
++import ca.spottedleaf.moonrise.common.list.IntList;
+ 
+ public interface BlockCountingChunkSection {
+ 
+     public int moonrise$getSpecialCollidingBlocks();
+ 
+-    public IBlockDataList moonrise$getTickingBlockList();
++    public IntList moonrise$getTickingBlockList(); // Moonrise - Store ticking blocks in chunk sections as positions only
+ 
+ }
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 991859906cf1278663ba75bf0992f002e056b244..9ef8919e4cdac61e2e4dd2fe96aed96cb1d5959e 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -841,10 +841,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
+                 continue;
+             }
+ 
+-            final ca.spottedleaf.moonrise.common.list.IBlockDataList tickList = ((ca.spottedleaf.moonrise.patches.block_counting.BlockCountingChunkSection)section).moonrise$getTickingBlockList();
+-            if (tickList.size() == 0) {
+-                continue;
+-            }
++            final ca.spottedleaf.moonrise.common.list.IntList tickList = ((ca.spottedleaf.moonrise.patches.block_counting.BlockCountingChunkSection) section).moonrise$getTickingBlockList(); // Moonrise - Store ticking blocks in chunk sections as positions only
+ 
+             for (int i = 0; i < tickSpeed; ++i) {
+                 final int tickingBlocks = tickList.size();
+@@ -855,15 +852,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ca.spottedleaf.
+                     continue;
+                 }
+ 
+-                final long raw = tickList.getRaw(index);
+-                final int location = ca.spottedleaf.moonrise.common.list.IBlockDataList.getLocationFromRaw(raw);
+-                final int randomX = (location & 15);
+-                final int randomY = ((location >>> (4 + 4)) & 255);
+-                final int randomZ = ((location >>> 4) & 15);
+-                final BlockState state = states.get(randomX | (randomZ << 4) | (randomY << 8));
++                // Moonrise start - Store ticking blocks in chunk sections as positions only
++                final int location = tickList.getRaw(index);
++                final BlockState state = states.get(location);
++                // Moonrise end - Store ticking blocks in chunk sections as positions only
+ 
+                 // do not use a mutable pos, as some random tick implementations store the input without calling immutable()!
+-                final BlockPos pos = new BlockPos(randomX | offsetX, randomY | offsetY, randomZ | offsetZ);
++                final BlockPos pos = new BlockPos((location & 15) | offsetX, ((location >>> (4 + 4)) & 15) | offsetY, ((location >>> 4) & 15) | offsetZ); // Moonrise - Store ticking blocks in chunk sections as positions only
+ 
+                 state.randomTick((ServerLevel)(Object)this, pos, random);
+                 if (tickFluids) {
+diff --git a/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java b/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java
+index 33747ef8211066155cd70ce2818862cf3e79db53..249fab7ae35b60a64b359d6dc1a28d0ce8a69664 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/src/main/java/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -36,7 +36,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     }
+ 
+     private int specialCollidingBlocks;
+-    private final ca.spottedleaf.moonrise.common.list.IBlockDataList tickingBlocks = new ca.spottedleaf.moonrise.common.list.IBlockDataList();
++    private final ca.spottedleaf.moonrise.common.list.IntList tickingBlocks = new ca.spottedleaf.moonrise.common.list.IntList(); // Moonrise - Store ticking blocks in chunk sections as positions only
+ 
+     @Override
+     public final int moonrise$getSpecialCollidingBlocks() {
+@@ -44,7 +44,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     }
+ 
+     @Override
+-    public final ca.spottedleaf.moonrise.common.list.IBlockDataList moonrise$getTickingBlockList() {
++    public final ca.spottedleaf.moonrise.common.list.IntList moonrise$getTickingBlockList() { // Moonrise - Store ticking blocks in chunk sections as positions only
+         return this.tickingBlocks;
+     }
+     // Paper end - block counting
+@@ -128,12 +128,16 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+             ++this.specialCollidingBlocks;
+         }
+ 
++        // Moonrise start - Store ticking blocks in chunk sections as positions only
++        final int position = x | (z << 4) | (y << (4 + 4));
++
+         if (iblockdata1.isRandomlyTicking()) {
+-            this.tickingBlocks.remove(x, y, z);
++            this.tickingBlocks.remove(position);
+         }
+         if (state.isRandomlyTicking()) {
+-            this.tickingBlocks.add(x, y, z, state);
++            this.tickingBlocks.add(position);
+         }
++        // Moonrise end - Store ticking blocks in chunk sections as positions only
+         // Paper end - block counting
+ 
+         return iblockdata1;
+@@ -200,7 +204,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+ 
+                     java.util.Objects.checkFromToIndex(0, paletteCount, raw.length);
+                     for (int i = 0; i < paletteCount; ++i) {
+-                        this.tickingBlocks.add(raw[i], state);
++                        this.tickingBlocks.add(raw[i]); // Moonrise - Store ticking blocks in chunk sections as positions only
+                     }
+                 }
+ 
