@@ -113,6 +113,7 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
       • <a href="https://github.com/plasmoapp/matter">Matter</a><br>
       • <a href="https://github.com/LuminolMC/Luminol">Luminol</a><br>
       • <a href="https://github.com/Gensokyo-Reimagined/Nitori">Nitori</a><br>
+      • <a href="https://github.com/Tuinity/Moonrise">Moonrise</a><br>
     </p>
 </details>
 
