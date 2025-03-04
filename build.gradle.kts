@@ -23,7 +23,7 @@ subprojects {
         mavenCentral()
         maven(paperMavenPublicUrl)
         maven(leafMavenPublicUrl)
-        maven("https://ci.pluginwiki.us/plugin/repository/everything/") // Leaf - Leaf config - ConfigurationMaster-API
+        maven("https://repo.bsdevelopment.org/releases/") // Leaf - Leaf config - ConfigurationMaster-API
     }
 
     tasks.withType<AbstractArchiveTask>().configureEach {

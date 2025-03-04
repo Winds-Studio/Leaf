@@ -1,5 +1,6 @@
 package org.dreeam.leaf.util.map;
 
+import com.google.common.collect.Interner;
 import com.google.common.collect.Interners;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
@@ -9,11 +10,12 @@ import java.util.function.Function;
 
 public class StringCanonizingOpenHashMap<T> extends Object2ObjectOpenHashMap<String, T> {
 
-    private static final com.google.common.collect.Interner<String> KEY_INTERNER = Interners.newWeakInterner();
+    private static final Interner<String> KEY_INTERNER = Interners.newWeakInterner();
 
     private static String intern(String key) {
         return key != null ? KEY_INTERNER.intern(key) : null;
     }
+
     public StringCanonizingOpenHashMap() {
         super();
     }
