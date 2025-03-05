@@ -55,8 +55,8 @@ subprojects {
             maven(leafMavenPublicUrl) {
                 name = "leaf"
 
-                credentials.username = "dreeam"
-                credentials.password = "dreeam123"
+                credentials.username = System.getenv("REPO_USER")
+                credentials.password = System.getenv("REPO_PASSWORD")
             }
         }
     }
