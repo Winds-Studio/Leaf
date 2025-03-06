@@ -12,6 +12,7 @@ public class AsyncChunkSend extends ConfigModules {
 
     @Experimental
     public static boolean enabled = false;
+    private static boolean configEnabled = false;
 
     @Override
     public void onLoaded() {
@@ -19,12 +20,27 @@ public class AsyncChunkSend extends ConfigModules {
             """
                 **Experimental feature**
                 Makes chunk packet preparation and sending asynchronous to improve server performance.
-                This can significantly reduce main thread load when many players are loading chunks.""",
+                This can significantly reduce main thread load when many players are loading chunks.
+                Note: This feature is automatically disabled when parallel world ticking is enabled.""",
             """
                 **实验性功能**
                 使区块数据包准备和发送异步化以提高服务器性能.
-                当许多玩家同时加载区块时, 这可以显著减少主线程负载.""");
+                当许多玩家同时加载区块时, 这可以显著减少主线程负载.
+                注意: 当启用并行世界处理时, 此功能将自动禁用.""");
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        configEnabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        updateEnabledState();
+    }
+
+    /**
+     * Updates the actual enabled state based on config and other factors
+     */
+    public static void updateEnabledState() {
+        // If parallel world ticking is enabled, disable async chunk sending
+        if (SparklyPaperParallelWorldTicking.enabled) {
+            enabled = false;
+        } else {
+            enabled = configEnabled;
+        }
     }
 }
