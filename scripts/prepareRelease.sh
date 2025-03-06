@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+echo "I'm here"
+
 LATEST_TAG=$(git describe --tags --abbrev=0)
 echo "Latest tag: $LATEST_TAG"
 
