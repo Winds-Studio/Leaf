@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Thu, 27 Feb 2025 23:39:32 +0100
+Subject: [PATCH] Rework ChunkHolderManager
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
+index be820c6093dd2ae7642b9bee11edf65e3a8d7242..29872fa10ec833ff9391fc09df034204f092f8a6 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
+@@ -736,24 +736,19 @@ public final class ChunkHolderManager {
+ 
+         final int sectionShift = ((ChunkSystemServerLevel)this.world).moonrise$getRegionChunkShift();
+ 
+-        final Predicate<Ticket<?>> expireNow = (final Ticket<?> ticket) -> {
+-            long removeDelay = ((ChunkSystemTicket<?>)(Object)ticket).moonrise$getRemoveDelay();
+-            if (removeDelay == NO_TIMEOUT_MARKER) {
+-                return false;
+-            }
+-            --removeDelay;
+-            ((ChunkSystemTicket<?>)(Object)ticket).moonrise$setRemoveDelay(removeDelay);
+-            return removeDelay <= 0L;
+-        };
+-
++        // Collect sections to process first to avoid concurrent modification issues
++        List<Long> sectionKeys = new ArrayList<>();
+         for (final PrimitiveIterator.OfLong iterator = this.sectionToChunkToExpireCount.keyIterator(); iterator.hasNext();) {
+-            final long sectionKey = iterator.nextLong();
++            sectionKeys.add(iterator.nextLong());
++        }
+ 
++        for (final Long sectionKey : sectionKeys) {
++            // Skip if section was removed concurrently
+             if (!this.sectionToChunkToExpireCount.containsKey(sectionKey)) {
+-                // removed concurrently
+                 continue;
+             }
+ 
++            // Acquire lock for this section only
+             final ReentrantAreaLock.Node ticketLock = this.ticketLockArea.lock(
+                 CoordinateUtils.getChunkX(sectionKey) << sectionShift,
+                 CoordinateUtils.getChunkZ(sectionKey) << sectionShift
+@@ -761,45 +756,66 @@ public final class ChunkHolderManager {
+ 
+             try {
+                 final Long2IntOpenHashMap chunkToExpireCount = this.sectionToChunkToExpireCount.get(sectionKey);
+-                if (chunkToExpireCount == null) {
+-                    // lost to some race
++                if (chunkToExpireCount == null || chunkToExpireCount.isEmpty()) {
++                    // Section was removed or is empty, clean up
++                    if (chunkToExpireCount != null && chunkToExpireCount.isEmpty()) {
++                        this.sectionToChunkToExpireCount.remove(sectionKey);
++                    }
+                     continue;
+                 }
+ 
++                // Process each chunk in this section
+                 for (final Iterator<Long2IntMap.Entry> iterator1 = chunkToExpireCount.long2IntEntrySet().fastIterator(); iterator1.hasNext();) {
+                     final Long2IntMap.Entry entry = iterator1.next();
+-
+                     final long chunkKey = entry.getLongKey();
+                     final int expireCount = entry.getIntValue();
+ 
+                     final SortedArraySet<Ticket<?>> tickets = this.tickets.get(chunkKey);
++                    if (tickets == null || tickets.isEmpty()) {
++                        iterator1.remove();
++                        continue;
++                    }
++
+                     final int levelBefore = getTicketLevelAt(tickets);
++                    int expiredCount = 0;
+ 
+-                    final int sizeBefore = tickets.size();
+-                    tickets.removeIf(expireNow);
+-                    final int sizeAfter = tickets.size();
+-                    final int levelAfter = getTicketLevelAt(tickets);
++                    // More efficient ticket processing - avoids creating a new predicate each time
++                    for (Iterator<Ticket<?>> ticketIterator = tickets.iterator(); ticketIterator.hasNext();) {
++                        Ticket<?> ticket = ticketIterator.next();
++                        long removeDelay = ((ChunkSystemTicket<?>)(Object)ticket).moonrise$getRemoveDelay();
++
++                        if (removeDelay == NO_TIMEOUT_MARKER) {
++                            continue;
++                        }
++
++                        --removeDelay;
++                        if (removeDelay <= 0) {
++                            ticketIterator.remove();
++                            expiredCount++;
++                        } else {
++                            ((ChunkSystemTicket<?>)(Object)ticket).moonrise$setRemoveDelay(removeDelay);
++                        }
++                    }
+ 
+                     if (tickets.isEmpty()) {
+                         this.tickets.remove(chunkKey);
+                     }
++
++                    final int levelAfter = getTicketLevelAt(tickets);
+                     if (levelBefore != levelAfter) {
+                         this.updateTicketLevel(chunkKey, levelAfter);
+                     }
+ 
+-                    final int newExpireCount = expireCount - (sizeBefore - sizeAfter);
+-
+-                    if (newExpireCount == expireCount) {
+-                        continue;
+-                    }
+-
+-                    if (newExpireCount != 0) {
+-                        entry.setValue(newExpireCount);
+-                    } else {
++                    // Update expire count
++                    final int newExpireCount = expireCount - expiredCount;
++                    if (newExpireCount <= 0) {
+                         iterator1.remove();
++                    } else if (newExpireCount != expireCount) {
++                        entry.setValue(newExpireCount);
+                     }
+                 }
+ 
++                // Remove empty sections
+                 if (chunkToExpireCount.isEmpty()) {
+                     this.sectionToChunkToExpireCount.remove(sectionKey);
+                 }

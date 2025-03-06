@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Tue, 25 Feb 2025 21:13:54 +0100
+Subject: [PATCH] Some Optimizations on SerializableChunkData
+
+
+diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+index 6b6aaeca14178b5b709e20ae13552d42217f15c0..c10ed10dd843bfa12be3f80a244cda94f8c56807 100644
+--- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
++++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+@@ -502,14 +502,14 @@ public record SerializableChunkData(
+             throw new IllegalArgumentException("Chunk can't be serialized: " + chunk);
+         } else {
+             ChunkPos pos = chunk.getPos();
+-            List<SerializableChunkData.SectionData> list = new ArrayList<>(); final List<SerializableChunkData.SectionData> sectionsList = list; // Paper - starlight - OBFHELPER
+-            LevelChunkSection[] sections = chunk.getSections();
+-            LevelLightEngine lightEngine = level.getChunkSource().getLightEngine();
+ 
+             // Paper start - starlight
+             final int minLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinLightSection(level);
+             final int maxLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMaxLightSection(level);
+             final int minBlockSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(level);
++            // Pre-allocate with correct capacity to avoid resizing
++            final int expectedSectionCount = maxLightSection - minLightSection + 1;
++            List<SerializableChunkData.SectionData> list = new ArrayList<>(expectedSectionCount);
+ 
+             final LevelChunkSection[] chunkSections = chunk.getSections();
+             final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles = ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)chunk).starlight$getBlockNibbles();
+@@ -541,10 +541,11 @@ public record SerializableChunkData(
+                     ((ca.spottedleaf.moonrise.patches.starlight.storage.StarlightSectionData)(Object)sectionData).starlight$setSkyLightState(skyNibble.state);
+                 }
+ 
+-                sectionsList.add(sectionData);
++                list.add(sectionData);
+             }
+             // Paper end - starlight
+ 
++            // Pre-allocate block entities list with exact size needed
+             List<CompoundTag> list1 = new ArrayList<>(chunk.getBlockEntitiesPos().size());
+ 
+             for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
+@@ -554,7 +555,14 @@ public record SerializableChunkData(
+                 }
+             }
+ 
+-            List<CompoundTag> list2 = new ArrayList<>();
++            // For entities, use an initial estimated capacity if it's a ProtoChunk
++            int entityEstimate = 64; // Reasonable default size
++            if (chunk.getPersistedStatus().getChunkType() == ChunkType.PROTOCHUNK) {
++                ProtoChunk protoChunk = (ProtoChunk)chunk;
++                entityEstimate = Math.max(16, protoChunk.getEntities().size());
++            }
++            List<CompoundTag> list2 = new ArrayList<>(entityEstimate);
++
+             long[] longs = null;
+             if (chunk.getPersistedStatus().getChunkType() == ChunkType.PROTOCHUNK) {
+                 ProtoChunk protoChunk = (ProtoChunk)chunk;
+@@ -570,14 +578,16 @@ public record SerializableChunkData(
+             for (Entry<Heightmap.Types, Heightmap> entry : chunk.getHeightmaps()) {
+                 if (chunk.getPersistedStatus().heightmapsAfter().contains(entry.getKey())) {
+                     long[] rawData = entry.getValue().getRawData();
+-                    map.put(entry.getKey(), (long[])rawData.clone());
++                    map.put(entry.getKey(), Arrays.copyOf(rawData, rawData.length));
+                 }
+             }
+ 
+             ChunkAccess.PackedTicks ticksForSerialization = chunk.getTicksForSerialization(level.getGameTime());
+-            ShortList[] lists = Arrays.stream(chunk.getPostProcessing())
+-                .map(list3 -> list3 != null ? new ShortArrayList(list3) : null)
+-                .toArray(ShortList[]::new);
++            ShortList[] postProcessing = chunk.getPostProcessing();
++            ShortList[] lists = new ShortList[postProcessing.length];
++            for (int i = 0; i < postProcessing.length; i++) {
++                lists[i] = postProcessing[i] != null ? new ShortArrayList(postProcessing[i]) : null;
++            }
+             CompoundTag compoundTag = packStructureData(
+                 StructurePieceSerializationContext.fromLevel(level), pos, chunk.getAllStarts(), chunk.getAllReferences()
+             );
+@@ -605,8 +615,8 @@ public record SerializableChunkData(
+                 list,
+                 list2,
+                 list1,
+-                compoundTag
+-                , persistentDataContainer // CraftBukkit - persistentDataContainer
++                compoundTag,
++                persistentDataContainer // CraftBukkit - persistentDataContainer
+             );
+         }
+     }
