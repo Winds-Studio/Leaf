@@ -25,11 +25,11 @@ echo "Latest tag: $LATEST_TAG"
 LAST_RELEASE_COMMIT=$(git rev-list -n 1 "$LATEST_TAG")
 echo "Last release commit: $LAST_RELEASE_COMMIT"
 
-# TODO: get commits log
-#COMMIT_LOG=$(git log "$LAST_RELEASE_COMMIT"..HEAD --pretty=format:"- [\`%h\`](https://github.com/${ github.repository }/commit/%h) %s (%an)")
-# if [ -z "$COMMIT_LOG" ]; then
-#   COMMIT_LOG="No new commits since $LATEST_TAG."
-# fi
+# Commits log
+COMMIT_LOG=$(git log "$LAST_RELEASE_COMMIT"..HEAD --pretty=format:"- [\`%h\`](https://github.com/"${GITHUB_REPO}"/commit/%h) %s (%an)")
+ if [ -z "$COMMIT_LOG" ]; then
+   COMMIT_LOG="No new commits since $LATEST_TAG."
+ fi
 
 # Release notes header
 echo "" >> $RELEASE_NOTES
@@ -78,4 +78,4 @@ if [ "$IS_UNSUPPORTED" = true ]; then
 fi
 
 # Delete last tag
-gh release delete ver-1.21.4 --cleanup-tag -y -R Winds-Studio/Leaf
+gh release delete ver-1.21.4 --cleanup-tag -y -R "${GITHUB_REPO}"
