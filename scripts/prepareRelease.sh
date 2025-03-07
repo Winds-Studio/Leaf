@@ -1,45 +1,46 @@
 #!/bin/bash
 set -e
 
-IS_EOL=true
+IS_EOL=false
 IS_UNSUPPORTED=false
 
 RELEASE_NOTES="release_notes.md"
 
-# Move Leaf jar
+# Rename Leaf jar
 mv ./leaf-1.21.4-"${BUILD_NUMBER}"-mojmap.jar ./leaf-1.21.4-"${BUILD_NUMBER}".jar
 
 # Branch name
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-echo "Current branch: $CURRENT_BRANCH"
+echo "✨Current branch: $CURRENT_BRANCH"
 
 # Latest tag name
 LATEST_TAG=$(git describe --tags --abbrev=0)
 if [ -z "$LATEST_TAG" ]; then
-  echo "No previous release found. Using initial commit."
+  echo "⚠️No previous release found. Using initial commit."
   LATEST_TAG=$(git rev-list --max-parents=0 HEAD)
 fi
-echo "Latest tag: $LATEST_TAG"
+echo "✨Latest tag: $LATEST_TAG"
 
 # Commit of the latest tag
 LAST_RELEASE_COMMIT=$(git rev-list -n 1 "$LATEST_TAG")
-echo "Last release commit: $LAST_RELEASE_COMMIT"
+echo "✨Last release commit: $LAST_RELEASE_COMMIT"
 
 # Commits log
-COMMIT_LOG=$(git log "$LAST_RELEASE_COMMIT"..HEAD --pretty=format:"- [\`%h\`](https://github.com/"${GITHUB_REPO}"/commit/%h) %s (%an)")
- if [ -z "$COMMIT_LOG" ]; then
-   COMMIT_LOG="No new commits since $LATEST_TAG."
- fi
+COMMIT_LOG=$(git log "$LAST_RELEASE_COMMIT"..HEAD --pretty=format:"- [\`%h\`](https://github.com/"${GITHUB_REPO}"/commit/%H) %s (%an)")
+if [ -z "$COMMIT_LOG" ]; then
+  COMMIT_LOG="⚠️No new commits since $LATEST_TAG."
+fi
+echo "✅Commits log generated"
 
 # Release notes header
 echo "" >> $RELEASE_NOTES
 
 # Commits log
 echo "### 📜 Commits:" >> $RELEASE_NOTES
+echo "***" >> $RELEASE_NOTES
 echo "" >> $RELEASE_NOTES
 echo "$COMMIT_LOG" >> $RELEASE_NOTES
 echo "" >> $RELEASE_NOTES
-
 echo "### 🔒 Checksums" >> $RELEASE_NOTES
 
 # Get checksums
@@ -58,8 +59,9 @@ if [ -d "$ARTIFACTS_DIR" ]; then
     fi
   done
 else
-  echo "No artifacts found." >> $RELEASE_NOTES
+  echo "⚠️No artifacts found." >> $RELEASE_NOTES
 fi
+echo "🔒Checksums calculated"
 
 # EOL warning
 if [ "$IS_EOL" = true ]; then
@@ -78,4 +80,6 @@ if [ "$IS_UNSUPPORTED" = true ]; then
 fi
 
 # Delete last tag
-gh release delete ver-1.21.4 --cleanup-tag -y -R "${GITHUB_REPO}"
+# TODO uncomment before merging
+# gh release delete ver-1.21.4 --cleanup-tag -y -R "${GITHUB_REPO}"
+echo "🚀Ready for release"
