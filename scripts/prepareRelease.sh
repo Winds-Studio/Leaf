@@ -7,7 +7,7 @@ IS_UNSUPPORTED=false
 RELEASE_NOTES="release_notes.md"
 
 # Move Leaf jar
-mv ./leaf-1.21.4-${{ env.BUILD_NUMBER }}-mojmap.jar ./leaf-1.21.4-${{ env.BUILD_NUMBER }}.jar
+mv ./leaf-1.21.4-${ env.BUILD_NUMBER }-mojmap.jar ./leaf-1.21.4-${ env.BUILD_NUMBER }.jar
 
 # Branch name
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -17,7 +17,7 @@ echo "Current branch: $CURRENT_BRANCH"
 LATEST_TAG=$(git describe --tags --abbrev=0)
 if [ -z "$LATEST_TAG" ]; then
   echo "No previous release found. Using initial commit."
-  LATEST_TAG=$(git rev-list --max-parents=0 HEAD) # 初始提交
+  LATEST_TAG=$(git rev-list --max-parents=0 HEAD)
 fi
 echo "Latest tag: $LATEST_TAG"
 
