@@ -80,6 +80,5 @@ if [ "$IS_UNSUPPORTED" = true ]; then
 fi
 
 # Delete last tag
-# TODO uncomment before merging
-# gh release delete ver-1.21.4 --cleanup-tag -y -R "${GITHUB_REPO}"
+gh release delete ver-1.21.4 --cleanup-tag -y -R "${GITHUB_REPO}"
 echo "🚀Ready for release"
