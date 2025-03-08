@@ -5,10 +5,14 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class ConcurrentLongHashSet extends LongOpenHashSet implements LongSet {
+
     private static final int DEFAULT_SEGMENTS = 16; // Should be power-of-two
     private final Segment[] segments;
     private final int segmentMask;
@@ -23,7 +27,7 @@ public final class ConcurrentLongHashSet extends LongOpenHashSet implements Long
         boolean modified = false;
         for (Object obj : c) {
             if (obj instanceof Long) {
-                modified |= remove((Long) obj);
+                modified |= remove(obj);
             }
         }
         return modified;
@@ -92,7 +96,7 @@ public final class ConcurrentLongHashSet extends LongOpenHashSet implements Long
         Objects.requireNonNull(c, "Collection cannot be null");
         for (Object obj : c) {
             if (obj == null || !(obj instanceof Long)) return false;
-            if (!contains((Long) obj)) return false;
+            if (!contains(obj)) return false;
         }
         return true;
     }
@@ -233,8 +237,7 @@ public final class ConcurrentLongHashSet extends LongOpenHashSet implements Long
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof LongSet)) return false;
-        LongSet that = (LongSet) o;
+        if (!(o instanceof LongSet that)) return false;
         return size() == that.size() && containsAll(that);
     }
 
@@ -248,7 +251,15 @@ public final class ConcurrentLongHashSet extends LongOpenHashSet implements Long
         return hash;
     }
 
-    @Override @NotNull public Object[] toArray() { return Collections.unmodifiableSet(this).toArray(); }
-    @Override @NotNull public <T> T[] toArray(@NotNull T[] a) { return Collections.unmodifiableSet(this).toArray(a); }
+    @Override
+    @NotNull
+    public Object[] toArray() {
+        return Collections.unmodifiableSet(this).toArray();
+    }
 
+    @Override
+    @NotNull
+    public <T> T[] toArray(@NotNull T[] a) {
+        return Collections.unmodifiableSet(this).toArray(a);
+    }
 }
