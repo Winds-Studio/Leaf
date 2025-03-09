@@ -2,94 +2,175 @@ name: Build Leaf 1.21.4
 on:
   push:
     branches: [ "ver/1.21.4" ]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     env:
       BUILD_NUMBER: ${{ github.run_number }}
       GRAALVM_ARGS: "-Dgraal.CompilerConfiguration=enterprise -Dgraal.UsePriorityInlining=true -Dgraal.Vectorization=true -Dgraal.OptDuplication=true -Dgraal.LoopUnroll=true -Dgraal.SpeculativeGuardMovement=true --add-modules jdk.incubator.vector"
-      GRADLE_OPTS: "-Dorg.gradle.parallel=true -Dorg.gradle.caching=true -Dorg.gradle.configureondemand=true -Dkotlin.incremental=true"
+      GRADLE_MEMORY: "-Xmx4g -XX:MaxMetaspaceSize=2g"
+      PATCH_PARALLELISM: "16"
+    outputs:
+      build_number: ${{ env.BUILD_NUMBER }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@main
-      
+        with:
+          fetch-depth: 0
+
       - name: Setup Gradle Cache
-        uses: actions/cache@v4
+        uses: useblacksmith/cache@v5
         with:
           path: |
-            ~/.gradle/caches
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/jars-*
+            ~/.gradle/caches/transforms-*
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+            # Add patches cache
+            .gradle/patchCache
+            .gradle/patched
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'buildSrc/**/*.kt', 'patches/**/*.patch') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
-      
+
+      - name: Gradle Cache Cleanup
+        run: |
+          mkdir -p ~/.gradle/caches/modules-2
+          [ -f ~/.gradle/caches/modules-2/modules-2.lock ] && rm -f ~/.gradle/caches/modules-2/modules-2.lock
+          [ -f ~/.gradle/caches/modules-2/gc.properties ] && rm -f ~/.gradle/caches/modules-2/gc.properties
+          find ~/.gradle/caches -name "*.lock" -type f -delete || echo "No lock files found to delete"
+
       - name: Set up GraalVM JDK 21
         uses: graalvm/setup-graalvm@main
         with:
           java-version: 21
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-          cache: gradle
-          set-java-home: true
-          components: 'native-image'
-      
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-      
+
       - name: Configure Git
         run: |
           git config --global user.email "no-reply@github.com"
           git config --global user.name "Github Actions"
-    
+          # Speed up git operations
+          git config --global core.preloadindex true
+          git config --global core.fscache true
+          git config --global gc.auto 256
+
       - name: Configure Gradle Properties
         run: |
           mkdir -p ~/.gradle
           echo "org.gradle.daemon=true" >> ~/.gradle/gradle.properties
           echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
           echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
-          echo "org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "org.gradle.jvmargs=${{ env.GRADLE_MEMORY }} -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
           echo "kotlin.incremental=true" >> ~/.gradle/gradle.properties
-      
+          # Add patch parallelism configuration 
+          echo "leafPatches.parallelism=${{ env.PATCH_PARALLELISM }}" >> ~/.gradle/gradle.properties
+
       - name: Apply patches
-        run: ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }}" applyAllPatches --stacktrace --no-daemon --parallel
-      
+        run: |
+          # Analyze available system resources for optimal settings
+          echo "CPU cores: $(nproc)"
+          echo "Memory: $(free -h)"
+          
+          # Run patch application with optimized settings
+          ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }} ${{ env.GRADLE_MEMORY }}" \
+                   -Dleaf.patcher.parallelism=${{ env.PATCH_PARALLELISM }} \
+                   applyAllPatches \
+                   --stacktrace --no-daemon --parallel \
+                   --max-workers=8
+
       - name: Create MojmapPaperclipJar
-        run: ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }}" createMojmapPaperclipJar --stacktrace --no-daemon --parallel
-      
+        run: ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }} ${{ env.GRADLE_MEMORY }}" createMojmapPaperclipJar --stacktrace --no-daemon --parallel --max-workers=8
+
       - name: Create ReobfPaperclipJar
-        run: ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }}" -Dpaperweight.debug=true createReobfPaperclipJar --stacktrace --no-daemon --parallel
-      
+        run: ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }} ${{ env.GRADLE_MEMORY }}" -Dpaperweight.debug=true createReobfPaperclipJar --stacktrace --no-daemon --parallel --max-workers=8
+
+      # Start API publishing in background
+      - name: Start API Publishing
+        id: publish-api
+        run: |
+          echo "Starting API publishing in background..."
+          (
+            ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }} ${{ env.GRADLE_MEMORY }}" publish --parallel --max-workers=4 > publish_api_log.txt 2>&1
+            # Uncomment when ready to implement:
+            # ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }} ${{ env.GRADLE_MEMORY }}" publishDevBundlePublicationToLeafRepository -PpublishDevBundle=true --parallel >> publish_api_log.txt 2>&1
+            echo "API_PUBLISH_DONE=true" >> $GITHUB_ENV
+          ) &
+          
+          # Store the background process ID
+          echo "PUBLISH_PID=$!" >> $GITHUB_ENV
+          echo "API publishing started in background with PID $!"
+        env:
+          REPO_USER: ${{ secrets.REPO_USER }}
+          REPO_PASSWORD: ${{ secrets.REPO_PASSWORD }}
+
+      - name: Gradle Cache Prune
+        run: |
+          if [ -d ~/.gradle/caches ]; then
+            echo "Before pruning:"
+            du -sh ~/.gradle/caches || echo "Could not determine cache size"
+            find ~/.gradle/caches -name "*.jar" -type f -atime +30 -delete || echo "No old JAR files to delete"
+            find ~/.gradle/caches -name "*.pom" -type f -atime +30 -delete || echo "No old POM files to delete"
+            echo "After pruning:"
+            du -sh ~/.gradle/caches || echo "Could not determine cache size"
+          else
+            echo "Gradle cache directory does not exist yet"
+          fi
+
       - name: Rename Paperclip JARs
         run: |
           mv leaf-server/build/libs/leaf-paperclip-1.21.4-R0.1-SNAPSHOT-mojmap.jar ./leaf-1.21.4-${{ env.BUILD_NUMBER }}-mojmap.jar
           mv leaf-server/build/libs/leaf-paperclip-1.21.4-R0.1-SNAPSHOT-reobf.jar ./leaf-1.21.4-${{ env.BUILD_NUMBER }}-reobf.jar
-      
-      - name: Publish API
-        continue-on-error: true
-        run: |
-          echo "REPO_USER=${{ secrets.REPO_USER }}" >> $GITHUB_ENV
-          export REPO_USER=${{ secrets.REPO_USER }}
-          echo "REPO_PASSWORD=${{ secrets.REPO_PASSWORD }}" >> $GITHUB_ENV
-          export REPO_PASSWORD=${{ secrets.REPO_PASSWORD }}
-          ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }}" publish --parallel
-          # Uncomment when ready to implement:
-          # ./gradlew -Dorg.gradle.jvmargs="${{ env.GRAALVM_ARGS }}" publishDevBundlePublicationToLeafRepository -PpublishDevBundle=true --parallel
-      
+
       - name: Upload Leaf as build artifact
         uses: actions/upload-artifact@main
         with:
           name: Leaf 1.21.4
           path: ./leaf-1.21.4-*.jar
-      
-      - name: Prepare jar for release
-        run: mv ./leaf-1.21.4-${{ env.BUILD_NUMBER }}-mojmap.jar ./leaf-1.21.4-${{ env.BUILD_NUMBER }}.jar
-      
+
+      - name: Prepare for release
+        continue-on-error: true
+        run: |
+          chmod +x ./scripts/prepareRelease.sh
+          ./scripts/prepareRelease.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+
+      # Wait for API publishing to complete before releasing
+      - name: Wait for API Publishing
+        run: |
+          echo "Waiting for API publishing to complete..."
+          # Check if the process is still running
+          if ps -p ${{ env.PUBLISH_PID }} > /dev/null; then
+            echo "API publishing is still running with PID ${{ env.PUBLISH_PID }}"
+            wait ${{ env.PUBLISH_PID }} || true
+            echo "API publishing process has completed."
+          else
+            echo "API publishing process already completed."
+          fi
+          
+          # Check for any errors in the log
+          if grep -i "error" publish_api_log.txt; then
+            echo "Warnings or errors found in API publishing log:"
+            cat publish_api_log.txt
+            echo "API publishing completed with warnings or errors, but continuing with release."
+          else
+            echo "API publishing completed successfully."
+          fi
+
       - name: Release Leaf
-        # TODO: Replace with a maintained action as marvinpinto/action-automatic-releases is archived
-        # Recommended alternatives: softprops/action-gh-release or ncipollo/release-action
-        uses: marvinpinto/action-automatic-releases@master
+        uses: softprops/action-gh-release@master
         with:
-          title: "Leaf 1.21.4"
-          automatic_release_tag: "ver-1.21.4"
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          name: "Leaf 1.21.4"
+          tag_name: "ver-1.21.4"
           files: "./leaf-1.21.4-${{ env.BUILD_NUMBER }}.jar"
+          body_path: "./release_notes.md"
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          target_commitish: "${{ github.sha }}"
           prerelease: false

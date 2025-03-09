@@ -16,14 +16,14 @@ public class ConnectionFlushQueueRewrite extends ConfigModules {
         enabled = config.getBoolean(getBasePath() + ".connection-flush-queue-rewrite", enabled, config.pickStringRegionBased("""
                 This replaces ConcurrentLinkedQueue with ArrayDeque for better performance
                 and uses the Netty event loop to ensure thread safety.
-                
+
                 May increase the Netty thread usage and requires server restart to take effect
                 Default: false
                 """,
             """
                 此选项将 ConcurrentLinkedQueue 替换为 ArrayDeque 以提高性能，
                 并使用 Netty 事件循环以确保线程安全。
-                
+
                 默认值: false
                 """));
     }
