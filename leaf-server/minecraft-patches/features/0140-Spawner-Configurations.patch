@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sun, 9 Mar 2025 00:36:26 +0100
+Subject: [PATCH] Spawner Configurations
+
+
+diff --git a/net/minecraft/world/level/BaseSpawner.java b/net/minecraft/world/level/BaseSpawner.java
+index 8c6f8cb08b247dcf497822ae991aa3afbcb784f1..81f491963cd00225cd44e1c3cd6e7d40c2c0d98b 100644
+--- a/net/minecraft/world/level/BaseSpawner.java
++++ b/net/minecraft/world/level/BaseSpawner.java
+@@ -52,8 +52,15 @@ public abstract class BaseSpawner {
+     }
+ 
+     public boolean isNearPlayer(Level level, BlockPos pos) {
+-        if (level.purpurConfig.spawnerDeactivateByRedstone && level.hasNeighborSignal(pos)) return false; // Purpur - Redstone deactivates spawners
+-        return level.hasNearbyAlivePlayerThatAffectsSpawningForSpawner(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, this.requiredPlayerRange); // Paper - Affects Spawning API // Leaf - Optimize nearby alive players for spawning
++        if (level.purpurConfig.spawnerDeactivateByRedstone && level.hasNeighborSignal(pos)) return false;
++        // Skip player proximity check if disabled in config
++        if (org.dreeam.leaf.config.modules.misc.SpawnerSettings.enabled && !org.dreeam.leaf.config.modules.misc.SpawnerSettings.checkForNearbyPlayers) {
++            return true; // Always act as if players are nearby
++        }
++        // Otherwise check if players are actually nearby
++        return level.hasNearbyAlivePlayerThatAffectsSpawningForSpawner(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
++            this.requiredPlayerRange
++        );
+     }
+ 
+     public void clientTick(Level level, BlockPos pos) {
+@@ -75,6 +82,18 @@ public abstract class BaseSpawner {
+         }
+     }
+ 
++    private int maxAllowedLight(EntityType<?> entityType) {
++        if (entityType.getCategory().isFriendly()) {
++            return 15; // No light restriction for passive mobs
++        } else if (entityType == EntityType.SPIDER || entityType == EntityType.CAVE_SPIDER) {
++            return 7; // Spiders can spawn in light level 7 or lower
++        } else if (entityType == EntityType.ENDERMAN) {
++            return 7; // Endermen can spawn in light level 7 or lower
++        }
++
++        return 0; // Complete darkness for other hostile mobs
++    }
++
+     public void serverTick(ServerLevel serverLevel, BlockPos pos) {
+         if (spawnCount <= 0 || maxNearbyEntities <= 0) return; // Paper - Ignore impossible spawn tick
+         // Paper start - Configurable mob spawner tick rate
+@@ -82,6 +101,16 @@ public abstract class BaseSpawner {
+         tickDelay = serverLevel.paperConfig().tickRates.mobSpawner;
+         if (tickDelay == -1) { return; } // If disabled
+         // Paper end - Configurable mob spawner tick rate
++
++        // Apply custom min/max spawn delays if enabled
++        if (org.dreeam.leaf.config.modules.misc.SpawnerSettings.enabled) {
++            if (this.minSpawnDelay != org.dreeam.leaf.config.modules.misc.SpawnerSettings.minSpawnDelay) {
++                this.minSpawnDelay = org.dreeam.leaf.config.modules.misc.SpawnerSettings.minSpawnDelay;
++            }
++            if (this.maxSpawnDelay != org.dreeam.leaf.config.modules.misc.SpawnerSettings.maxSpawnDelay) {
++                this.maxSpawnDelay = org.dreeam.leaf.config.modules.misc.SpawnerSettings.maxSpawnDelay;
++            }
++        }
+         if (this.isNearPlayer(serverLevel, pos)) {
+             if (this.spawnDelay < -tickDelay) { // Paper - Configurable mob spawner tick rate
+                 this.delay(serverLevel, pos);
+@@ -107,18 +136,41 @@ public abstract class BaseSpawner {
+                     double d = size >= 1 ? list.getDouble(0) : pos.getX() + (random.nextDouble() - random.nextDouble()) * this.spawnRange + 0.5;
+                     double d1 = size >= 2 ? list.getDouble(1) : pos.getY() + random.nextInt(3) - 1;
+                     double d2 = size >= 3 ? list.getDouble(2) : pos.getZ() + (random.nextDouble() - random.nextDouble()) * this.spawnRange + 0.5;
+-                    if (serverLevel.noCollision(optional.get().getSpawnAABB(d, d1, d2))) {
++
++                    // Skip collision check if block checks are disabled
++                    boolean skipBlockChecks = org.dreeam.leaf.config.modules.misc.SpawnerSettings.enabled &&
++                        !org.dreeam.leaf.config.modules.misc.SpawnerSettings.spawnerBlockChecks;
++                    if (skipBlockChecks || serverLevel.noCollision(optional.get().getSpawnAABB(d, d1, d2))) {
+                         BlockPos blockPos = BlockPos.containing(d, d1, d2);
++
++                        // Add light level check if enabled
++                        if (org.dreeam.leaf.config.modules.misc.SpawnerSettings.enabled &&
++                            org.dreeam.leaf.config.modules.misc.SpawnerSettings.lightLevelCheck) {
++                            int lightLevel = serverLevel.getMaxLocalRawBrightness(blockPos);
++                            if (lightLevel > maxAllowedLight(optional.get())) {
++                                continue;
++                            }
++                        }
++
++                        // Add water check if enabled
++                        if (org.dreeam.leaf.config.modules.misc.SpawnerSettings.enabled &&
++                            org.dreeam.leaf.config.modules.misc.SpawnerSettings.waterPreventSpawnCheck &&
++                            serverLevel.getBlockState(blockPos).getFluidState().is(net.minecraft.tags.FluidTags.WATER)) {
++                            continue;
++                        }
++
++                        // Handle spawn rules checks
++                        boolean skipSpawnRules = false;
+                         if (nextSpawnData.getCustomSpawnRules().isPresent()) {
+                             if (!optional.get().getCategory().isFriendly() && serverLevel.getDifficulty() == Difficulty.PEACEFUL) {
+                                 continue;
+                             }
+ 
+                             SpawnData.CustomSpawnRules customSpawnRules = nextSpawnData.getCustomSpawnRules().get();
+-                            if (!customSpawnRules.isValidPosition(blockPos, serverLevel)) {
++                            if (!skipBlockChecks && !customSpawnRules.isValidPosition(blockPos, serverLevel)) {
+                                 continue;
+                             }
+-                        } else if (!SpawnPlacements.checkSpawnRules(optional.get(), serverLevel, EntitySpawnReason.SPAWNER, blockPos, serverLevel.getRandom())) {
++                        } else if (!skipBlockChecks && !SpawnPlacements.checkSpawnRules(optional.get(), serverLevel, EntitySpawnReason.SPAWNER, blockPos, serverLevel.getRandom())) {
+                             continue;
+                         }
+ 
+@@ -146,22 +198,27 @@ public abstract class BaseSpawner {
+                             return;
+                         }
+ 
+-                        int size1 = serverLevel.getEntities(
+-                                EntityTypeTest.forExactClass(entity.getClass()),
+-                                new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1).inflate(this.spawnRange),
+-                                EntitySelector.NO_SPECTATORS
+-                            )
+-                            .size();
+-                        if (size1 >= this.maxNearbyEntities) {
+-                            this.delay(serverLevel, pos);
+-                            return;
++                        // Skip max nearby entity check if disabled
++                        if (!org.dreeam.leaf.config.modules.misc.SpawnerSettings.enabled ||
++                            org.dreeam.leaf.config.modules.misc.SpawnerSettings.spawnerMaxNearbyCheck) {
++                            int size1 = serverLevel.getEntities(
++                                    EntityTypeTest.forExactClass(entity.getClass()),
++                                    new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1).inflate(this.spawnRange),
++                                    EntitySelector.NO_SPECTATORS
++                                )
++                                .size();
++                            if (size1 >= this.maxNearbyEntities) {
++                                this.delay(serverLevel, pos);
++                                return;
++                            }
+                         }
+ 
+                         entity.preserveMotion = true; // Paper - Fix Entity Teleportation and cancel velocity if teleported; preserve entity motion from tag
+                         entity.moveTo(entity.getX(), entity.getY(), entity.getZ(), random.nextFloat() * 360.0F, 0.0F);
+                         if (entity instanceof Mob mob) {
+-                            if (nextSpawnData.getCustomSpawnRules().isEmpty() && !mob.checkSpawnRules(serverLevel, EntitySpawnReason.SPAWNER)
+-                                || !mob.checkSpawnObstruction(serverLevel)) {
++                            // Skip spawn rule and obstruction checks if block checks are disabled
++                            if (!skipBlockChecks && (nextSpawnData.getCustomSpawnRules().isEmpty() && !mob.checkSpawnRules(serverLevel, EntitySpawnReason.SPAWNER)
++                                || !mob.checkSpawnObstruction(serverLevel))) {
+                                 continue;
+                             }
+ 
+@@ -197,8 +254,6 @@ public abstract class BaseSpawner {
+                         if (entity instanceof Mob) {
+                             ((Mob)entity).spawnAnim();
+                         }
+-
+-                        //flag = true; // Paper - moved up above cancellable event
+                     }
+                 }
+ 
+@@ -259,6 +314,8 @@ public abstract class BaseSpawner {
+             this.minSpawnDelay = tag.getInt("MinSpawnDelay"); // Paper - short -> int
+             this.maxSpawnDelay = tag.getInt("MaxSpawnDelay"); // Paper - short -> int
+             this.spawnCount = tag.getShort("SpawnCount");
++            this.minSpawnDelay = org.dreeam.leaf.config.modules.misc.SpawnerSettings.minSpawnDelay;
++            this.maxSpawnDelay = org.dreeam.leaf.config.modules.misc.SpawnerSettings.maxSpawnDelay;
+         }
+ 
+         if (tag.contains("MaxNearbyEntities", 99)) {
