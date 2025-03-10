@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config.modules.misc;
+package org.dreeam.leaf.config.modules.gameplay;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
@@ -6,7 +6,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 public class SpawnerSettings extends ConfigModules {
 
     public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".spawner-settings";
+        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".spawner-settings";
     }
 
     // Global toggle
