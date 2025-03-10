@@ -19,8 +19,8 @@ public class SpawnerSettings extends ConfigModules {
     public static boolean spawnerBlockChecks = false;
     public static boolean waterPreventSpawnCheck = false;
 
-    public static int minSpawnDelay = 400;
-    public static int maxSpawnDelay = 2000;
+    public static int minSpawnDelay = 200;
+    public static int maxSpawnDelay = 800;
 
     @Override
     public void onLoaded() {
