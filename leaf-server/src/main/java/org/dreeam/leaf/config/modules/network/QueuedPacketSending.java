@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config.modules.async;
+package org.dreeam.leaf.config.modules.network;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
@@ -20,13 +20,12 @@ public class QueuedPacketSending extends ConfigModules {
     public static boolean enabled = false;
 
     // Queue settings
-    public static int batchSize = 512;
+    public static int batchSize = 1024;
     public static int flushFrequency = 1;
     public static boolean prioritizeImportantPackets = true;
 
     // Thread pool settings
     public static int threadPoolSize = 4;
-    public static int queueCapacity = 1024; // in case if it leaks, will most likely remove this later on
     private static ExecutorService PACKET_THREAD_EXECUTOR = null;
 
     public static ExecutorService getPacketThreadExecutor() {
@@ -35,7 +34,7 @@ public class QueuedPacketSending extends ConfigModules {
                 threadPoolSize,
                 threadPoolSize,
                 60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(queueCapacity), // Using bounded queue to prevent memory issues
+                new LinkedBlockingQueue<>(), // Unbounded queue!!!!!!!!!!!!!!!!!!!!!!!!!
                 new ThreadFactoryBuilder()
                     .setNameFormat("Packet-Processor-%d")
                     .setDaemon(true)
@@ -43,7 +42,7 @@ public class QueuedPacketSending extends ConfigModules {
                         LeafConfig.LOGGER.error("Uncaught exception in Packet Processor Thread", e);
                     })
                     .build(),
-                new ThreadPoolExecutor.CallerRunsPolicy() // If queue is full, run in caller thread as fallback
+                new ThreadPoolExecutor.CallerRunsPolicy()
             );
         }
         return PACKET_THREAD_EXECUTOR;
@@ -87,11 +86,9 @@ public class QueuedPacketSending extends ConfigModules {
 
         // Thread pool settings
         threadPoolSize = config.getInt(getBasePath() + ".thread-pool-size", threadPoolSize);
-        queueCapacity = config.getInt(getBasePath() + ".queue-capacity", queueCapacity);
 
         // Validate configuration
         if (threadPoolSize < 1) {threadPoolSize = 1;}
-        if (queueCapacity < 128) {queueCapacity = 128;}
         if (batchSize < 16) {batchSize = 16;}
         if (batchSize > 512) {batchSize = 512;}
         if (flushFrequency < 1) {flushFrequency = 1;}
