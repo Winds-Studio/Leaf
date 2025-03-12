@@ -10,15 +10,23 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class AsyncPacketSending extends ConfigModules {
+public class QueuedPacketSending extends ConfigModules {
 
     public String getBasePath() {
         return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-packet-sending";
     }
 
+    // General settings
     public static boolean enabled = false;
-    public static int threadPoolSize = 2;
-    public static int queueCapacity = 1024;
+
+    // Queue settings
+    public static int batchSize = 512;
+    public static int flushFrequency = 1;
+    public static boolean prioritizeImportantPackets = true;
+
+    // Thread pool settings
+    public static int threadPoolSize = 4;
+    public static int queueCapacity = 1024; // in case if it leaks, will most likely remove this later on
     private static ExecutorService PACKET_THREAD_EXECUTOR = null;
 
     public static ExecutorService getPacketThreadExecutor() {
@@ -29,10 +37,10 @@ public class AsyncPacketSending extends ConfigModules {
                 60L, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(queueCapacity), // Using bounded queue to prevent memory issues
                 new ThreadFactoryBuilder()
-                    .setNameFormat("Packet-Thread-%d")
+                    .setNameFormat("Packet-Processor-%d")
                     .setDaemon(true)
                     .setUncaughtExceptionHandler((t, e) -> {
-                        LeafConfig.LOGGER.error("Uncaught exception in Packet Thread", e);
+                        LeafConfig.LOGGER.error("Uncaught exception in Packet Processor Thread", e);
                     })
                     .build(),
                 new ThreadPoolExecutor.CallerRunsPolicy() // If queue is full, run in caller thread as fallback
@@ -46,7 +54,7 @@ public class AsyncPacketSending extends ConfigModules {
             PACKET_THREAD_EXECUTOR.shutdown();
             try {
                 if (!PACKET_THREAD_EXECUTOR.awaitTermination(10, TimeUnit.SECONDS)) {
-                    LeafConfig.LOGGER.warn("Packet thread pool did not terminate in time");
+                    LeafConfig.LOGGER.warn("Packet processor thread pool did not terminate in time");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -58,25 +66,41 @@ public class AsyncPacketSending extends ConfigModules {
     @Override
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
-                Offloads player packet sending operations to a dedicated thread pool to reduce main thread load.
+                Optimizes player packet sending by using a queue-based approach with batched processing.
+                This reduces main thread load and improves network efficiency compared to per-packet scheduling.
                 """,
             """
-                将数据包发送操作转移到专用线程池，以减少主线程负载。
+                通过使用基于队列的批处理方法来优化玩家数据包发送。
+                与每个数据包单独调度相比，这减少了主线程负载并提高了网络效率。
                 """);
 
+        // General settings
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+
+        // Queue settings
+        batchSize = config.getInt(getBasePath() + ".batch-size", batchSize,
+            "Maximum number of packets to process in a single batch");
+        flushFrequency = config.getInt(getBasePath() + ".flush-frequency", flushFrequency,
+            "How often (in ticks) to flush the packet queue");
+        prioritizeImportantPackets = config.getBoolean(getBasePath() + ".prioritize-important-packets",
+            prioritizeImportantPackets, "Immediately process important packets like chat and keep-alive");
+
+        // Thread pool settings
         threadPoolSize = config.getInt(getBasePath() + ".thread-pool-size", threadPoolSize);
         queueCapacity = config.getInt(getBasePath() + ".queue-capacity", queueCapacity);
 
-        // Validate thread pool size
+        // Validate configuration
         if (threadPoolSize < 1) {threadPoolSize = 1;}
-
-        // Ensure queue capacity is reasonable
         if (queueCapacity < 128) {queueCapacity = 128;}
+        if (batchSize < 16) {batchSize = 16;}
+        if (batchSize > 512) {batchSize = 512;}
+        if (flushFrequency < 1) {flushFrequency = 1;}
+        if (flushFrequency > 20) {flushFrequency = 20;}
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for threaded packet sending with queue capacity {}",
-                threadPoolSize, queueCapacity);
+            LeafConfig.LOGGER.info("Using queue-based packet sending with {} processor threads. " +
+                    "Batch size: {}, Flush frequency: {} tick(s)",
+                threadPoolSize, batchSize, flushFrequency);
         }
     }
 }

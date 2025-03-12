@@ -5,46 +5,427 @@ Subject: [PATCH] Async playerPacket Send
 
 
 diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
-index 5a8133497d9c1260a3bba7e9dc7f3b059bbe6b1a..99599a765ecfcda383e7a232136ba39c651c17aa 100644
+index 2aba58b4c1afb843b61d9a5113ed058b06278348..66fb22103da205eefb6f62b63c41fbe2859d118c 100644
 --- a/net/minecraft/network/Connection.java
 +++ b/net/minecraft/network/Connection.java
-@@ -474,9 +474,39 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -128,6 +128,23 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         return null;
+     }
+     // Paper end - add utility methods
++    private static final int INITIAL_CAPACITY = 2048; // Preallocate space for typical burst size
++    private final Queue<Packet<?>> fastPacketQueue = new java.util.ArrayDeque<>(INITIAL_CAPACITY);
++    private final java.util.Map<Packet<?>, PacketSendListener> listenerMap = new java.util.IdentityHashMap<>(INITIAL_CAPACITY);
++    private final java.util.BitSet flushFlags = new java.util.BitSet(INITIAL_CAPACITY);
++    private final java.util.Queue<PacketEntry> packetQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
++    private int queueSize = 0;
++    private static final class PacketEntry {
++        final Packet<?> packet;
++        final PacketSendListener listener;
++        final boolean flush;
++
++        PacketEntry(Packet<?> packet, PacketSendListener listener, boolean flush) {
++            this.packet = packet;
++            this.listener = listener;
++            this.flush = flush;
++        }
++    }
+     // Paper start - packet limiter
+     protected final Object PACKET_LIMIT_LOCK = new Object();
+     protected final @Nullable io.papermc.paper.util.IntervalledCounter allPacketCounts = io.papermc.paper.configuration.GlobalConfiguration.get().packetLimiter.allPackets.isEnabled() ? new io.papermc.paper.util.IntervalledCounter(
+@@ -428,41 +445,69 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     }
+ 
+     public void send(Packet<?> packet, @Nullable PacketSendListener listener, boolean flush) {
+-        // Paper start - Optimize network: Handle oversized packets better
+         final boolean connected = this.isConnected();
+         if (!connected && !this.preparing) {
+             return;
+         }
+-
+         packet.onPacketDispatch(this.getPlayer());
+         if (connected && (InnerUtil.canSendImmediate(this, packet)
+             || (io.papermc.paper.util.MCUtil.isMainThread() && packet.isReady() && this.pendingActions.isEmpty()
+             && (packet.getExtraPackets() == null || packet.getExtraPackets().isEmpty())))) {
+             this.sendPacket(packet, listener, flush);
+         } else {
+-            // Write the packets to the queue, then flush - antixray hooks there already
+-            final java.util.List<Packet<?>> extraPackets = InnerUtil.buildExtraPackets(packet);
+-            final boolean hasExtraPackets = extraPackets != null && !extraPackets.isEmpty();
+-            if (!hasExtraPackets) {
+-                this.pendingActions.add(new PacketSendAction(packet, listener, flush));
++            // Fast path
++            if (packet.getExtraPackets() == null || packet.getExtraPackets().isEmpty()) {
++                // Direct queue insertion without creating wrapper objects
++                synchronized (fastPacketQueue) {
++                    int index = queueSize++;
++                    fastPacketQueue.add(packet);
++                    if (listener != null) {
++                        listenerMap.put(packet, listener);
++                    }
++                    if (flush) {
++                        flushFlags.set(index);
++                    }
++                }
+             } else {
+-                final java.util.List<PacketSendAction> actions = new java.util.ArrayList<>(1 + extraPackets.size());
+-                actions.add(new PacketSendAction(packet, null, false)); // Delay the future listener until the end of the extra packets
+-
+-                for (int i = 0, len = extraPackets.size(); i < len;) {
+-                    final Packet<?> extraPacket = extraPackets.get(i);
+-                    final boolean end = ++i == len;
+-                    actions.add(new PacketSendAction(extraPacket, end ? listener : null, end)); // Append listener to the end
++                // Handle packets with extra packets - use original approach for this less common case
++                final java.util.List<Packet<?>> extraPackets = InnerUtil.buildExtraPackets(packet);
++                final boolean hasExtraPackets = extraPackets != null && !extraPackets.isEmpty();
++                if (!hasExtraPackets) {
++                    this.pendingActions.add(new PacketSendAction(packet, listener, flush));
++                } else {
++                    final java.util.List<PacketSendAction> actions = new java.util.ArrayList<>(1 + extraPackets.size());
++                    actions.add(new PacketSendAction(packet, null, false)); // Delay the future listener until the end of the extra packets
++                    for (int i = 0, len = extraPackets.size(); i < len;) {
++                        final Packet<?> extraPacket = extraPackets.get(i);
++                        final boolean end = ++i == len;
++                        actions.add(new PacketSendAction(extraPacket, end ? listener : null, end)); // Append listener to the end
++                    }
++                    this.pendingActions.addAll(actions);
+                 }
+-
+-                this.pendingActions.addAll(actions);
+             }
+-
+             this.flushQueue();
+             // Paper end - Optimize network
+         }
+     }
+ 
++    private void processFastQueue() {
++        synchronized (fastPacketQueue) {
++            if (fastPacketQueue.isEmpty()) {
++                return;
++            }
++            int processedCount = 0;
++            Packet<?> packet;
++            while ((packet = fastPacketQueue.poll()) != null) {
++                boolean shouldFlush = flushFlags.get(processedCount);
++                PacketSendListener listener = listenerMap.remove(packet);
++                this.sendPacket(packet, listener, shouldFlush);
++                processedCount++;
++            }
++            queueSize = 0;
++            flushFlags.clear();
++        }
++    }
++
+     public void runOnceConnected(Consumer<Connection> action) {
+         if (this.isConnected()) {
+             this.flushQueue();
+@@ -474,48 +519,183 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
  
      private void sendPacket(Packet<?> packet, @Nullable PacketSendListener sendListener, boolean flush) {
          this.sentPackets++;
+-        if (this.channel.eventLoop().inEventLoop()) {
 +
-+        // If we're already in the event loop, just execute directly
-         if (this.channel.eventLoop().inEventLoop()) {
++        // If we're already in the event loop or queued sending is disabled, process directly
++        if (this.channel.eventLoop().inEventLoop() || !org.dreeam.leaf.config.modules.async.QueuedPacketSending.enabled) {
              this.doSendPacket(packet, sendListener, flush);
 +            return;
 +        }
 +
-+        // Check if async sending is enabled
-+        if (org.dreeam.leaf.config.modules.async.AsyncPacketSending.enabled && io.papermc.paper.util.MCUtil.isMainThread()) {
++        // Queue the packet for batched processing
++        packetQueue.add(new PacketEntry(packet, sendListener, flush));
 +
++        boolean isImportantPacket =
++            org.dreeam.leaf.config.modules.async.QueuedPacketSending.prioritizeImportantPackets && (
++                packet instanceof net.minecraft.network.protocol.common.ClientboundKeepAlivePacket ||
++                    packet instanceof net.minecraft.network.protocol.game.ClientboundPlayerChatPacket ||
++                    packet instanceof net.minecraft.network.protocol.game.ClientboundSystemChatPacket ||
++                    packet instanceof net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket ||
++                    packet instanceof net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket
++            );
++
++        boolean shouldProcessNow = isImportantPacket ||
++            packetQueue.size() >= org.dreeam.leaf.config.modules.async.QueuedPacketSending.batchSize;
++
++        if (shouldProcessNow) {
++            flushPacketQueue();
++        }
++    }
++
++    private void flushPacketQueue() {
++        if (packetQueue.isEmpty() || !this.channel.isOpen()) {
++            return;
++        }
++        // Process on a background thread if we're on the main thread
++        if (io.papermc.paper.util.MCUtil.isMainThread()) {
 +            try {
-+                // Use the packet thread pool to offload the packet submission task
-+                org.dreeam.leaf.config.modules.async.AsyncPacketSending.getPacketThreadExecutor().execute(() -> {
-+                    if (this.channel.isOpen()) {
-+                        // Submit to the event loop from our thread pool
-+                        this.channel.eventLoop().execute(() -> this.doSendPacket(packet, sendListener, flush));
-+                    } else {
-+                        // If channel is closed while in the thread pool queue, ensure cleanup happens
-+                        final net.minecraft.server.level.ServerPlayer player = this.getPlayer();
-+                        if (packet.hasFinishListener()) {
-+                            packet.onPacketDispatchFinish(player, null);
-+                        }
-+                    }
++                org.dreeam.leaf.config.modules.async.QueuedPacketSending.getPacketThreadExecutor().execute(() -> {
++                    processPacketBatch();
 +                });
 +            } catch (Throwable e) {
-+                // Fall back to direct submission if the thread pool fails
++                // Fall back to direct processing if thread pool fails
 +                if (LOGGER.isDebugEnabled()) {
 +                    LOGGER.debug("Packet thread pool error, falling back to direct submission", e);
 +                }
-+                this.channel.eventLoop().execute(() -> this.doSendPacket(packet, sendListener, flush));
++                processQueuedPacketsDirectly();
 +            }
          } else {
-+            // Original behavior - execute on the event loop
-             this.channel.eventLoop().execute(() -> this.doSendPacket(packet, sendListener, flush));
+-            this.channel.eventLoop().execute(() -> this.doSendPacket(packet, sendListener, flush));
++            // Not on main thread, process directly
++            processQueuedPacketsDirectly();
          }
      }
+ 
++    private void processPacketBatch() {
++        // Collect packets from queue
++        int maxBatchSize = org.dreeam.leaf.config.modules.async.QueuedPacketSending.batchSize;
++        java.util.List<PacketEntry> batch = new java.util.ArrayList<>(
++            Math.min(packetQueue.size(), maxBatchSize)
++        );
++        PacketEntry entry;
++        boolean needsFlush = false;
++        while ((entry = packetQueue.poll()) != null && batch.size() < maxBatchSize) {
++            batch.add(entry);
++            needsFlush |= entry.flush;
++        }
++        if (batch.isEmpty()) {
++            return;
++        }
++        // Submit batch to event loop for processing
++        final boolean finalNeedsFlush = needsFlush;
++        this.channel.eventLoop().execute(() -> {
++            if (!this.channel.isOpen()) {
++                // Clean up if channel was closed
++                for (PacketEntry e : batch) {
++                    final net.minecraft.server.level.ServerPlayer player = this.getPlayer();
++                    if (e.packet.hasFinishListener()) {
++                        e.packet.onPacketDispatchFinish(player, null);
++                    }
++                }
++                return;
++            }
++            for (int i = 0; i < batch.size() - 1; i++) {
++                PacketEntry e = batch.get(i);
++                ChannelFuture writeFuture = this.channel.write(e.packet);
++                writeFuture.addListener(future -> {
++                    if (e.listener != null) {
++                        if (future.isSuccess()) {
++                            e.listener.onSuccess();
++                        } else {
++                            Packet<?> failurePacket = e.listener.onFailure();
++                            if (failurePacket != null) {
++                                ChannelFuture failureFuture = this.channel.writeAndFlush(failurePacket);
++                                failureFuture.addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
++                            }
++                        }
++                    }
++
++                    if (e.packet.hasFinishListener()) {
++                        e.packet.onPacketDispatchFinish(this.getPlayer(), (ChannelFuture)future);
++                    }
++                });
++            }
++            // Handle the last packet with flush if needed
++            if (!batch.isEmpty()) {
++                PacketEntry last = batch.get(batch.size() - 1);
++                ChannelFuture future = finalNeedsFlush ?
++                    this.channel.writeAndFlush(last.packet) :
++                    this.channel.write(last.packet);
++
++                future.addListener(f -> {
++                    if (last.listener != null) {
++                        if (f.isSuccess()) {
++                            last.listener.onSuccess();
++                        } else {
++                            Packet<?> failurePacket = last.listener.onFailure();
++                            if (failurePacket != null) {
++                                ChannelFuture failureFuture = this.channel.writeAndFlush(failurePacket);
++                                failureFuture.addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
++                            }
++                        }
++                    }
++
++                    if (last.packet.hasFinishListener()) {
++                        last.packet.onPacketDispatchFinish(this.getPlayer(), (ChannelFuture)f);
++                    }
++                });
++            }
++
++            // If we didn't flush on the last packet but need to flush, do it now
++            if (finalNeedsFlush && batch.size() > 1) {
++                this.channel.flush();
++            }
++        });
++    }
++
++    private void processQueuedPacketsDirectly() {
++        this.channel.eventLoop().execute(() -> {
++            PacketEntry entry;
++            while ((entry = packetQueue.poll()) != null) {
++                this.doSendPacket(entry.packet, entry.listener, entry.flush);
++            }
++        });
++    }
++
+     private void doSendPacket(Packet<?> packet, @Nullable PacketSendListener sendListener, boolean flush) {
+-        // Paper start - Optimize network
+         final net.minecraft.server.level.ServerPlayer player = this.getPlayer();
+         if (!this.isConnected()) {
+-            packet.onPacketDispatchFinish(player, null);
++            if (packet.hasFinishListener()) {
++                packet.onPacketDispatchFinish(player, null);
++            }
+             return;
+         }
+         try {
+-        // Paper end - Optimize network
+-        ChannelFuture channelFuture = flush ? this.channel.writeAndFlush(packet) : this.channel.write(packet);
+-        if (sendListener != null) {
+-            channelFuture.addListener(future -> {
+-                if (future.isSuccess()) {
+-                    sendListener.onSuccess();
+-                } else {
+-                    Packet<?> packet1 = sendListener.onFailure();
+-                    if (packet1 != null) {
+-                        ChannelFuture channelFuture1 = this.channel.writeAndFlush(packet1);
+-                        channelFuture1.addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
+-                    }
+-                }
+-            });
+-        }
++            ChannelFuture channelFuture = flush ? this.channel.writeAndFlush(packet) : this.channel.write(packet);
+ 
+-        // Paper start - Optimize network
+-        if (packet.hasFinishListener()) {
+-            channelFuture.addListener((ChannelFutureListener) future -> packet.onPacketDispatchFinish(player, future));
+-        }
+-        channelFuture.addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
++            if (sendListener != null) {
++                channelFuture.addListener(future -> {
++                    if (future.isSuccess()) {
++                        sendListener.onSuccess();
++                    } else {
++                        Packet<?> packet1 = sendListener.onFailure();
++                        if (packet1 != null) {
++                            ChannelFuture channelFuture1 = this.channel.writeAndFlush(packet1);
++                            channelFuture1.addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
++                        }
++                    }
++                });
++            }
++            if (packet.hasFinishListener()) {
++                channelFuture.addListener((ChannelFutureListener) future ->
++                    packet.onPacketDispatchFinish(player, future));
++            }
++            channelFuture.addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
+         } catch (final Exception e) {
+             LOGGER.error("NetworkException: {}", player, e);
+             this.disconnect(Component.translatable("disconnect.genericReason", "Internal Exception: " + e.getMessage()));
+-            packet.onPacketDispatchFinish(player, null);
++            if (packet.hasFinishListener()) {
++                packet.onPacketDispatchFinish(player, null);
++            }
+         }
+-        // Paper end - Optimize network
+     }
+ 
+     public void flushChannel() {
+@@ -539,19 +719,18 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         if (!this.isConnected()) {
+             return true;
+         }
++        // Process the fast queue first
++        processFastQueue();
++        // Then process the regular queue for complex cases
+         if (io.papermc.paper.util.MCUtil.isMainThread()) {
+             return this.processQueue();
+         } else if (this.isPending) {
+-            // Leaf start - Rewrite queue on Connection.flushQueue
+             if (org.dreeam.leaf.config.modules.network.ConnectionFlushQueueRewrite.enabled) {
+-                // Submit to the event loop to ensure thread confinement
+                 this.channel.eventLoop().execute(this::processQueue);
+                 return false;
+             } else {
+-                // Original Paper behavior
+                 synchronized (this.pendingActions) {
+                     return this.processQueue();
+-                    // Leaf end - Rewrite queue on Connection.flushQueue
+                 }
+             }
+         }
+@@ -649,6 +828,12 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+             } // Paper end - Buffer joins to world
+         }
+ 
++        if (org.dreeam.leaf.config.modules.async.QueuedPacketSending.enabled &&
++            !packetQueue.isEmpty() &&
++            this.tickCount % org.dreeam.leaf.config.modules.async.QueuedPacketSending.flushFrequency == 0) {
++            flushPacketQueue();
++        }
++
+         if (!this.isConnected() && !this.disconnectionHandled) {
+             this.handleDisconnection();
+         }
+@@ -942,43 +1127,34 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     // Paper start - Optimize network
+     public void clearPacketQueue() {
+         final net.minecraft.server.level.ServerPlayer player = getPlayer();
+-
+-        // Leaf start - Rewrite queue on Connection.flushQueue
+-        if (org.dreeam.leaf.config.modules.network.ConnectionFlushQueueRewrite.enabled) {
+-            // When using Leaf's queue rewrite, ensure thread safety via event loop
+-            if (this.channel != null && !this.channel.eventLoop().inEventLoop()) {
+-                this.channel.eventLoop().execute(() -> this.clearPacketQueue());
+-                return;
+-            }
+-
+-            // Take a snapshot to avoid ConcurrentModificationException
+-            java.util.List<Consumer<Connection>> queueSnapshot = new java.util.ArrayList<>(this.pendingActions);
+-
+-            for (Consumer<Connection> queuedAction : queueSnapshot) {
+-                if (queuedAction instanceof PacketSendAction packetSendAction) {
+-                    final Packet<?> packet = packetSendAction.packet;
++        synchronized (fastPacketQueue) {
++            if (!fastPacketQueue.isEmpty()) {
++                fastPacketQueue.forEach(packet -> {
+                     if (packet.hasFinishListener()) {
+                         packet.onPacketDispatchFinish(player, null);
+                     }
+-                }
++                });
++                fastPacketQueue.clear();
++                listenerMap.clear();
++                flushFlags.clear();
++                queueSize = 0;
+             }
+-
+-            this.pendingActions.clear();
++        }
++        if (org.dreeam.leaf.config.modules.network.ConnectionFlushQueueRewrite.enabled) {
++            this.channel.eventLoop().execute(() -> this.processQueue());
+         } else {
+-        // Original Paper behavior - use synchronization
+-        synchronized (this.pendingActions) {
+-        for (final Consumer<Connection> queuedAction : this.pendingActions) {
+-            if (queuedAction instanceof PacketSendAction packetSendAction) {
+-                final Packet<?> packet = packetSendAction.packet;
+-                if (packet.hasFinishListener()) {
+-                    packet.onPacketDispatchFinish(player, null);
+-                }
++            synchronized (this.pendingActions) {
++                this.processQueue();
+             }
+         }
+-        this.pendingActions.clear();
+-            }
++        if (org.dreeam.leaf.config.modules.async.QueuedPacketSending.enabled) {
++            packetQueue.forEach(entry -> {
++                if (entry.packet.hasFinishListener()) {
++                    entry.packet.onPacketDispatchFinish(player, null);
++                }
++            });
++            packetQueue.clear();
+         }
+-        // Leaf end - Rewrite queue on Connection.flushQueue
+     }
+ 
+     private static class InnerUtil { // Attempt to hide these methods from ProtocolLib, so it doesn't accidently pick them up.
