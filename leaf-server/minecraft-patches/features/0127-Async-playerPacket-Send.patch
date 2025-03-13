@@ -5,10 +5,10 @@ Subject: [PATCH] Async playerPacket Send
 
 
 diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
-index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53be39a078 100644
+index 2aba58b4c1afb843b61d9a5113ed058b06278348..62b8040af041a4aa86691aa4f1b54a8d39398f48 100644
 --- a/net/minecraft/network/Connection.java
 +++ b/net/minecraft/network/Connection.java
-@@ -128,6 +128,23 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -128,6 +128,24 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
          return null;
      }
      // Paper end - add utility methods
@@ -17,6 +17,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 +    private final java.util.Map<Packet<?>, PacketSendListener> listenerMap = new java.util.IdentityHashMap<>(INITIAL_CAPACITY);
 +    private final java.util.BitSet flushFlags = new java.util.BitSet(INITIAL_CAPACITY);
 +    private final java.util.Queue<PacketEntry> packetQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
++    private final java.util.concurrent.atomic.AtomicInteger packetQueueSize = new java.util.concurrent.atomic.AtomicInteger(0);
 +    private int queueSize = 0;
 +    private static final class PacketEntry {
 +        final Packet<?> packet;
@@ -32,7 +33,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
      // Paper start - packet limiter
      protected final Object PACKET_LIMIT_LOCK = new Object();
      protected final @Nullable io.papermc.paper.util.IntervalledCounter allPacketCounts = io.papermc.paper.configuration.GlobalConfiguration.get().packetLimiter.allPackets.isEnabled() ? new io.papermc.paper.util.IntervalledCounter(
-@@ -428,41 +445,69 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -428,41 +446,69 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
      }
  
      public void send(Packet<?> packet, @Nullable PacketSendListener listener, boolean flush) {
@@ -119,7 +120,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
      public void runOnceConnected(Consumer<Connection> action) {
          if (this.isConnected()) {
              this.flushQueue();
-@@ -474,48 +519,183 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -474,48 +520,184 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
  
      private void sendPacket(Packet<?> packet, @Nullable PacketSendListener sendListener, boolean flush) {
          this.sentPackets++;
@@ -133,6 +134,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 +
 +        // Queue the packet for batched processing
 +        packetQueue.add(new PacketEntry(packet, sendListener, flush));
++        int currentSize = packetQueueSize.incrementAndGet();
 +
 +        boolean isImportantPacket =
 +            org.dreeam.leaf.config.modules.network.QueuedPacketSending.prioritizeImportantPackets && (
@@ -144,7 +146,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 +            );
 +
 +        boolean shouldProcessNow = isImportantPacket ||
-+            packetQueue.size() >= org.dreeam.leaf.config.modules.network.QueuedPacketSending.batchSize;
++            currentSize >= org.dreeam.leaf.config.modules.network.QueuedPacketSending.batchSize;
 +
 +        if (shouldProcessNow) {
 +            flushPacketQueue();
@@ -152,7 +154,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 +    }
 +
 +    private void flushPacketQueue() {
-+        if (packetQueue.isEmpty() || !this.channel.isOpen()) {
++        if (packetQueueSize.get() == 0 || !this.channel.isOpen()) {
 +            return;
 +        }
 +        // Process on a background thread if we're on the main thread
@@ -178,12 +180,11 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 +    private void processPacketBatch() {
 +        // Collect packets from queue
 +        int maxBatchSize = org.dreeam.leaf.config.modules.network.QueuedPacketSending.batchSize;
-+        java.util.List<PacketEntry> batch = new java.util.ArrayList<>(
-+            Math.min(packetQueue.size(), maxBatchSize)
-+        );
++        java.util.List<PacketEntry> batch = new java.util.ArrayList<>(Math.min(packetQueueSize.get(), maxBatchSize));
 +        PacketEntry entry;
 +        boolean needsFlush = false;
 +        while ((entry = packetQueue.poll()) != null && batch.size() < maxBatchSize) {
++            packetQueueSize.decrementAndGet(); // Decrement counter for each packet removed
 +            batch.add(entry);
 +            needsFlush |= entry.flush;
 +        }
@@ -261,6 +262,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 +        this.channel.eventLoop().execute(() -> {
 +            PacketEntry entry;
 +            while ((entry = packetQueue.poll()) != null) {
++                packetQueueSize.decrementAndGet();
 +                this.doSendPacket(entry.packet, entry.listener, entry.flush);
 +            }
 +        });
@@ -329,7 +331,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
      }
  
      public void flushChannel() {
-@@ -539,19 +719,18 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -539,19 +721,18 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
          if (!this.isConnected()) {
              return true;
          }
@@ -352,7 +354,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
                  }
              }
          }
-@@ -649,6 +828,12 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -649,6 +830,12 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
              } // Paper end - Buffer joins to world
          }
  
@@ -365,7 +367,7 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
          if (!this.isConnected() && !this.disconnectionHandled) {
              this.handleDisconnection();
          }
-@@ -942,43 +1127,34 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -942,43 +1129,34 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
      // Paper start - Optimize network
      public void clearPacketQueue() {
          final net.minecraft.server.level.ServerPlayer player = getPlayer();
@@ -391,18 +393,10 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
                          packet.onPacketDispatchFinish(player, null);
                      }
 -                }
-+                });
-+                fastPacketQueue.clear();
-+                listenerMap.clear();
-+                flushFlags.clear();
-+                queueSize = 0;
-             }
+-            }
 -
 -            this.pendingActions.clear();
-+        }
-+        if (org.dreeam.leaf.config.modules.network.ConnectionFlushQueueRewrite.enabled) {
-+            this.channel.eventLoop().execute(() -> this.processQueue());
-         } else {
+-        } else {
 -        // Original Paper behavior - use synchronization
 -        synchronized (this.pendingActions) {
 -        for (final Consumer<Connection> queuedAction : this.pendingActions) {
@@ -411,12 +405,22 @@ index 2aba58b4c1afb843b61d9a5113ed058b06278348..548ae134db8fac2cf83ad08d04c3ce53
 -                if (packet.hasFinishListener()) {
 -                    packet.onPacketDispatchFinish(player, null);
 -                }
-+            synchronized (this.pendingActions) {
-+                this.processQueue();
++                });
++                fastPacketQueue.clear();
++                listenerMap.clear();
++                flushFlags.clear();
++                queueSize = 0;
              }
          }
 -        this.pendingActions.clear();
 -            }
++        if (org.dreeam.leaf.config.modules.network.QueuedPacketSending.enabled) {
++            packetQueue.forEach(entry -> {
++                if (entry.packet.hasFinishListener()) {entry.packet.onPacketDispatchFinish(player, null);}
++            });
++            packetQueue.clear();
++            packetQueueSize.set(0);
++        }
 +        if (org.dreeam.leaf.config.modules.network.QueuedPacketSending.enabled) {
 +            packetQueue.forEach(entry -> {
 +                if (entry.packet.hasFinishListener()) {
