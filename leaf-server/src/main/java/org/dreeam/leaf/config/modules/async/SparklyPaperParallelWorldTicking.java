@@ -5,7 +5,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 
 public class SparklyPaperParallelWorldTicking extends ConfigModules {
     public String getBasePath() {
-        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".sparklypaper-parallel-world-tracking";
+        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".parallel-world-tracking";
     }
 
     public static boolean enabled = false;
@@ -17,12 +17,11 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(),
             """
-                Enables parallel world ticking to improve performance on multi-core systems.
-                Note: When enabled, this will automatically disable async chunk sending
-                regardless of its own config setting.""",
+                **Experimental feature**
+                Enables parallel world ticking to improve performance on multi-core systems..""",
             """
-                启用并行世界处理以提高多核系统的性能.
-                注意: 启用后, 无论异步区块发送的配置如何设置, 都会自动禁用异步区块发送.""");
+                **实验性功能**
+                启用并行世界处理以提高多核系统的性能.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         threads = config.getInt(getBasePath() + ".threads", threads);
@@ -31,8 +30,5 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
         logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
         disableHardThrow = config.getBoolean(getBasePath() + ".disable-hard-throw", disableHardThrow);
         disableHardThrow = enabled && disableHardThrow;
-
-        // Update AsyncChunkSend enabled state
-        AsyncChunkSend.updateEnabledState();
     }
 }
