@@ -686,26 +686,18 @@ index f59662da0bbfe0e768c4ac5c7491d13263ac5cac..1643b3af9b33931277c03dbfa2f85e36
          serverPlayer.connection = player.connection;
          serverPlayer.restoreFrom(player, keepInventory);
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..db9864a55f6f28aaec0054b054bdabf58f76ce0f 100644
+index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea53a303db4 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -83,10 +83,15 @@ import net.minecraft.world.InteractionResult;
- import net.minecraft.world.Nameable;
- import net.minecraft.world.damagesource.DamageSource;
- import net.minecraft.world.damagesource.DamageSources;
-+import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
-+import net.minecraft.world.entity.item.FallingBlockEntity;
- import net.minecraft.world.entity.item.ItemEntity;
-+import net.minecraft.world.entity.item.PrimedTnt;
- import net.minecraft.world.entity.player.Player;
-+import net.minecraft.world.entity.projectile.AbstractArrow;
- import net.minecraft.world.entity.projectile.Projectile;
- import net.minecraft.world.entity.projectile.ProjectileDeflection;
-+import net.minecraft.world.entity.projectile.ShulkerBullet;
- import net.minecraft.world.entity.vehicle.AbstractBoat;
- import net.minecraft.world.item.Item;
- import net.minecraft.world.item.ItemStack;
-@@ -131,6 +136,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
+@@ -25,6 +25,7 @@ import java.util.Set;
+ import java.util.UUID;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.function.BiConsumer;
++import java.util.function.Consumer;
+ import java.util.function.Predicate;
+ import java.util.stream.Stream;
+ import javax.annotation.Nullable;
+@@ -131,6 +132,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  import net.minecraft.world.scores.PlayerTeam;
  import net.minecraft.world.scores.ScoreHolder;
  import net.minecraft.world.scores.Team;
@@ -713,29 +705,7 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..db9864a55f6f28aaec0054b054bdabf5
  import org.slf4j.Logger;
  
  public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess, ScoreHolder, ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity, ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity {  // Paper - rewrite chunk system // Paper - optimise entity tracker
-@@ -866,7 +872,20 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
-     // CraftBukkit start
-     public void postTick() {
-         // No clean way to break out of ticking once the entity has been copied to a new world, so instead we move the portalling later in the tick cycle
--        if (!(this instanceof ServerPlayer) && this.isAlive()) { // Paper - don't attempt to teleport dead entities
-+        if (!(
-+            this instanceof ServerPlayer ||
-+                // Leaf start - SparklyPaper parallel world ticking mod (per Potothingi's mod: skip entities which handle portals earlier)
-+                SparklyPaperParallelWorldTicking.enabled && (
-+                    this instanceof EndCrystal ||
-+                        this instanceof FallingBlockEntity ||
-+                        this instanceof PrimedTnt ||
-+                        this instanceof AbstractArrow ||
-+                        this instanceof ShulkerBullet
-+                )
-+                // Leaf end
-+        )
-+            && this.isAlive()) // Paper - don't attempt to teleport dead entities
-+        {
-             this.handlePortal();
-         }
-     }
-@@ -3370,14 +3389,22 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -3370,15 +3372,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
              if (this.portalProcess != null) {
                  if (this.portalProcess.processPortalTeleportation(serverLevel, this, this.canUsePortal(false))) {
                      this.setPortalCooldown();
@@ -745,28 +715,31 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..db9864a55f6f28aaec0054b054bdabf5
 -                        if (this instanceof ServerPlayer // CraftBukkit - always call event for players
 -                            || (level != null && (level.dimension() == serverLevel.dimension() || this.canTeleport(serverLevel, level)))) { // CraftBukkit
 -                            this.teleport(portalDestination);
--                        }
--                    }
-+                    // TCRF SparklyPaper (Pathothingi) start - parallel world ticking
-+                    getBukkitEntity().taskScheduler.schedule(
-+                        entity -> {
-+                            TeleportTransition portalDestination = entity.portalProcess.getPortalDestination(serverLevel, entity);
-+                            if (portalDestination != null) {
-+                                ServerLevel level = portalDestination.newLevel();
-+                                if (entity instanceof ServerPlayer // CraftBukkit - always call event for players
-+                                    || (level != null && (level.dimension() == serverLevel.dimension() || entity.canTeleport(serverLevel, level)))) { // CraftBukkit
-+                                    entity.teleport(portalDestination);
-+                                }
++                    // TCRF SparklyPaper (Pathothingi) start - parallel world ticking // Leaf start - SparklyPaper parallel world ticking mod (mark pending teleport to prevent clearing portal process)
++                    Consumer<Entity> portalEntityTask = entity -> {
++                        TeleportTransition portalDestination = entity.portalProcess.getPortalDestination(serverLevel, entity);
++                        if (portalDestination != null) {
++                            ServerLevel level = portalDestination.newLevel();
++                            if (entity instanceof ServerPlayer // CraftBukkit - always call event for players
++                                || (level != null && (level.dimension() == serverLevel.dimension() || entity.canTeleport(serverLevel, level)))) { // CraftBukkit
++                                entity.teleport(portalDestination);
 +                            }
-+                        },
-+                        entity -> {},
-+                        0
-+                    );
-+                    // TCRF SparklyPaper (Pathothingi) end
- 
+                         }
+-                    }
+-
++                        if (this.portalProcess != null)
++                            entity.portalProcess.pendingTeleport = false;
++                    };
++                    if (SparklyPaperParallelWorldTicking.enabled) {
++                        this.portalProcess.pendingTeleport = true;
++                        this.getBukkitEntity().taskScheduler.schedule(portalEntityTask, entity -> {}, 0);
++                    } else
++                        portalEntityTask.accept(this);
++                    // TCRF SparklyPaper (Pathothingi) end // Leaf end
                  } else if (this.portalProcess.hasExpired()) {
                      this.portalProcess = null;
-@@ -3908,6 +3935,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                 }
+@@ -3908,6 +3920,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
      }
  
      private Entity teleportCrossDimension(ServerLevel level, TeleportTransition teleportTransition) {
@@ -775,8 +748,89 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..db9864a55f6f28aaec0054b054bdabf5
          List<Entity> passengers = this.getPassengers();
          List<Entity> list = new ArrayList<>(passengers.size());
          this.ejectPassengers();
+diff --git a/net/minecraft/world/entity/PortalProcessor.java b/net/minecraft/world/entity/PortalProcessor.java
+index 88b07fbb96b20124777889830afa480673629d43..72f117c0bfbe24ad4b1c21b717e53d66e286d094 100644
+--- a/net/minecraft/world/entity/PortalProcessor.java
++++ b/net/minecraft/world/entity/PortalProcessor.java
+@@ -11,6 +11,7 @@ public class PortalProcessor {
+     private BlockPos entryPosition;
+     private int portalTime;
+     private boolean insidePortalThisTick;
++    public boolean pendingTeleport = false; // Leaf - SparklyPaper parallel world ticking mod (mark pending teleport to prevent clearing portal process)
+ 
+     public PortalProcessor(Portal portal, BlockPos entryPosition) {
+         this.portal = portal;
+@@ -19,6 +20,8 @@ public class PortalProcessor {
+     }
+ 
+     public boolean processPortalTeleportation(ServerLevel level, Entity entity, boolean canChangeDimensions) {
++        if (this.pendingTeleport) return false; // Leaf - SparklyPaper parallel world ticking mod (mark pending teleport to prevent clearing portal process)
++
+         if (!this.insidePortalThisTick) {
+             this.decayTick();
+             return false;
+@@ -42,7 +45,7 @@ public class PortalProcessor {
+     }
+ 
+     public boolean hasExpired() {
+-        return this.portalTime <= 0;
++        return !this.pendingTeleport && this.portalTime <= 0; // Leaf - SparklyPaper parallel world ticking mod (mark if teleport is pending to prevent clearing portal process)
+     }
+ 
+     public BlockPos getEntryPosition() {
+diff --git a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
+index 3614551856c594f3c0cfee984fcf03fad672b007..57511640d26742f408236ca781814f2ba61599e3 100644
+--- a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
++++ b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
+@@ -1,16 +1,22 @@
+ package net.minecraft.world.entity.ai.behavior;
+ 
++import ca.spottedleaf.concurrentutil.util.Priority;
+ import com.google.common.collect.ImmutableMap;
+ import java.util.Optional;
++import java.util.function.BiPredicate;
++
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.GlobalPos;
++import net.minecraft.core.Holder;
+ import net.minecraft.network.protocol.game.DebugPackets;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+ import net.minecraft.world.entity.ai.memory.MemoryStatus;
+ import net.minecraft.world.entity.ai.village.poi.PoiManager;
++import net.minecraft.world.entity.ai.village.poi.PoiType;
+ import net.minecraft.world.entity.npc.Villager;
+ import net.minecraft.world.entity.schedule.Activity;
++import org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking;
+ 
+ public class GoToPotentialJobSite extends Behavior<Villager> {
+     private static final int TICKS_UNTIL_TIMEOUT = 1200;
+@@ -46,12 +52,18 @@ public class GoToPotentialJobSite extends Behavior<Villager> {
+             BlockPos blockPos = globalPos.pos();
+             ServerLevel level1 = level.getServer().getLevel(globalPos.dimension());
+             if (level1 != null) {
+-                PoiManager poiManager = level1.getPoiManager();
+-                if (poiManager.exists(blockPos, holder -> true)) {
+-                    poiManager.release(blockPos);
+-                }
++                Runnable releasePoiTask = () -> {
++                    PoiManager poiManager = level1.getPoiManager();
++                    if (poiManager.exists(blockPos, holder -> true)) {
++                        poiManager.release(blockPos);
++                    }
+ 
+-                DebugPackets.sendPoiTicketCountPacket(level, blockPos);
++                    DebugPackets.sendPoiTicketCountPacket(level, blockPos);
++                };
++                if (SparklyPaperParallelWorldTicking.enabled)
++                    level.moonrise$getChunkTaskScheduler().scheduleChunkTask(0, 0, releasePoiTask, Priority.BLOCKING);
++                else
++                    releasePoiTask.run();
+             }
+         });
+         entity.getBrain().eraseMemory(MemoryModuleType.POTENTIAL_JOB_SITE);
 diff --git a/net/minecraft/world/entity/npc/Villager.java b/net/minecraft/world/entity/npc/Villager.java
-index 0b4c4707139c9c72929799818ec1a1b25575d70e..e7d11397701c7f8c7f1602572382373de94a84b9 100644
+index 0b4c4707139c9c72929799818ec1a1b25575d70e..ade7f0853ec78a214fe8d846604574726f1a767a 100644
 --- a/net/minecraft/world/entity/npc/Villager.java
 +++ b/net/minecraft/world/entity/npc/Villager.java
 @@ -1,5 +1,6 @@
@@ -786,7 +840,15 @@ index 0b4c4707139c9c72929799818ec1a1b25575d70e..e7d11397701c7f8c7f1602572382373d
  import com.google.common.annotations.VisibleForTesting;
  import com.google.common.collect.ImmutableList;
  import com.google.common.collect.ImmutableMap;
-@@ -806,13 +807,16 @@ public class Villager extends AbstractVillager implements ReputationEventHandler
+@@ -86,6 +87,7 @@ import net.minecraft.world.item.trading.MerchantOffers;
+ import net.minecraft.world.level.Level;
+ import net.minecraft.world.level.ServerLevelAccessor;
+ import net.minecraft.world.phys.AABB;
++import org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking;
+ import org.slf4j.Logger;
+ 
+ // CraftBukkit start
+@@ -806,13 +808,20 @@ public class Villager extends AbstractVillager implements ReputationEventHandler
              this.brain.getMemory(moduleType).ifPresent(globalPos -> {
                  ServerLevel level = server.getLevel(globalPos.dimension());
                  if (level != null) {
@@ -797,7 +859,7 @@ index 0b4c4707139c9c72929799818ec1a1b25575d70e..e7d11397701c7f8c7f1602572382373d
 -                        poiManager.release(globalPos.pos());
 -                        DebugPackets.sendPoiTicketCountPacket(level, globalPos.pos());
 -                    }
-+                    level.moonrise$getChunkTaskScheduler().scheduleChunkTask(0, 0, () -> {
++                    Runnable releasePoiTask = () -> {
 +                        PoiManager poiManager = level.getPoiManager();
 +                        Optional<Holder<PoiType>> type = poiManager.getType(globalPos.pos());
 +                        BiPredicate<Villager, Holder<PoiType>> biPredicate = POI_MEMORIES.get(moduleType);
@@ -805,13 +867,114 @@ index 0b4c4707139c9c72929799818ec1a1b25575d70e..e7d11397701c7f8c7f1602572382373d
 +                            poiManager.release(globalPos.pos());
 +                            DebugPackets.sendPoiTicketCountPacket(level, globalPos.pos());
 +                        }
-+                    }, Priority.BLOCKING);
++                    };
++                    if (SparklyPaperParallelWorldTicking.enabled)
++                        level.moonrise$getChunkTaskScheduler().scheduleChunkTask(0, 0, releasePoiTask, Priority.BLOCKING);
++                    else
++                        releasePoiTask.run();
 +
                  }
              });
          }
+diff --git a/net/minecraft/world/entity/projectile/ThrownEnderpearl.java b/net/minecraft/world/entity/projectile/ThrownEnderpearl.java
+index d212f57c8c0b2086f567fd30237b110203d9e8cb..23b831b993255a727ea275f4026e4e86579b5b1e 100644
+--- a/net/minecraft/world/entity/projectile/ThrownEnderpearl.java
++++ b/net/minecraft/world/entity/projectile/ThrownEnderpearl.java
+@@ -1,6 +1,7 @@
+ package net.minecraft.world.entity.projectile;
+ 
+ import java.util.UUID;
++import java.util.function.Consumer;
+ import javax.annotation.Nullable;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+@@ -26,6 +27,7 @@ import net.minecraft.world.level.portal.TeleportTransition;
+ import net.minecraft.world.phys.EntityHitResult;
+ import net.minecraft.world.phys.HitResult;
+ import net.minecraft.world.phys.Vec3;
++import org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking;
+ 
+ public class ThrownEnderpearl extends ThrowableItemProjectile {
+     private long ticketTimer = 0L;
+@@ -126,40 +128,46 @@ public class ThrownEnderpearl extends ThrowableItemProjectile {
+                 Vec3 vec3 = this.oldPosition();
+                 if (owner instanceof ServerPlayer serverPlayer) {
+                     if (serverPlayer.connection.isAcceptingMessages()) {
+-                        // CraftBukkit start
+-                        ServerPlayer serverPlayer1 = serverPlayer.teleport(new TeleportTransition(serverLevel, vec3, Vec3.ZERO, 0.0F, 0.0F, Relative.union(Relative.ROTATION, Relative.DELTA), TeleportTransition.DO_NOTHING, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.ENDER_PEARL));
+-                        if (serverPlayer1 == null) {
+-                            this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.HIT);
+-                            return;
+-                        }
+-                        // CraftBukkit end
+-                        if (this.random.nextFloat() < serverLevel.purpurConfig.enderPearlEndermiteChance && serverLevel.getGameRules().getBoolean(GameRules.RULE_DOMOBSPAWNING)) { // Purpur - Configurable Ender Pearl RNG
+-                            Endermite endermite = EntityType.ENDERMITE.create(serverLevel, EntitySpawnReason.TRIGGERED);
+-                            if (endermite != null) {
+-                                endermite.setPlayerSpawned(true); // Purpur - Add back player spawned endermite API
+-                                endermite.moveTo(owner.getX(), owner.getY(), owner.getZ(), owner.getYRot(), owner.getXRot());
+-                                serverLevel.addFreshEntity(endermite, org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.ENDER_PEARL);
++                        Consumer<ServerPlayer> teleportPlayerCrossDimensionTask = (taskServerPlayer) -> {
++                            // CraftBukkit start
++                            ServerPlayer serverPlayer1 = taskServerPlayer.teleport(new TeleportTransition(serverLevel, vec3, Vec3.ZERO, 0.0F, 0.0F, Relative.union(Relative.ROTATION, Relative.DELTA), TeleportTransition.DO_NOTHING, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.ENDER_PEARL));
++                            if (serverPlayer1 == null) {
++                                this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.HIT);
++                                return;
++                            }
++                            // CraftBukkit end
++                            if (this.random.nextFloat() < serverLevel.purpurConfig.enderPearlEndermiteChance && serverLevel.getGameRules().getBoolean(GameRules.RULE_DOMOBSPAWNING)) { // Purpur - Configurable Ender Pearl RNG
++                                Endermite endermite = EntityType.ENDERMITE.create(serverLevel, EntitySpawnReason.TRIGGERED);
++                                if (endermite != null) {
++                                    endermite.setPlayerSpawned(true); // Purpur - Add back player spawned endermite API
++                                    endermite.moveTo(owner.getX(), owner.getY(), owner.getZ(), owner.getYRot(), owner.getXRot());
++                                    serverLevel.addFreshEntity(endermite, org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.ENDER_PEARL);
++                                }
+                             }
+-                        }
+ 
+-                        if (this.isOnPortalCooldown()) {
+-                            owner.setPortalCooldown();
+-                        }
++                            if (this.isOnPortalCooldown()) {
++                                owner.setPortalCooldown();
++                            }
+ 
+-                        // CraftBukkit start - moved up
+-                        // ServerPlayer serverPlayer1 = serverPlayer.teleport(
+-                        //     new TeleportTransition(
+-                        //         serverLevel, vec3, Vec3.ZERO, 0.0F, 0.0F, Relative.union(Relative.ROTATION, Relative.DELTA), TeleportTransition.DO_NOTHING
+-                        //     )
+-                        // );
+-                        // CraftBukkit end - moved up
+-                        if (serverPlayer1 != null) {
+-                            serverPlayer1.resetFallDistance();
+-                            serverPlayer1.resetCurrentImpulseContext();
+-                            serverPlayer1.hurtServer(serverPlayer.serverLevel(), this.damageSources().enderPearl().eventEntityDamager(this), this.level().purpurConfig.enderPearlDamage); // CraftBukkit // Paper - fix DamageSource API // Purpur - Configurable Ender Pearl damage
+-                        }
++                            // CraftBukkit start - moved up
++                            // ServerPlayer serverPlayer1 = serverPlayer.teleport(
++                            //     new TeleportTransition(
++                            //         serverLevel, vec3, Vec3.ZERO, 0.0F, 0.0F, Relative.union(Relative.ROTATION, Relative.DELTA), TeleportTransition.DO_NOTHING
++                            //     )
++                            // );
++                            // CraftBukkit end - moved up
++                            if (serverPlayer1 != null) {
++                                serverPlayer1.resetFallDistance();
++                                serverPlayer1.resetCurrentImpulseContext();
++                                serverPlayer1.hurtServer(taskServerPlayer.serverLevel(), this.damageSources().enderPearl().eventEntityDamager(this), this.level().purpurConfig.enderPearlDamage); // CraftBukkit // Paper - fix DamageSource API // Purpur - Configurable Ender Pearl damage
++                            }
+ 
+-                        this.playSound(serverLevel, vec3);
++                            this.playSound(serverLevel, vec3);
++                        };
++                        if (SparklyPaperParallelWorldTicking.enabled)
++                            serverPlayer.getBukkitEntity().taskScheduler.schedule(teleportPlayerCrossDimensionTask, entity -> {}, 0);
++                        else
++                            teleportPlayerCrossDimensionTask.accept(serverPlayer);
+                     }
+                 } else {
+                     Entity entity = owner.teleport(
 diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
-index d42f30a7ccdc10bc1f2bfc4b8d93821aa0a25679..4e82d3e714c39bf0a614e8692aca6364b76138a2 100644
+index 8a0d1aebad1f92c43112e279b9c5922fdd1fd432..1fc83d18ab8c6d7a65fcd314f00414e638a417e9 100644
 --- a/net/minecraft/world/inventory/AbstractContainerMenu.java
 +++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
 @@ -33,6 +33,7 @@ import net.minecraft.world.item.BundleItem;
