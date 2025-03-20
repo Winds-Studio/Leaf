@@ -686,7 +686,7 @@ index f59662da0bbfe0e768c4ac5c7491d13263ac5cac..1643b3af9b33931277c03dbfa2f85e36
          serverPlayer.connection = player.connection;
          serverPlayer.restoreFrom(player, keepInventory);
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea53a303db4 100644
+index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..762f6b3a7763a635c370a84baa68ba790e0f1323 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -25,6 +25,7 @@ import java.util.Set;
@@ -705,7 +705,7 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea5
  import org.slf4j.Logger;
  
  public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess, ScoreHolder, ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity, ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity {  // Paper - rewrite chunk system // Paper - optimise entity tracker
-@@ -3370,15 +3372,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -3370,15 +3372,32 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
              if (this.portalProcess != null) {
                  if (this.portalProcess.processPortalTeleportation(serverLevel, this, this.canUsePortal(false))) {
                      this.setPortalCooldown();
@@ -717,6 +717,14 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea5
 -                            this.teleport(portalDestination);
 +                    // TCRF SparklyPaper (Pathothingi) start - parallel world ticking // Leaf start - SparklyPaper parallel world ticking mod (mark pending teleport to prevent clearing portal process)
 +                    Consumer<Entity> portalEntityTask = entity -> {
++                        assert entity.portalProcess != null;
++
++                        if (entity.portalProcess.isParallelCancelledByPlugin()) {
++                            entity.portalProcess = null;
++                            return;
+                         }
+-                    }
+ 
 +                        TeleportTransition portalDestination = entity.portalProcess.getPortalDestination(serverLevel, entity);
 +                        if (portalDestination != null) {
 +                            ServerLevel level = portalDestination.newLevel();
@@ -724,14 +732,12 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea5
 +                                || (level != null && (level.dimension() == serverLevel.dimension() || entity.canTeleport(serverLevel, level)))) { // CraftBukkit
 +                                entity.teleport(portalDestination);
 +                            }
-                         }
--                    }
--
++                        }
 +                        if (this.portalProcess != null)
-+                            entity.portalProcess.pendingTeleport = false;
++                            entity.portalProcess.confirmParallelAsHandled();
 +                    };
 +                    if (SparklyPaperParallelWorldTicking.enabled) {
-+                        this.portalProcess.pendingTeleport = true;
++                        this.portalProcess.setParallelAsScheduled();
 +                        this.getBukkitEntity().taskScheduler.schedule(portalEntityTask, entity -> {}, 0);
 +                    } else
 +                        portalEntityTask.accept(this);
@@ -739,7 +745,7 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea5
                  } else if (this.portalProcess.hasExpired()) {
                      this.portalProcess = null;
                  }
-@@ -3908,6 +3920,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -3908,6 +3927,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
      }
  
      private Entity teleportCrossDimension(ServerLevel level, TeleportTransition teleportTransition) {
@@ -749,35 +755,74 @@ index 9bc978ca290ca772b0367e89b69fe16b502b0cd2..056b9d29250153fe2d7536b20f618ea5
          List<Entity> list = new ArrayList<>(passengers.size());
          this.ejectPassengers();
 diff --git a/net/minecraft/world/entity/PortalProcessor.java b/net/minecraft/world/entity/PortalProcessor.java
-index 88b07fbb96b20124777889830afa480673629d43..72f117c0bfbe24ad4b1c21b717e53d66e286d094 100644
+index 88b07fbb96b20124777889830afa480673629d43..5979ffe3fa30a6c2473f976423123fecb1ead442 100644
 --- a/net/minecraft/world/entity/PortalProcessor.java
 +++ b/net/minecraft/world/entity/PortalProcessor.java
-@@ -11,6 +11,7 @@ public class PortalProcessor {
+@@ -11,6 +11,9 @@ public class PortalProcessor {
      private BlockPos entryPosition;
      private int portalTime;
      private boolean insidePortalThisTick;
-+    public boolean pendingTeleport = false; // Leaf - SparklyPaper parallel world ticking mod (mark pending teleport to prevent clearing portal process)
++    // Leaf start - SparklyPaper parallel world ticking mod (prevent clearing portal process)
++    private ParallelPendingTeleportState pendingTeleport = ParallelPendingTeleportState.INACTIVE;
++    // Leaf end
  
      public PortalProcessor(Portal portal, BlockPos entryPosition) {
          this.portal = portal;
-@@ -19,6 +20,8 @@ public class PortalProcessor {
+@@ -19,6 +22,8 @@ public class PortalProcessor {
      }
  
      public boolean processPortalTeleportation(ServerLevel level, Entity entity, boolean canChangeDimensions) {
-+        if (this.pendingTeleport) return false; // Leaf - SparklyPaper parallel world ticking mod (mark pending teleport to prevent clearing portal process)
++        if (this.isParallelTeleportScheduled()) return false; // Leaf - SparklyPaper parallel world ticking mod (prevent clearing portal process)
 +
          if (!this.insidePortalThisTick) {
              this.decayTick();
              return false;
-@@ -42,7 +45,7 @@ public class PortalProcessor {
+@@ -42,7 +47,7 @@ public class PortalProcessor {
      }
  
      public boolean hasExpired() {
 -        return this.portalTime <= 0;
-+        return !this.pendingTeleport && this.portalTime <= 0; // Leaf - SparklyPaper parallel world ticking mod (mark if teleport is pending to prevent clearing portal process)
++        return !this.isParallelTeleportScheduled() && this.portalTime <= 0; // Leaf - SparklyPaper parallel world ticking mod (prevent clearing portal process)
      }
  
      public BlockPos getEntryPosition() {
+@@ -68,4 +73,36 @@ public class PortalProcessor {
+     public boolean isSamePortal(Portal portal) {
+         return this.portal == portal;
+     }
++
++    // Leaf start - SparklyPaper parallel world ticking mod (prevent clearing portal process)
++    public boolean isParallelTeleportPending() {
++        return this.pendingTeleport == ParallelPendingTeleportState.PENDING;
++    }
++
++    public boolean isParallelTeleportScheduled() {
++        return this.pendingTeleport != ParallelPendingTeleportState.INACTIVE;
++    }
++
++    public boolean isParallelCancelledByPlugin() {
++        return this.pendingTeleport == ParallelPendingTeleportState.CANCELLED;
++    }
++
++    public void setParallelAsScheduled() {
++        this.pendingTeleport = ParallelPendingTeleportState.PENDING;
++    }
++
++    public void confirmParallelAsHandled() {
++        this.pendingTeleport = ParallelPendingTeleportState.INACTIVE;
++    }
++
++    public void setParallelAsCancelled() {
++        this.pendingTeleport = ParallelPendingTeleportState.CANCELLED;
++    }
++
++    private enum ParallelPendingTeleportState {
++        INACTIVE,
++        PENDING,
++        CANCELLED
++    }
++    // Leaf end
+ }
 diff --git a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
 index 3614551856c594f3c0cfee984fcf03fad672b007..57511640d26742f408236ca781814f2ba61599e3 100644
 --- a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
