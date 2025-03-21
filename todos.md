@@ -6,11 +6,8 @@
 
 # Leaf TODOs
 - [ ] refactor leaves protocol manager opt and pr it.
-- [ ] Check and apply work patches
 - [ ] Transfer patch notes to file for Gale and Leaf
 - [ ] Add spigot config unknown message to leaf docs
 - [ ] Add server full join config explanation to docs
 - [ ] Add purpur config changes to docs moved config
-- [ ] Merge changes from Tramontane
 - [ ] check Dont send useless entity packets
-- [ ] Check lithium fastutil and equipment tracking missing stuff?

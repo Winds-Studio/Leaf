@@ -65,6 +65,7 @@ public class LeafConfig {
 
                 ConfigModules.clearModules();
                 loadConfig(false);
+                ConfigModules.loadAfterBootstrap();
 
                 final String success = String.format("Successfully reloaded config in %sms.", (System.nanoTime() - begin) / 1_000_000);
                 Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));

@@ -42,6 +42,12 @@ public abstract class ConfigModules extends LeafConfig {
         }
     }
 
+    public static void loadAfterBootstrap() {
+        for (ConfigModules module : MODULES) {
+            module.onPostLoaded();
+        }
+    }
+
     private static List<Field> getAnnotatedStaticFields(Class<?> clazz, Class<? extends Annotation> annotation) {
         List<Field> fields = new ArrayList<>();
 
@@ -60,4 +66,7 @@ public abstract class ConfigModules extends LeafConfig {
     }
 
     public abstract void onLoaded();
+
+    public void onPostLoaded() {
+    }
 }

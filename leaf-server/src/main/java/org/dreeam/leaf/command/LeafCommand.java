@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.Pair;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.minecraft.Util;
+import org.dreeam.leaf.command.subcommands.MSPTCommand;
 import org.dreeam.leaf.command.subcommands.ReloadCommand;
 import org.dreeam.leaf.command.subcommands.VersionCommand;
 import org.jetbrains.annotations.NotNull;
@@ -37,11 +38,13 @@ public final class LeafCommand extends Command {
     // subcommand label -> subcommand
     private static final LeafSubcommand RELOAD_SUBCOMMAND = new ReloadCommand();
     private static final LeafSubcommand VERSION_SUBCOMMAND = new VersionCommand();
+    private static final LeafSubcommand MSPT_SUBCOMMAND = new MSPTCommand();
     private static final Map<String, LeafSubcommand> SUBCOMMANDS = Util.make(() -> {
         final Map<Set<String>, LeafSubcommand> commands = new HashMap<>();
 
         commands.put(Set.of(ReloadCommand.LITERAL_ARGUMENT), RELOAD_SUBCOMMAND);
         commands.put(Set.of(VersionCommand.LITERAL_ARGUMENT), VERSION_SUBCOMMAND);
+        commands.put(Set.of(MSPTCommand.LITERAL_ARGUMENT), MSPT_SUBCOMMAND);
 
         return commands.entrySet().stream()
             .flatMap(entry -> entry.getKey().stream().map(s -> Map.entry(s, entry.getValue())))

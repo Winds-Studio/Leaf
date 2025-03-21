@@ -5,59 +5,51 @@ Subject: [PATCH] Optimize chunkUnload
 
 
 diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java b/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
-index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..75893974d198b946bdc07b01b4c68ff999df5028 100644
+index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..bed3a64388bb43e47c2ba4e67f7dde5b990d9578 100644
 --- a/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
 +++ b/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
-@@ -3,6 +3,8 @@ package ca.spottedleaf.moonrise.patches.starlight.light;
- import net.minecraft.world.level.chunk.DataLayer;
- import java.util.ArrayDeque;
- import java.util.Arrays;
-+import java.util.Map;
-+import java.util.WeakHashMap;
- 
- // SWMR -> Single Writer Multi Reader Nibble Array
- public final class SWMRNibbleArray {
-@@ -22,21 +24,35 @@ public final class SWMRNibbleArray {
+@@ -22,12 +22,24 @@ public final class SWMRNibbleArray {
      protected static final int INIT_STATE_INIT   = 2; // initialised
      protected static final int INIT_STATE_HIDDEN = 3; // initialised, but conversion to Vanilla data should be treated as if NULL
  
++    // Leaf start - Optimize chunkUnload
 +    private volatile boolean cachedIsAllZero = false;
 +    private boolean cachedIsAllZeroValid = false;
 +
-+    private static final ThreadLocal<SaveState[]> SAVE_STATE_CACHE =
-+        ThreadLocal.withInitial(() -> new SaveState[4]);
++    private static final ThreadLocal<SaveState[]> SAVE_STATE_CACHE = ThreadLocal.withInitial(() -> new SaveState[4]);
 +
      public static final int ARRAY_SIZE = 16 * 16 * 16 / (8/4); // blocks / bytes per block
      // this allows us to maintain only 1 byte array when we're not updating
 -    static final ThreadLocal<ArrayDeque<byte[]>> WORKING_BYTES_POOL = ThreadLocal.withInitial(ArrayDeque::new);
-+    static final ThreadLocal<ArrayDeque<byte[]>> WORKING_BYTES_POOL = new ThreadLocal<ArrayDeque<byte[]>>() {
-+        @Override
-+        protected ArrayDeque<byte[]> initialValue() {
-+            return new ArrayDeque<byte[]>(8); // Limit pool size to avoid memory leaks
-+        }
-+    };
++    static final ThreadLocal<ArrayDeque<byte[]>> WORKING_BYTES_POOL = ThreadLocal.withInitial(() -> {
++        return new ArrayDeque<>(8); // Limit pool size to avoid memory leaks
++    });
++    // Leaf end - Optimize chunkUnload
  
      private static byte[] allocateBytes() {
 -        final byte[] inPool = WORKING_BYTES_POOL.get().pollFirst();
++        // Leaf start - Optimize chunkUnload
 +        final ArrayDeque<byte[]> queue = WORKING_BYTES_POOL.get();
 +        final byte[] inPool = queue.pollFirst();
++        // Leaf end - Optimize chunkUnload
          if (inPool != null) {
              return inPool;
          }
--
-         return new byte[ARRAY_SIZE];
+@@ -36,7 +48,12 @@ public final class SWMRNibbleArray {
      }
  
      private static void freeBytes(final byte[] bytes) {
 -        WORKING_BYTES_POOL.get().addFirst(bytes);
++        // Leaf start - Optimize chunkUnload
 +        final ArrayDeque<byte[]> queue = WORKING_BYTES_POOL.get();
 +        if (queue.size() < 8) {  // Limit pool size to prevent memory leaks
 +            queue.addFirst(bytes);
 +        }
++        // Leaf end - Optimize chunkUnload
      }
  
      public static SWMRNibbleArray fromVanilla(final DataLayer nibble) {
-@@ -131,15 +147,44 @@ public final class SWMRNibbleArray {
+@@ -131,15 +148,44 @@ public final class SWMRNibbleArray {
      public SaveState getSaveState() {
          synchronized (this) {
              final int state = this.stateVisible;
@@ -65,9 +57,9 @@ index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..75893974d198b946bdc07b01b4c68ff9
              if (state == INIT_STATE_NULL) {
                  return null;
              }
-+
              if (state == INIT_STATE_UNINIT) {
 -                return new SaveState(null, state);
++                // Leaf start - Optimize chunkUnload
 +                // Use array-based cache instead of WeakHashMap
 +                SaveState[] cache = SAVE_STATE_CACHE.get();
 +                SaveState cachedState = cache[INIT_STATE_UNINIT];
@@ -89,7 +81,6 @@ index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..75893974d198b946bdc07b01b4c68ff9
 +                cachedIsAllZeroValid = true;
              }
 -            final boolean zero = isAllZero(data);
-+
              if (zero) {
 +                // Use array-based cache instead of WeakHashMap
 +                SaveState[] cache = SAVE_STATE_CACHE.get();
@@ -102,10 +93,11 @@ index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..75893974d198b946bdc07b01b4c68ff9
 +                    }
 +                    return cachedState;
 +                }
++                // Leaf end - Optimize chunkUnload
                  return state == INIT_STATE_INIT ? new SaveState(null, INIT_STATE_UNINIT) : null;
              } else {
                  return new SaveState(data.clone(), state);
-@@ -148,14 +193,23 @@ public final class SWMRNibbleArray {
+@@ -148,17 +194,28 @@ public final class SWMRNibbleArray {
      }
  
      protected static boolean isAllZero(final byte[] data) {
@@ -114,14 +106,15 @@ index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..75893974d198b946bdc07b01b4c68ff9
 -
 -            for (int k = 1; k < (1 << 4); ++k) {
 -                whole |= data[(i << 4) | k];
-+        // check in 8-byte chunks
++        // Leaf start - Optimize chunkUnload
++        // Check in 8-byte chunks
 +        final int longLength = ARRAY_SIZE >>> 3;
 +        for (int i = 0; i < longLength; i++) {
 +            long value = 0;
 +            final int baseIndex = i << 3;
 +            // Combine 8 bytes into a long
 +            for (int j = 0; j < 8; j++) {
-+                value |= ((long)(data[baseIndex + j] & 0xFF)) << (j << 3);
++                value |= ((long) (data[baseIndex + j] & 0xFF)) << (j << 3);
 +            }
 +            if (value != 0) {
 +                return false;
@@ -135,50 +128,45 @@ index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..75893974d198b946bdc07b01b4c68ff9
                  return false;
              }
          }
-@@ -163,6 +217,10 @@ public final class SWMRNibbleArray {
++        // Leaf end - Optimize chunkUnload
+ 
          return true;
      }
- 
-+    private void invalidateCache() {
-+        this.cachedIsAllZeroValid = false;
-+    }
-+
-     // operation type: updating on src, updating on other
-     public void extrudeLower(final SWMRNibbleArray other) {
-         if (other.stateUpdating == INIT_STATE_NULL) {
-@@ -349,6 +407,7 @@ public final class SWMRNibbleArray {
+@@ -349,6 +406,7 @@ public final class SWMRNibbleArray {
              }
              this.updatingDirty = false;
              this.stateVisible = this.stateUpdating;
-+            this.cachedIsAllZeroValid = false; // Invalidate cache on update
++            this.cachedIsAllZeroValid = false; // Leaf - Optimize chunkUnload - Invalidate cache on update
          }
  
          return true;
-@@ -424,7 +483,14 @@ public final class SWMRNibbleArray {
+@@ -424,7 +482,16 @@ public final class SWMRNibbleArray {
          final int shift = (index & 1) << 2;
          final int i = index >>> 1;
  
 -        this.storageUpdating[i] = (byte)((this.storageUpdating[i] & (0xF0 >>> shift)) | (value << shift));
++        // Leaf start - Optimize chunkUnload
 +        byte oldValue = this.storageUpdating[i];
 +        byte newValue = (byte)((oldValue & (0xF0 >>> shift)) | (value << shift));
 +
 +        // Only invalidate cache if the value actually changes
 +        if (oldValue != newValue) {
 +            this.storageUpdating[i] = newValue;
-+            this.invalidateCache();
++            this.cachedIsAllZeroValid = false;
 +        }
++        // Leaf end - Optimize chunkUnload
      }
  
      public static final class SaveState {
 diff --git a/net/minecraft/world/level/chunk/LevelChunkSection.java b/net/minecraft/world/level/chunk/LevelChunkSection.java
-index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..f6c33a7ca59d00c8967034402be00767a66b6948 100644
+index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..dc158e981199b507531af810ff9ced3ca717e39e 100644
 --- a/net/minecraft/world/level/chunk/LevelChunkSection.java
 +++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
 @@ -24,6 +24,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
      private boolean isRandomlyTickingBlocksStatus; // Leaf - Cache random tick block status
      public final PalettedContainer<BlockState> states;
      private PalettedContainer<Holder<Biome>> biomes; // CraftBukkit - read/write
-+    private boolean modified = false;
++    private boolean modified = false; // Leaf - Optimize chunkUnload
  
      // Paper start - block counting
      private static final it.unimi.dsi.fastutil.shorts.ShortArrayList FULL_LIST = new it.unimi.dsi.fastutil.shorts.ShortArrayList(16*16*16);
@@ -186,14 +174,15 @@ index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..f6c33a7ca59d00c8967034402be00767
      // Paper end - block counting
  
      public BlockState setBlockState(int x, int y, int z, BlockState state, boolean useLocks) {
-+        this.modified = true;
++        this.modified = true; // Leaf - Optimize chunkUnload
          BlockState blockState;
          if (useLocks) {
              blockState = this.states.getAndSet(x, y, z, state);
-@@ -328,7 +330,29 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+@@ -328,7 +330,32 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
          this.biomes = palettedContainer;
      }
  
++    // Leaf start - Optimize chunkUnload
 +    private LevelChunkSection(short nonEmptyBlockCount, short tickingBlockCount, short tickingFluidCount,
 +                              PalettedContainer<BlockState> states, PalettedContainer<Holder<Biome>> biomes) {
 +        this.nonEmptyBlockCount = nonEmptyBlockCount;
@@ -201,10 +190,12 @@ index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..f6c33a7ca59d00c8967034402be00767
 +        this.tickingFluidCount = tickingFluidCount;
 +        this.states = states;
 +        this.biomes = biomes;
-+        this.isRandomlyTickingBlocksStatus = this.tickingBlockCount > 0;
++        this.isRandomlyTickingBlocksStatus = this.tickingBlockCount > 0; // Leaf - Cache random tick block status
 +    }
++    // Leaf end - Optimize chunkUnload
 +
      public LevelChunkSection copy() {
++        // Leaf - Optimize chunkUnload
 +        // If the section hasn't been modified and no random ticking blocks/fluids,
 +        // return a lightweight copy that shares palette data
 +        if (!this.modified && this.tickingBlockCount == 0 && this.tickingFluidCount == 0) {
@@ -216,7 +207,7 @@ index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..f6c33a7ca59d00c8967034402be00767
 +                this.biomes  // Share reference instead of copying
 +            );
 +        }
++        // Leaf end - Optimize chunkUnload
          return new LevelChunkSection(this);
      }
-+
  }

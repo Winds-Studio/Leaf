@@ -61,14 +61,10 @@ public class ItemStackStripper {
      * Check if two ItemStacks are the same after stripping components
      */
     public static boolean matchesStripped(ItemStack left, ItemStack right) {
-        if (HideItemComponent.enabled) {
-            return left == right || (
-                left.is(right.getItem()) && left.getCount() == right.getCount() &&
-                    (left.isEmpty() && right.isEmpty() || Objects.equals(strip(left.getComponents()), strip(right.getComponents())))
-            );
-        }
-
-        return ItemStack.matches(left, right);
+        return left == right || (
+            left.is(right.getItem()) && left.getCount() == right.getCount() &&
+                (left.isEmpty() && right.isEmpty() || Objects.equals(strip(left.getComponents()), strip(right.getComponents())))
+        );
     }
 
     /**

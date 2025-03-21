@@ -1,44 +1,18 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Taiyou06 <kaandindar21@gmail.com>
 Date: Sun, 2 Mar 2025 21:23:20 +0100
-Subject: [PATCH] Async ChunkSend
+Subject: [PATCH] Async chunk sending
 
 
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
-index a35e9fae8f8da0c42f0616c4f78dc396492673aa..4e2e9cbd46c12f5d11dca0ecc0d41078918d52a9 100644
+index a35e9fae8f8da0c42f0616c4f78dc396492673aa..af49117695c0785033b984ff91550e2fccbbc5e6 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
-@@ -22,15 +22,13 @@ import it.unimi.dsi.fastutil.longs.LongComparator;
- import it.unimi.dsi.fastutil.longs.LongHeapPriorityQueue;
- import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
- import net.minecraft.network.protocol.Packet;
--import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
--import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
--import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
--import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
-+import net.minecraft.network.protocol.game.*;
- import net.minecraft.server.level.ChunkTrackingView;
- import net.minecraft.server.level.ServerLevel;
- import net.minecraft.server.level.ServerPlayer;
- import net.minecraft.server.level.TicketType;
- import net.minecraft.server.network.PlayerChunkSender;
-+import net.minecraft.server.network.ServerGamePacketListenerImpl;
- import net.minecraft.world.level.ChunkPos;
- import net.minecraft.world.level.GameRules;
- import net.minecraft.world.level.chunk.ChunkAccess;
-@@ -43,6 +41,8 @@ import java.util.concurrent.TimeUnit;
- import java.util.concurrent.atomic.AtomicLong;
- import java.util.function.Function;
- 
-+import static org.dreeam.leaf.config.LeafConfig.LOGGER;
-+
- public final class RegionizedPlayerChunkLoader {
- 
-     public static final TicketType<Long> PLAYER_TICKET         = TicketType.create("chunk_system:player_ticket", Long::compareTo);
-@@ -411,18 +411,84 @@ public final class RegionizedPlayerChunkLoader {
+@@ -411,19 +411,91 @@ public final class RegionizedPlayerChunkLoader {
              this.delayedTicketOps.addLast(op);
          }
  
++        // Leaf start - Async chunk sending
 +        /**
 +         * Sends a chunk to the player.
 +         * If async chunk sending is enabled, this will prepare and send the chunk packet asynchronously.
@@ -49,7 +23,8 @@ index a35e9fae8f8da0c42f0616c4f78dc396492673aa..4e2e9cbd46c12f5d11dca0ecc0d41078
 -                ((ChunkSystemChunkHolder)((ChunkSystemServerLevel)this.world).moonrise$getChunkTaskScheduler().chunkHolderManager
 -                        .getChunkHolder(chunkX, chunkZ).vanillaChunkHolder).moonrise$addReceivedChunk(this.player);
 +            final long chunkKey = CoordinateUtils.getChunkKey(chunkX, chunkZ);
-+
+ 
+-                final LevelChunk chunk = ((ChunkSystemLevel)this.world).moonrise$getFullChunkIfLoaded(chunkX, chunkZ);
 +            if (!this.sentChunks.add(chunkKey)) {
 +                // Already in our sent list - silently return instead of throwing an exception
 +                return;
@@ -62,13 +37,12 @@ index a35e9fae8f8da0c42f0616c4f78dc396492673aa..4e2e9cbd46c12f5d11dca0ecc0d41078
 +                this.sentChunks.remove(chunkKey);
 +                return;
 +            }
- 
--                final LevelChunk chunk = ((ChunkSystemLevel)this.world).moonrise$getFullChunkIfLoaded(chunkX, chunkZ);
++
 +            // Try to mark the chunk as received by this player
 +            try {
 +                // This part needs to remain on the main thread as it affects shared state
-+                ((ChunkSystemChunkHolder) ((ChunkSystemServerLevel) this.world).moonrise$getChunkTaskScheduler().chunkHolderManager
-+                    .getChunkHolder(chunkX, chunkZ).vanillaChunkHolder).moonrise$addReceivedChunk(this.player);
++                ((ChunkSystemServerLevel) this.world).moonrise$getChunkTaskScheduler().chunkHolderManager
++                    .getChunkHolder(chunkX, chunkZ).vanillaChunkHolder.moonrise$addReceivedChunk(this.player);
  
 +                // Call onChunkWatch on the main thread as it might affect server state
                  PlatformHooks.get().onChunkWatch(this.world, chunk, this.player);
@@ -86,22 +60,26 @@ index a35e9fae8f8da0c42f0616c4f78dc396492673aa..4e2e9cbd46c12f5d11dca0ecc0d41078
 +                // Async implementation
 +                net.minecraft.Util.backgroundExecutor().execute(() -> {
 +                    try {
-+                        final ServerGamePacketListenerImpl connection = this.player.connection;
++                        final net.minecraft.server.network.ServerGamePacketListenerImpl connection = this.player.connection;
 +                        final ServerLevel serverLevel = this.world;
++
 +                        // Create the packet with anti-xray control flag
-+                        final ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
++                        final net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
 +                            chunk, serverLevel.getLightEngine(), null, null,
 +                            serverLevel.chunkPacketBlockController.shouldModify(this.player, chunk)
 +                        );
++
 +                        // Let the main thread handle the anti-xray processing
 +                        serverLevel.getServer().execute(() -> {
 +                            if (this.removed || !this.sentChunks.contains(chunkKey)) {
 +                                return;
 +                            }
++
 +                            // This will trigger anti-xray processing and mark the packet as ready when done
 +                            // The packet automatically handles readiness
 +                            // Send the packet (which will be held until ready by the network layer)
 +                            connection.send(packet);
++
 +                            // Fire events and send POI packets
 +                            if (io.papermc.paper.event.packet.PlayerChunkLoadEvent.getHandlerList().getRegisteredListeners().length > 0) {
 +                                new io.papermc.paper.event.packet.PlayerChunkLoadEvent(
@@ -110,11 +88,11 @@ index a35e9fae8f8da0c42f0616c4f78dc396492673aa..4e2e9cbd46c12f5d11dca0ecc0d41078
 +                                ).callEvent();
 +                            }
 +
-+                            ChunkPos pos = chunk.getPos();
-+                            DebugPackets.sendPoiPacketsForChunk(serverLevel, pos);
++                            net.minecraft.network.protocol.game.DebugPackets.sendPoiPacketsForChunk(serverLevel, chunk.getPos());
 +                        });
 +                    } catch (Exception e) {
-+                        LOGGER.error("Failed to send chunk asynchronously", e);
++                        org.dreeam.leaf.async.AsyncChunkSending.LOGGER.error("Failed to send chunk asynchronously!", e);
++
 +                        if (!this.removed) {
 +                            this.sentChunks.remove(chunkKey);
 +                        }
@@ -124,5 +102,7 @@ index a35e9fae8f8da0c42f0616c4f78dc396492673aa..4e2e9cbd46c12f5d11dca0ecc0d41078
 +                PlayerChunkSender.sendChunk(this.player.connection, this.world, chunk);
 +            }
          }
++        // Leaf end - Async chunk sending
  
          private void sendUnloadChunk(final int chunkX, final int chunkZ) {
+             if (!this.sentChunks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ))) {

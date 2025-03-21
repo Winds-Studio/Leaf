@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Wed, 19 Mar 2025 13:41:29 +0100
+Subject: [PATCH] Optimize SetLookAndInteract and NearestVisibleLivingEntities
+
+Changes predicate order to be faster
+These numbers are gotten with 2000 villagers searching for a Job
+Paper: 3859ms
+Leaf : 1363ms (-64% reduction)
+
+diff --git a/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java b/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
+index 13359e484486a5280f408955fe2a365cd3c34a43..48c30c8b686fdc82481bd72d6d10f541e9eb0217 100644
+--- a/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
++++ b/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
+@@ -9,7 +9,7 @@ import net.minecraft.world.entity.ai.memory.NearestVisibleLivingEntities;
+ 
+ public class SetLookAndInteract {
+     public static BehaviorControl<LivingEntity> create(EntityType<?> entityType, int maxDist) {
+-        int i = maxDist * maxDist;
++        final int maxDistSq = maxDist * maxDist; // Leaf - Optimize SetLookAndInteract and NearestVisibleLivingEntities
+         return BehaviorBuilder.create(
+             instance -> instance.group(
+                     instance.registered(MemoryModuleType.LOOK_TARGET),
+@@ -19,16 +19,22 @@ public class SetLookAndInteract {
+                 .apply(
+                     instance,
+                     (lookTarget, interactionTarget, nearestVisibleLivingEntities) -> (level, entity, gameTime) -> {
+-                        Optional<LivingEntity> optional = instance.<NearestVisibleLivingEntities>get(nearestVisibleLivingEntities)
+-                            .findClosest(nearEntity -> nearEntity.distanceToSqr(entity) <= i && entityType.equals(nearEntity.getType()));
++                        // Leaf start - Optimize SetLookAndInteract and NearestVisibleLivingEntities
++                        // Check entity type first as it's likely cheaper than distance calculation
++                        NearestVisibleLivingEntities entities = instance.get(nearestVisibleLivingEntities);
++                        Optional<LivingEntity> optional = entities.findClosest(
++                            nearEntity -> entityType.equals(nearEntity.getType()) && nearEntity.distanceToSqr(entity) <= maxDistSq
++                        );
++
+                         if (optional.isEmpty()) {
+                             return false;
+-                        } else {
+-                            LivingEntity livingEntity = optional.get();
+-                            interactionTarget.set(livingEntity);
+-                            lookTarget.set(new EntityTracker(livingEntity, true));
+-                            return true;
+                         }
++
++                        LivingEntity livingEntity = optional.get();
++                        interactionTarget.set(livingEntity);
++                        lookTarget.set(new EntityTracker(livingEntity, true));
++                        return true;
++                        // Leaf end - Optimize SetLookAndInteract and NearestVisibleLivingEntities
+                     }
+                 )
+         );
+diff --git a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+index 2b973a3ba7d65330fa4690e71e5321c28457ec61..82de8e3bc462638bffbb43456076de2670d76540 100644
+--- a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
++++ b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+@@ -32,11 +32,30 @@ public class NearestVisibleLivingEntities {
+     }
+ 
+     public Optional<LivingEntity> findClosest(Predicate<LivingEntity> predicate) {
+-        for (LivingEntity livingEntity : this.nearbyEntities) {
+-            if (predicate.test(livingEntity) && this.lineOfSightTest.test(livingEntity)) {
+-                return Optional.of(livingEntity);
++        // Leaf start - Optimize SetLookAndInteract and NearestVisibleLivingEntities
++        // Early return if no entities
++        if (this.nearbyEntities.isEmpty()) {
++            return Optional.empty();
++        }
++
++        // Avoid computing line of sight unless necessary
++        LivingEntity closest = null;
++        double closestDistSq = Double.MAX_VALUE;
++
++        for (int i = 0; i < this.nearbyEntities.size(); i++) {
++            LivingEntity entity = this.nearbyEntities.get(i);
++
++            // Check predicate first as it's likely cheaper than line of sight test
++            if (predicate.test(entity)) {
++                // Only do expensive line of sight check if other conditions pass
++                if (this.lineOfSightTest.test(entity)) {
++                    // For SetLookAndInteract we can optimize further since distanceSq check
++                    // is already in the predicate - see if there's a chance to return early
++                    return Optional.of(entity);
++                }
+             }
+         }
++        // Leaf end - Optimize SetLookAndInteract and NearestVisibleLivingEntities
+ 
+         return Optional.empty();
+     }
+@@ -46,8 +65,20 @@ public class NearestVisibleLivingEntities {
+     }
+ 
+     public Stream<LivingEntity> find(Predicate<LivingEntity> predicate) {
+-        return this.nearbyEntities.stream().filter(target -> predicate.test(target) && this.lineOfSightTest.test(target));
++        return this.nearbyEntities.stream().filter(target -> predicate.test(target) && this.lineOfSightTest.test(target)); // Leaf - Optimize SetLookAndInteract and NearestVisibleLivingEntities - diff on change
++    }
++
++    // Leaf start - Optimize SetLookAndInteract and NearestVisibleLivingEntities
++    public List<LivingEntity> findWithList(Predicate<LivingEntity> predicate) {
++        it.unimi.dsi.fastutil.objects.ObjectList<LivingEntity> result = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
++        for (LivingEntity entity : this.nearbyEntities) {
++            if (predicate.test(entity) && this.lineOfSightTest.test(entity)) {
++                result.add(entity);
++            }
++        }
++        return result;
+     }
++    // Leaf end - Optimize SetLookAndInteract and NearestVisibleLivingEntities
+ 
+     public boolean contains(LivingEntity entity) {
+         return this.nearbyEntities.contains(entity) && this.lineOfSightTest.test(entity);

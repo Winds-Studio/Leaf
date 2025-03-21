@@ -60,7 +60,10 @@ public class DynamicActivationofBrain extends ConfigModules {
                 "不会被 DAB 影响的实体列表"));
 
         startDistanceSquared = startDistance * startDistance;
+    }
 
+    @Override
+    public void onPostLoaded() {
         for (EntityType<?> entityType : BuiltInRegistries.ENTITY_TYPE) {
             entityType.dabEnabled = true; // reset all, before setting the ones to true
         }
