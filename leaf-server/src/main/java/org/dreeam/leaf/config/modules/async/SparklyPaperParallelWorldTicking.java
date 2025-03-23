@@ -8,7 +8,7 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
 
     public String getBasePath() {
         return EnumConfigCategory.ASYNC.getBaseKeyName() + ".parallel-world-tracking";
-    }
+    } // TODO: Correct config key when stable
 
     @Experimental
     public static boolean enabled = false;
