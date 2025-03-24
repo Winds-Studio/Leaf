@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sun, 23 Mar 2025 11:51:44 +0100
+Subject: [PATCH] AsyncBlockFinding
+
+
+diff --git a/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java b/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
+index 3f080b15543bf8c5fa0774b62d7f12e13b82511a..51a949dbb88d7fff076379962000b70acecacce3 100644
+--- a/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
+@@ -1,9 +1,16 @@
+ package net.minecraft.world.entity.ai.goal;
+ 
+ import java.util.EnumSet;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import com.google.common.util.concurrent.ThreadFactoryBuilder;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.world.entity.PathfinderMob;
+ import net.minecraft.world.level.LevelReader;
++import org.dreeam.leaf.config.modules.async.AsyncBlockFinding;
+ 
+ public abstract class MoveToBlockGoal extends Goal {
+     private static final int GIVE_UP_TICKS = 1200;
+@@ -20,6 +27,17 @@ public abstract class MoveToBlockGoal extends Goal {
+     private final int verticalSearchRange;
+     protected int verticalSearchStart;
+ 
++    private static final ExecutorService BLOCK_FINDER_EXECUTOR =
++        Executors.newSingleThreadExecutor(
++            new ThreadFactoryBuilder()
++                .setNameFormat("block-finder-%d")
++                .setDaemon(true)
++                .build());
++
++    private final ConcurrentLinkedQueue<BlockPos> candidateBlocks = new ConcurrentLinkedQueue<>();
++    private boolean asyncSearchInProgress = false;
++    private boolean searchComplete = false;
++
+     public MoveToBlockGoal(PathfinderMob mob, double speedModifier, int searchRange) {
+         this(mob, speedModifier, searchRange, 1);
+     }
+@@ -109,6 +127,92 @@ public abstract class MoveToBlockGoal extends Goal {
+     }
+ 
+     protected boolean findNearestBlock() {
++        // Check if async is enabled, if not use the original implementation
++        if (!AsyncBlockFinding.enabled) {
++            return findNearestBlockSync();
++        }
++
++        // Check if we're done with the current search
++        if (searchComplete) {
++            searchComplete = false;
++            asyncSearchInProgress = false;
++            candidateBlocks.clear();
++            return false;
++        }
++        while (!candidateBlocks.isEmpty()) {
++            BlockPos pos = candidateBlocks.poll();
++
++            if (pos != null && this.mob.level().hasChunkAt(pos) &&
++                this.mob.isWithinRestriction(pos) &&
++                this.isValidTarget(this.mob.level(), pos)) {
++
++                this.blockPos = pos;
++                this.mob.movingTarget = pos == BlockPos.ZERO ? null : pos;
++                searchComplete = true;
++                return true;
++            }
++        }
++
++        // If no candidates are left and async search is done
++        if (candidateBlocks.isEmpty() && !asyncSearchInProgress) {
++            searchComplete = true;
++            return false;
++        }
++
++        // Start async search if needed
++        if (!asyncSearchInProgress && candidateBlocks.isEmpty()) {
++            asyncSearchInProgress = true;
++
++            // Get necessary data from main thread
++            final BlockPos centerPos = this.mob.blockPosition().immutable();
++            final int searchRange = this.searchRange;
++            final int verticalRange = this.verticalSearchRange;
++            final int verticalStart = this.verticalSearchStart;
++            BLOCK_FINDER_EXECUTOR.execute(() -> {
++                try {
++                    generateCandidateBlocks(centerPos, searchRange, verticalRange, verticalStart);
++                } catch (Exception e) {
++                    e.printStackTrace();
++                } finally {
++                    asyncSearchInProgress = false;
++                }
++            });
++        }
++
++        return false;
++    }
++
++    // Generate candidate blocks in a spiral pattern
++    private void generateCandidateBlocks(BlockPos center, int searchRange, int verticalRange, int verticalStart) {
++        // Pre-calculate a prioritized list of positions
++        List<BlockPos> positions = new ArrayList<>();
++
++        for (int i2 = verticalStart; i2 <= verticalRange; i2 = i2 > 0 ? -i2 : 1 - i2) {
++            for (int i3 = 0; i3 < searchRange; i3++) {
++                for (int i4 = 0; i4 <= i3; i4 = i4 > 0 ? -i4 : 1 - i4) {
++                    for (int i5 = i4 < i3 && i4 > -i3 ? i3 : 0; i5 <= i3; i5 = i5 > 0 ? -i5 : 1 - i5) {
++                        BlockPos pos = center.offset(i4, i2 - 1, i5);
++                        positions.add(pos.immutable());
++                    }
++                }
++            }
++        }
++
++        // Sort by distance to center (closest first)
++        positions.sort((p1, p2) -> {
++            double d1 = p1.distSqr(center);
++            double d2 = p2.distSqr(center);
++            return Double.compare(d1, d2);
++        });
++
++        // Add to candidate queue
++        for (BlockPos pos : positions) {
++            candidateBlocks.add(pos);
++        }
++    }
++
++    // The original method renamed
++    protected boolean findNearestBlockSync() {
+         int i = this.searchRange;
+         int i1 = this.verticalSearchRange;
+         BlockPos blockPos = this.mob.blockPosition();

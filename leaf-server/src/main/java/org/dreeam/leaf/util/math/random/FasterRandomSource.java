@@ -21,17 +21,20 @@ public class FasterRandomSource implements BitRandomSource {
     private static final RandomGeneratorFactory<RandomGenerator> RANDOM_GENERATOR_FACTORY = RandomGeneratorFactory.of(FastRNG.randomGenerator);
     private static final boolean isSplittableGenerator = RANDOM_GENERATOR_FACTORY.isSplittable();
     private long seed;
+    private boolean useDirectImpl;
     private RandomGenerator randomGenerator;
     public static final FasterRandomSource SHARED_INSTANCE = new FasterRandomSource(ThreadLocalRandom.current().nextLong());
 
     public FasterRandomSource(long seed) {
         this.seed = seed;
         this.randomGenerator = RANDOM_GENERATOR_FACTORY.create(seed);
+        this.useDirectImpl = FastRNG.useDirectImpl; // Get the value from config
     }
 
     private FasterRandomSource(long seed, RandomGenerator.SplittableGenerator randomGenerator) {
         this.seed = seed;
         this.randomGenerator = randomGenerator;
+        this.useDirectImpl = FastRNG.useDirectImpl;
     }
 
     @Override
@@ -55,8 +58,13 @@ public class FasterRandomSource implements BitRandomSource {
 
     @Override
     public final int next(int bits) {
-        // >>> instead of Mojang's >> fixes MC-239059
-        return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> INT_BITS - bits);
+        if (useDirectImpl) {
+            // Direct
+            return (int) ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
+        } else {
+            // old
+            return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
+        }
     }
 
     public static class FasterRandomSourcePositionalRandomFactory implements PositionalRandomFactory {
@@ -93,36 +101,71 @@ public class FasterRandomSource implements BitRandomSource {
 
     @Override
     public final int nextInt() {
-        return randomGenerator.nextInt();
+        if (useDirectImpl) {
+            return (int) (((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> 16) ^
+                ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> 32));
+        } else {
+            return randomGenerator.nextInt();
+        }
     }
 
     @Override
     public final int nextInt(int bound) {
-        return randomGenerator.nextInt(bound);
+        if (useDirectImpl && bound > 0) {
+            if ((bound & -bound) == bound) {
+                return (int) ((bound * (long) next(31)) >> 31);
+            }
+            int bits, val;
+            do {
+                bits = next(31);
+                val = bits % bound;
+            } while (bits - val + (bound - 1) < 0);
+            return val;
+        } else {
+            return randomGenerator.nextInt(bound);
+        }
     }
 
     @Override
     public final long nextLong() {
-        return randomGenerator.nextLong();
+        if (useDirectImpl) {
+            return ((long) next(32) << 32) + next(32);
+        } else {
+            return randomGenerator.nextLong();
+        }
     }
 
     @Override
     public final boolean nextBoolean() {
-        return randomGenerator.nextBoolean();
+        if (useDirectImpl) {
+            return next(1) != 0;
+        } else {
+            return randomGenerator.nextBoolean();
+        }
     }
 
     @Override
     public final float nextFloat() {
-        return randomGenerator.nextFloat();
+        if (useDirectImpl) {
+            return next(24) / ((float) (1 << 24));
+        } else {
+            return randomGenerator.nextFloat();
+        }
     }
 
     @Override
     public final double nextDouble() {
-        return randomGenerator.nextDouble();
+        if (useDirectImpl) {
+            return (((long) next(26) << 27) + next(27)) / (double) (1L << 53);
+        } else {
+            return randomGenerator.nextDouble();
+        }
     }
 
     @Override
     public final double nextGaussian() {
+        // delegate Gaussian distribution to RandomGenerator
+        // as direct implementation would be complex (i aint doin allat)
         return randomGenerator.nextGaussian();
     }
 }
