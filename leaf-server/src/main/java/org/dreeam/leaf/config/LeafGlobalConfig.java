@@ -177,4 +177,19 @@ public class LeafGlobalConfig {
     public String pickStringRegionBased(String en, String cn) {
         return isCN ? cn : en;
     }
+
+    public long getLong(String path, long def, String comment) {
+        configFile.addDefault(path, def, comment);
+        return configFile.getLong(path, def);
+    }
+
+    public long getLong(String path, long def) {
+        configFile.addDefault(path, def);
+        return configFile.getLong(path, def);
+    }
+    public Long getLong(String path) {
+        String value = configFile.getString(path, null);
+        return value == null ? null : Long.parseLong(value);
+    }
+
 }
