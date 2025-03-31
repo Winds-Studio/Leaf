@@ -8,7 +8,7 @@ import java.util.concurrent.*;
 public class AsyncPlayerDataSaving {
 
     public static final ExecutorService IO_POOL = new ThreadPoolExecutor(
-        1, 1, 0, TimeUnit.MILLISECONDS,
+        1, 1, 0L, TimeUnit.MILLISECONDS,
         new LinkedBlockingQueue<>(),
         new com.google.common.util.concurrent.ThreadFactoryBuilder()
             .setPriority(Thread.NORM_PRIORITY - 2)
