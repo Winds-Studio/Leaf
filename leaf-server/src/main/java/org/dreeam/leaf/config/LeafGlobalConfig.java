@@ -94,6 +94,16 @@ public class LeafGlobalConfig {
         return configFile.getInteger(path, def);
     }
 
+    public long getLong(String path, long def, String comment) {
+        configFile.addDefault(path, def, comment);
+        return configFile.getLong(path, def);
+    }
+
+    public long getLong(String path, long def) {
+        configFile.addDefault(path, def);
+        return configFile.getLong(path, def);
+    }
+
     public List<String> getList(String path, List<String> def, String comment) {
         configFile.addDefault(path, def, comment);
         return configFile.getStringList(path);
@@ -122,7 +132,6 @@ public class LeafGlobalConfig {
 
     public Boolean getBoolean(String path) {
         String value = configFile.getString(path, null);
-
         return value == null ? null : Boolean.parseBoolean(value);
     }
 
@@ -132,14 +141,17 @@ public class LeafGlobalConfig {
 
     public Double getDouble(String path) {
         String value = configFile.getString(path, null);
-
         return value == null ? null : Double.parseDouble(value); // TODO: Need to check whether need to handle NFE correctly
     }
 
     public Integer getInt(String path) {
         String value = configFile.getString(path, null);
-
         return value == null ? null : Integer.parseInt(value); // TODO: Need to check whether need to handle NFE correctly
+    }
+
+    public Long getLong(String path) {
+        String value = configFile.getString(path, null);
+        return value == null ? null : Long.parseLong(value); // TODO: Need to check whether need to handle NFE correctly
     }
 
     public List<String> getList(String path) {

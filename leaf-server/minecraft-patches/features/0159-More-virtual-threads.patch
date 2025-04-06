@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sun, 6 Apr 2025 11:22:35 +0200
+Subject: [PATCH] More virtual threads
+
+
+diff --git a/net/minecraft/Util.java b/net/minecraft/Util.java
+index b097f685e826e70008e3a096ee5f1d4fccf25680..f374428c65e929b8795f2a0ddfe3137b4afca9bc 100644
+--- a/net/minecraft/Util.java
++++ b/net/minecraft/Util.java
+@@ -61,6 +61,7 @@ import java.util.concurrent.ForkJoinPool;
+ import java.util.concurrent.ForkJoinWorkerThread;
+ import java.util.concurrent.LinkedBlockingQueue;
+ import java.util.concurrent.TimeUnit;
++import java.util.concurrent.ThreadFactory;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.function.BiFunction;
+ import java.util.function.BooleanSupplier;
+@@ -86,6 +87,10 @@ import net.minecraft.util.TimeSource;
+ import net.minecraft.util.datafix.DataFixers;
+ import net.minecraft.world.level.block.state.properties.Property;
+ import org.slf4j.Logger;
++import org.galemc.gale.virtualthread.VirtualThreadService; // Gale - virtual thread support
++import org.dreeam.leaf.config.modules.opt.VT4DownloadPool;
++import org.dreeam.leaf.config.modules.opt.VT4ProfileExecutor;
++
+ 
+ public class Util {
+     static final Logger LOGGER = LogUtils.getLogger();
+@@ -97,7 +102,7 @@ public class Util {
+     public static final TracingExecutor DIMENSION_DATA_IO_POOL = makeExtraIoExecutor("Dimension-Data-IO-Worker-"); // Paper - Separate dimension data IO pool
+     private static final TracingExecutor DOWNLOAD_POOL = makeIoExecutor("Download-", true);
+     // Paper start - don't submit BLOCKING PROFILE LOOKUPS to the world gen thread
+-    public static final ExecutorService PROFILE_EXECUTOR = Executors.newFixedThreadPool(2, new java.util.concurrent.ThreadFactory() {
++    public static final ExecutorService PROFILE_EXECUTOR = createProfileExecutor(); /* new Executors.newFixedThreadPool(2, new java.util.concurrent.ThreadFactory() {
+ 
+         private final AtomicInteger count = new AtomicInteger();
+ 
+@@ -110,7 +115,27 @@ public class Util {
+             });
+             return ret;
+         }
+-    });
++    }); */
++    private static ExecutorService createProfileExecutor() {
++        final ThreadFactory factory;
++        if (VT4ProfileExecutor.enabled && VirtualThreadService.isSupported()) {
++            factory = VirtualThreadService.get().createFactory();
++        } else {
++            factory = new ThreadFactory() {
++                private final AtomicInteger count = new AtomicInteger();
++                @Override
++                public Thread newThread(Runnable run) {
++                    Thread ret = new Thread(run);
++                    ret.setName("Profile Lookup Executor #" + this.count.getAndIncrement());
++                    ret.setUncaughtExceptionHandler((Thread thread, Throwable throwable) -> {
++                        LOGGER.error("Uncaught exception in thread " + thread.getName(), throwable);
++                    });
++                    return ret;
++                }
++            };
++        }
++        return Executors.newFixedThreadPool(2, factory);
++    }
+     // Paper end - don't submit BLOCKING PROFILE LOOKUPS to the world gen thread
+     private static final DateTimeFormatter FILENAME_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH.mm.ss", Locale.ROOT);
+     public static final int LINEAR_LOOKUP_THRESHOLD = 8;
+@@ -254,16 +279,29 @@ public class Util {
+     }
+ 
+     private static TracingExecutor makeIoExecutor(String name, boolean daemon) {
+-        AtomicInteger atomicInteger = new AtomicInteger(1);
+-        return new TracingExecutor(Executors.newCachedThreadPool(runnable -> {
+-            Thread thread = new Thread(runnable);
+-            String string = name + atomicInteger.getAndIncrement();
+-            TracyClient.setThreadName(string, name.hashCode());
+-            thread.setName(string);
+-            thread.setDaemon(daemon);
+-            thread.setUncaughtExceptionHandler(Util::onThreadException);
+-            return thread;
+-        }));
++        final ThreadFactory factory;
++        final boolean useVirtualThreads; // Gale - virtual thread support
++        if (name.startsWith("Download-")) { // Gale - virtual thread support
++            useVirtualThreads = VT4DownloadPool.enabled && VirtualThreadService.isSupported(); // Gale - virtual thread support
++        } else {
++            useVirtualThreads = false;
++        }
++
++        if (useVirtualThreads) {
++            factory = VirtualThreadService.get().createFactory();
++        } else {
++            AtomicInteger atomicInteger = new AtomicInteger(1);
++            factory = runnable -> {
++                Thread thread = new Thread(runnable);
++                String string = name + atomicInteger.getAndIncrement();
++                TracyClient.setThreadName(string, name.hashCode());
++                thread.setName(string);
++                thread.setDaemon(daemon);
++                thread.setUncaughtExceptionHandler(Util::onThreadException);
++                return thread;
++            };
++        }
++        return new TracingExecutor(Executors.newCachedThreadPool(factory));
+     }
+ 
+     // Paper start - Separate dimension data IO pool
+@@ -1099,7 +1137,7 @@ public class Util {
+     }
+ 
+     public static <T> Typed<T> readTypedOrThrow(Type<T> type, Dynamic<?> data, boolean partial) {
+-        DataResult<Typed<T>> dataResult = type.readTyped(data).map(Pair::getFirst);
++        DataResult<Typed<T>> dataResult = type.readTyped(data).map(Pair::getFirst); // Paper - Fix generics issue // Gale - Fix generics issue
+ 
+         try {
+             return partial ? dataResult.getPartialOrThrow(IllegalStateException::new) : dataResult.getOrThrow(IllegalStateException::new);
+@@ -1143,12 +1181,14 @@ public class Util {
+ 
+         private final String telemetryName;
+ 
++        // Paper start - Fix warnings on build by removing client-only code
+         OS(final String telemetryName) {
+             this.telemetryName = telemetryName;
+         }
+ 
+         public void openUri(URI uri) {
+-            throw new IllegalStateException("This method is not useful on dedicated servers."); // Paper - Fix warnings on build by removing client-only code
++            // This method is not useful on dedicated servers.
++            // throw new IllegalStateException("This method is not useful on dedicated servers."); // Paper - Fix warnings on build by removing client-only code
+         }
+ 
+         public void openFile(File file) {
+@@ -1179,5 +1219,6 @@ public class Util {
+         public String telemetryName() {
+             return this.telemetryName;
+         }
++        // Paper end - Fix warnings on build by removing client-only code
+     }
+ }

@@ -19,7 +19,9 @@ public class FastRNG extends ConfigModules {
     public static boolean useLegacyForSlimeChunk = false;
     public static boolean useDirectImpl = false;
 
-    public static boolean worldgenEnabled() {return enabled && enableForWorldgen;} // Helper function
+    public static boolean worldgenEnabled() {
+        return enabled && enableForWorldgen;
+    } // Helper function
 
     @Override
     public void onLoaded() {

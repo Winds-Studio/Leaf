@@ -11,7 +11,6 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
-
 public class FasterRandomSource implements BitRandomSource {
 
     private static final int INT_BITS = 48;
@@ -42,6 +41,7 @@ public class FasterRandomSource implements BitRandomSource {
         if (isSplittableGenerator) {
             return new FasterRandomSource(seed, ((RandomGenerator.SplittableGenerator) this.randomGenerator).split());
         }
+
         return new FasterRandomSource(this.nextLong());
     }
 
@@ -61,10 +61,9 @@ public class FasterRandomSource implements BitRandomSource {
         if (useDirectImpl) {
             // Direct
             return (int) ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
-        } else {
-            // old
-            return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
         }
+
+        return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
     }
 
     public static class FasterRandomSourcePositionalRandomFactory implements PositionalRandomFactory {
@@ -104,9 +103,9 @@ public class FasterRandomSource implements BitRandomSource {
         if (useDirectImpl) {
             return (int) (((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> 16) ^
                 ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> 32));
-        } else {
-            return randomGenerator.nextInt();
         }
+
+        return randomGenerator.nextInt();
     }
 
     @Override
@@ -121,45 +120,45 @@ public class FasterRandomSource implements BitRandomSource {
                 val = bits % bound;
             } while (bits - val + (bound - 1) < 0);
             return val;
-        } else {
-            return randomGenerator.nextInt(bound);
         }
+
+        return randomGenerator.nextInt(bound);
     }
 
     @Override
     public final long nextLong() {
         if (useDirectImpl) {
             return ((long) next(32) << 32) + next(32);
-        } else {
-            return randomGenerator.nextLong();
         }
+
+        return randomGenerator.nextLong();
     }
 
     @Override
     public final boolean nextBoolean() {
         if (useDirectImpl) {
             return next(1) != 0;
-        } else {
-            return randomGenerator.nextBoolean();
         }
+
+        return randomGenerator.nextBoolean();
     }
 
     @Override
     public final float nextFloat() {
         if (useDirectImpl) {
             return next(24) / ((float) (1 << 24));
-        } else {
-            return randomGenerator.nextFloat();
         }
+
+        return randomGenerator.nextFloat();
     }
 
     @Override
     public final double nextDouble() {
         if (useDirectImpl) {
             return (((long) next(26) << 27) + next(27)) / (double) (1L << 53);
-        } else {
-            return randomGenerator.nextDouble();
         }
+
+        return randomGenerator.nextDouble();
     }
 
     @Override
