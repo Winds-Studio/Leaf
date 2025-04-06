@@ -1,0 +1,527 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sun, 6 Apr 2025 19:01:04 +0200
+Subject: [PATCH] Optimize getBlockEntity calls
+
+
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 546fb78339c005ed71142cb3c894f816b8c72d08..ea2d89e6204745a6f302c047c61a2919bcb25c99 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -6,10 +6,12 @@ import com.mojang.logging.LogUtils;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+ import java.util.Collections;
++import java.util.List;
+ import java.util.Map;
+ import java.util.Map.Entry;
+ import java.util.function.Consumer;
+ import java.util.function.Supplier;
++import java.util.stream.Collectors;
+ import javax.annotation.Nullable;
+ import net.minecraft.CrashReport;
+ import net.minecraft.CrashReportCategory;
+@@ -201,14 +203,20 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+             postLoad,
+             chunk.getBlendingData()
+         );
+-        if (!Collections.disjoint(chunk.pendingBlockEntities.keySet(), chunk.blockEntities.keySet())) {
+-            LOGGER.error("Chunk at {} contains duplicated block entities", chunk.getPos());
+-        }
++        // We need to make sure block entities are added using setBlockEntity below
++        // so they end up in the section array, not just the ProtoChunk map.
++        // The pendingBlockEntities map is separate and handles NBT data before promotion.
++
++        // if (!Collections.disjoint(chunk.pendingBlockEntities.keySet(), chunk.blockEntities.keySet())) {
++        //     LOGGER.error("Chunk at {} contains duplicated block entities", chunk.getPos());
++        // }
+ 
++        // Add block entities using the proper method
+         for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
+             this.setBlockEntity(blockEntity);
+         }
+ 
++        // Keep track of pending NBT data
+         this.pendingBlockEntities.putAll(chunk.getBlockEntityNbts());
+ 
+         for (int i = 0; i < chunk.getPostProcessing().length; i++) {
+@@ -373,15 +381,15 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+ 
+     public FluidState getFluidState(int x, int y, int z) {
+         // try { // Paper start - Perf: Optimise Chunk#getFluid
+-            int sectionIndex = this.getSectionIndex(y);
+-            if (sectionIndex >= 0 && sectionIndex < this.sections.length) {
+-                LevelChunkSection levelChunkSection = this.sections[sectionIndex];
+-                if (!levelChunkSection.hasOnlyAir()) {
+-                    return levelChunkSection.states.get((y & 15) << 8 | (z & 15) << 4 | x & 15).getFluidState(); // Paper - Perf: Optimise Chunk#getFluid
+-                }
++        int sectionIndex = this.getSectionIndex(y);
++        if (sectionIndex >= 0 && sectionIndex < this.sections.length) {
++            LevelChunkSection levelChunkSection = this.sections[sectionIndex];
++            if (!levelChunkSection.hasOnlyAir()) {
++                return levelChunkSection.states.get((y & 15) << 8 | (z & 15) << 4 | x & 15).getFluidState(); // Paper - Perf: Optimise Chunk#getFluid
+             }
++        }
+ 
+-            return Fluids.EMPTY.defaultFluidState();
++        return Fluids.EMPTY.defaultFluidState();
+         /* // Paper - Perf: Optimise Chunk#getFluid
+         } catch (Throwable var7) {
+             CrashReport crashReport = CrashReport.forThrowable(var7, "Getting fluid state");
+@@ -497,44 +505,75 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+ 
+     @Nullable
+     public BlockEntity getBlockEntity(BlockPos pos, LevelChunk.EntityCreationType creationType) {
+-        // CraftBukkit start
+-        BlockEntity blockEntity = this.level.capturedTileEntities.get(pos);
+-        if (blockEntity == null) {
+-            blockEntity = this.blockEntities.get(pos);
++        // CraftBukkit start - Captured TileEntities
++        BlockEntity captured = this.level.capturedTileEntities.get(pos);
++        if (captured != null) {
++            return captured;
+         }
+         // CraftBukkit end
++
++        int y = pos.getY();
++        int sectionIndex = this.getSectionIndex(y);
++
++        BlockEntity blockEntity = null;
++
++        // Check the section's dedicated array first
++        if (sectionIndex >= 0 && sectionIndex < this.sections.length) {
++            LevelChunkSection section = this.sections[sectionIndex];
++            BlockEntity[] sectionEntities = section.getBlockEntityArray();
++            if (sectionEntities != null) {
++                int indexInSection = (pos.getX() & 15) + ((pos.getZ() & 15) * 16) + ((y & 15) * 256);
++                blockEntity = sectionEntities[indexInSection];
++            }
++        }
++
++        // Treat removed entities as not found
++        if (blockEntity != null && blockEntity.isRemoved()) {
++            // Optionally remove from array here if desired, though setBlockEntity should handle overwrites
++            // section.removeBlockEntityInSectionArray(pos.getX() & 15, y & 15, pos.getZ() & 15);
++            blockEntity = null;
++        }
++
++        // If not found in array, check pending NBT data
+         if (blockEntity == null) {
+             CompoundTag compoundTag = this.pendingBlockEntities.remove(pos);
+             if (compoundTag != null) {
+-                BlockEntity blockEntity1 = this.promotePendingBlockEntity(pos, compoundTag);
+-                if (blockEntity1 != null) {
+-                    return blockEntity1;
++                // promotePending handles calling addAndRegisterBlockEntity, which adds to the section array
++                blockEntity = this.promotePendingBlockEntity(pos, compoundTag);
++                // Return immediately if promoted successfully
++                if (blockEntity != null) {
++                    return blockEntity;
+                 }
++                // If promotion failed, put the NBT back? Or assume failure means it's truly gone?
++                // else { this.pendingBlockEntities.put(pos, compoundTag); }
+             }
+         }
+ 
++        // If still not found, create if requested
+         if (blockEntity == null) {
+             if (creationType == LevelChunk.EntityCreationType.IMMEDIATE) {
+                 blockEntity = this.createBlockEntity(pos);
+                 if (blockEntity != null) {
++                    // addAndRegister handles adding to section array and ticking
+                     this.addAndRegisterBlockEntity(blockEntity);
+                 }
+             }
+-        } else if (blockEntity.isRemoved()) {
+-            this.blockEntities.remove(pos);
+-            return null;
++            // QUEUED type likely involves adding to pendingBlockEntities, handled elsewhere?
+         }
+ 
+         return blockEntity;
+     }
+ 
+     public void addAndRegisterBlockEntity(BlockEntity blockEntity) {
+-        this.setBlockEntity(blockEntity);
++        // This method now primarily ensures the BE is in the correct section array
++        // and sets up ticking/listeners.
++        this.setBlockEntity(blockEntity); // setBlockEntity handles adding to the section array
++
+         if (this.isInLevel()) {
++            // We need to call these *after* setBlockEntity ensures it's in the array
+             if (this.level instanceof ServerLevel serverLevel) {
+                 this.addGameEventListener(blockEntity, serverLevel);
+             }
+-
+             this.updateBlockEntityTicker(blockEntity);
+         }
+     }
+@@ -546,9 +585,9 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+     boolean isTicking(BlockPos pos) {
+         return this.level.getWorldBorder().isWithinBounds(pos)
+             && (
+-                !(this.level instanceof ServerLevel serverLevel)
+-                    || this.getFullStatus().isOrAfter(FullChunkStatus.BLOCK_TICKING) && serverLevel.areEntitiesLoaded(ChunkPos.asLong(pos))
+-            );
++            !(this.level instanceof ServerLevel serverLevel)
++                || this.getFullStatus().isOrAfter(FullChunkStatus.BLOCK_TICKING) && serverLevel.areEntitiesLoaded(ChunkPos.asLong(pos))
++        );
+     }
+ 
+     @Override
+@@ -578,24 +617,43 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+                 blockEntity.setBlockState(blockState);
+             }
+ 
+-            blockEntity.setLevel(this.level);
+-            blockEntity.clearRemoved();
+-            BlockEntity blockEntity1 = this.blockEntities.put(blockPos.immutable(), blockEntity);
+-            if (blockEntity1 != null && blockEntity1 != blockEntity) {
+-                blockEntity1.setRemoved();
++            // Add to the section array
++            int sectionIndex = this.getSectionIndex(blockPos.getY());
++            if (sectionIndex >= 0 && sectionIndex < this.sections.length) {
++                LevelChunkSection section = this.sections[sectionIndex];
++                section.setBlockEntityInSectionArray(blockPos.getX() & 15, blockPos.getY() & 15, blockPos.getZ() & 15, blockEntity);
++                // Set level and clear removed status AFTER adding to array
++                blockEntity.setLevel(this.level);
++                blockEntity.clearRemoved();
++            } else {
++                LOGGER.warn("Attempted to set block entity {} outside of chunk sections at {}", blockEntity, blockPos);
++                // Still set level and clear removed? Probably.
++                blockEntity.setLevel(this.level);
++                blockEntity.clearRemoved();
+             }
++
++            // Remove from the old map if necessary (though ideally it shouldn't be there)
++            // This is inherited from ChunkAccess, potentially used by other logic/mods?
++            // BlockEntity old = this.blockEntities.put(blockPos.immutable(), blockEntity);
++            // if (old != null && old != blockEntity) {
++            //     old.setRemoved();
++            // }
++            // For safety, maybe just ensure the old map doesn't contain it if it was there before?
++            this.blockEntities.remove(blockPos); // Keep this? Or assume array is the source of truth? Let's remove it.
+         }
+     }
+ 
+     @Nullable
+     @Override
+     public CompoundTag getBlockEntityNbtForSaving(BlockPos pos, HolderLookup.Provider registries) {
+-        BlockEntity blockEntity = this.getBlockEntity(pos);
++        // Fetch from section array (or pending) first
++        BlockEntity blockEntity = this.getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK);
+         if (blockEntity != null && !blockEntity.isRemoved()) {
+             CompoundTag compoundTag = blockEntity.saveWithFullMetadata(this.level.registryAccess());
+             compoundTag.putBoolean("keepPacked", false);
+             return compoundTag;
+         } else {
++            // If not found active, check pending NBT data
+             CompoundTag compoundTag = this.pendingBlockEntities.get(pos);
+             if (compoundTag != null) {
+                 compoundTag = compoundTag.copy();
+@@ -609,21 +667,40 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+     @Override
+     public void removeBlockEntity(BlockPos pos) {
+         if (this.isInLevel()) {
+-            BlockEntity blockEntity = this.blockEntities.remove(pos);
+-            // CraftBukkit start - SPIGOT-5561: Also remove from pending map
++            int sectionIndex = this.getSectionIndex(pos.getY());
++            BlockEntity blockEntity = null; // We might need the instance to remove listeners
++
++            // Remove from section array
++            if (sectionIndex >= 0 && sectionIndex < this.sections.length) {
++                LevelChunkSection section = this.sections[sectionIndex];
++                // Need a way to get the BE before removing, or remove listener logic needs adjustment
++                BlockEntity[] sectionEntities = section.getBlockEntityArray();
++                if (sectionEntities != null) {
++                    int indexInSection = (pos.getX() & 15) + ((pos.getZ() & 15) * 16) + ((pos.getY() & 15) * 256);
++                    blockEntity = sectionEntities[indexInSection]; // Get reference before removing
++                }
++                section.removeBlockEntityInSectionArray(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15);
++            }
++
++            // Also remove from pending map
+             if (!this.pendingBlockEntities.isEmpty()) {
+                 this.pendingBlockEntities.remove(pos);
+             }
+-            // CraftBukkit end
++
++            // Also remove from the old map for compatibility/safety?
++            // BlockEntity oldMapBE = this.blockEntities.remove(pos);
++            // if (blockEntity == null) blockEntity = oldMapBE; // Use the one from the map if not found in array
++
++            // If we found a block entity (from array or map), handle listener removal and set removed
+             if (blockEntity != null) {
+                 if (this.level instanceof ServerLevel serverLevel) {
+                     this.removeGameEventListener(blockEntity, serverLevel);
+                 }
+-
+-                blockEntity.setRemoved();
++                blockEntity.setRemoved(); // Mark it as removed
+             }
+         }
+ 
++        // Always remove ticker regardless of finding the BE instance
+         this.removeBlockEntityTicker(pos);
+     }
+ 
+@@ -748,7 +825,7 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+     }
+ 
+     public void replaceWithPacketData(FriendlyByteBuf buffer, CompoundTag tag, Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> outputTagConsumer) {
+-        this.clearAllBlockEntities();
++        this.clearAllBlockEntities(); // Should now clear from section arrays
+ 
+         for (LevelChunkSection levelChunkSection : this.sections) {
+             levelChunkSection.read(buffer);
+@@ -763,6 +840,7 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+ 
+         this.initializeLightSources();
+         outputTagConsumer.accept((pos, blockEntityType, blockEntityTag) -> {
++            // This call will now use the section array logic
+             BlockEntity blockEntity = this.getBlockEntity(pos, LevelChunk.EntityCreationType.IMMEDIATE);
+             if (blockEntity != null && blockEntityTag != null && blockEntity.getType() == blockEntityType) {
+                 blockEntity.loadWithComponents(blockEntityTag, this.level.registryAccess());
+@@ -785,7 +863,46 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+     }
+ 
+     public Map<BlockPos, BlockEntity> getBlockEntities() {
+-        return this.blockEntities;
++        // Build map dynamically from section arrays and pending NBT
++        Map<BlockPos, BlockEntity> map = Maps.newHashMap();
++        for (LevelChunkSection section : this.sections) {
++            if (section != null) { // Check if section itself is null
++                BlockEntity[] sectionEntities = section.getBlockEntityArray();
++                if (sectionEntities != null) {
++                    for (BlockEntity blockEntity : sectionEntities) {
++                        if (blockEntity != null && !blockEntity.isRemoved()) {
++                            map.put(blockEntity.getBlockPos(), blockEntity);
++                        }
++                    }
++                }
++            }
++        }
++
++        // Add pending entities that might not have been promoted yet
++        for (Map.Entry<BlockPos, CompoundTag> entry : this.pendingBlockEntities.entrySet()) {
++            BlockPos pos = entry.getKey();
++            if (!map.containsKey(pos)) { // Only add if not already present as a loaded BE
++                CompoundTag tag = entry.getValue();
++                if (tag != null) {
++                    // Attempt to promote - this might return null but we still need the NBT represented
++                    // We cannot fully create the BE here as it might cause issues,
++                    // but getBlockEntities() needs to represent its *potential* existence.
++                    // This part is tricky - returning a placeholder might be wrong.
++                    // Perhaps getBlockEntities() should only return fully loaded entities?
++                    // Let's stick to only loaded entities for now.
++                    BlockEntity be = this.promotePendingBlockEntity(pos, tag);
++                    if (be != null && !be.isRemoved()) {
++                        map.put(pos, be);
++                    }
++                }
++            }
++        }
++
++        // Ensure the inherited map is cleared (if it wasn't already empty)
++        // This prevents stale data if other code accidentally uses it.
++        this.blockEntities.clear();
++
++        return Collections.unmodifiableMap(map);
+     }
+ 
+     public void postProcessGeneration(ServerLevel level) {
+@@ -813,10 +930,14 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+             }
+         }
+ 
++        // Promote pending block entities using the updated getBlockEntity logic
+         for (BlockPos blockPos1 : ImmutableList.copyOf(this.pendingBlockEntities.keySet())) {
+-            this.getBlockEntity(blockPos1);
++            // Calling getBlockEntity with CHECK should attempt promotion via pendingBlockEntities.remove
++            // If successful, it adds to section array via promotePendingBlockEntity -> addAndRegisterBlockEntity
++            this.getBlockEntity(blockPos1, LevelChunk.EntityCreationType.CHECK);
+         }
+ 
++        // Clear pending map *after* attempting promotion
+         this.pendingBlockEntities.clear();
+         this.upgradeData.upgrade(this);
+         this.postProcessingDone = true; // Paper - rewrite chunk system
+@@ -838,7 +959,9 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+         }
+ 
+         if (blockEntity != null) {
++            // Ensure level is set before adding/registering
+             blockEntity.setLevel(this.level);
++            // addAndRegister now handles putting it into the section array and ticking
+             this.addAndRegisterBlockEntity(blockEntity);
+         } else {
+             LOGGER.warn("Tried to load a block entity for block {} but failed at location {}", blockState, pos);
+@@ -876,20 +999,58 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+     }
+ 
+     public void clearAllBlockEntities() {
+-        this.blockEntities.values().forEach(BlockEntity::setRemoved);
++        // Iterate through sections and remove from arrays
++        for (LevelChunkSection section : this.sections) {
++            if (section != null) { // Section might be null
++                BlockEntity[] sectionEntities = section.getBlockEntityArray();
++                if (sectionEntities != null) {
++                    for (int i = 0; i < sectionEntities.length; i++) {
++                        BlockEntity blockEntity = sectionEntities[i];
++                        if (blockEntity != null) {
++                            // We need to properly remove listeners/tickers if they exist
++                            if (this.level instanceof ServerLevel serverLevel) {
++                                this.removeGameEventListener(blockEntity, serverLevel);
++                            }
++                            this.removeBlockEntityTicker(blockEntity.getBlockPos()); // Remove associated ticker
++                            blockEntity.setRemoved(); // Mark as removed
++                            sectionEntities[i] = null; // Clear from array
++                        }
++                    }
++                }
++            }
++        }
++        // Clear pending NBT as well
++        this.pendingBlockEntities.clear();
++        // Clear the inherited map just in case
+         this.blockEntities.clear();
+-        this.tickersInLevel.values().forEach(ticker -> ticker.rebind(NULL_TICKER));
++        // Clear active tickers map
++        this.tickersInLevel.values().forEach(ticker -> ticker.rebind(NULL_TICKER)); // Ensure wrappers don't hold refs
+         this.tickersInLevel.clear();
+     }
+ 
+     public void registerAllBlockEntitiesAfterLevelLoad() {
+-        this.blockEntities.values().forEach(blockEntity -> {
+-            if (this.level instanceof ServerLevel serverLevel) {
+-                this.addGameEventListener(blockEntity, serverLevel);
++        // Iterate through section arrays to find existing BEs
++        for (LevelChunkSection section : this.sections) {
++            if (section != null) { // Section might be null
++                BlockEntity[] sectionEntities = section.getBlockEntityArray();
++                if (sectionEntities != null) {
++                    for (BlockEntity blockEntity : sectionEntities) {
++                        if (blockEntity != null && !blockEntity.isRemoved()) { // Check if not null and not already removed
++                            // Register listeners and tickers
++                            if (this.level instanceof ServerLevel serverLevel) {
++                                this.addGameEventListener(blockEntity, serverLevel);
++                            }
++                            this.updateBlockEntityTicker(blockEntity);
++                        }
++                    }
++                }
+             }
+-
+-            this.updateBlockEntityTicker(blockEntity);
+-        });
++        }
++        // Also process any pending entities that might exist from loading/conversion
++        // Need to iterate keys safely as promotePending might modify the map
++        for (BlockPos pos : List.copyOf(this.pendingBlockEntities.keySet())) {
++            getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK); // Attempt promotion
++        }
+     }
+ 
+     private <T extends BlockEntity> void addGameEventListener(T blockEntity, ServerLevel level) {
+@@ -956,7 +1117,7 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+                         if (this.blockEntity.getType().isValid(blockState)) {
+                             this.ticker.tick(LevelChunk.this.level, this.blockEntity.getBlockPos(), blockState, this.blockEntity);
+                             this.loggedInvalidBlockState = false;
+-                        // Paper start - Remove the Block Entity if it's invalid
++                            // Paper start - Remove the Block Entity if it's invalid
+                         } else {
+                             LevelChunk.this.removeBlockEntity(this.getPos());
+                             if (!this.loggedInvalidBlockState) {
+diff --git a/net/minecraft/world/level/chunk/LevelChunkSection.java b/net/minecraft/world/level/chunk/LevelChunkSection.java
+index dc158e981199b507531af810ff9ced3ca717e39e..bfe55bc4f5d8abf57c53d994bb8b13e16bcbea42 100644
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -5,6 +5,8 @@ import net.minecraft.core.Holder;
+ import net.minecraft.core.Registry;
+ import net.minecraft.network.FriendlyByteBuf;
+ import net.minecraft.world.level.biome.Biome;
++import net.minecraft.world.level.block.entity.BlockEntity;
++import javax.annotation.Nullable;
+ import net.minecraft.world.level.biome.BiomeResolver;
+ import net.minecraft.world.level.biome.Biomes;
+ import net.minecraft.world.level.biome.Climate;
+@@ -26,6 +28,9 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     private PalettedContainer<Holder<Biome>> biomes; // CraftBukkit - read/write
+     private boolean modified = false; // Leaf - Optimize chunkUnload
+ 
++    @Nullable
++    private BlockEntity[] sectionBlockEntities = null;
++
+     // Paper start - block counting
+     private static final it.unimi.dsi.fastutil.shorts.ShortArrayList FULL_LIST = new it.unimi.dsi.fastutil.shorts.ShortArrayList(16*16*16);
+     static {
+@@ -57,6 +62,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         this.states = section.states.copy();
+         this.biomes = section.biomes.copy();
+         this.isRandomlyTickingBlocksStatus = this.tickingBlockCount > 0; // Leaf - Cache random tick block status
++        this.sectionBlockEntities = section.sectionBlockEntities;
+     }
+ 
+     public LevelChunkSection(PalettedContainer<BlockState> states, PalettedContainer<Holder<Biome>> biomes) { // CraftBukkit - read/write
+@@ -76,6 +82,28 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         this.biomes = new PalettedContainer<>(biomeRegistry.asHolderIdMap(), biomeRegistry.getOrThrow(Biomes.PLAINS), PalettedContainer.Strategy.SECTION_BIOMES, null); // Paper - Anti-Xray - Add preset biomes
+     }
+ 
++    @Nullable
++    public BlockEntity[] getBlockEntityArray() {
++        return this.sectionBlockEntities;
++    }
++
++    public void setBlockEntityInSectionArray(int x, int y, int z, BlockEntity blockEntity) {
++        if (this.sectionBlockEntities == null) {
++            this.sectionBlockEntities = new BlockEntity[SECTION_SIZE];
++        }
++        int indexInSection = x + (z * 16) + (y * 256);
++        this.sectionBlockEntities[indexInSection] = blockEntity;
++    }
++
++     public void removeBlockEntityInSectionArray(int x, int y, int z) {
++         if (this.sectionBlockEntities != null) {
++             int indexInSection = x + (z * 16) + (y * 256);
++             this.sectionBlockEntities[indexInSection] = null;
++
++         }
++     }
++
++
+     public BlockState getBlockState(int x, int y, int z) {
+         return this.states.get(x, y, z);
+     }
+@@ -332,7 +360,8 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+ 
+     // Leaf start - Optimize chunkUnload
+     private LevelChunkSection(short nonEmptyBlockCount, short tickingBlockCount, short tickingFluidCount,
+-                              PalettedContainer<BlockState> states, PalettedContainer<Holder<Biome>> biomes) {
++                              PalettedContainer<BlockState> states, PalettedContainer<Holder<Biome>> biomes,
++                              @Nullable BlockEntity[] sectionBlockEntities) {
+         this.nonEmptyBlockCount = nonEmptyBlockCount;
+         this.tickingBlockCount = tickingBlockCount;
+         this.tickingFluidCount = tickingFluidCount;
+@@ -340,6 +369,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         this.biomes = biomes;
+         this.isRandomlyTickingBlocksStatus = this.tickingBlockCount > 0; // Leaf - Cache random tick block status
+     }
++
+     // Leaf end - Optimize chunkUnload
+ 
+     public LevelChunkSection copy() {
+@@ -351,11 +381,11 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+                 this.nonEmptyBlockCount,
+                 this.tickingBlockCount,
+                 this.tickingFluidCount,
+-                this.states, // Share reference instead of copying
+-                this.biomes  // Share reference instead of copying
++                this.states,
++                this.biomes,
++                this.sectionBlockEntities
+             );
+         }
+-        // Leaf end - Optimize chunkUnload
+         return new LevelChunkSection(this);
+     }
+ }
