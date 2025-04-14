@@ -92,7 +92,7 @@ fi
 # Delete current release tag
 if git show-ref --tags $CURRENT_TAG --quiet; then
   {
-    git push --delete origin $CURRENT_TAG
+    gh release delete $CURRENT_TAG --cleanup-tag -y -R "${GITHUB_REPO}"
   }
 fi
 echo "🚀Ready for release"
