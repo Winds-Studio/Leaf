@@ -1,9 +1,47 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Taiyou06 <kaandindar21@gmail.com>
-Date: Fri, 28 Feb 2025 01:35:49 +0100
-Subject: [PATCH] Optimize chunkUnload
+Date: Mon, 14 Apr 2025 20:07:52 +0200
+Subject: [PATCH] Optimise chunkUnloads
 
 
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java
+index e4a5fa25ed368fc4662c30934da2963ef446d782..62ad5fe1196cd982b0d48b1e4903d036262ac54b 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java
+@@ -1753,23 +1753,20 @@ public final class NewChunkHolder {
+             chunk.tryMarkSaved();
+ 
+             final CallbackCompletable<CompoundTag> completable = new CallbackCompletable<>();
+-
+-            final Runnable run = () -> {
+-                final CompoundTag data = chunkData.write();
+-
+-                completable.complete(data);
+-
+-                if (unloading) {
+-                    NewChunkHolder.this.completeAsyncUnloadDataSave(MoonriseRegionFileIO.RegionFileType.CHUNK_DATA, data);
+-                }
+-            };
+-
+             final PrioritisedExecutor.PrioritisedTask task;
++
+             if (unloading) {
+-                this.chunkDataUnload.toRun().setRunnable(run);
++                this.chunkDataUnload.toRun().setRunnable(() -> {
++                    final CompoundTag data = chunkData.write();
++                    completable.complete(data);
++                    NewChunkHolder.this.completeAsyncUnloadDataSave(MoonriseRegionFileIO.RegionFileType.CHUNK_DATA, data);
++                });
+                 task = this.chunkDataUnload.task();
+             } else {
+-                task = this.scheduler.saveExecutor.createTask(run);
++                task = this.scheduler.saveExecutor.createTask(() -> {
++                    final CompoundTag data = chunkData.write();
++                    completable.complete(data);
++                });
+             }
+ 
+             task.queue();
 diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java b/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
 index 4ca68a903e67606fc4ef0bfa9862a73797121c8b..bed3a64388bb43e47c2ba4e67f7dde5b990d9578 100644
 --- a/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
@@ -211,3 +249,128 @@ index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..dc158e981199b507531af810ff9ced3c
          return new LevelChunkSection(this);
      }
  }
+diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389dc365eb88 100644
+--- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
++++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+@@ -526,14 +526,14 @@ public record SerializableChunkData(
+             throw new IllegalArgumentException("Chunk can't be serialized: " + chunk);
+         } else {
+             ChunkPos pos = chunk.getPos();
+-            List<SerializableChunkData.SectionData> list = new ArrayList<>(); final List<SerializableChunkData.SectionData> sectionsList = list; // Paper - starlight - OBFHELPER
+-            LevelChunkSection[] sections = chunk.getSections();
+-            LevelLightEngine lightEngine = level.getChunkSource().getLightEngine();
+ 
+             // Paper start - starlight
+             final int minLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinLightSection(level);
+             final int maxLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMaxLightSection(level);
+             final int minBlockSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(level);
++            // Pre-allocate with correct capacity to avoid resizing
++            final int expectedSectionCount = maxLightSection - minLightSection + 1;
++            List<SerializableChunkData.SectionData> list = new ArrayList<>(expectedSectionCount);
+ 
+             final LevelChunkSection[] chunkSections = chunk.getSections();
+             final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles = ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)chunk).starlight$getBlockNibbles();
+@@ -551,10 +551,18 @@ public record SerializableChunkData(
+                     continue;
+                 }
+ 
++                DataLayer blockDataLayer = null;
++                if (blockNibble != null && blockNibble.data != null) {
++                    blockDataLayer = new DataLayer(blockNibble.data);
++                }
++
++                DataLayer skyDataLayer = null;
++                if (skyNibble != null && skyNibble.data != null) {
++                    skyDataLayer = new DataLayer(skyNibble.data);
++                }
++
+                 final SerializableChunkData.SectionData sectionData = new SerializableChunkData.SectionData(
+-                    lightSection, chunkSection,
+-                    blockNibble == null ? null : (blockNibble.data == null ? null : new DataLayer(blockNibble.data)),
+-                    skyNibble == null ? null : (skyNibble.data == null ? null : new DataLayer(skyNibble.data))
++                    lightSection, chunkSection, blockDataLayer, skyDataLayer
+                 );
+ 
+                 if (blockNibble != null) {
+@@ -565,28 +573,42 @@ public record SerializableChunkData(
+                     ((ca.spottedleaf.moonrise.patches.starlight.storage.StarlightSectionData)(Object)sectionData).starlight$setSkyLightState(skyNibble.state);
+                 }
+ 
+-                sectionsList.add(sectionData);
++                list.add(sectionData);
+             }
+             // Paper end - starlight
+ 
+-            List<CompoundTag> list1 = new ArrayList<>(chunk.getBlockEntitiesPos().size());
++            // Pre-allocate block entities list with exact size needed
++            final int blockEntityCount = chunk.getBlockEntitiesPos().size();
++            List<CompoundTag> list1 = blockEntityCount > 0 ? new ArrayList<>(blockEntityCount) : java.util.Collections.emptyList();
+ 
+-            for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
+-                CompoundTag blockEntityNbtForSaving = chunk.getBlockEntityNbtForSaving(blockPos, level.registryAccess());
+-                if (blockEntityNbtForSaving != null) {
+-                    list1.add(blockEntityNbtForSaving);
++            if (blockEntityCount > 0) {
++                for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
++                    CompoundTag blockEntityNbtForSaving = chunk.getBlockEntityNbtForSaving(blockPos, level.registryAccess());
++                    if (blockEntityNbtForSaving != null) {
++                        list1.add(blockEntityNbtForSaving);
++                    }
+                 }
+             }
+ 
+-            List<CompoundTag> list2 = new ArrayList<>();
++            // For entities, use an initial estimated capacity if it's a ProtoChunk
++            List<CompoundTag> list2;
+             long[] longs = null;
++
+             if (chunk.getPersistedStatus().getChunkType() == ChunkType.PROTOCHUNK) {
+                 ProtoChunk protoChunk = (ProtoChunk)chunk;
+-                list2.addAll(protoChunk.getEntities());
++                int entitySize = protoChunk.getEntities().size();
++                if (entitySize > 0) {
++                    list2 = new ArrayList<>(Math.max(16, entitySize));
++                    list2.addAll(protoChunk.getEntities());
++                } else {
++                    list2 = java.util.Collections.emptyList();
++                }
+                 CarvingMask carvingMask = protoChunk.getCarvingMask();
+                 if (carvingMask != null) {
+                     longs = carvingMask.toArray();
+                 }
++            } else {
++                list2 = java.util.Collections.emptyList();
+             }
+ 
+             Map<Heightmap.Types, long[]> map = new EnumMap<>(Heightmap.Types.class);
+@@ -594,14 +616,25 @@ public record SerializableChunkData(
+             for (Entry<Heightmap.Types, Heightmap> entry : chunk.getHeightmaps()) {
+                 if (chunk.getPersistedStatus().heightmapsAfter().contains(entry.getKey())) {
+                     long[] rawData = entry.getValue().getRawData();
+-                    map.put(entry.getKey(), (long[])rawData.clone());
++                    map.put(entry.getKey(), Arrays.copyOf(rawData, rawData.length));
+                 }
+             }
+ 
+             ChunkAccess.PackedTicks ticksForSerialization = chunk.getTicksForSerialization(level.getGameTime());
+-            ShortList[] lists = Arrays.stream(chunk.getPostProcessing())
+-                .map(list3 -> list3 != null ? new ShortArrayList(list3) : null)
+-                .toArray(ShortList[]::new);
++            // Leaf start - Some Optimizations on SerializableChunkData
++            ShortList[] postProcessing = chunk.getPostProcessing();
++            ShortList[] lists = new ShortList[postProcessing.length];
++            for (int i = 0; i < postProcessing.length; i++) {
++                ShortList source = postProcessing[i];
++                // Only create a new list if there's actual data to copy
++                if (source != null) {
++                    int size = source.size();
++                    if (size > 0) {
++                        lists[i] = new ShortArrayList(size);
++                        lists[i].addAll(source);
++                    }
++                }
++            }
+             CompoundTag compoundTag = packStructureData(
+                 StructurePieceSerializationContext.fromLevel(level), pos, chunk.getAllStarts(), chunk.getAllReferences()
+             );
