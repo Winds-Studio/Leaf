@@ -9,47 +9,23 @@ Leaf: ~48ms (-36%)
 This should help drastically on the farms that use actively changing fluids.
 
 diff --git a/net/minecraft/world/level/material/FlowingFluid.java b/net/minecraft/world/level/material/FlowingFluid.java
-index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..33e5c19362de8b4002c23959661535b835eb0ce5 100644
+index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..f6bc70685e846e9114f477dfd8aceca3b910a09f 100644
 --- a/net/minecraft/world/level/material/FlowingFluid.java
 +++ b/net/minecraft/world/level/material/FlowingFluid.java
-@@ -8,6 +8,8 @@ import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
- import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
- import java.util.Map;
- import java.util.Map.Entry;
-+import java.util.Queue;
-+
- import net.minecraft.core.BlockPos;
- import net.minecraft.core.Direction;
- import net.minecraft.server.level.ServerLevel;
-@@ -341,31 +343,76 @@ public abstract class FlowingFluid extends Fluid {
+@@ -341,32 +341,81 @@ public abstract class FlowingFluid extends Fluid {
      protected void beforeDestroyingBlock(LevelAccessor level, BlockPos pos, BlockState state, BlockPos source) { beforeDestroyingBlock(level, pos, state); } // Paper - Add BlockBreakBlockEvent
      protected abstract void beforeDestroyingBlock(LevelAccessor level, BlockPos pos, BlockState state);
  
 -    protected int getSlopeDistance(LevelReader level, BlockPos pos, int depth, Direction direction, BlockState state, FlowingFluid.SpreadContext spreadContext) {
 -        int i = 1000;
++    // Leaf start - Use BFS on getSlopeDistance
 +    protected int getSlopeDistance(LevelReader level, BlockPos startPos, int initialDepth, Direction excludedDirection, BlockState startState, FlowingFluid.SpreadContext spreadContext) {
 +        it.unimi.dsi.fastutil.longs.LongSet visited = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(512);
 +        java.util.Queue<FlowingFluid.SlopeDistanceNode> queue = new java.util.ArrayDeque<>(256);
- 
--        for (Direction direction1 : Direction.Plane.HORIZONTAL) {
--            if (direction1 != direction) {
--                BlockPos blockPos = pos.relative(direction1);
--                BlockState blockState = spreadContext.getBlockStateIfLoaded(blockPos); // Paper - Prevent chunk loading from fluid flowing
--                if (blockState == null) continue; // Paper - Prevent chunk loading from fluid flowing
--                FluidState fluidState = blockState.getFluidState();
--                if (this.canPassThrough(level, this.getFlowing(), pos, state, direction1, blockPos, blockState, fluidState)) {
--                    if (spreadContext.isHole(blockPos)) {
--                        return depth;
--                    }
++
 +        for (Direction dir : Direction.Plane.HORIZONTAL) {
 +            if (dir == excludedDirection) continue;
- 
--                    if (depth < this.getSlopeFindDistance(level)) {
--                        int slopeDistance = this.getSlopeDistance(level, blockPos, depth + 1, direction1.getOpposite(), blockState, spreadContext);
--                        if (slopeDistance < i) {
--                            i = slopeDistance;
--                        }
--                    }
++
 +            BlockPos neighborPos = startPos.relative(dir);
 +            BlockState neighborState = spreadContext.getBlockStateIfLoaded(neighborPos);
 +            if (neighborState == null) continue;
@@ -64,10 +40,26 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..33e5c19362de8b4002c23959661535b8
 +                queue.add(new FlowingFluid.SlopeDistanceNode(neighborPos, initialDepth, dir.getOpposite(), neighborState));
 +            }
 +        }
-+
+ 
+-        for (Direction direction1 : Direction.Plane.HORIZONTAL) {
+-            if (direction1 != direction) {
+-                BlockPos blockPos = pos.relative(direction1);
+-                BlockState blockState = spreadContext.getBlockStateIfLoaded(blockPos); // Paper - Prevent chunk loading from fluid flowing
+-                if (blockState == null) continue; // Paper - Prevent chunk loading from fluid flowing
+-                FluidState fluidState = blockState.getFluidState();
+-                if (this.canPassThrough(level, this.getFlowing(), pos, state, direction1, blockPos, blockState, fluidState)) {
+-                    if (spreadContext.isHole(blockPos)) {
+-                        return depth;
+-                    }
 +        int slopeFindDistance = this.getSlopeFindDistance(level);
 +        int minDistance = 1000;
-+
+ 
+-                    if (depth < this.getSlopeFindDistance(level)) {
+-                        int slopeDistance = this.getSlopeDistance(level, blockPos, depth + 1, direction1.getOpposite(), blockState, spreadContext);
+-                        if (slopeDistance < i) {
+-                            i = slopeDistance;
+-                        }
+-                    }
 +        // Process the queue
 +        while (!queue.isEmpty()) {
 +            FlowingFluid.SlopeDistanceNode current = queue.poll();
@@ -76,6 +68,7 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..33e5c19362de8b4002c23959661535b8
 +            }
 +
 +            if (current.depth >= slopeFindDistance) continue;
++
 +            for (Direction dir : Direction.Plane.HORIZONTAL) {
 +                if (dir == current.excludedDir) continue;
 +
@@ -100,7 +93,8 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..33e5c19362de8b4002c23959661535b8
 +    }
 +
 +    private static long encodeSlopeNode(BlockPos pos, Direction excludedDir) {
-+        return ((long) pos.getX() & 0xFFFFFFFFL) << 32 | ((long) pos.getZ() & 0xFFFFFFFFL) << 4 | (excludedDir.ordinal() & 0x0F);}
++        return ((long) pos.getX() & 0xFFFFFFFFL) << 32 | ((long) pos.getZ() & 0xFFFFFFFFL) << 4 | (excludedDir.ordinal() & 0x0F);
++    }
 +
 +    private static class SlopeDistanceNode {
 +        final BlockPos pos;
@@ -115,5 +109,7 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..33e5c19362de8b4002c23959661535b8
 +            this.state = state;
 +        }
      }
++    // Leaf end - Use BFS on getSlopeDistance
  
      boolean isWaterHole(BlockGetter level, BlockPos pos, BlockState state, BlockPos belowPos, BlockState belowState) {
+         return canPassThroughWall(Direction.DOWN, level, pos, state, belowPos, belowState)

@@ -2,7 +2,6 @@ package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
 
 public class AsyncBlockFinding extends ConfigModules {
 

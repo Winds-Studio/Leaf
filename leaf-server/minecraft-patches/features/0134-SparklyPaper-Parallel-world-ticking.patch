@@ -424,47 +424,41 @@ index c50a301a0c2365c2052aefc6a23fcf6fa82e1b9d..ac751d460ae0c8dbb858c4047c459a11
      }
      // CraftBukkit end
 diff --git a/net/minecraft/server/PlayerAdvancements.java b/net/minecraft/server/PlayerAdvancements.java
-index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..a7e1c9979897a12a7a8f417545ae96f703a1b248 100644
+index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..abe7ffd48766c48fab091947f34db436b3c883d0 100644
 --- a/net/minecraft/server/PlayerAdvancements.java
 +++ b/net/minecraft/server/PlayerAdvancements.java
-@@ -19,6 +19,7 @@ import java.nio.file.Path;
- import java.util.HashMap;
- import java.util.HashSet;
- import java.util.LinkedHashMap;
-+import java.util.concurrent.ConcurrentHashMap;
- import java.util.Map;
- import java.util.Set;
- import java.util.Map.Entry;
-@@ -53,8 +54,9 @@ public class PlayerAdvancements {
+@@ -53,8 +53,11 @@ public class PlayerAdvancements {
      private AdvancementTree tree;
      private final Map<AdvancementHolder, AdvancementProgress> progress = new LinkedHashMap<>();
      private final Set<AdvancementHolder> visible = new HashSet<>();
 -    private final Set<AdvancementHolder> progressChanged = new HashSet<>();
 -    private final Set<AdvancementNode> rootsToUpdate = new HashSet<>();
++    // Leaf start - SparklyPaper - parallel world ticking
 +    private final Set<AdvancementHolder> progressChanged = new HashSet<>(); // Used when PWT is disabled
-+    private final Set<AdvancementHolder> progressChangedConcurrent = ConcurrentHashMap.newKeySet(); // Used when PWT is enabled
++    private final Set<AdvancementHolder> progressChangedConcurrent = java.util.concurrent.ConcurrentHashMap.newKeySet(); // Used when PWT is enabled
 +    private final Set<AdvancementNode> rootsToUpdate = new HashSet<>(); // Always managed on player tick thread
++    // Leaf end - SparklyPaper - parallel world ticking
      private ServerPlayer player;
      @Nullable
      private AdvancementHolder lastSelectedTab;
-@@ -88,6 +90,8 @@ public class PlayerAdvancements {
+@@ -88,6 +91,7 @@ public class PlayerAdvancements {
          this.visible.clear();
          this.rootsToUpdate.clear();
          this.progressChanged.clear();
-+        // PWT Fix: Also clear concurrent set on reload
-+        this.progressChangedConcurrent.clear();
++        this.progressChangedConcurrent.clear(); // Leaf - SparklyPaper - parallel world ticking fix - Also clear concurrent set on reload
          this.isFirstPacket = true;
          this.lastSelectedTab = null;
          this.tree = manager.tree();
-@@ -151,6 +155,7 @@ public class PlayerAdvancements {
+@@ -151,7 +155,7 @@ public class PlayerAdvancements {
                  if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().logToConsole.ignoredAdvancements) LOGGER.warn("Ignored advancement '{}' in progress file {} - it doesn't exist anymore?", path, this.playerSavePath); // Gale - Purpur - do not log ignored advancements
              } else {
                  this.startProgress(advancementHolder, progress);
-+                // PWT Fix: Always add to non-concurrent set during load, flushDirty will handle sync
-                 this.progressChanged.add(advancementHolder);
+-                this.progressChanged.add(advancementHolder);
++                this.progressChanged.add(advancementHolder); // Leaf - SparklyPaper - parallel world ticking fix - Always add to non-concurrent set during load, flushDirty will handle sync
                  this.markForVisibilityUpdate(advancementHolder);
              }
-@@ -183,25 +188,25 @@ public class PlayerAdvancements {
+         });
+@@ -183,10 +187,12 @@ public class PlayerAdvancements {
                  return false;
              }
              // Paper end - Add PlayerAdvancementCriterionGrantEvent
@@ -472,65 +466,46 @@ index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..a7e1c9979897a12a7a8f417545ae96f7
 -            this.progressChanged.add(advancement);
 -            flag = true;
 -            if (!isDone && orStartProgress.isDone()) {
++            // Leaf start - SparklyPaper - parallel world ticking
 +            this.unregisterListeners(advancement); // Must unregister criteria listeners
 +            (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.progressChangedConcurrent : this.progressChanged).add(advancement);
 +            flag = true; // Mark progress changed
 +            if (!isDone && orStartProgress.isDone()) { // If the advancement was just completed
++                // Leaf end - SparklyPaper - parallel world ticking
                  // Paper start - Add Adventure message to PlayerAdvancementDoneEvent
--                final net.kyori.adventure.text.Component message = advancement.value().display().flatMap(info -> {
--                    return java.util.Optional.ofNullable(
--                        info.shouldAnnounceChat() ? io.papermc.paper.adventure.PaperAdventure.asAdventure(info.getType().createAnnouncement(advancement, this.player)) : null
--                    );
--                }).orElse(null);
--                final org.bukkit.event.player.PlayerAdvancementDoneEvent event = new org.bukkit.event.player.PlayerAdvancementDoneEvent(this.player.getBukkitEntity(), advancement.toBukkit(), message);
-+                final net.kyori.adventure.text.Component message = advancement.value().display().flatMap(info -> { // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                    return java.util.Optional.ofNullable( // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                        info.shouldAnnounceChat() ? io.papermc.paper.adventure.PaperAdventure.asAdventure(info.getType().createAnnouncement(advancement, this.player)) : null // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                    ); // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                }).orElse(null); // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                final org.bukkit.event.player.PlayerAdvancementDoneEvent event = new org.bukkit.event.player.PlayerAdvancementDoneEvent(this.player.getBukkitEntity(), advancement.toBukkit(), message); // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-                 this.player.level().getCraftServer().getPluginManager().callEvent(event); // CraftBukkit
-                 // Paper end
-                 advancement.value().rewards().grant(this.player);
-                 advancement.value().display().ifPresent(displayInfo -> {
-                     // Paper start - Add Adventure message to PlayerAdvancementDoneEvent
--                    if (event.message() != null && this.player.serverLevel().getGameRules().getBoolean(GameRules.RULE_ANNOUNCE_ADVANCEMENTS)) {
--                        if (org.purpurmc.purpur.PurpurConfig.advancementOnlyBroadcastToAffectedPlayer) this.player.sendMessage(message); else // Purpur - Configurable broadcast settings
--                        this.playerList.broadcastSystemMessage(io.papermc.paper.adventure.PaperAdventure.asVanilla(event.message()), false);
-+                    if (event.message() != null && this.player.serverLevel().getGameRules().getBoolean(GameRules.RULE_ANNOUNCE_ADVANCEMENTS)) { // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                        if (org.purpurmc.purpur.PurpurConfig.advancementOnlyBroadcastToAffectedPlayer) this.player.sendMessage(message); else // Purpur - Configurable broadcast settings // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-+                            this.playerList.broadcastSystemMessage(io.papermc.paper.adventure.PaperAdventure.asVanilla(event.message()), false); // Paper - Add Adventure message to PlayerAdvancementDoneEvent
-                         // Paper end
-                     }
-                 });
-@@ -220,12 +225,12 @@ public class PlayerAdvancements {
+                 final net.kyori.adventure.text.Component message = advancement.value().display().flatMap(info -> {
+                     return java.util.Optional.ofNullable(
+@@ -220,12 +226,14 @@ public class PlayerAdvancements {
          AdvancementProgress orStartProgress = this.getOrStartProgress(advancement);
          boolean isDone = orStartProgress.isDone();
          if (orStartProgress.revokeProgress(criterionKey)) {
 -            this.registerListeners(advancement);
 -            this.progressChanged.add(advancement);
++            // Leaf start - SparklyPaper - parallel world ticking
 +            this.registerListeners(advancement); // Re-register listeners if it's no longer done
 +            (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.progressChangedConcurrent : this.progressChanged).add(advancement);
++            // Leaf end - SparklyPaper - parallel world ticking
              flag = true;
          }
  
 -        if (isDone && !orStartProgress.isDone()) {
-+        if (isDone && !orStartProgress.isDone()) { // If the advancement was just un-completed
++        if (isDone && !orStartProgress.isDone()) { // Leaf - SparklyPaper - parallel world ticking - If the advancement was just un-completed
              this.markForVisibilityUpdate(advancement);
          }
  
-@@ -271,7 +276,9 @@ public class PlayerAdvancements {
+@@ -271,7 +279,10 @@ public class PlayerAdvancements {
      }
  
      public void flushDirty(ServerPlayer serverPlayer) {
 -        if (this.isFirstPacket || !this.rootsToUpdate.isEmpty() || !this.progressChanged.isEmpty()) {
++        // Leaf start - SparklyPaper - parallel world ticking
 +        final boolean useConcurrent = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
 +        final Set<AdvancementHolder> relevantProgressSet = useConcurrent ? this.progressChangedConcurrent : this.progressChanged;
 +        if (this.isFirstPacket || !this.rootsToUpdate.isEmpty() || !relevantProgressSet.isEmpty()) {
              Map<ResourceLocation, AdvancementProgress> map = new HashMap<>();
              Set<AdvancementHolder> set = new java.util.TreeSet<>(java.util.Comparator.comparing(adv -> adv.id().toString())); // Paper - Changed from HashSet to TreeSet ordered alphabetically.
              Set<ResourceLocation> set1 = new HashSet<>();
-@@ -279,16 +286,23 @@ public class PlayerAdvancements {
+@@ -279,16 +290,24 @@ public class PlayerAdvancements {
              for (AdvancementNode advancementNode : this.rootsToUpdate) {
                  this.updateTreeVisibility(advancementNode, set, set1);
              }
@@ -542,13 +517,11 @@ index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..a7e1c9979897a12a7a8f417545ae96f7
  
 -            for (AdvancementHolder advancementHolder : this.progressChanged) {
 -                if (this.visible.contains(advancementHolder)) {
--                    map.put(advancementHolder.id(), this.progress.get(advancementHolder));
-+                for (AdvancementHolder advancementHolder : toProcess) {
-+                    if (this.visible.contains(advancementHolder)) { // Only include progress for visible advancements
-+                        map.put(advancementHolder.id(), this.progress.get(advancementHolder));
-+                    }
++            for (AdvancementHolder advancementHolder : toProcess) {
++                if (this.visible.contains(advancementHolder)) { // Only include progress for visible advancements
+                     map.put(advancementHolder.id(), this.progress.get(advancementHolder));
                  }
--            }
+             }
  
 -            this.progressChanged.clear();
 +                if (useConcurrent) {
@@ -557,22 +530,26 @@ index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..a7e1c9979897a12a7a8f417545ae96f7
 +                    this.progressChanged.clear(); // Clear the regular set
 +                }
 +            }
++            // Leaf end - SparklyPaper - parallel world ticking
              if (!map.isEmpty() || !set.isEmpty() || !set1.isEmpty()) {
                  serverPlayer.connection.send(new ClientboundUpdateAdvancementsPacket(this.isFirstPacket, set, set1, map));
              }
-@@ -331,9 +345,10 @@ public class PlayerAdvancements {
+@@ -331,10 +350,13 @@ public class PlayerAdvancements {
                  AdvancementHolder advancementHolder = node.holder();
                  if (visible) {
                      if (this.visible.add(advancementHolder)) {
 -                        advancementOutput.add(advancementHolder);
++                        // Leaf start - SparklyPaper - parallel world ticking
 +                        advancementOutput.add(advancementHolder); // Add to visible set for packet
                          if (this.progress.containsKey(advancementHolder)) {
 -                            this.progressChanged.add(advancementHolder);
 +                            // If progress exists, mark it changed so the progress data is sent
 +                            (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.progressChangedConcurrent : this.progressChanged).add(advancementHolder);
                          }
++                        // Leaf end - SparklyPaper - parallel world ticking
                      }
                  } else if (this.visible.remove(advancementHolder)) {
+                     idOutput.add(advancementHolder.id());
 diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
 index d4048661575ebfaf128ba25da365843774364e0e..33dd16a26edd2974f04d9a868d3e58e8e3060032 100644
 --- a/net/minecraft/server/dedicated/DedicatedServer.java
