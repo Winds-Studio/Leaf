@@ -13,11 +13,11 @@ public class DespawnEndermanWhileHoldingMushroom extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        despawn = config.getBoolean(getBasePath() + ".despawn-enderman-holding-mushroom", despawn, config.pickStringRegionBased("""
+        despawn = config.getBoolean(getBasePath() + "mushroom.despawn-enderman-while-holding", despawn, config.pickStringRegionBased("""
                 Endermen are capable of despawning even while holding a mushroom.""",
             """
                 末影人拿着蘑菇时能够消失."""));
-        noGrowthInTheEnd = config.getBoolean(getBasePath() + ".disallow-mushroom-grow-in-the-end", noGrowthInTheEnd, config.pickStringRegionBased("""
+        noGrowthInTheEnd = config.getBoolean(getBasePath() + "mushroom.prevent-grow-in-the-end", noGrowthInTheEnd, config.pickStringRegionBased("""
                 Prevent mushrooms from growing in the end.""",
             """
                 阻止蘑菇在末地生长."""));
