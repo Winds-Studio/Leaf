@@ -35,13 +35,15 @@ index 075fcbcde23b5bb7b27ff622e8d188c3a2583973..4d2f8f716d1b7be1aaa5344e6156cdb3
      public static final float DEFAULT_BB_HEIGHT = 1.8F;
      public float moveDist;
 diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbdeecc9a11 100644
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..0a48cdeadee06e615f8d36b35d83dae4e08b8042 100644
 --- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 +++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-@@ -18,6 +18,20 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -17,7 +17,21 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+     protected final int randomInterval;
      @Nullable
      protected LivingEntity target;
-     protected TargetingConditions targetConditions;
+-    protected TargetingConditions targetConditions;
++    protected TargetingConditions.Selector selector; // Leaf
 +    // Leaf start - Async Target Finding
 +    private static final org.apache.logging.log4j.Logger LOGGER = org.apache.logging.log4j.LogManager.getLogger("Leaf Async Target Lookup");
 +    // Single thread executor to prevent overwhelming the server
@@ -72,7 +74,8 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +        }
 +        // Leaf end - update every tick
          this.setFlags(EnumSet.of(Goal.Flag.TARGET));
-         this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
+-        this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
++        this.selector = selector; // Leaf
      }
  
      @Override
@@ -83,7 +86,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +            if (t != null) {
 +                pendingTarget.setRelease(null);
 +                ServerLevel serverLevel = getServerLevel(this.mob);
-+                if (t.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, t)) {
++                if (serverLevel != null && t.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, t)) {
 +                    this.target = t;
 +                }
 +                return true;
@@ -94,7 +97,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +        } else if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
 +            this.findTargetAsync();
 +            ServerLevel serverLevel = getServerLevel(this.mob);
-+            if (this.target != null && !(this.target.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, this.target))) {
++            if (this.target != null && !(serverLevel != null && this.target.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, this.target))) {
 +                this.target = null;
 +            }
 +            return false;
@@ -106,7 +109,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
      }
  
      protected AABB getTargetSearchArea(double targetDistance) {
-@@ -71,6 +111,178 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -71,6 +111,176 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          }
      }
  
@@ -132,6 +135,8 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +        final double followDistance = this.getFollowDistance();
 +        final TargetingConditions targetConditions = this.getTargetConditions();
 +        final Class<T> targetType = this.targetType;
++        final double maxDistSqr = followDistance * followDistance;
++        final AABB targetSearch = getTargetSearchArea(this.getFollowDistance());
 +
 +        TARGET_EXECUTOR.execute(() -> {
 +            try {
@@ -145,21 +150,16 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +
 +                try {
 +                    if (targetType != Player.class && targetType != ServerPlayer.class) {
-+                        AABB searchArea = new AABB(
-+                            x - followDistance, y - followDistance, z - followDistance,
-+                            x + followDistance, y + followDistance, z + followDistance
-+                        );
-+
 +                        java.util.List<T> entities;
 +                        try {
-+                            entities = mob.level().getEntitiesOfClass(targetType, searchArea, entity -> true);
++                            entities = mob.level().getEntitiesOfClass(targetType, targetSearch, entity -> entity != null && entity != mob && !entity.isRemoved() && entity.isAlive());
 +                        } catch (Exception e) {
 +                            LOGGER.warn("Error getting entities", e);
 +                            return ;
 +                        }
 +
 +                        if (entities != null && !entities.isEmpty()) {
-+                            var result = findNearestEntitySafely(entities, targetConditions, mob, x, y, z, serverLevel);
++                            var result = findNearestEntitySafely(entities, targetConditions, mob, x, y, z, serverLevel, maxDistSqr);
 +                            pendingTarget.setRelease(result);
 +                        }
 +                    } else {
@@ -185,20 +185,21 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +        double x,
 +        double y,
 +        double z,
-+        ServerLevel level) {
++        ServerLevel level,
++        double maxDistSqr) {
 +
 +        if (entities == null || entities.isEmpty() || level == null) {
 +            return null;
 +        }
 +
 +        try {
-+            double closestDistSq = -1.0;
++            double closestDistSq = maxDistSqr;
 +            LivingEntity closest = null;
 +
 +            for (int i = 0; i < entities.size(); i++) {
 +                try {
 +                    LivingEntity entity = entities.get(i);
-+                    if (entity == null || entity.isRemoved() || !entity.isAlive()) {
++                    if (entity == null || entity == source || entity.isRemoved() || !entity.isAlive()) {
 +                        continue;
 +                    }
 +
@@ -208,7 +209,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
 +                        double dz = entity.getZ() - z;
 +                        double distSq = dx * dx + dy * dy + dz * dz;
 +
-+                        if (closestDistSq == -1.0 || distSq < closestDistSq) {
++                        if (distSq < closestDistSq) {
 +                            closestDistSq = distSq;
 +                            closest = entity;
 +                        }
@@ -285,15 +286,98 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..927cc7e3c79e46112715354e0bf14dbd
      @Override
      public void start() {
          this.mob.setTarget(this.target, this.target instanceof ServerPlayer ? org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_PLAYER : org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_ENTITY, true); // CraftBukkit - reason
-@@ -84,4 +296,11 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
-     private TargetingConditions getTargetConditions() {
-         return this.targetConditions.range(this.getFollowDistance());
+@@ -81,7 +291,16 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         this.target = target;
      }
+ 
+-    private TargetingConditions getTargetConditions() {
+-        return this.targetConditions.range(this.getFollowDistance());
++    // Leaf start
++    protected TargetingConditions getTargetConditions() {
++        return TargetingConditions.forCombat().range(this.getFollowDistance()).selector(this.selector);
++    }
++    // Leaf end
 +
 +    // Leaf start - update every tick
 +    @Override
 +    public boolean requiresUpdateEveryTick() {
 +        return org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled;
-+    }
+     }
 +    // Leaf end - update every tick
  }
+diff --git a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
+index abf57494950f55bbd75f335f26736cb9e703c197..683722fbd07fcae9cdd72928ed25fd084202b57e 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
+@@ -20,6 +20,15 @@ public class NonTameRandomTargetGoal<T extends LivingEntity> extends NearestAtta
+ 
+     @Override
+     public boolean canContinueToUse() {
+-        return this.targetConditions != null ? this.targetConditions.test(getServerLevel(this.mob), this.mob, this.target) : super.canContinueToUse();
++        // Leaf start
++        if (this.target == null || !this.target.isAlive() || this.target.isRemoved()) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null) {
++            return false;
++        }
++        return this.getTargetConditions().test(serverLevel, this.mob, this.target) && super.canContinueToUse();
++        // Leaf end
+     }
+ }
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index 002d3c0d8b1107a275020d5c582c37e9a5c536ee..7ba7ca4512260f4d049ac75120f606d517c0f635 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -33,6 +33,7 @@ public class Sensing {
+     }
+ 
+     public void tick() {
++        synchronized (this) { // Leaf
+         if (this.expiring == null) { // Gale - Petal - reduce line of sight updates
+         this.seen.clear();
+             // Gale start - Petal - reduce line of sight updates
+@@ -60,9 +61,11 @@ public class Sensing {
+             }
+         }
+         // Gale end - Petal - reduce line of sight updates
++        } // Leaf
+     }
+ 
+     public boolean hasLineOfSight(Entity entity) {
++        synchronized (this) { // Leaf
+         int id = entity.getId();
+         // Gale start - Petal - reduce line of sight cache lookups - merge sets
+         int cached = this.seen.get(id);
+@@ -88,5 +91,6 @@ public class Sensing {
+ 
+             return hasLineOfSight;
+         }
++        } // Leaf
+     }
+ }
+diff --git a/net/minecraft/world/entity/animal/Fox.java b/net/minecraft/world/entity/animal/Fox.java
+index 90452f0945e761077608692877677f522d38bccd..736eea50b4460041242bdd4b7191d67d7dd4524d 100644
+--- a/net/minecraft/world/entity/animal/Fox.java
++++ b/net/minecraft/world/entity/animal/Fox.java
+@@ -849,13 +849,18 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
+                 return false;
+             } else {
+                 ServerLevel serverLevel = getServerLevel(Fox.this.level());
++                // Leaf start
++                if (serverLevel == null) {
++                    return false;
++                }
++                // Leaf end
+ 
+                 for (UUID uuid : Fox.this.getTrustedUUIDs()) {
+                     if (serverLevel.getEntity(uuid) instanceof LivingEntity livingEntity) {
+                         this.trustedLastHurt = livingEntity;
+                         this.trustedLastHurtBy = livingEntity.getLastHurtByMob();
+                         int lastHurtByMobTimestamp = livingEntity.getLastHurtByMobTimestamp();
+-                        return lastHurtByMobTimestamp != this.timestamp && this.canAttack(this.trustedLastHurtBy, this.targetConditions);
++                        return lastHurtByMobTimestamp != this.timestamp && this.canAttack(this.trustedLastHurtBy, this.getTargetConditions()); // Leaf
+                     }
+                 }
+ 
