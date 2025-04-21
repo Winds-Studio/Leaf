@@ -10,7 +10,7 @@ public class ThrottleHopperWhenFull extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    public static int skipTicks = 0;
+    public static int skipTicks = 8;
 
     @Override
     public void onLoaded() {

@@ -20,20 +20,18 @@ public class FasterRandomSource implements BitRandomSource {
     private static final RandomGeneratorFactory<RandomGenerator> RANDOM_GENERATOR_FACTORY = RandomGeneratorFactory.of(FastRNG.randomGenerator);
     private static final boolean isSplittableGenerator = RANDOM_GENERATOR_FACTORY.isSplittable();
     private long seed;
-    private boolean useDirectImpl;
+    private static final boolean useDirectImpl = FastRNG.useDirectImpl;
     private RandomGenerator randomGenerator;
     public static final FasterRandomSource SHARED_INSTANCE = new FasterRandomSource(ThreadLocalRandom.current().nextLong());
 
     public FasterRandomSource(long seed) {
         this.seed = seed;
         this.randomGenerator = RANDOM_GENERATOR_FACTORY.create(seed);
-        this.useDirectImpl = FastRNG.useDirectImpl; // Get the value from config
     }
 
     private FasterRandomSource(long seed, RandomGenerator.SplittableGenerator randomGenerator) {
         this.seed = seed;
         this.randomGenerator = randomGenerator;
-        this.useDirectImpl = FastRNG.useDirectImpl;
     }
 
     @Override
@@ -59,7 +57,6 @@ public class FasterRandomSource implements BitRandomSource {
     @Override
     public final int next(int bits) {
         if (useDirectImpl) {
-            // Direct
             return (int) ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
         }
 

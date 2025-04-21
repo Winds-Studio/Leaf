@@ -1,0 +1,437 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sat, 29 Mar 2025 13:40:46 +0100
+Subject: [PATCH] Async target finding
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 24926aa7ed5c78b235659daf18b224b14beb744c..64d5cebd488892c93f07b938ce8dc3e99fddcdad 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1088,6 +1088,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             org.dreeam.leaf.async.AsyncPlayerDataSaving.IO_POOL.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
+         } catch (java.lang.InterruptedException ignored) {}
+         // Leaf end - Async playerdata saving
++        // Leaf start - Async target finding
++        net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal.TARGET_EXECUTOR.shutdown();
++        try {
++            net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal.TARGET_EXECUTOR.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
++        } catch (java.lang.InterruptedException ignored) {}
++        // Leaf end - Async target finding
+     }
+ 
+     public String getLocalIp() {
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 075fcbcde23b5bb7b27ff622e8d188c3a2583973..e5aa7c542b1e9c9362aa1feeeebef45919feac70 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -243,6 +243,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     protected Vec3 stuckSpeedMultiplier = Vec3.ZERO;
+     @Nullable
+     private Entity.RemovalReason removalReason;
++    private final java.util.concurrent.atomic.AtomicBoolean isRemoved = new java.util.concurrent.atomic.AtomicBoolean(false); // Leaf - atomic removal check
+     public static final float DEFAULT_BB_WIDTH = 0.6F;
+     public static final float DEFAULT_BB_HEIGHT = 1.8F;
+     public float moveDist;
+@@ -5028,7 +5029,13 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     public final boolean isRemoved() {
+-        return this.removalReason != null;
++        // Leaf start - atomic removal check
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            return this.isRemoved.getAcquire();
++        } else {
++            return this.removalReason != null;
++        }
++        // Leaf end - atomic removal check
+     }
+ 
+     @Nullable
+@@ -5055,6 +5062,11 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         final boolean alreadyRemoved = this.removalReason != null; // Paper - Folia schedulers
+         if (this.removalReason == null) {
+             this.removalReason = removalReason;
++            // Leaf start - atomic removal check
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++                this.isRemoved.setRelease(true);
++            }
++            // Leaf end - atomic removal check
+         }
+ 
+         if (this.removalReason.shouldDestroy()) {
+@@ -5074,6 +5086,11 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+ 
+     public void unsetRemoved() {
+         this.removalReason = null;
++        // Leaf start - atomic removal check
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.isRemoved.setRelease(false);
++        }
++        // Leaf end - atomic removal check
+     }
+ 
+     // Paper start - Folia schedulers
+diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81d008fd3b 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
+@@ -17,7 +17,21 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+     protected final int randomInterval;
+     @Nullable
+     protected LivingEntity target;
+-    protected TargetingConditions targetConditions;
++    @Nullable protected TargetingConditions.Selector selector; // Leaf - create TargetingConditions instead of reusing it
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.apache.logging.log4j.LogManager.getLogger("Leaf Async Target Lookup");
++    // Single thread executor to prevent overwhelming the server
++    public static final java.util.concurrent.ExecutorService TARGET_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor(
++        new com.google.common.util.concurrent.ThreadFactoryBuilder()
++            .setNameFormat("Leaf Async Target Finding Thread")
++            .setDaemon(true)
++            .setPriority(Thread.NORM_PRIORITY - 2)
++            .build());
++
++    // Flag to track if a search is in progress
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    // Leaf end - Async Target Finding
+ 
+     public NearestAttackableTargetGoal(Mob mob, Class<T> targetType, boolean mustSee) {
+         this(mob, targetType, 10, mustSee, false, null);
+@@ -36,19 +50,45 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+     ) {
+         super(mob, mustSee, mustReach);
+         this.targetType = targetType;
+-        this.randomInterval = reducedTickDelay(interval);
++        // Leaf start - update every tick
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.randomInterval = interval;
++        } else {
++            this.randomInterval = reducedTickDelay(interval);
++        }
++        // Leaf end - update every tick
+         this.setFlags(EnumSet.of(Goal.Flag.TARGET));
+-        this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
++        this.selector = selector; // Leaf
+     }
+ 
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async target finding
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            LivingEntity t = pendingTarget.getAcquire();
++            if (t != null) {
++                pendingTarget.setRelease(null);
++                ServerLevel serverLevel = getServerLevel(this.mob);
++                if (serverLevel != null && t.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, t)) {
++                    this.target = t;
++                }
++                return true;
++            }
++        }
+         if (this.randomInterval > 0 && this.mob.getRandom().nextInt(this.randomInterval) != 0) {
+             return false;
++        } else if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.findTargetAsync();
++            ServerLevel serverLevel = getServerLevel(this.mob);
++            if (this.target != null && !(serverLevel != null && this.target.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, this.target))) {
++                this.target = null;
++            }
++            return false;
+         } else {
+             this.findTarget();
+             return this.target != null;
+         }
++        // Leaf end - Async target finding
+     }
+ 
+     protected AABB getTargetSearchArea(double targetDistance) {
+@@ -71,6 +111,176 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         }
+     }
+ 
++    // Leaf start - find target async
++    protected void findTargetAsync() {
++        if (isSearching.getAcquire()) {
++            return;
++        }
++        isSearching.setRelease(true);
++
++        // Capture mutable state to avoid race conditions
++        final Mob mob = this.mob;
++
++        // Safety check
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        final double followDistance = this.getFollowDistance();
++        final TargetingConditions targetConditions = this.getTargetConditions();
++        final Class<T> targetType = this.targetType;
++        final double maxDistSqr = followDistance * followDistance;
++        final AABB targetSearch = getTargetSearchArea(this.getFollowDistance());
++
++        TARGET_EXECUTOR.execute(() -> {
++            try {
++                ServerLevel serverLevel = getServerLevel(mob);
++                if (serverLevel == null) {
++                    return;
++                }
++                if (mob.isRemoved() || !mob.isAlive()) {
++                    return;
++                }
++
++                try {
++                    if (targetType != Player.class && targetType != ServerPlayer.class) {
++                        java.util.List<T> entities;
++                        try {
++                            entities = mob.level().getEntitiesOfClass(targetType, targetSearch, entity -> entity != null && entity != mob && !entity.isRemoved() && entity.isAlive());
++                        } catch (Exception e) {
++                            LOGGER.warn("Error getting entities", e);
++                            return;
++                        }
++
++                        if (entities != null && !entities.isEmpty()) {
++                            var result = findNearestEntitySafely(entities, targetConditions, mob, x, y, z, serverLevel, maxDistSqr);
++                            pendingTarget.setRelease(result);
++                        }
++                    } else {
++                        var result = findNearestPlayerSafely(targetConditions, mob, x, y, z, serverLevel);
++                        pendingTarget.setRelease(result);
++                    }
++                } catch (Exception e) {
++                    LOGGER.warn("Error finding entities in async target finder", e);
++                }
++            } catch (Exception e) {
++                LOGGER.warn("Error during async target finding", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++
++    @Nullable
++    private LivingEntity findNearestEntitySafely(
++        java.util.List<? extends LivingEntity> entities,
++        TargetingConditions conditions,
++        Mob source,
++        double x,
++        double y,
++        double z,
++        ServerLevel level,
++        double maxDistSqr) {
++
++        if (entities == null || entities.isEmpty() || level == null) {
++            return null;
++        }
++
++        try {
++            double closestDistSq = maxDistSqr;
++            LivingEntity closest = null;
++
++            for (int i = 0; i < entities.size(); i++) {
++                try {
++                    LivingEntity entity = entities.get(i);
++                    if (entity == null || entity == source || entity.isRemoved() || !entity.isAlive()) {
++                        continue;
++                    }
++
++                    if (conditions.test(level, source, entity)) {
++                        double dx = entity.getX() - x;
++                        double dy = entity.getY() - y;
++                        double dz = entity.getZ() - z;
++                        double distSq = dx * dx + dy * dy + dz * dz;
++
++                        if (distSq < closestDistSq) {
++                            closestDistSq = distSq;
++                            closest = entity;
++                        }
++                    }
++                } catch (IndexOutOfBoundsException e) {
++                    break;
++                } catch (Exception e) {
++                    LOGGER.warn("Error processing entity in findNearestEntitySafely", e);
++                }
++            }
++
++            return closest;
++        } catch (Exception e) {
++            LOGGER.warn("Error in findNearestEntitySafely", e);
++            return null;
++        }
++    }
++
++    @Nullable
++    private Player findNearestPlayerSafely(
++        TargetingConditions conditions,
++        Mob source,
++        double x,
++        double y,
++        double z,
++        ServerLevel level) {
++
++        if (level == null) {
++            return null;
++        }
++
++        try {
++            java.util.List<? extends Player> players = level.players();
++            if (players == null || players.isEmpty()) {
++                return null;
++            }
++
++            double closestDistSq = -1.0;
++            Player closest = null;
++
++            for (int i = 0; i < players.size(); i++) {
++                try {
++                    Player player = players.get(i);
++                    if (player == null || player.isRemoved() || !player.isAlive()) {
++                        continue;
++                    }
++
++                    if (conditions.test(level, source, player)) {
++                        double dx = player.getX() - x;
++                        double dy = player.getY() - y;
++                        double dz = player.getZ() - z;
++                        double distSq = dx * dx + dy * dy + dz * dz;
++
++                        if (closestDistSq == -1.0 || distSq < closestDistSq) {
++                            closestDistSq = distSq;
++                            closest = player;
++                        }
++                    }
++                } catch (IndexOutOfBoundsException e) {
++                    break;
++                } catch (Exception e) {
++                    System.err.println("Error processing player in findNearestPlayerSafely: " + e.getMessage());
++                }
++            }
++
++            return closest;
++        } catch (Exception e) {
++            System.err.println("Error in findNearestPlayerSafely: " + e.getMessage());
++            return null;
++        }
++    }
++    // Leaf end - find target async
++
+     @Override
+     public void start() {
+         this.mob.setTarget(this.target, this.target instanceof ServerPlayer ? org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_PLAYER : org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_ENTITY, true); // CraftBukkit - reason
+@@ -81,7 +291,16 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         this.target = target;
+     }
+ 
+-    private TargetingConditions getTargetConditions() {
+-        return this.targetConditions.range(this.getFollowDistance());
++    // Leaf start
++    protected TargetingConditions getTargetConditions() {
++        return TargetingConditions.forCombat().range(this.getFollowDistance()).selector(this.selector);
++    }
++    // Leaf end
++
++    // Leaf start - update every tick
++    @Override
++    public boolean requiresUpdateEveryTick() {
++        return org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled;
+     }
++    // Leaf end - update every tick
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
+index abf57494950f55bbd75f335f26736cb9e703c197..683722fbd07fcae9cdd72928ed25fd084202b57e 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
+@@ -20,6 +20,15 @@ public class NonTameRandomTargetGoal<T extends LivingEntity> extends NearestAtta
+ 
+     @Override
+     public boolean canContinueToUse() {
+-        return this.targetConditions != null ? this.targetConditions.test(getServerLevel(this.mob), this.mob, this.target) : super.canContinueToUse();
++        // Leaf start
++        if (this.target == null || !this.target.isAlive() || this.target.isRemoved()) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null) {
++            return false;
++        }
++        return this.getTargetConditions().test(serverLevel, this.mob, this.target) && super.canContinueToUse();
++        // Leaf end
+     }
+ }
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index 002d3c0d8b1107a275020d5c582c37e9a5c536ee..3f8c18f4040f4929df79ba85906330b150720cb0 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -32,9 +32,21 @@ public class Sensing {
+         // Gale end - Petal - reduce line of sight updates - expiring entity id lists
+     }
+ 
++    // Leaf start - async target finding
+     public void tick() {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            synchronized (this) {
++                tick1();
++            }
++        } else {
++            tick1();
++        }
++    }
++
++    private void tick1() {
++    // Leaf end - async target finding
+         if (this.expiring == null) { // Gale - Petal - reduce line of sight updates
+-        this.seen.clear();
++            this.seen.clear();
+             // Gale start - Petal - reduce line of sight updates
+         } else {
+             var expiringNow = this.expiring[this.nextToExpireIndex];
+@@ -62,7 +74,19 @@ public class Sensing {
+         // Gale end - Petal - reduce line of sight updates
+     }
+ 
++    // Leaf start - async target finding
+     public boolean hasLineOfSight(Entity entity) {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            synchronized (this) {
++                return hasLineOfSight1(entity);
++            }
++        } else {
++            return hasLineOfSight1(entity);
++        }
++    }
++
++    private boolean hasLineOfSight1(Entity entity) {
++    // Leaf end - async target finding
+         int id = entity.getId();
+         // Gale start - Petal - reduce line of sight cache lookups - merge sets
+         int cached = this.seen.get(id);
+diff --git a/net/minecraft/world/entity/animal/Fox.java b/net/minecraft/world/entity/animal/Fox.java
+index 90452f0945e761077608692877677f522d38bccd..736eea50b4460041242bdd4b7191d67d7dd4524d 100644
+--- a/net/minecraft/world/entity/animal/Fox.java
++++ b/net/minecraft/world/entity/animal/Fox.java
+@@ -849,13 +849,18 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
+                 return false;
+             } else {
+                 ServerLevel serverLevel = getServerLevel(Fox.this.level());
++                // Leaf start
++                if (serverLevel == null) {
++                    return false;
++                }
++                // Leaf end
+ 
+                 for (UUID uuid : Fox.this.getTrustedUUIDs()) {
+                     if (serverLevel.getEntity(uuid) instanceof LivingEntity livingEntity) {
+                         this.trustedLastHurt = livingEntity;
+                         this.trustedLastHurtBy = livingEntity.getLastHurtByMob();
+                         int lastHurtByMobTimestamp = livingEntity.getLastHurtByMobTimestamp();
+-                        return lastHurtByMobTimestamp != this.timestamp && this.canAttack(this.trustedLastHurtBy, this.targetConditions);
++                        return lastHurtByMobTimestamp != this.timestamp && this.canAttack(this.trustedLastHurtBy, this.getTargetConditions()); // Leaf
+                     }
+                 }
+ 
