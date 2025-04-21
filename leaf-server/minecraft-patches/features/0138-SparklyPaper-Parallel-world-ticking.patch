@@ -568,10 +568,64 @@ index d4048661575ebfaf128ba25da365843774364e0e..33dd16a26edd2974f04d9a868d3e58e8
  
          // Gale start - Pufferfish - SIMD support
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..31abf2da10bc9b4b7825ed4b3d4e9da52feb2e39 100644
+index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..370016bc83c46bce2e9cf38164738f36bc9a3262 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -182,7 +182,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -27,6 +27,7 @@ import java.util.Objects;
+ import java.util.Optional;
+ import java.util.Set;
+ import java.util.UUID;
++import java.util.concurrent.ConcurrentLinkedQueue;
+ import java.util.concurrent.Executor;
+ import java.util.function.BooleanSupplier;
+ import java.util.function.Function;
+@@ -105,18 +106,7 @@ import net.minecraft.world.entity.raid.Raids;
+ import net.minecraft.world.flag.FeatureFlagSet;
+ import net.minecraft.world.item.alchemy.PotionBrewing;
+ import net.minecraft.world.item.crafting.RecipeManager;
+-import net.minecraft.world.level.BlockEventData;
+-import net.minecraft.world.level.ChunkPos;
+-import net.minecraft.world.level.CustomSpawner;
+-import net.minecraft.world.level.Explosion;
+-import net.minecraft.world.level.ExplosionDamageCalculator;
+-import net.minecraft.world.level.ForcedChunksSavedData;
+-import net.minecraft.world.level.GameRules;
+-import net.minecraft.world.level.Level;
+-import net.minecraft.world.level.NaturalSpawner;
+-import net.minecraft.world.level.ServerExplosion;
+-import net.minecraft.world.level.StructureManager;
+-import net.minecraft.world.level.WorldGenLevel;
++import net.minecraft.world.level.*;
+ import net.minecraft.world.level.biome.Biome;
+ import net.minecraft.world.level.block.Block;
+ import net.minecraft.world.level.block.Blocks;
+@@ -163,11 +153,25 @@ import net.minecraft.world.level.storage.ServerLevelData;
+ import net.minecraft.world.phys.AABB;
+ import net.minecraft.world.phys.Vec3;
+ import net.minecraft.world.phys.shapes.BooleanOp;
++import net.minecraft.world.phys.shapes.CollisionContext;
+ import net.minecraft.world.phys.shapes.Shapes;
+ import net.minecraft.world.phys.shapes.VoxelShape;
+ import net.minecraft.world.ticks.LevelTicks;
++import org.bukkit.FluidCollisionMode;
++import org.bukkit.Location;
++import org.bukkit.block.BlockFace;
++import org.bukkit.block.data.BlockData;
++import org.bukkit.craftbukkit.CraftFluidCollisionMode;
++import org.bukkit.craftbukkit.CraftHeightMap;
++import org.bukkit.craftbukkit.block.CraftBlock;
++import org.bukkit.craftbukkit.block.data.CraftBlockData;
++import org.bukkit.craftbukkit.util.CraftLocation;
++import org.bukkit.util.Vector;
++import org.dreeam.leaf.async.world.WorldReadRequest;
+ import org.slf4j.Logger;
+ 
++import static org.bukkit.Bukkit.getLogger;
++
+ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLevel, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevelReader, ca.spottedleaf.moonrise.patches.chunk_tick_iteration.ChunkTickServerLevel { // Paper - rewrite chunk system // Paper - chunk tick iteration
+     public static final BlockPos END_SPAWN_POINT = new BlockPos(100, 50, 0);
+     public static final IntProvider RAIN_DELAY = UniformInt.of(12000, 180000);
+@@ -182,7 +186,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      private final MinecraftServer server;
      public final net.minecraft.world.level.storage.PrimaryLevelData serverLevelData; // CraftBukkit - type
      private int lastSpawnChunkRadius;
@@ -580,15 +634,17 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..31abf2da10bc9b4b7825ed4b3d4e9da5
      // Paper - rewrite chunk system
      private final GameEventDispatcher gameEventDispatcher;
      public boolean noSave;
-@@ -208,6 +208,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -208,7 +212,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      private double preciseTime; // Purpur - Configurable daylight cycle
      private boolean forceTime; // Purpur - Configurable daylight cycle
      private final RandomSequences randomSequences;
+-
 +    public java.util.concurrent.ExecutorService tickExecutor; // SparklyPaper - parallel world ticking
- 
++    public final ConcurrentLinkedQueue<WorldReadRequest> asyncReadRequestQueue = new ConcurrentLinkedQueue<>();
      // CraftBukkit start
      public final LevelStorageSource.LevelStorageAccess levelStorageAccess;
-@@ -703,6 +704,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     public final UUID uuid;
+@@ -703,6 +708,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
          this.preciseTime = this.serverLevelData.getDayTime(); // Purpur - Configurable daylight cycle
          this.realPlayers = Lists.newArrayList(); // Leaves - skip
@@ -596,7 +652,157 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..31abf2da10bc9b4b7825ed4b3d4e9da5
      }
  
      // Paper start
-@@ -1313,9 +1315,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -737,8 +743,136 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+ 
+     public Player[] eligibleDespawnCheckingPlayerCache = new Player[0]; // Leaf - Cache eligible players for despawn checks
+ 
++    private void processAsyncReadRequests() {
++        // Only process if parallel ticking is enabled and buffering is active
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ||
++            !org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.asyncUnsafeReadHandling.equals("BUFFERED")) {
++            // Clear queue if buffering gets disabled to prevent memory leaks
++            if (!this.asyncReadRequestQueue.isEmpty()) {
++                WorldReadRequest req;
++                while ((req = this.asyncReadRequestQueue.poll()) != null) {
++                    req.future().completeExceptionally(new IllegalStateException("Async read buffering disabled while request was pending."));
++                }
++            }
++            return;
++        }
++
++        WorldReadRequest request;
++        int processed = 0;
++        // Limit processing per tick to avoid stalling the tick loop
++        int maxToProcess = 500; // Consider making this configurable
++
++        while (processed < maxToProcess && (request = this.asyncReadRequestQueue.poll()) != null) {
++            processed++;
++            // Ensure we are on the correct thread before executing
++            // This check might be redundant if called correctly from tick(), but good for safety
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Processing async read request off-thread");
++
++            try {
++                Object result = executeReadRequest(request);
++                request.future().complete(result);
++            } catch (Throwable t) {
++                // Log the error from the tick thread side
++                getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type(), t);
++                request.future().completeExceptionally(t);
++            }
++        }
++    }
++
++    // Executes the actual read operation based on the request type
++    private Object executeReadRequest(WorldReadRequest request) {
++        Object[] params = request.params();
++        BlockPos pos; // Declare pos outside the switch
++
++        switch (request.type()) {
++            // Existing cases...
++            case GET_HIGHEST_BLOCK_Y_AT: {
++                int x = (int) params[0];
++                int z = (int) params[1];
++                org.bukkit.HeightMap heightMap = (org.bukkit.HeightMap) params[2];
++                // Direct NMS call
++                return this.getHeight(CraftHeightMap.toNMS(heightMap), x, z);
++            }
++            case GET_BLOCK_DATA: {
++                int x = (int) params[0];
++                int y = (int) params[1];
++                int z = (int) params[2];
++                // Direct NMS call
++                return this.getBlockState(new BlockPos(x, y, z)); // Return NMS state
++            }
++            case GET_BIOME: {
++                int x = (int) params[0];
++                int y = (int) params[1];
++                int z = (int) params[2];
++                // Direct NMS call - returns Holder<Biome>
++                return this.getNoiseBiome(x >> 2, y >> 2, z >> 2);
++            }
++
++            // CraftBlock specific cases
++            case BLOCK_GET_NMS_STATE: { //
++                pos = (BlockPos) params[0];
++                return this.getBlockState(pos);
++            }
++            case BLOCK_GET_BIOME: {
++                pos = (BlockPos) params[0];
++                // Delegate to existing world-level biome logic
++                return this.getNoiseBiome(pos.getX() >> 2, pos.getY() >> 2, pos.getZ() >> 2);
++            }
++            case BLOCK_GET_COMPUTED_BIOME: {
++                pos = (BlockPos) params[0];
++                return this.getBiome(pos);
++            }
++            case BLOCK_IS_INDIRECTLY_POWERED: {
++                pos = (BlockPos) params[0];
++                return this.hasNeighborSignal(pos);
++            }
++            case BLOCK_GET_BLOCK_POWER: {
++                pos = (BlockPos) params[0];
++                BlockFace face = (BlockFace) params[1];
++                int power = 0;
++                Direction notchDir = CraftBlock.blockFaceToNotch(face);
++
++                // Use the assigned 'pos' variable here
++                if ((face == BlockFace.DOWN || face == BlockFace.SELF) && this.hasSignal(pos.below(), Direction.DOWN)) power = CraftBlock.getPower(power, this.getBlockState(pos.below()));
++                if ((face == BlockFace.UP || face == BlockFace.SELF) && this.hasSignal(pos.above(), Direction.UP)) power = CraftBlock.getPower(power, this.getBlockState(pos.above()));
++                if ((face == BlockFace.EAST || face == BlockFace.SELF) && this.hasSignal(pos.east(), Direction.EAST)) power = CraftBlock.getPower(power, this.getBlockState(pos.east()));
++                if ((face == BlockFace.WEST || face == BlockFace.SELF) && this.hasSignal(pos.west(), Direction.WEST)) power = CraftBlock.getPower(power, this.getBlockState(pos.west()));
++                if ((face == BlockFace.NORTH || face == BlockFace.SELF) && this.hasSignal(pos.north(), Direction.NORTH)) power = CraftBlock.getPower(power, this.getBlockState(pos.north()));
++                if ((face == BlockFace.SOUTH || face == BlockFace.SELF) && this.hasSignal(pos.south(), Direction.SOUTH)) power = CraftBlock.getPower(power, this.getBlockState(pos.south()));
++
++                boolean indirectlyPowered = (face == BlockFace.SELF) ? this.hasNeighborSignal(pos) : (this.getSignal(pos, notchDir) > 0); // Simplified indirect check for faces
++                return power > 0 ? power : (indirectlyPowered ? 15 : 0);
++            }
++            case BLOCK_RAY_TRACE: {
++                pos = (BlockPos) params[0];
++                Location start = (Location) params[1];
++                Vector direction = (Vector) params[2];
++                double maxDistance = (double) params[3];
++                FluidCollisionMode fluidCollisionMode = (FluidCollisionMode) params[4];
++
++                Vector dir = direction.clone().normalize().multiply(maxDistance);
++                Vec3 startPos = CraftLocation.toVec3D(start);
++                Vec3 endPos = startPos.add(dir.getX(), dir.getY(), dir.getZ());
++
++                return this.clip(new ClipContext(startPos, endPos, ClipContext.Block.OUTLINE, CraftFluidCollisionMode.toNMS(fluidCollisionMode), CollisionContext.empty()), pos); // Pass block pos
++            }
++            case BLOCK_CAN_PLACE: {
++                pos = (BlockPos) params[0];
++                BlockData data = (BlockData) params[1];
++                net.minecraft.world.level.block.state.BlockState nmsData = ((CraftBlockData) data).getState();
++                return nmsData.canSurvive(this, pos);
++            }
++            // Add cases for other ReadOperationType values here...
++            // case GET_ENTITIES_IN_BOX: ... (complex, needs careful list handling)
++
++            default:
++                throw new UnsupportedOperationException("Unsupported buffered read type: " + request.type());
++        }
++    }
++
+     public void tick(BooleanSupplier hasTimeLeft) {
+         this.handlingTick = true;
++        this.processAsyncReadRequests();
+         TickRateManager tickRateManager = this.tickRateManager();
+         boolean runsNormally = tickRateManager.runsNormally();
+         if (runsNormally) {
+@@ -746,6 +880,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+             this.advanceWeatherCycle();
+         }
+ 
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            this.moonrise$midTickTasks();
++        } else if ((++this.tickedBlocksOrFluids & 7L) != 0L) { // Keep original mid-tick logic for PWT enabled
++            this.server.moonrise$executeMidTickTasks();
++        }
++
+         int _int = this.getGameRules().getInt(GameRules.RULE_PLAYERS_SLEEPING_PERCENTAGE);
+         if (this.purpurConfig.playersSkipNight && this.sleepStatus.areEnoughSleeping(_int) && this.sleepStatus.areEnoughDeepSleeping(_int, this.players)) { // Purpur - Config for skipping night
+             // Paper start - create time skip event - move up calculations
+@@ -1313,9 +1453,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              fluidState.tick(this, pos, blockState);
          }
          // Paper start - rewrite chunk system
@@ -611,7 +817,7 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..31abf2da10bc9b4b7825ed4b3d4e9da5
          // Paper end - rewrite chunk system
  
      }
-@@ -1326,9 +1331,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1326,9 +1469,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              blockState.tick(this, pos, this.random);
          }
          // Paper start - rewrite chunk system
@@ -626,7 +832,7 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..31abf2da10bc9b4b7825ed4b3d4e9da5
          // Paper end - rewrite chunk system
  
      }
-@@ -1579,6 +1587,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1579,6 +1725,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      }
  
      private void addPlayer(ServerPlayer player) {
@@ -635,7 +841,7 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..31abf2da10bc9b4b7825ed4b3d4e9da5
          Entity entity = this.getEntities().get(player.getUUID());
          if (entity != null) {
              LOGGER.warn("Force-added player with duplicate UUID {}", player.getUUID());
-@@ -1591,7 +1601,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1591,7 +1739,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
  
      // CraftBukkit start
      private boolean addEntity(Entity entity, org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason spawnReason) {
