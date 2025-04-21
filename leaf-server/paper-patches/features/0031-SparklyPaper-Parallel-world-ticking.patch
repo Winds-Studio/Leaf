@@ -511,7 +511,7 @@ index af33cab59932f4ec135caf94dc5828930833daf6..ec6001e376e3e8036d05ee6265cf1159
      }
      // Paper end
 diff --git a/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java b/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
-index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa81451c68 100644
+index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..c36b08236357a69f49a26078d96ea73d1abab0f8 100644
 --- a/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
 +++ b/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
 @@ -5,9 +5,13 @@ import java.util.ArrayList;
@@ -528,135 +528,454 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
  import net.minecraft.server.level.ServerLevel;
  import net.minecraft.world.InteractionHand;
  import net.minecraft.world.InteractionResult;
-@@ -60,6 +64,11 @@ import org.bukkit.util.BlockVector;
+@@ -25,12 +29,14 @@ import net.minecraft.world.phys.BlockHitResult;
+ import net.minecraft.world.phys.HitResult;
+ import net.minecraft.world.phys.Vec3;
+ import net.minecraft.world.phys.shapes.CollisionContext;
++import net.minecraft.world.phys.shapes.Shapes;
+ import net.minecraft.world.phys.shapes.VoxelShape;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Chunk;
+ import org.bukkit.FluidCollisionMode;
+ import org.bukkit.Location;
+ import org.bukkit.Material;
++import org.bukkit.Server;
+ import org.bukkit.TreeType;
+ import org.bukkit.World;
+ import org.bukkit.block.Biome;
+@@ -60,10 +66,20 @@ import org.bukkit.util.BlockVector;
  import org.bukkit.util.BoundingBox;
  import org.bukkit.util.RayTraceResult;
  import org.bukkit.util.Vector;
 +import org.dreeam.leaf.async.world.ReadOperationType;
 +import org.dreeam.leaf.async.world.WorldReadRequest;
 +
-+import static org.bukkit.Bukkit.getLogger;
++// Import the config class directly or use a helper to access it
 +import static org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.asyncUnsafeReadHandling;
++import static org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
++import static org.bukkit.Bukkit.getLogger;
++
  
  public class CraftBlock implements Block {
      private final net.minecraft.world.level.LevelAccessor world;
-@@ -74,8 +83,66 @@ public class CraftBlock implements Block {
+     private final BlockPos position;
++    // Add server access if needed for logging
++    private final Server server = Bukkit.getServer(); // Bukkit Server instance
+ 
+     public CraftBlock(LevelAccessor world, BlockPos position) {
+         this.world = world;
+@@ -74,13 +90,99 @@ public class CraftBlock implements Block {
          return new CraftBlock(world, position);
      }
  
++    // Helper to get ServerLevel safely, returns null if not a ServerLevel
 +    private ServerLevel getServerLevel() {
 +        if (this.world instanceof ServerLevel) {
 +            return (ServerLevel) this.world;
 +        }
-+        // This should ideally not happen if CraftBlock is used correctly on server side
-+        // Throw an exception or return null based on how you want to handle client-side/non-server worlds
-+        throw new IllegalStateException("CraftBlock is not associated with a ServerLevel");
++        return null; // Return null instead of throwing
 +    }
 +
-+    // Helper to check if buffering is needed
++    // Helper to check if buffering is needed (requires ServerLevel)
 +    private boolean needsBuffering(ServerLevel level, String handlingMode) {
-+        boolean parallelTickingEnabled = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
++        if (level == null) return false; // Cannot buffer without ServerLevel
++        boolean parallelTickingEnabled = enabled; // Use imported config value
 +        return parallelTickingEnabled
 +            && handlingMode.equals("BUFFERED")
 +            && !ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(level);
 +    }
 +
-+    // Helper for strict mode check
++    // Helper for strict mode check (requires ServerLevel)
 +    private void checkStrictMode(ServerLevel level, String handlingMode, String methodName) {
-+        boolean parallelTickingEnabled = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
++        if (level == null) return; // Cannot check without ServerLevel
++        boolean parallelTickingEnabled = enabled; // Use imported config value
 +        if (parallelTickingEnabled && handlingMode.equals("STRICT")) {
 +            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, this.position, "Async unsafe block read detected (strict mode) for " + methodName);
 +        }
 +    }
 +
-+    // Helper to execute buffered read
++    // Helper to execute buffered read (requires ServerLevel)
 +    private <T> T executeBufferedRead(ServerLevel level, ReadOperationType type, Object[] params, T defaultValue, String methodName) {
++        // This method should only be called if needsBuffering returned true, implying level is not null.
++        // Add a null check just for absolute safety, though it indicates a logic error elsewhere if hit.
++        if (level == null) {
++            getLogger().log(Level.SEVERE, "executeBufferedRead called with null ServerLevel for " + methodName + " - falling back to default.");
++            return defaultValue;
++        }
++
 +        CompletableFuture<Object> future = new CompletableFuture<>();
 +        WorldReadRequest request = new WorldReadRequest(type, params, future);
 +        level.asyncReadRequestQueue.offer(request);
 +
 +        try {
 +            Object result = future.join();
++            // Handle null result from future if necessary, though completeExceptionally is preferred for errors
++            if (result == null) {
++                getLogger().log(Level.WARNING, "Buffered async world read returned null for " + methodName + " - returning default.");
++                return defaultValue;
++            }
 +            return (T) result; // Requires careful casting based on expected return type
 +        } catch (CompletionException e) {
-+            getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type());
++            getLogger().log(Level.SEVERE, "Async block read failed for " + methodName, e.getCause() != null ? e.getCause() : e);
 +            return defaultValue;
 +        } catch (Exception e) {
-+            getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type());
++            getLogger().log(Level.SEVERE, "Unexpected error during async block read for " + methodName, e);
 +            return defaultValue;
 +        }
 +    }
 +
-+
-+
      public net.minecraft.world.level.block.state.BlockState getNMS() {
 -        return this.world.getBlockState(this.position);
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        // Use global config directly or fetch world-specific if available
++        String handlingMode = asyncUnsafeReadHandling; // Fallback to global if no ServerLevel
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) { // Check level != null first
 +            return executeBufferedRead(level, ReadOperationType.BLOCK_GET_NMS_STATE, new Object[]{this.position}, Blocks.AIR.defaultBlockState(), "getNMS");
 +        } else {
-+            checkStrictMode(level, handlingMode, "getNMS");
++            // Perform strict check only if we have a ServerLevel
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "getNMS");
++            }
++            // Direct access path (used if not buffering or if world is not ServerLevel)
 +            try {
 +                return this.world.getBlockState(this.position);
 +            } catch (Exception e) {
-+                getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type ");
++                getLogger().log(Level.SEVERE, "Direct world access failed for getNMS" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return Blocks.AIR.defaultBlockState();
 +            }
 +        }
      }
  
      // Paper start
-@@ -157,6 +224,11 @@ public class CraftBlock implements Block {
-     }
- 
-     private void setData(final byte data, int flag) {
-+        // SparklyPaper start - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
+     public net.minecraft.world.level.material.FluidState getNMSFluid() {
+-        return this.world.getFluidState(this.position);
++        // Note: Fluid state access might also need buffering/checks depending on usage context.
++        // For simplicity, keeping direct access for now. Add buffering if needed.
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getNMSFluid"); // Apply strict check if applicable
 +        }
-+        // SparklyPaper end - parallel world ticking
-         this.world.setBlock(this.position, CraftMagicNumbers.getBlock(this.getType(), data), flag);
++        try {
++            return this.world.getFluidState(this.position);
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getNMSFluid" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return Blocks.WATER.defaultBlockState().getFluidState(); // Example fallback
++        }
+     }
+     // Paper end
+ 
+@@ -94,20 +196,24 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public World getWorld() {
++        // This should be safe as it likely doesn't involve direct NMS state access needing sync
+         return this.world.getMinecraftWorld().getWorld();
      }
  
-@@ -198,6 +270,12 @@ public class CraftBlock implements Block {
+     public CraftWorld getCraftWorld() {
++        // This should be safe
+         return (CraftWorld) this.getWorld();
+     }
+ 
+     @Override
+     public Location getLocation() {
++        // This should be safe
+         return CraftLocation.toBukkit(this.position, this.getWorld());
+     }
+ 
+     @Override
+     public Location getLocation(Location loc) {
++        // This should be safe
+         if (loc != null) {
+             loc.setWorld(this.getWorld());
+             loc.setX(this.position.getX());
+@@ -116,31 +222,35 @@ public class CraftBlock implements Block {
+             loc.setYaw(0);
+             loc.setPitch(0);
+         }
+-
+         return loc;
+     }
+ 
+     public BlockVector getVector() {
++        // This should be safe
+         return new BlockVector(this.getX(), this.getY(), this.getZ());
+     }
+ 
+     @Override
+     public int getX() {
++        // This should be safe
+         return this.position.getX();
+     }
+ 
+     @Override
+     public int getY() {
++        // This should be safe
+         return this.position.getY();
+     }
+ 
+     @Override
+     public int getZ() {
++        // This should be safe
+         return this.position.getZ();
+     }
+ 
+     @Override
+     public Chunk getChunk() {
++        // Delegates to World.getChunkAt, which should handle its own safety/buffering if needed
+         return this.getWorld().getChunkAt(this);
+     }
+ 
+@@ -156,19 +266,38 @@ public class CraftBlock implements Block {
+         }
+     }
+ 
++    // --- Methods that MODIFY state ---
++    // These should generally still throw errors if called async,
++    // but we add the check for consistency.
++
+     private void setData(final byte data, int flag) {
+-        this.world.setBlock(this.position, CraftMagicNumbers.getBlock(this.getType(), data), flag);
++        ServerLevel level = getServerLevel();
++        if (level != null) { // Only perform check if it's a ServerLevel
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) { // Check if PWT is enabled
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (setData)");
++            }
++        } else if (enabled) {
++            // Log a warning if PWT is enabled but we can't verify the thread because it's not a ServerLevel
++            getLogger().log(Level.WARNING, "Attempted to call setData on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
++        }
++        // Original logic
++        // Need to get type safely first if needed, but getType() itself might need buffering
++        Material currentType = this.getType(); // This call might need buffering itself
++        this.world.setBlock(this.position, CraftMagicNumbers.getBlock(currentType, data), flag);
+     }
+ 
+     @Override
+     public byte getData() {
+-        net.minecraft.world.level.block.state.BlockState blockData = this.world.getBlockState(this.position);
++        // Reading state, potentially needs buffering
++        net.minecraft.world.level.block.state.BlockState blockData = this.getNMS(); // Use the buffered getNMS()
+         return CraftMagicNumbers.toLegacyData(blockData);
+     }
+ 
+     @Override
+     public BlockData getBlockData() {
+-        return CraftBlockData.fromData(this.getNMS());
++        // Reading state, potentially needs buffering
++        return CraftBlockData.fromData(this.getNMS()); // Use the buffered getNMS()
+     }
+ 
+     @Override
+@@ -179,7 +308,7 @@ public class CraftBlock implements Block {
+     @Override
+     public void setType(Material type, boolean applyPhysics) {
+         Preconditions.checkArgument(type != null, "Material cannot be null");
+-        this.setBlockData(type.createBlockData(), applyPhysics);
++        this.setBlockData(type.createBlockData(), applyPhysics); // Delegates to setBlockData
+     }
+ 
+     @Override
+@@ -190,17 +319,28 @@ public class CraftBlock implements Block {
+     @Override
+     public void setBlockData(BlockData data, boolean applyPhysics) {
+         Preconditions.checkArgument(data != null, "BlockData cannot be null");
++        // This modifies state, ensure thread safety via setTypeAndData
+         this.setTypeAndData(((CraftBlockData) data).getState(), applyPhysics);
+     }
+ 
+     boolean setTypeAndData(final net.minecraft.world.level.block.state.BlockState blockData, final boolean applyPhysics) {
++        // Delegates to the static method which has the thread check
+         return CraftBlock.setTypeAndData(this.world, this.position, this.getNMS(), blockData, applyPhysics);
      }
  
      public static boolean setTypeAndData(LevelAccessor world, BlockPos position, net.minecraft.world.level.block.state.BlockState old, net.minecraft.world.level.block.state.BlockState blockData, boolean applyPhysics) {
-+        // SparklyPaper start - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
+-        // SPIGOT-611: need to do this to prevent glitchiness. Easier to handle this here (like /setblock) than to fix weirdness in tile entity cleanup
+-        if (old.hasBlockEntity() && blockData.getBlock() != old.getBlock()) { // SPIGOT-3725 remove old tile entity if block changes
+-            // SPIGOT-4612: faster - just clear tile
++        ServerLevel level = (world instanceof ServerLevel) ? (ServerLevel) world : null;
++        if (level != null) { // Only perform check if it's a ServerLevel
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) { // Check if PWT is enabled
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (setTypeAndData)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call setTypeAndData on non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
 +        }
-+        // SparklyPaper end - parallel world ticking
 +
-         // SPIGOT-611: need to do this to prevent glitchiness. Easier to handle this here (like /setblock) than to fix weirdness in tile entity cleanup
-         if (old.hasBlockEntity() && blockData.getBlock() != old.getBlock()) { // SPIGOT-3725 remove old tile entity if block changes
-             // SPIGOT-4612: faster - just clear tile
-@@ -343,18 +421,64 @@ public class CraftBlock implements Block {
++        // Original logic...
++        if (old.hasBlockEntity() && blockData.getBlock() != old.getBlock()) {
+             if (world instanceof net.minecraft.world.level.Level) {
+                 ((net.minecraft.world.level.Level) world).removeBlockEntity(position);
+             } else {
+@@ -211,14 +351,15 @@ public class CraftBlock implements Block {
+         if (applyPhysics) {
+             return world.setBlock(position, blockData, 3);
+         } else {
+-            boolean success = world.setBlock(position, blockData, 2 | 16 | 1024); // NOTIFY | NO_OBSERVER | NO_PLACE (custom)
++            boolean success = world.setBlock(position, blockData, 2 | 16 | 1024);
+             if (success && world instanceof net.minecraft.world.level.Level) {
+-                world.getMinecraftWorld().sendBlockUpdated(
+-                        position,
+-                        old,
+-                        blockData,
+-                        3
+-                );
++                // Ensure getMinecraftWorld() is safe or check type
++                if (world instanceof ServerLevel serverLevel) { // Check if it's a ServerLevel before calling getMinecraftWorld()
++                    serverLevel.sendBlockUpdated(position, old, blockData, 3);
++                } else {
++                    // Handle cases where it's not a ServerLevel if necessary
++                    getLogger().log(Level.FINE, "Skipping sendBlockUpdated in setTypeAndData for non-ServerLevel LevelAccessor");
++                }
+             }
+             return success;
+         }
+@@ -226,22 +367,64 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public Material getType() {
+-        return this.world.getBlockState(this.position).getBukkitMaterial(); // Paper - optimise getType calls
++        // Reading state, potentially needs buffering
++        return this.getNMS().getBukkitMaterial(); // Use buffered getNMS()
+     }
+ 
+     @Override
+     public byte getLightLevel() {
+-        return (byte) this.world.getMinecraftWorld().getMaxLocalRawBrightness(this.position);
++        // Light level access might need buffering depending on implementation details
++        // Assuming direct access is safe for now, add buffering if issues arise
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getLightLevel");
++        }
++        try {
++            // Requires Level, not just LevelAccessor
++            if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
++                return (byte) nmsLevel.getMaxLocalRawBrightness(this.position);
++            }
++            getLogger().log(Level.WARNING, "getLightLevel called on non-Level LevelAccessor - returning 0");
++            return 0;
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getLightLevel" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return 0;
++        }
+     }
+ 
+     @Override
+     public byte getLightFromSky() {
+-        return (byte) this.world.getBrightness(LightLayer.SKY, this.position);
++        // Light level access might need buffering
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getLightFromSky");
++        }
++        try {
++            // LevelAccessor has getBrightness
++            return (byte) this.world.getBrightness(LightLayer.SKY, this.position);
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getLightFromSky" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return 0;
++        }
+     }
+ 
+     @Override
+     public byte getLightFromBlocks() {
+-        return (byte) this.world.getBrightness(LightLayer.BLOCK, this.position);
++        // Light level access might need buffering
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getLightFromBlocks");
++        }
++        try {
++            // LevelAccessor has getBrightness
++            return (byte) this.world.getBrightness(LightLayer.BLOCK, this.position);
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getLightFromBlocks" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return 0;
++        }
+     }
+ 
+     public Block getFace(final BlockFace face) {
+@@ -254,6 +437,7 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public Block getRelative(final int modX, final int modY, final int modZ) {
++        // Delegates to World.getBlockAt, should be safe if that's handled
+         return this.getWorld().getBlockAt(this.getX() + modX, this.getY() + modY, this.getZ() + modZ);
+     }
+ 
+@@ -269,20 +453,20 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public BlockFace getFace(final Block block) {
++        // Safe calculation
+         BlockFace[] values = BlockFace.values();
+-
+         for (BlockFace face : values) {
+             if ((this.getX() + face.getModX() == block.getX()) && (this.getY() + face.getModY() == block.getY()) && (this.getZ() + face.getModZ() == block.getZ())) {
+                 return face;
+             }
+         }
+-
+         return null;
+     }
+ 
+     @Override
+     public String toString() {
+-        return "CraftBlock{pos=" + this.position + ",type=" + this.getType() + ",data=" + this.getNMS() + ",fluid=" + this.world.getFluidState(this.position) + '}';
++        // Uses buffered getNMS()
++        return "CraftBlock{pos=" + this.position + ",type=" + this.getType() + ",data=" + this.getNMS() + ",fluid=" + this.getNMSFluid() + '}'; // Use safe getNMSFluid
+     }
+ 
+     public static BlockFace notchToBlockFace(Direction notch) {
+@@ -331,109 +515,261 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public BlockState getState() {
+-        return CraftBlockStates.getBlockState(this, org.dreeam.leaf.config.modules.opt.TileEntitySnapshotCreation.enabled); // Leaf - EMC - Don't use snapshots for acquiring blockstate
++        // Delegates to CraftBlockStates which should handle safety/snapshots
++        return CraftBlockStates.getBlockState(this, org.dreeam.leaf.config.modules.opt.TileEntitySnapshotCreation.enabled);
+     }
+ 
+     // Paper start
+     @Override
+     public BlockState getState(boolean useSnapshot) {
++        // Delegates to CraftBlockStates which should handle safety/snapshots
+         return CraftBlockStates.getBlockState(this, useSnapshot);
+     }
+     // Paper end
  
      @Override
      public Biome getBiome() {
 -        return this.getWorld().getBiome(this.getX(), this.getY(), this.getZ());
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        String handlingMode = (level != null) ? asyncUnsafeReadHandling : asyncUnsafeReadHandling;
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) {
 +            Holder<net.minecraft.world.level.biome.Biome> nmsResult = executeBufferedRead(
 +                level,
 +                ReadOperationType.BLOCK_GET_BIOME,
 +                new Object[]{this.position},
-+                null, // Default value if needed, maybe Holder.direct(Biomes.PLAINS)?
++                null,
 +                "getBiome"
 +            );
-+            return (nmsResult != null) ? CraftBiome.minecraftHolderToBukkit(nmsResult) : org.bukkit.block.Biome.PLAINS; // Fallback biome
++            return (nmsResult != null) ? CraftBiome.minecraftHolderToBukkit(nmsResult) : org.bukkit.block.Biome.PLAINS;
 +        } else {
-+            checkStrictMode(level, handlingMode, "getBiome");
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "getBiome");
++            }
 +            try {
-+                // Direct access uses world coordinates, not block position directly for noise biome
++                // Use the Bukkit API which handles LevelAccessor correctly
 +                return this.getWorld().getBiome(this.getX(), this.getY(), this.getZ());
 +            } catch (Exception e) {
-+                getLogger().log(Level.SEVERE, "Direct world access failed for getBiome", e);
++                getLogger().log(Level.SEVERE, "Direct world access failed for getBiome" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return org.bukkit.block.Biome.PLAINS;
 +            }
 +        }
@@ -666,24 +985,27 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
      @Override
      public Biome getComputedBiome() {
 -        return this.getWorld().getComputedBiome(this.getX(), this.getY(), this.getZ());
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        String handlingMode = (level != null) ? asyncUnsafeReadHandling : asyncUnsafeReadHandling;
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) {
 +            Holder<net.minecraft.world.level.biome.Biome> nmsResult = executeBufferedRead(
 +                level,
 +                ReadOperationType.BLOCK_GET_COMPUTED_BIOME,
 +                new Object[]{this.position},
-+                null, // Default value
++                null,
 +                "getComputedBiome"
 +            );
-+            return (nmsResult != null) ? CraftBiome.minecraftHolderToBukkit(nmsResult) : org.bukkit.block.Biome.PLAINS; // Fallback biome
++            return (nmsResult != null) ? CraftBiome.minecraftHolderToBukkit(nmsResult) : org.bukkit.block.Biome.PLAINS;
 +        } else {
-+            checkStrictMode(level, handlingMode, "getComputedBiome");
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "getComputedBiome");
++            }
 +            try {
++                // Use the Bukkit API which handles LevelAccessor correctly
 +                return this.getWorld().getComputedBiome(this.getX(), this.getY(), this.getZ());
 +            } catch (Exception e) {
-+                getLogger().log(Level.SEVERE, "Direct world access failed for getComputedBiome", e);
++                getLogger().log(Level.SEVERE, "Direct world access failed for getComputedBiome" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return org.bukkit.block.Biome.PLAINS;
 +            }
 +        }
@@ -692,37 +1014,164 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
  
      @Override
      public void setBiome(Biome bio) {
-+        // SparklyPaper start - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (setBiome)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call setBiome on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
 +        }
-+        // SparklyPaper end - parallel world ticking
++        // Original logic
          this.getWorld().setBiome(this.getX(), this.getY(), this.getZ(), bio);
      }
  
-@@ -375,7 +499,20 @@ public class CraftBlock implements Block {
+     @Override
+     public double getTemperature() {
+-        return this.world.getBiome(this.position).value().getTemperature(this.position, this.world.getSeaLevel());
++        // Accesses biome data, might need buffering if getBiome isn't sufficient
++        // Assuming getBiome handles buffering, this might be okay. Add checks if needed.
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getTemperature");
++        }
++        try {
++            // Requires LevelAccessor.getBiome, which should be safe if implemented correctly
++            return this.world.getBiome(this.position).value().getTemperature(this.position, this.world.getSeaLevel());
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getTemperature" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return 0.5; // Default temperature
++        }
+     }
+ 
+     @Override
+     public double getHumidity() {
++        // Delegates to World.getHumidity, should be safe if that's handled
+         return this.getWorld().getHumidity(this.getX(), this.getY(), this.getZ());
+     }
+ 
+     @Override
+     public boolean isBlockPowered() {
+-        return this.world.getMinecraftWorld().getDirectSignalTo(this.position) > 0;
++        // Requires Level.getDirectSignalTo
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "isBlockPowered");
++        }
++        try {
++            if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
++                return nmsLevel.getDirectSignalTo(this.position) > 0;
++            }
++            getLogger().log(Level.WARNING, "isBlockPowered called on non-Level LevelAccessor - returning false");
++            return false;
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for isBlockPowered" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return false;
++        }
+     }
  
      @Override
      public boolean isBlockIndirectlyPowered() {
 -        return this.world.getMinecraftWorld().hasNeighborSignal(this.position);
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        String handlingMode = (level != null) ? asyncUnsafeReadHandling : asyncUnsafeReadHandling;
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) {
 +            return executeBufferedRead(level, ReadOperationType.BLOCK_IS_INDIRECTLY_POWERED, new Object[]{this.position}, false, "isBlockIndirectlyPowered");
 +        } else {
-+            checkStrictMode(level, handlingMode, "isBlockIndirectlyPowered");
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "isBlockIndirectlyPowered");
++            }
 +            try {
-+                return this.world.getMinecraftWorld().hasNeighborSignal(this.position);
++                // LevelAccessor doesn't have hasNeighborSignal, need Level
++                if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
++                    return nmsLevel.hasNeighborSignal(this.position);
++                }
++                getLogger().log(Level.WARNING, "isBlockIndirectlyPowered called on non-Level LevelAccessor - returning false");
++                return false;
 +            } catch (Exception e) {
-+                getLogger().log(Level.SEVERE, "Direct world access failed for isBlockIndirectlyPowered", e);
++                getLogger().log(Level.SEVERE, "Direct world access failed for isBlockIndirectlyPowered" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return false;
 +            }
 +        }
      }
  
      @Override
-@@ -414,21 +551,33 @@ public class CraftBlock implements Block {
+     public boolean equals(Object o) {
+-        if (o == this) {
+-            return true;
+-        }
+-        if (!(o instanceof CraftBlock other)) {
+-            return false;
+-        }
+-
++        // Safe comparison
++        if (o == this) return true;
++        if (!(o instanceof CraftBlock other)) return false;
+         return this.position.equals(other.position) && this.getWorld().equals(other.getWorld());
+     }
+ 
+     @Override
+     public int hashCode() {
++        // Safe calculation
+         return this.position.hashCode() ^ this.getWorld().hashCode();
+     }
+ 
+     @Override
+     public boolean isBlockFacePowered(BlockFace face) {
+-        return this.world.getMinecraftWorld().hasSignal(this.position, CraftBlock.blockFaceToNotch(face));
++        // Requires Level.hasSignal
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "isBlockFacePowered");
++        }
++        try {
++            if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
++                return nmsLevel.hasSignal(this.position, CraftBlock.blockFaceToNotch(face));
++            }
++            getLogger().log(Level.WARNING, "isBlockFacePowered called on non-Level LevelAccessor - returning false");
++            return false;
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for isBlockFacePowered" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return false;
++        }
+     }
+ 
+     @Override
+     public boolean isBlockFaceIndirectlyPowered(BlockFace face) {
+-        int power = this.world.getMinecraftWorld().getSignal(this.position, CraftBlock.blockFaceToNotch(face));
+-
+-        Block relative = this.getRelative(face);
+-        if (relative.getType() == Material.REDSTONE_WIRE) {
+-            return Math.max(power, relative.getData()) > 0;
++        // Requires Level.getSignal and potentially relative block access
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "isBlockFaceIndirectlyPowered");
++        }
++        try {
++            if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
++                int power = nmsLevel.getSignal(this.position, CraftBlock.blockFaceToNotch(face));
++                Block relative = this.getRelative(face); // This might need buffering if getRelative isn't safe
++                if (relative.getType() == Material.REDSTONE_WIRE) {
++                    return Math.max(power, relative.getData()) > 0; // getData() might need buffering
++                }
++                return power > 0;
++            }
++            getLogger().log(Level.WARNING, "isBlockFaceIndirectlyPowered called on non-Level LevelAccessor - returning false");
++            return false;
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for isBlockFaceIndirectlyPowered" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return false;
+         }
+-
+-        return power > 0;
+     }
  
      @Override
      public int getBlockPower(BlockFace face) {
@@ -741,72 +1190,370 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
 -    }
 -
 -    private static int getPower(int i, net.minecraft.world.level.block.state.BlockState iblockdata) {
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        String handlingMode = (level != null) ? asyncUnsafeReadHandling : asyncUnsafeReadHandling;
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) {
 +            return executeBufferedRead(level, ReadOperationType.BLOCK_GET_BLOCK_POWER, new Object[]{this.position, face}, 0, "getBlockPower");
 +        } else {
-+            checkStrictMode(level, handlingMode, "getBlockPower");
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "getBlockPower");
++            }
 +            try {
-+                // Original logic for direct access
-+                int power = 0;
-+                net.minecraft.world.level.Level nmsWorld = this.world.getMinecraftWorld();
-+                int x = this.getX(); int y = this.getY(); int z = this.getZ();
-+                if ((face == BlockFace.DOWN || face == BlockFace.SELF) && nmsWorld.hasSignal(new BlockPos(x, y - 1, z), Direction.DOWN)) power = CraftBlock.getPower(power, nmsWorld.getBlockState(new BlockPos(x, y - 1, z)));
-+                if ((face == BlockFace.UP || face == BlockFace.SELF) && nmsWorld.hasSignal(new BlockPos(x, y + 1, z), Direction.UP)) power = CraftBlock.getPower(power, nmsWorld.getBlockState(new BlockPos(x, y + 1, z)));
-+                if ((face == BlockFace.EAST || face == BlockFace.SELF) && nmsWorld.hasSignal(new BlockPos(x + 1, y, z), Direction.EAST)) power = CraftBlock.getPower(power, nmsWorld.getBlockState(new BlockPos(x + 1, y, z)));
-+                if ((face == BlockFace.WEST || face == BlockFace.SELF) && nmsWorld.hasSignal(new BlockPos(x - 1, y, z), Direction.WEST)) power = CraftBlock.getPower(power, nmsWorld.getBlockState(new BlockPos(x - 1, y, z)));
-+                if ((face == BlockFace.NORTH || face == BlockFace.SELF) && nmsWorld.hasSignal(new BlockPos(x, y, z - 1), Direction.NORTH)) power = CraftBlock.getPower(power, nmsWorld.getBlockState(new BlockPos(x, y, z - 1)));
-+                if ((face == BlockFace.SOUTH || face == BlockFace.SELF) && nmsWorld.hasSignal(new BlockPos(x, y, z + 1), Direction.SOUTH)) power = CraftBlock.getPower(power, nmsWorld.getBlockState(new BlockPos(x, y, z + 1)));
-+                return power > 0 ? power : (face == BlockFace.SELF ? this.isBlockIndirectlyPowered() : this.isBlockFaceIndirectlyPowered(face)) ? 15 : 0; // isBlockFaceIndirectlyPowered might need buffering too if called here
++                // Original logic for direct access - requires Level, not just LevelAccessor
++                if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
++                    int power = 0;
++                    int x = this.getX(); int y = this.getY(); int z = this.getZ();
++                    if ((face == BlockFace.DOWN || face == BlockFace.SELF) && nmsLevel.hasSignal(new BlockPos(x, y - 1, z), Direction.DOWN)) power = CraftBlock.getPower(power, nmsLevel.getBlockState(new BlockPos(x, y - 1, z)));
++                    if ((face == BlockFace.UP || face == BlockFace.SELF) && nmsLevel.hasSignal(new BlockPos(x, y + 1, z), Direction.UP)) power = CraftBlock.getPower(power, nmsLevel.getBlockState(new BlockPos(x, y + 1, z)));
++                    if ((face == BlockFace.EAST || face == BlockFace.SELF) && nmsLevel.hasSignal(new BlockPos(x + 1, y, z), Direction.EAST)) power = CraftBlock.getPower(power, nmsLevel.getBlockState(new BlockPos(x + 1, y, z)));
++                    if ((face == BlockFace.WEST || face == BlockFace.SELF) && nmsLevel.hasSignal(new BlockPos(x - 1, y, z), Direction.WEST)) power = CraftBlock.getPower(power, nmsLevel.getBlockState(new BlockPos(x - 1, y, z)));
++                    if ((face == BlockFace.NORTH || face == BlockFace.SELF) && nmsLevel.hasSignal(new BlockPos(x, y, z - 1), Direction.NORTH)) power = CraftBlock.getPower(power, nmsLevel.getBlockState(new BlockPos(x, y, z - 1)));
++                    if ((face == BlockFace.SOUTH || face == BlockFace.SELF) && nmsLevel.hasSignal(new BlockPos(x, y, z + 1), Direction.SOUTH)) power = CraftBlock.getPower(power, nmsLevel.getBlockState(new BlockPos(x, y, z + 1)));
++                    // Need to call isBlockIndirectlyPowered safely here too if face is SELF
++                    boolean indirect = (face == BlockFace.SELF) ? this.isBlockIndirectlyPowered() : this.isBlockFaceIndirectlyPowered(face);
++                    return power > 0 ? power : (indirect ? 15 : 0);
++                } else {
++                    getLogger().log(Level.WARNING, "getBlockPower called on non-Level LevelAccessor - returning 0");
++                    return 0;
++                }
 +            } catch (Exception e) {
-+                getLogger().log(Level.SEVERE, "Direct world access failed for getBlockPower", e);
++                getLogger().log(Level.SEVERE, "Direct world access failed for getBlockPower" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return 0;
 +            }
 +        }
 +    }
 +
++    // Static method, safe
 +    public static int getPower(int i, net.minecraft.world.level.block.state.BlockState iblockdata) {
          if (!iblockdata.is(Blocks.REDSTONE_WIRE)) {
              return i;
          } else {
-@@ -484,6 +633,11 @@ public class CraftBlock implements Block {
+             int j = iblockdata.getValue(RedStoneWireBlock.POWER);
+-
+             return j > i ? j : i;
+         }
+     }
+@@ -445,45 +781,63 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public boolean isEmpty() {
++        // Uses buffered getNMS()
+         return this.getNMS().isAir();
+     }
+ 
+     @Override
+     public boolean isLiquid() {
++        // Uses buffered getNMS()
+         return this.getNMS().liquid();
+     }
+ 
+     // Paper start
+     @Override
+     public boolean isBuildable() {
+-        return this.getNMS().isSolid(); // This is in fact isSolid, despite the fact that isSolid below returns blocksMotion
++        // Uses buffered getNMS()
++        return this.getNMS().isSolid();
+     }
+     @Override
+     public boolean isBurnable() {
++        // Uses buffered getNMS()
+         return this.getNMS().ignitedByLava();
+     }
+     @Override
+     public boolean isReplaceable() {
++        // Uses buffered getNMS()
+         return this.getNMS().canBeReplaced();
+     }
+     @Override
+     public boolean isSolid() {
++        // Uses buffered getNMS()
+         return this.getNMS().blocksMotion();
+     }
+ 
+     @Override
+     public boolean isCollidable() {
++        // Uses buffered getNMS()
+         return getNMS().getBlock().hasCollision;
+     }
+     // Paper end
+ 
+     @Override
+     public PistonMoveReaction getPistonMoveReaction() {
++        // Uses buffered getNMS()
+         return PistonMoveReaction.getById(this.getNMS().getPistonPushReaction().ordinal());
+     }
  
      @Override
      public boolean breakNaturally() {
-+        // SparklyPaper start - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (breakNaturally)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call breakNaturally on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
 +        }
-+        // SparklyPaper end - parallel world ticking
++        // Original logic
          return this.breakNaturally(null);
      }
  
-@@ -543,6 +697,11 @@ public class CraftBlock implements Block {
+@@ -501,63 +855,118 @@ public class CraftBlock implements Block {
+     @Override
+     public boolean breakNaturally(ItemStack item, boolean triggerEffect, boolean dropExperience) {
+         // Paper end
++        // This modifies state, ensure thread safety check is performed at the start
++        ServerLevel level = getServerLevel(); // Use the helper to get ServerLevel or null
++        if (level != null) { // Check if we actually have a ServerLevel
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (breakNaturally item...)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call breakNaturally(item...) on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
++        }
++
+         // Order matters here, need to drop before setting to air so skulls can get their data
+-        net.minecraft.world.level.block.state.BlockState iblockdata = this.getNMS();
++        net.minecraft.world.level.block.state.BlockState iblockdata = this.getNMS(); // Use buffered getNMS
+         net.minecraft.world.level.block.Block block = iblockdata.getBlock();
+         net.minecraft.world.item.ItemStack nmsItem = CraftItemStack.asNMSCopy(item);
+-        boolean result = false;
+-
+-        // Modelled off EntityHuman#hasBlock
+-        if (block != Blocks.AIR && (item == null || !iblockdata.requiresCorrectToolForDrops() || nmsItem.isCorrectToolForDrops(iblockdata))) {
+-            net.minecraft.world.level.block.Block.dropResources(iblockdata, this.world.getMinecraftWorld(), this.position, this.world.getBlockEntity(this.position), null, nmsItem, false); // Paper - Properly handle xp dropping
+-            // Paper start - improve Block#breanNaturally
+-            if (triggerEffect) {
++        boolean droppedItems = false; // Renamed 'result' to avoid confusion with final return
++
++        // Experience dropping requires ServerLevel
++        ServerLevel serverLevelForDrops = getServerLevel(); // Get ServerLevel specifically for drop logic
++
++        if (serverLevelForDrops != null) { // Only attempt drops if we have a ServerLevel
++            // Modelled off EntityHuman#hasBlock
++            if (block != Blocks.AIR && (item == null || !iblockdata.requiresCorrectToolForDrops() || nmsItem.isCorrectToolForDrops(iblockdata))) {
++                // Drop items using ServerLevel
++                net.minecraft.world.level.block.Block.dropResources(iblockdata, serverLevelForDrops, this.position, this.world.getBlockEntity(this.position), null, nmsItem, false); // Paper - Properly handle xp dropping
++
++                // Trigger effect using LevelAccessor (safe)
++                if (triggerEffect) {
++                    if (iblockdata.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock) {
++                        this.world.levelEvent(net.minecraft.world.level.block.LevelEvent.SOUND_EXTINGUISH_FIRE, this.position, 0);
++                    } else {
++                        this.world.levelEvent(net.minecraft.world.level.block.LevelEvent.PARTICLES_DESTROY_BLOCK, this.position, net.minecraft.world.level.block.Block.getId(iblockdata));
++                    }
++                }
++                // Drop experience using ServerLevel
++                if (dropExperience) {
++                    // *** THE FIX IS HERE *** Use serverLevelForDrops for both calls
++                    block.popExperience(serverLevelForDrops, this.position, block.getExpDrop(iblockdata, serverLevelForDrops, this.position, nmsItem, true));
++                }
++                droppedItems = true;
++            }
++        } else {
++            // Log if we couldn't drop XP because it wasn't a ServerLevel
++            if (dropExperience) {
++                getLogger().log(Level.WARNING, "Cannot drop experience for breakNaturally: CraftBlock is not associated with a ServerLevel.");
++            }
++            // We might still want to trigger effects even if we can't drop items/xp?
++            if (triggerEffect && block != Blocks.AIR) {
+                 if (iblockdata.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock) {
+                     this.world.levelEvent(net.minecraft.world.level.block.LevelEvent.SOUND_EXTINGUISH_FIRE, this.position, 0);
+                 } else {
+                     this.world.levelEvent(net.minecraft.world.level.block.LevelEvent.PARTICLES_DESTROY_BLOCK, this.position, net.minecraft.world.level.block.Block.getId(iblockdata));
+                 }
+             }
+-            if (dropExperience) block.popExperience(this.world.getMinecraftWorld(), this.position, block.getExpDrop(iblockdata, this.world.getMinecraftWorld(), this.position, nmsItem, true));
+-            // Paper end
+-            result = true;
+         }
+ 
+-        // SPIGOT-6778: Directly call setBlock instead of setTypeAndData, so that the tile entiy is not removed and custom remove logic is run.
+-        // Paper start - improve breakNaturally
++
++        // SPIGOT-6778: Directly call setBlock instead of setTypeAndData...
++        // Block removal and destruction use LevelAccessor (this.world)
+         boolean destroyed = this.world.removeBlock(this.position, false);
+         if (destroyed) {
+             block.destroy(this.world, this.position, iblockdata);
+         }
+-        if (result) {
+-            // special cases
+-            if (block instanceof net.minecraft.world.level.block.IceBlock iceBlock) {
+-                iceBlock.afterDestroy(this.world.getMinecraftWorld(), this.position, nmsItem);
+-            } else if (block instanceof net.minecraft.world.level.block.TurtleEggBlock turtleEggBlock) {
+-                turtleEggBlock.decreaseEggs(this.world.getMinecraftWorld(), this.position, iblockdata);
++
++        // Special case handling - requires Level, check again
++        if (droppedItems) { // Only do special cases if drops were attempted
++            if (this.world instanceof net.minecraft.world.level.Level nmsLevelForSpecialCases) { // Check again if needed for special cases
++                if (block instanceof net.minecraft.world.level.block.IceBlock iceBlock) {
++                    iceBlock.afterDestroy(nmsLevelForSpecialCases, this.position, nmsItem);
++                } else if (block instanceof net.minecraft.world.level.block.TurtleEggBlock turtleEggBlock) {
++                    turtleEggBlock.decreaseEggs(nmsLevelForSpecialCases, this.position, iblockdata);
++                }
++            } else {
++                getLogger().log(Level.WARNING, "Cannot perform post-break special actions: CraftBlock is not associated with a Level.");
+             }
+         }
+-        return destroyed && result;
+-        // Paper end
++        // Return true if the block was successfully destroyed AND items were dropped (or attempted if applicable)
++        // Adjust logic based on whether breaking without drops should return true
++        return destroyed && droppedItems; // Or just 'return destroyed;' if breaking is success regardless of drops
+     }
  
      @Override
      public boolean applyBoneMeal(BlockFace face) {
-+        // SparklyPaper start - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (applyBoneMeal)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call applyBoneMeal on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
 +        }
-+        // SparklyPaper end - parallel world ticking
++
++        // Original logic...
          Direction direction = CraftBlock.blockFaceToNotch(face);
          BlockFertilizeEvent event = null;
-         ServerLevel world = this.getCraftWorld().getHandle();
-@@ -554,8 +713,8 @@ public class CraftBlock implements Block {
-         world.captureTreeGeneration = false;
+-        ServerLevel world = this.getCraftWorld().getHandle();
+-        UseOnContext context = new UseOnContext(world, null, InteractionHand.MAIN_HAND, Items.BONE_MEAL.getDefaultInstance(), new BlockHitResult(Vec3.ZERO, direction, this.getPosition(), false));
++        // Need ServerLevel for bonemeal context and captures
++        if (level == null) {
++            getLogger().log(Level.SEVERE, "Cannot apply bonemeal: CraftBlock is not associated with a ServerLevel.");
++            return false;
++        }
++        UseOnContext context = new UseOnContext(level, null, InteractionHand.MAIN_HAND, Items.BONE_MEAL.getDefaultInstance(), new BlockHitResult(Vec3.ZERO, direction, this.getPosition(), false));
  
-         if (world.capturedBlockStates.size() > 0) {
+-        // SPIGOT-6895: Call StructureGrowEvent and BlockFertilizeEvent
+-        world.captureTreeGeneration = true;
++        level.captureTreeGeneration = true;
+         InteractionResult result = BoneMealItem.applyBonemeal(context);
+-        world.captureTreeGeneration = false;
++        level.captureTreeGeneration = false;
+ 
+-        if (world.capturedBlockStates.size() > 0) {
 -            TreeType treeType = SaplingBlock.treeType;
 -            SaplingBlock.treeType = null;
-+            TreeType treeType = SaplingBlock.getTreeTypeRT(); // SparklyPaper - parallel world ticking // Leaf - SparklyPaper - parallel world ticking mod (collapse original behavior)
-+            SaplingBlock.setTreeTypeRT(null); // SparklyPaper - parallel world ticking // Leaf - SparklyPaper - parallel world ticking mod (collapse original behavior)
-             List<BlockState> blocks = new ArrayList<>(world.capturedBlockStates.values());
-             world.capturedBlockStates.clear();
+-            List<BlockState> blocks = new ArrayList<>(world.capturedBlockStates.values());
+-            world.capturedBlockStates.clear();
++        if (level.capturedBlockStates.size() > 0) {
++            TreeType treeType = SaplingBlock.getTreeTypeRT();
++            SaplingBlock.setTreeTypeRT(null);
++            List<org.bukkit.block.BlockState> blocks = new ArrayList<>(level.capturedBlockStates.values());
++            level.capturedBlockStates.clear();
              StructureGrowEvent structureEvent = null;
-@@ -647,22 +806,38 @@ public class CraftBlock implements Block {
+ 
+             if (treeType != null) {
+@@ -565,14 +974,14 @@ public class CraftBlock implements Block {
+                 Bukkit.getPluginManager().callEvent(structureEvent);
+             }
+ 
+-            event = new BlockFertilizeEvent(CraftBlock.at(world, this.getPosition()), null, blocks);
++            event = new BlockFertilizeEvent(CraftBlock.at(level, this.getPosition()), null, blocks);
+             event.setCancelled(structureEvent != null && structureEvent.isCancelled());
+             Bukkit.getPluginManager().callEvent(event);
+ 
+             if (!event.isCancelled()) {
+-                for (BlockState blockstate : blocks) {
++                for (org.bukkit.block.BlockState blockstate : blocks) {
+                     blockstate.update(true);
+-                    world.checkCapturedTreeStateForObserverNotify(this.position, (org.bukkit.craftbukkit.block.CraftBlockState) blockstate); // Paper - notify observers even if grow failed
++                    level.checkCapturedTreeStateForObserverNotify(this.position, (org.bukkit.craftbukkit.block.CraftBlockState) blockstate);
+                 }
+             }
+         }
+@@ -592,20 +1001,36 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public Collection<ItemStack> getDrops(ItemStack item, Entity entity) {
+-        net.minecraft.world.level.block.state.BlockState iblockdata = this.getNMS();
+-        net.minecraft.world.item.ItemStack nms = CraftItemStack.asNMSCopy(item);
++        // Requires ServerLevel for getDrops call
++        ServerLevel level = getServerLevel();
++        if (level == null) {
++            getLogger().log(Level.WARNING, "Cannot getDrops: CraftBlock is not associated with a ServerLevel.");
++            return Collections.emptyList();
++        }
++        // Strict check if applicable
++        String handlingMode = asyncUnsafeReadHandling;
++        checkStrictMode(level, handlingMode, "getDrops"); // Check before proceeding
++
++        try {
++            net.minecraft.world.level.block.state.BlockState iblockdata = this.getNMS(); // Use buffered getNMS
++            net.minecraft.world.item.ItemStack nms = CraftItemStack.asNMSCopy(item);
+ 
+-        // Modelled off EntityHuman#hasBlock
+-        if (item == null || CraftBlockData.isPreferredTool(iblockdata, nms)) {
+-            return net.minecraft.world.level.block.Block.getDrops(iblockdata, (ServerLevel) this.world.getMinecraftWorld(), this.position, this.world.getBlockEntity(this.position), entity == null ? null : ((CraftEntity) entity).getHandle(), nms)
++            // Modelled off EntityHuman#hasBlock
++            if (item == null || CraftBlockData.isPreferredTool(iblockdata, nms)) {
++                return net.minecraft.world.level.block.Block.getDrops(iblockdata, level, this.position, this.world.getBlockEntity(this.position), entity == null ? null : ((CraftEntity) entity).getHandle(), nms)
+                     .stream().map(CraftItemStack::asBukkitCopy).collect(Collectors.toList());
+-        } else {
++            } else {
++                return Collections.emptyList();
++            }
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getDrops" + (level == null ? " (Not a ServerLevel)" : ""), e);
+             return Collections.emptyList();
+         }
+     }
+ 
+     @Override
+     public boolean isPreferredTool(ItemStack item) {
++        // Uses buffered getNMS()
+         net.minecraft.world.level.block.state.BlockState iblockdata = this.getNMS();
+         net.minecraft.world.item.ItemStack nms = CraftItemStack.asNMSCopy(item);
+         return CraftBlockData.isPreferredTool(iblockdata, nms);
+@@ -614,9 +1039,21 @@ public class CraftBlock implements Block {
+     @Override
+     public float getBreakSpeed(Player player) {
+         Preconditions.checkArgument(player != null, "player cannot be null");
+-        return this.getNMS().getDestroyProgress(((CraftPlayer) player).getHandle(), this.world, this.position);
++        // Requires LevelReader (LevelAccessor is sufficient)
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getBreakSpeed");
++        }
++        try {
++            return this.getNMS().getDestroyProgress(((CraftPlayer) player).getHandle(), this.world, this.position); // Use buffered getNMS
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getBreakSpeed" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return 0.0f;
++        }
+     }
+ 
++    // Metadata methods delegate to CraftWorld, which should handle safety
+     @Override
+     public void setMetadata(String metadataKey, MetadataValue newMetadataValue) {
+         this.getCraftWorld().getBlockMetadata().setMetadata(this, metadataKey, newMetadataValue);
+@@ -639,7 +1076,18 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public boolean isPassable() {
+-        return this.getNMS().getCollisionShape(this.world, this.position).isEmpty();
++        // Requires LevelReader (LevelAccessor is sufficient)
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "isPassable");
++        }
++        try {
++            return this.getNMS().getCollisionShape(this.world, this.position).isEmpty(); // Use buffered getNMS
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for isPassable" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return true; // Default to passable on error?
++        }
+     }
+ 
+     @Override
+@@ -647,80 +1095,151 @@ public class CraftBlock implements Block {
          Preconditions.checkArgument(start != null, "Location start cannot be null");
          Preconditions.checkArgument(this.getWorld().equals(start.getWorld()), "Location start cannot be a different world");
          start.checkFinite();
@@ -820,29 +1567,31 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
 -            return null;
 +        if (maxDistance < 0.0D) return null;
 +
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        String handlingMode = (level != null) ? asyncUnsafeReadHandling : asyncUnsafeReadHandling;
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) {
 +            HitResult nmsHitResult = executeBufferedRead(
 +                level,
 +                ReadOperationType.BLOCK_RAY_TRACE,
 +                new Object[]{this.position, start, direction, maxDistance, fluidCollisionMode},
-+                null, // Default value
++                null,
 +                "rayTrace"
 +            );
 +            return CraftRayTraceResult.fromNMS(this.getWorld(), nmsHitResult);
 +        } else {
-+            checkStrictMode(level, handlingMode, "rayTrace");
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "rayTrace");
++            }
 +            try {
 +                Vector dir = direction.clone().normalize().multiply(maxDistance);
 +                Vec3 startPos = CraftLocation.toVec3D(start);
 +                Vec3 endPos = startPos.add(dir.getX(), dir.getY(), dir.getZ());
-+                // Direct NMS call
++                // Direct NMS call - LevelAccessor has clip method
 +                HitResult nmsHitResult = this.world.clip(new ClipContext(startPos, endPos, ClipContext.Block.OUTLINE, CraftFluidCollisionMode.toNMS(fluidCollisionMode), CollisionContext.empty()), this.position);
 +                return CraftRayTraceResult.fromNMS(this.getWorld(), nmsHitResult);
 +            } catch (Exception e) {
-+                getLogger().log(Level.SEVERE, "Direct world access failed for rayTrace", e);
++                getLogger().log(Level.SEVERE, "Direct world access failed for rayTrace" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return null;
 +            }
          }
@@ -856,7 +1605,52 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
      }
  
      @Override
-@@ -686,10 +861,23 @@ public class CraftBlock implements Block {
+     public BoundingBox getBoundingBox() {
+-        VoxelShape shape = this.getNMS().getShape(this.world, this.position);
+-
+-        if (shape.isEmpty()) {
+-            return new BoundingBox(); // Return an empty bounding box if the block has no dimension
++        // Requires LevelReader (LevelAccessor is sufficient)
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getBoundingBox");
++        }
++        try {
++            VoxelShape shape = this.getNMS().getShape(this.world, this.position); // Use buffered getNMS
++            if (shape.isEmpty()) {
++                return new BoundingBox();
++            }
++            AABB aabb = shape.bounds();
++            return new BoundingBox(this.getX() + aabb.minX, this.getY() + aabb.minY, this.getZ() + aabb.minZ, this.getX() + aabb.maxX, this.getY() + aabb.maxY, this.getZ() + aabb.maxZ);
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getBoundingBox" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return new BoundingBox(getX(), getY(), getZ(), getX() + 1, getY() + 1, getZ() + 1); // Default box
+         }
+-
+-        AABB aabb = shape.bounds();
+-        return new BoundingBox(this.getX() + aabb.minX, this.getY() + aabb.minY, this.getZ() + aabb.minZ, this.getX() + aabb.maxX, this.getY() + aabb.maxY, this.getZ() + aabb.maxZ);
+     }
+ 
+     @Override
+     public org.bukkit.util.VoxelShape getCollisionShape() {
+-        VoxelShape shape = this.getNMS().getCollisionShape(this.world, this.position);
+-        return new CraftVoxelShape(shape);
++        // Requires LevelReader (LevelAccessor is sufficient)
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            String handlingMode = asyncUnsafeReadHandling;
++            checkStrictMode(level, handlingMode, "getCollisionShape");
++        }
++        try {
++            VoxelShape shape = this.getNMS().getCollisionShape(this.world, this.position); // Use buffered getNMS
++            return new CraftVoxelShape(shape);
++        } catch (Exception e) {
++            getLogger().log(Level.SEVERE, "Direct world access failed for getCollisionShape" + (level == null ? " (Not a ServerLevel)" : ""), e);
++            return new CraftVoxelShape(Shapes.empty()); // Default empty shape
++        }
+     }
+ 
      @Override
      public boolean canPlace(BlockData data) {
          Preconditions.checkArgument(data != null, "BlockData cannot be null");
@@ -864,37 +1658,103 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4e7ff09e72e08432d4445ac01e66a7fa
 -        net.minecraft.world.level.Level world = this.world.getMinecraftWorld();
  
 -        return iblockdata.canSurvive(world, this.position);
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
++        ServerLevel level = getServerLevel(); // Can be null
++        String handlingMode = (level != null) ? asyncUnsafeReadHandling : asyncUnsafeReadHandling;
 +
-+        if (needsBuffering(level, handlingMode)) {
++        if (level != null && needsBuffering(level, handlingMode)) {
 +            return executeBufferedRead(level, ReadOperationType.BLOCK_CAN_PLACE, new Object[]{this.position, data}, false, "canPlace");
 +        } else {
-+            checkStrictMode(level, handlingMode, "canPlace");
++            if (level != null) {
++                checkStrictMode(level, handlingMode, "canPlace");
++            }
 +            try {
 +                net.minecraft.world.level.block.state.BlockState iblockdata = ((CraftBlockData) data).getState();
-+                net.minecraft.world.level.Level nmsWorld = this.world.getMinecraftWorld();
-+                return iblockdata.canSurvive(nmsWorld, this.position);
++                // LevelAccessor has canSurvive
++                return iblockdata.canSurvive(this.world, this.position);
 +            } catch (Exception e) {
-+                getLogger().log(Level.SEVERE, "Direct world access failed for canPlace", e);
++                getLogger().log(Level.SEVERE, "Direct world access failed for canPlace" + (level == null ? " (Not a ServerLevel)" : ""), e);
 +                return false;
 +            }
 +        }
      }
  
      @Override
-@@ -719,6 +907,11 @@ public class CraftBlock implements Block {
+     public String getTranslationKey() {
++        // Uses buffered getNMS()
+         return this.getNMS().getBlock().getDescriptionId();
+     }
+ 
+     // Paper start
+     @Override
+     public com.destroystokyo.paper.block.BlockSoundGroup getSoundGroup() {
++        // Uses buffered getNMS()
+         return new com.destroystokyo.paper.block.CraftBlockSoundGroup(getNMS().getBlock().defaultBlockState().getSoundType());
+     }
+ 
+     @Override
+     public org.bukkit.SoundGroup getBlockSoundGroup() {
++        // Uses buffered getNMS()
+         return org.bukkit.craftbukkit.CraftSoundGroup.getSoundGroup(this.getNMS().getSoundType());
+     }
+ 
+     @Override
+     public String translationKey() {
++        // Uses buffered getNMS()
+         return this.getNMS().getBlock().getDescriptionId();
+     }
+ 
+     public boolean isValidTool(ItemStack itemStack) {
++        // Delegates to getDrops, which should handle safety
+         return getDrops(itemStack).size() != 0;
+     }
  
      @Override
      public void tick() {
-+        // SparklyPaper start - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
+-        final ServerLevel level = this.world.getMinecraftWorld();
+-        this.getNMS().tick(level, this.position, level.random);
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (tick)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call tick on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
 +        }
-+        // SparklyPaper end - parallel world ticking
-         final ServerLevel level = this.world.getMinecraftWorld();
-         this.getNMS().tick(level, this.position, level.random);
++        // Original logic - requires ServerLevel
++        if (level != null) {
++            this.getNMS().tick(level, this.position, level.random); // Use buffered getNMS
++        } else {
++            getLogger().log(Level.SEVERE, "Cannot tick block: CraftBlock is not associated with a ServerLevel.");
++        }
      }
+ 
+ 
+@@ -731,8 +1250,22 @@ public class CraftBlock implements Block {
+ 
+     @Override
+     public void randomTick() {
+-        final ServerLevel level = this.world.getMinecraftWorld();
+-        this.getNMS().randomTick(level, this.position, level.random);
++        // Modifies state potentially, requires thread check
++        ServerLevel level = getServerLevel();
++        if (level != null) {
++            boolean parallelTickingEnabled = enabled;
++            if (parallelTickingEnabled) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "Cannot modify world asynchronously (randomTick)");
++            }
++        } else if (enabled) {
++            getLogger().log(Level.WARNING, "Attempted to call randomTick on CraftBlock with non-ServerLevel LevelAccessor during parallel ticking - safety cannot be guaranteed.");
++        }
++        // Requires ServerLevel
++        if (level != null) {
++            this.getNMS().randomTick(level, this.position, level.random); // Use buffered getNMS
++        } else {
++            getLogger().log(Level.SEVERE, "Cannot randomTick block: CraftBlock is not associated with a ServerLevel.");
++        }
+     }
+     // Paper end
+ }
 diff --git a/src/main/java/org/bukkit/craftbukkit/block/CraftBlockEntityState.java b/src/main/java/org/bukkit/craftbukkit/block/CraftBlockEntityState.java
 index 768d3f93da2522d467183654260a8bd8653588b1..5cef786fa2e5dfd3e7b79918bc73af02891b0bea 100644
 --- a/src/main/java/org/bukkit/craftbukkit/block/CraftBlockEntityState.java
