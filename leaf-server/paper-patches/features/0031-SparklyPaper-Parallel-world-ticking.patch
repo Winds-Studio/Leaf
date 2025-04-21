@@ -511,7 +511,7 @@ index af33cab59932f4ec135caf94dc5828930833daf6..ec6001e376e3e8036d05ee6265cf1159
      }
      // Paper end
 diff --git a/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java b/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
-index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4daf13623 100644
+index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4057f335bc518fba635c8af8b0defd3acb91c43b 100644
 --- a/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
 +++ b/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
 @@ -5,9 +5,13 @@ import java.util.ArrayList;
@@ -551,22 +551,19 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
  
  public class CraftBlock implements Block {
      private final net.minecraft.world.level.LevelAccessor world;
-@@ -74,15 +87,84 @@ public class CraftBlock implements Block {
+@@ -74,15 +87,80 @@ public class CraftBlock implements Block {
          return new CraftBlock(world, position);
      }
  
-+    // PWT: Helper to safely get ServerLevel or null
 +    private ServerLevel getServerLevel() {
 +        return (this.world instanceof ServerLevel serverLevel) ? serverLevel : null;
 +    }
 +
-+    // PWT: Helper to check if buffering is needed (requires ServerLevel)
 +    private boolean needsBuffering(ServerLevel level, String handlingMode) {
 +        // No ServerLevel means no queue, can't buffer
 +        return level != null && enabled && handlingMode.equals("BUFFERED") && !ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(level);
 +    }
 +
-+    // PWT: Helper for strict mode check (requires ServerLevel)
 +    private void checkStrictMode(ServerLevel level, String handlingMode, String methodName) {
 +        // Only check if PWT enabled, mode is STRICT, and we have a ServerLevel
 +        if (level != null && enabled && handlingMode.equals("STRICT")) {
@@ -574,7 +571,6 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
 +        }
 +    }
 +
-+    // PWT: Helper to execute buffered read (requires ServerLevel)
 +    private <T> T executeBufferedRead(ServerLevel level, ReadOperationType type, Object[] params, T defaultValue, String methodName) {
 +        if (level == null) { // Should not happen if called correctly after needsBuffering
 +            getLogger().log(Level.SEVERE, "PWT: executeBufferedRead called with null ServerLevel for " + methodName);
@@ -640,32 +636,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
  
      public BlockPos getPosition() {
          return this.position;
-@@ -94,20 +176,24 @@ public class CraftBlock implements Block {
- 
-     @Override
-     public World getWorld() {
-+        // Assumed safe - returns Bukkit wrapper, doesn't access NMS state directly here
-         return this.world.getMinecraftWorld().getWorld();
-     }
- 
-     public CraftWorld getCraftWorld() {
-+        // Assumed safe
-         return (CraftWorld) this.getWorld();
-     }
- 
-     @Override
-     public Location getLocation() {
-+        // Assumed safe - uses cached position and safe getWorld()
-         return CraftLocation.toBukkit(this.position, this.getWorld());
-     }
- 
-     @Override
-     public Location getLocation(Location loc) {
-+        // Assumed safe - uses cached position and safe getWorld()
-         if (loc != null) {
-             loc.setWorld(this.getWorld());
-             loc.setX(this.position.getX());
-@@ -116,38 +202,44 @@ public class CraftBlock implements Block {
+@@ -116,7 +194,6 @@ public class CraftBlock implements Block {
              loc.setYaw(0);
              loc.setPitch(0);
          }
@@ -673,32 +644,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
          return loc;
      }
  
-     public BlockVector getVector() {
-+        // Assumed safe - uses cached position
-         return new BlockVector(this.getX(), this.getY(), this.getZ());
-     }
- 
-     @Override
-     public int getX() {
-+        // Assumed safe - immutable position
-         return this.position.getX();
-     }
- 
-     @Override
-     public int getY() {
-+        // Assumed safe - immutable position
-         return this.position.getY();
-     }
- 
-     @Override
-     public int getZ() {
-+        // Assumed safe - immutable position
-         return this.position.getZ();
-     }
- 
-     @Override
-     public Chunk getChunk() {
-+        // Delegates to World.getChunkAt, safety depends on that implementation
+@@ -144,10 +221,12 @@ public class CraftBlock implements Block {
          return this.getWorld().getChunkAt(this);
      }
  
@@ -711,43 +657,39 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      public void setData(final byte data, boolean applyPhysics) {
          if (applyPhysics) {
              this.setData(data, 3);
-@@ -156,18 +248,33 @@ public class CraftBlock implements Block {
-         }
+@@ -157,12 +236,18 @@ public class CraftBlock implements Block {
      }
  
-+    // PWT: Internal method for setting data with thread check
      private void setData(final byte data, int flag) {
--        this.world.setBlock(this.position, CraftMagicNumbers.getBlock(this.getType(), data), flag);
-+        ServerLevel level = getServerLevel();
-+        if (enabled) { // Only check/warn if PWT is enabled
-+            if (level != null) {
-+                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "PWT: Cannot modify world asynchronously (setData)");
-+            } else {
-+                getLogger().log(Level.WARNING, "PWT: Attempted setData on non-ServerLevel - safety not guaranteed.");
-+            }
++        // SparklyPaper start - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
 +        }
-+
-+        // Original logic (getType might need buffering, but it uses getNMS which handles it)
-+        Material currentType = this.getType();
-+        this.world.setBlock(this.position, CraftMagicNumbers.getBlock(currentType, data), flag);
++        // SparklyPaper end - parallel world ticking
+         this.world.setBlock(this.position, CraftMagicNumbers.getBlock(this.getType(), data), flag);
      }
  
      @Override
 +    @Deprecated // Magic value
      public byte getData() {
 -        net.minecraft.world.level.block.state.BlockState blockData = this.world.getBlockState(this.position);
-+        // Uses safe getNMS()
 +        net.minecraft.world.level.block.state.BlockState blockData = this.getNMS();
          return CraftMagicNumbers.toLegacyData(blockData);
      }
  
-     @Override
-     public BlockData getBlockData() {
-+        // Uses safe getNMS()
+@@ -171,6 +256,11 @@ public class CraftBlock implements Block {
          return CraftBlockData.fromData(this.getNMS());
      }
  
-@@ -179,6 +286,7 @@ public class CraftBlock implements Block {
++    @Override
++    public void setBlockData(BlockData data) {
++        this.setBlockData(data, true);
++    }
++
+     @Override
+     public void setType(final Material type) {
+         this.setType(type, true);
+@@ -179,14 +269,10 @@ public class CraftBlock implements Block {
      @Override
      public void setType(Material type, boolean applyPhysics) {
          Preconditions.checkArgument(type != null, "Material cannot be null");
@@ -755,72 +697,47 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
          this.setBlockData(type.createBlockData(), applyPhysics);
      }
  
-@@ -190,58 +298,101 @@ public class CraftBlock implements Block {
+-    @Override
+-    public void setBlockData(BlockData data) {
+-        this.setBlockData(data, true);
+-    }
+-
      @Override
      public void setBlockData(BlockData data, boolean applyPhysics) {
          Preconditions.checkArgument(data != null, "BlockData cannot be null");
-+        // Delegates to setTypeAndData (which has checks)
-         this.setTypeAndData(((CraftBlockData) data).getState(), applyPhysics);
+@@ -198,6 +284,12 @@ public class CraftBlock implements Block {
      }
  
-+    // PWT: Internal helper, delegates to static method which has the check
-     boolean setTypeAndData(final net.minecraft.world.level.block.state.BlockState blockData, final boolean applyPhysics) {
-+        // Uses safe getNMS() to get old state
-         return CraftBlock.setTypeAndData(this.world, this.position, this.getNMS(), blockData, applyPhysics);
-     }
- 
-+    // PWT: Static helper with thread check for modifications
      public static boolean setTypeAndData(LevelAccessor world, BlockPos position, net.minecraft.world.level.block.state.BlockState old, net.minecraft.world.level.block.state.BlockState blockData, boolean applyPhysics) {
--        // SPIGOT-611: need to do this to prevent glitchiness. Easier to handle this here (like /setblock) than to fix weirdness in tile entity cleanup
--        if (old.hasBlockEntity() && blockData.getBlock() != old.getBlock()) { // SPIGOT-3725 remove old tile entity if block changes
--            // SPIGOT-4612: faster - just clear tile
-+        ServerLevel level = (world instanceof ServerLevel) ? (ServerLevel) world : null;
-+        if (enabled) { // Only check/warn if PWT is enabled
-+            if (level != null) {
-+                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "PWT: Cannot modify world asynchronously (setTypeAndData)");
-+            } else {
-+                getLogger().log(Level.WARNING, "PWT: Attempted setTypeAndData on non-ServerLevel - safety not guaranteed.");
-+            }
++        // SparklyPaper start - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
 +        }
++        // SparklyPaper end - parallel world ticking
 +
-+        // Original logic...
-+        if (old.hasBlockEntity() && blockData.getBlock() != old.getBlock()) {
-             if (world instanceof net.minecraft.world.level.Level) {
-                 ((net.minecraft.world.level.Level) world).removeBlockEntity(position);
-             } else {
-+                // Fallback for generic LevelAccessor - might not be sufficient?
-                 world.setBlock(position, Blocks.AIR.defaultBlockState(), 0);
-             }
-         }
- 
--        if (applyPhysics) {
--            return world.setBlock(position, blockData, 3);
--        } else {
--            boolean success = world.setBlock(position, blockData, 2 | 16 | 1024); // NOTIFY | NO_OBSERVER | NO_PLACE (custom)
--            if (success && world instanceof net.minecraft.world.level.Level) {
--                world.getMinecraftWorld().sendBlockUpdated(
+         // SPIGOT-611: need to do this to prevent glitchiness. Easier to handle this here (like /setblock) than to fix weirdness in tile entity cleanup
+         if (old.hasBlockEntity() && blockData.getBlock() != old.getBlock()) { // SPIGOT-3725 remove old tile entity if block changes
+             // SPIGOT-4612: faster - just clear tile
+@@ -214,10 +306,10 @@ public class CraftBlock implements Block {
+             boolean success = world.setBlock(position, blockData, 2 | 16 | 1024); // NOTIFY | NO_OBSERVER | NO_PLACE (custom)
+             if (success && world instanceof net.minecraft.world.level.Level) {
+                 world.getMinecraftWorld().sendBlockUpdated(
 -                        position,
 -                        old,
 -                        blockData,
 -                        3
--                );
--            }
--            return success;
-+        boolean success;
-+        int flags = applyPhysics ? 3 : (2 | 16 | 1024); // NOTIFY_CLIENTS | NO_OBSERVER | NO_PLACE (custom)
-+        success = world.setBlock(position, blockData, flags);
-+
-+        // Send update packet only if successful and it's a ServerLevel (which can send packets)
-+        if (success && !applyPhysics && level != null) { // Check level != null here
-+            level.sendBlockUpdated(position, old, blockData, 3); // Use flag 3 for update packet
-         }
-+        return success;
-     }
++                    position,
++                    old,
++                    blockData,
++                    3
+                 );
+             }
+             return success;
+@@ -226,22 +318,56 @@ public class CraftBlock implements Block {
  
      @Override
      public Material getType() {
 -        return this.world.getBlockState(this.position).getBukkitMaterial(); // Paper - optimise getType calls
-+        // Uses safe getNMS()
 +        return this.getNMS().getBukkitMaterial();
      }
  
@@ -877,19 +794,9 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      }
  
      public Block getFace(final BlockFace face) {
-@@ -254,6 +405,7 @@ public class CraftBlock implements Block {
- 
-     @Override
-     public Block getRelative(final int modX, final int modY, final int modZ) {
-+        // Delegates to World.getBlockAt, safety depends on that implementation
-         return this.getWorld().getBlockAt(this.getX() + modX, this.getY() + modY, this.getZ() + modZ);
-     }
- 
-@@ -269,172 +421,299 @@ public class CraftBlock implements Block {
- 
+@@ -270,91 +396,112 @@ public class CraftBlock implements Block {
      @Override
      public BlockFace getFace(final Block block) {
-+        // Safe calculation using immutable positions
          BlockFace[] values = BlockFace.values();
 -
          for (BlockFace face : values) {
@@ -907,11 +814,9 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      @Override
      public String toString() {
 -        return "CraftBlock{pos=" + this.position + ",type=" + this.getType() + ",data=" + this.getNMS() + ",fluid=" + this.world.getFluidState(this.position) + '}';
-+        // Uses safe getNMS() and getNMSFluid()
 +        return "CraftBlock{pos=" + this.position + ",type=" + this.getType() + ",data=" + this.getNMS() + ",fluid=" + this.getNMSFluid() + '}';
      }
  
-+    // Static helper, safe
      public static BlockFace notchToBlockFace(Direction notch) {
 -        if (notch == null) {
 -            return BlockFace.SELF;
@@ -932,8 +837,6 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
 -            default:
 -                return BlockFace.SELF;
 -        }
--    }
--
 +        if (notch == null) return BlockFace.SELF;
 +        return switch (notch) {
 +            case DOWN -> BlockFace.DOWN;
@@ -944,9 +847,8 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
 +            case EAST -> BlockFace.EAST;
 +            default -> BlockFace.SELF;
 +        };
-+    }
-+
-+    // Static helper, safe
+     }
+ 
      public static Direction blockFaceToNotch(BlockFace face) {
 -        if (face == null) {
 -            return null;
@@ -982,14 +884,12 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      @Override
      public BlockState getState() {
 -        return CraftBlockStates.getBlockState(this, org.dreeam.leaf.config.modules.opt.TileEntitySnapshotCreation.enabled); // Leaf - EMC - Don't use snapshots for acquiring blockstate
-+        // Delegates to CraftBlockStates, which handles snapshots and safety
 +        return CraftBlockStates.getBlockState(this, !org.dreeam.leaf.config.modules.opt.TileEntitySnapshotCreation.enabled); // Leaf - EMC - Don't use snapshots for acquiring blockstate
      }
  
 -    // Paper start
      @Override
      public BlockState getState(boolean useSnapshot) {
-+        // Delegates to CraftBlockStates
          return CraftBlockStates.getBlockState(this, useSnapshot);
      }
 -    // Paper end
@@ -1048,41 +948,15 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
  
      @Override
      public void setBiome(Biome bio) {
-+        // PWT: Write operation check
-+        ServerLevel level = getServerLevel();
-+        if (enabled) {
-+            if (level != null) {
-+                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(level, position, "PWT: Cannot modify world asynchronously (setBiome)");
-+            } else {
-+                getLogger().log(Level.WARNING, "PWT: Attempted setBiome on non-ServerLevel - safety not guaranteed.");
-+            }
++        // SparklyPaper start - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && world instanceof ServerLevel serverWorld) { // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverWorld, position, "Cannot modify world asynchronously");
 +        }
-+        // Original logic (delegates to World)
++        // SparklyPaper end - parallel world ticking
          this.getWorld().setBiome(this.getX(), this.getY(), this.getZ(), bio);
      }
  
-     @Override
-     public double getTemperature() {
--        return this.world.getBiome(this.position).value().getTemperature(this.position, this.world.getSeaLevel());
-+        ServerLevel level = getServerLevel();
-+        String handlingMode = asyncUnsafeReadHandling;
-+        checkStrictMode(level, handlingMode, "getTemperature"); // Strict check if applicable
-+
-+        try {
-+            // Requires LevelAccessor.getBiome, which should be safe if implemented correctly
-+            // Also needs getSeaLevel, which should be safe on LevelAccessor
-+            return this.world.getBiome(this.position).value().getTemperature(this.position, this.world.getSeaLevel());
-+        } catch (Exception e) {
-+            getLogger().log(Level.SEVERE, "PWT: Direct access failed for getTemperature" + (level == null ? " (Not a ServerLevel)" : ""), e);
-+            return 0.5; // Default temperature
-+        }
-     }
- 
-     @Override
-     public double getHumidity() {
-+        // Delegates to World.getHumidity, assumed safe
-         return this.getWorld().getHumidity(this.getX(), this.getY(), this.getZ());
-     }
+@@ -370,23 +517,52 @@ public class CraftBlock implements Block {
  
      @Override
      public boolean isBlockPowered() {
@@ -1139,18 +1013,12 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
 -            return false;
 -        }
 -
-+        // Safe comparison
 +        if (o == this) return true;
 +        if (!(o instanceof CraftBlock other)) return false;
-+        // Uses safe getWorld() and immutable position
          return this.position.equals(other.position) && this.getWorld().equals(other.getWorld());
      }
  
-     @Override
-     public int hashCode() {
-+        // Safe calculation
-         return this.position.hashCode() ^ this.getWorld().hashCode();
-     }
+@@ -397,44 +573,94 @@ public class CraftBlock implements Block {
  
      @Override
      public boolean isBlockFacePowered(BlockFace face) {
@@ -1160,7 +1028,6 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
 +        checkStrictMode(level, handlingMode, "isBlockFacePowered"); // Strict check if applicable
 +
 +        try {
-+            // Requires Level.hasSignal
 +            if (this.world instanceof net.minecraft.world.level.Level nmsLevel) {
 +                return nmsLevel.hasSignal(this.position, CraftBlock.blockFaceToNotch(face));
 +            }
@@ -1273,7 +1140,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
          }
      }
  
-@@ -453,10 +732,9 @@ public class CraftBlock implements Block {
+@@ -453,10 +679,9 @@ public class CraftBlock implements Block {
          return this.getNMS().liquid();
      }
  
@@ -1285,7 +1152,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      }
      @Override
      public boolean isBurnable() {
-@@ -475,111 +753,181 @@ public class CraftBlock implements Block {
+@@ -475,111 +700,181 @@ public class CraftBlock implements Block {
      public boolean isCollidable() {
          return getNMS().getBlock().hasCollision;
      }
@@ -1511,7 +1378,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      @Override
      public Collection<ItemStack> getDrops() {
          return this.getDrops(null);
-@@ -592,31 +940,67 @@ public class CraftBlock implements Block {
+@@ -592,31 +887,67 @@ public class CraftBlock implements Block {
  
      @Override
      public Collection<ItemStack> getDrops(ItemStack item, Entity entity) {
@@ -1589,7 +1456,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      @Override
      public void setMetadata(String metadataKey, MetadataValue newMetadataValue) {
          this.getCraftWorld().getBlockMetadata().setMetadata(this, metadataKey, newMetadataValue);
-@@ -639,57 +1023,136 @@ public class CraftBlock implements Block {
+@@ -639,57 +970,136 @@ public class CraftBlock implements Block {
  
      @Override
      public boolean isPassable() {
@@ -1752,7 +1619,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      }
  
      @Override
-@@ -697,10 +1160,9 @@ public class CraftBlock implements Block {
+@@ -697,10 +1107,9 @@ public class CraftBlock implements Block {
          return this.getNMS().getBlock().getDescriptionId();
      }
  
@@ -1765,7 +1632,7 @@ index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..a2c1e3e61e4b65a6260bfbd89b4bb1a4
      }
  
      @Override
-@@ -713,26 +1175,66 @@ public class CraftBlock implements Block {
+@@ -713,26 +1122,66 @@ public class CraftBlock implements Block {
          return this.getNMS().getBlock().getDescriptionId();
      }
  
