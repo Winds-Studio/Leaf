@@ -73,7 +73,7 @@ index 075fcbcde23b5bb7b27ff622e8d188c3a2583973..e5aa7c542b1e9c9362aa1feeeebef459
  
      // Paper start - Folia schedulers
 diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81d008fd3b 100644
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..4c33bebbe34aa329c21fb7ba730c2c8aac14ddb2 100644
 --- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 +++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 @@ -17,7 +17,21 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
@@ -99,18 +99,12 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81
  
      public NearestAttackableTargetGoal(Mob mob, Class<T> targetType, boolean mustSee) {
          this(mob, targetType, 10, mustSee, false, null);
-@@ -36,19 +50,45 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -36,13 +50,18 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
      ) {
          super(mob, mustSee, mustReach);
          this.targetType = targetType;
 -        this.randomInterval = reducedTickDelay(interval);
-+        // Leaf start - update every tick
-+        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            this.randomInterval = interval;
-+        } else {
-+            this.randomInterval = reducedTickDelay(interval);
-+        }
-+        // Leaf end - update every tick
++        this.randomInterval = adjustedTickDelay(interval); // Leaf - update every tick
          this.setFlags(EnumSet.of(Goal.Flag.TARGET));
 -        this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
 +        this.selector = selector; // Leaf
@@ -119,44 +113,54 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81
      @Override
      public boolean canUse() {
 +        // Leaf start - Async target finding
-+        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            LivingEntity t = pendingTarget.getAcquire();
-+            if (t != null) {
-+                pendingTarget.setRelease(null);
-+                ServerLevel serverLevel = getServerLevel(this.mob);
-+                if (serverLevel != null && t.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, t)) {
-+                    this.target = t;
-+                }
-+                return true;
-+            }
++        if (loadPendingTarget()) {
++            return true;
 +        }
++        // Leaf end - Async target finding
          if (this.randomInterval > 0 && this.mob.getRandom().nextInt(this.randomInterval) != 0) {
              return false;
-+        } else if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            this.findTargetAsync();
-+            ServerLevel serverLevel = getServerLevel(this.mob);
-+            if (this.target != null && !(serverLevel != null && this.target.isAlive() && this.getTargetConditions().test(serverLevel, this.mob, this.target))) {
-+                this.target = null;
-+            }
-+            return false;
          } else {
-             this.findTarget();
-             return this.target != null;
-         }
-+        // Leaf end - Async target finding
+@@ -55,8 +74,32 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         return this.mob.getBoundingBox().inflate(targetDistance, targetDistance, targetDistance);
      }
  
-     protected AABB getTargetSearchArea(double targetDistance) {
-@@ -71,6 +111,176 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
-         }
-     }
- 
-+    // Leaf start - find target async
-+    protected void findTargetAsync() {
-+        if (isSearching.getAcquire()) {
++    // Leaf start - Async target finding
++    protected boolean loadPendingTarget() {
++        if (!org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            return false;
++        }
++        LivingEntity t = pendingTarget.getAndSet(null);
++        ServerLevel serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || !this.getTargetConditions().test(serverLevel, this.mob, t)) {
++            return false;
++        }
++        this.target = t;
++        return true;
++    }
++
+     protected void findTarget() {
+         ServerLevel serverLevel = getServerLevel(this.mob);
++
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.findTargetAsync();
++            if (serverLevel == null || !this.target.isAlive() || !this.getTargetConditions().test(serverLevel, this.mob, this.target)) {
++                this.target = null;
++                return;
++            }
 +            return;
 +        }
-+        isSearching.setRelease(true);
++
+         if (this.targetType != Player.class && this.targetType != ServerPlayer.class) {
+             this.target = serverLevel.getNearestEntity(
+                 this.mob.level().getEntitiesOfClass(this.targetType, this.getTargetSearchArea(this.getFollowDistance()), entity -> true),
+@@ -71,6 +114,174 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         }
+     }
+ 
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
 +
 +        // Capture mutable state to avoid race conditions
 +        final Mob mob = this.mob;
@@ -208,7 +212,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81
 +                    LOGGER.warn("Error finding entities in async target finder", e);
 +                }
 +            } catch (Exception e) {
-+                LOGGER.warn("Error during async target finding", e);
++                LOGGER.warn("Exception during async target finding", e);
 +            } finally {
 +                isSearching.setRelease(false);
 +            }
@@ -309,22 +313,22 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81
 +                } catch (IndexOutOfBoundsException e) {
 +                    break;
 +                } catch (Exception e) {
-+                    System.err.println("Error processing player in findNearestPlayerSafely: " + e.getMessage());
++                    LOGGER.warn("Error processing player in findNearestPlayerSafely", e);
 +                }
 +            }
 +
 +            return closest;
 +        } catch (Exception e) {
-+            System.err.println("Error in findNearestPlayerSafely: " + e.getMessage());
++            LOGGER.warn("Exception in findNearestPlayerSafely", e);
 +            return null;
 +        }
 +    }
-+    // Leaf end - find target async
++    // Leaf end - Async target finding
 +
      @Override
      public void start() {
          this.mob.setTarget(this.target, this.target instanceof ServerPlayer ? org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_PLAYER : org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_ENTITY, true); // CraftBukkit - reason
-@@ -81,7 +291,16 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -81,7 +292,16 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          this.target = target;
      }
  
@@ -342,6 +346,44 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..1320d4af037dd0af7b8003372a53df81
 +        return org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled;
      }
 +    // Leaf end - update every tick
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
+index 4604a603c4ddd0a9242e859aaa5a511c2d4c4f84..e3444acd0052f57da56b065fbbc6d557201815db 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
+@@ -10,7 +10,7 @@ public class NearestHealableRaiderTargetGoal<T extends LivingEntity> extends Nea
+     private int cooldown = 0;
+ 
+     public NearestHealableRaiderTargetGoal(Raider raider, Class<T> targetType, boolean mustSee, @Nullable TargetingConditions.Selector selector) {
+-        super(raider, targetType, 500, mustSee, false, selector);
++        super(raider, targetType, 100, mustSee, false, selector); // Leaf 500 -> 100 seem doesn't used before
+     }
+ 
+     public int getCooldown() {
+@@ -23,6 +23,15 @@ public class NearestHealableRaiderTargetGoal<T extends LivingEntity> extends Nea
+ 
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async target finding
++        if (loadPendingTarget()) {
++            return ((Raider) this.mob).hasActiveRaid();
++        }
++        // 5 sec
++        if (this.randomInterval > 0 && this.mob.getRandom().nextInt(this.randomInterval) != 0) {
++            return false;
++        }
++        // Leaf end - Async target finding
+         if (this.cooldown > 0 || !this.mob.getRandom().nextBoolean()) {
+             return false;
+         } else if (!((Raider)this.mob).hasActiveRaid()) {
+@@ -35,7 +44,7 @@ public class NearestHealableRaiderTargetGoal<T extends LivingEntity> extends Nea
+ 
+     @Override
+     public void start() {
+-        this.cooldown = reducedTickDelay(200);
++        this.cooldown = adjustedTickDelay(200); // Leaf - update every tick
+         super.start();
+     }
  }
 diff --git a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
 index abf57494950f55bbd75f335f26736cb9e703c197..683722fbd07fcae9cdd72928ed25fd084202b57e 100644
