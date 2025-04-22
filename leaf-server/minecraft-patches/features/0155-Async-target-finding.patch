@@ -21,6 +21,28 @@ index 24926aa7ed5c78b235659daf18b224b14beb744c..64d5cebd488892c93f07b938ce8dc3e9
      }
  
      public String getLocalIp() {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 90bdcd168ad5b1a940f81b191bd59a34d3a33070..4abc090c2ab680fbe0523b011090383449c6dc50 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -177,7 +177,16 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private static final int EMPTY_TIME_NO_TICK = 300;
+     private static final int MAX_SCHEDULED_TICKS_PER_TICK = 65536;
+-    final List<ServerPlayer> players = Lists.newArrayList();
++    // Leaf start - Async target finding
++    final List<ServerPlayer> players;
++    {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.players = Lists.newCopyOnWriteArrayList();
++        } else {
++            this.players = Lists.newArrayList();
++        }
++    }
++    // Leaf end - Async target finding
+     public final ServerChunkCache chunkSource;
+     private final MinecraftServer server;
+     public final net.minecraft.world.level.storage.PrimaryLevelData serverLevelData; // CraftBukkit - type
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
 index 075fcbcde23b5bb7b27ff622e8d188c3a2583973..e5aa7c542b1e9c9362aa1feeeebef45919feac70 100644
 --- a/net/minecraft/world/entity/Entity.java
@@ -160,7 +182,7 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..d7361d2f0a777f745133c3687637ba6a
  
      // Paper start - Perf: optimize goal types
 diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c245fe35d92 100644
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..16e2b891b20fc75184c626a50416673898fc3c0d 100644
 --- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 +++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 @@ -11,13 +11,28 @@ import net.minecraft.world.entity.ai.targeting.TargetingConditions;
@@ -213,13 +235,17 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
          if (this.randomInterval > 0 && this.mob.getRandom().nextInt(this.randomInterval) != 0) {
              return false;
          } else {
-@@ -55,8 +76,37 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -55,8 +76,38 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          return this.mob.getBoundingBox().inflate(targetDistance, targetDistance, targetDistance);
      }
  
 +    // Leaf start - Async target finding
 +    @Override
 +    public boolean poll() {
++        if (this.readyNow) {
++            this.readyNow = false;
++            LOGGER.warn("NearestAttackableTargetGoal#findTarget call twice");
++        }
 +        LivingEntity t = pendingTarget.getAndSet(null);
 +        if (t == null) {
 +            return false;
@@ -229,9 +255,6 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
 +            return false;
 +        }
 +        this.target = t;
-+        if (this.readyNow) {
-+            LOGGER.error("findTarget call twice");
-+        }
 +        this.readyNow = true;
 +        return true;
 +    }
@@ -251,7 +274,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
          if (this.targetType != Player.class && this.targetType != ServerPlayer.class) {
              this.target = serverLevel.getNearestEntity(
                  this.mob.level().getEntitiesOfClass(this.targetType, this.getTargetSearchArea(this.getFollowDistance()), entity -> true),
-@@ -71,6 +121,174 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -71,6 +122,156 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          }
      }
  
@@ -288,26 +311,22 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
 +                    return;
 +                }
 +
-+                try {
-+                    if (targetType != Player.class && targetType != ServerPlayer.class) {
-+                        java.util.List<T> entities;
-+                        try {
-+                            entities = mob.level().getEntitiesOfClass(targetType, targetSearch, entity -> entity != null && entity != mob && !entity.isRemoved() && entity.isAlive());
-+                        } catch (Exception e) {
-+                            LOGGER.warn("Error getting entities", e);
-+                            return;
-+                        }
++                if (targetType != Player.class && targetType != ServerPlayer.class) {
++                    java.util.List<T> entities;
++                    try {
++                        entities = mob.level().getEntitiesOfClass(targetType, targetSearch, entity -> entity != null && entity != mob && !entity.isRemoved() && entity.isAlive());
++                    } catch (Exception e) {
++                        LOGGER.warn("Exception getting entities", e);
++                        return;
++                    }
 +
-+                        if (entities != null && !entities.isEmpty()) {
-+                            var result = findNearestEntitySafely(entities, targetConditions, mob, x, y, z, serverLevel, maxDistSqr);
-+                            pendingTarget.setRelease(result);
-+                        }
-+                    } else {
-+                        var result = findNearestPlayerSafely(targetConditions, mob, x, y, z, serverLevel);
++                    if (entities != null && !entities.isEmpty()) {
++                        var result = findNearestEntitySafely(entities, targetConditions, mob, x, y, z, serverLevel, maxDistSqr);
 +                        pendingTarget.setRelease(result);
 +                    }
-+                } catch (Exception e) {
-+                    LOGGER.warn("Error finding entities in async target finder", e);
++                } else {
++                    var result = findNearestPlayerSafely(targetConditions, mob, x, y, z, serverLevel);
++                    pendingTarget.setRelease(result);
 +                }
 +            } catch (Exception e) {
 +                LOGGER.warn("Exception during async target finding", e);
@@ -336,34 +355,27 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
 +            double closestDistSq = maxDistSqr;
 +            LivingEntity closest = null;
 +
-+            for (int i = 0; i < entities.size(); i++) {
-+                try {
-+                    LivingEntity entity = entities.get(i);
-+                    if (entity == null || entity == source || entity.isRemoved() || !entity.isAlive()) {
-+                        continue;
-+                    }
++            for (LivingEntity entity : entities) {
++                if (entity == null || entity == source || entity.isRemoved() || !entity.isAlive()) {
++                    continue;
++                }
 +
-+                    if (conditions.test(level, source, entity)) {
-+                        double dx = entity.getX() - x;
-+                        double dy = entity.getY() - y;
-+                        double dz = entity.getZ() - z;
-+                        double distSq = dx * dx + dy * dy + dz * dz;
++                if (conditions.test(level, source, entity)) {
++                    double dx = entity.getX() - x;
++                    double dy = entity.getY() - y;
++                    double dz = entity.getZ() - z;
++                    double distSq = dx * dx + dy * dy + dz * dz;
 +
-+                        if (distSq < closestDistSq) {
-+                            closestDistSq = distSq;
-+                            closest = entity;
-+                        }
++                    if (distSq < closestDistSq) {
++                        closestDistSq = distSq;
++                        closest = entity;
 +                    }
-+                } catch (IndexOutOfBoundsException e) {
-+                    break;
-+                } catch (Exception e) {
-+                    LOGGER.warn("Error processing entity in findNearestEntitySafely", e);
 +                }
 +            }
 +
 +            return closest;
 +        } catch (Exception e) {
-+            LOGGER.warn("Error in findNearestEntitySafely", e);
++            LOGGER.error("Exception in findNearestEntitySafely", e);
 +            return null;
 +        }
 +    }
@@ -390,34 +402,27 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
 +            double closestDistSq = -1.0;
 +            Player closest = null;
 +
-+            for (int i = 0; i < players.size(); i++) {
-+                try {
-+                    Player player = players.get(i);
-+                    if (player == null || player.isRemoved() || !player.isAlive()) {
-+                        continue;
-+                    }
++            for (Player player : players) {
++                if (player == null || player.isRemoved() || !player.isAlive()) {
++                    continue;
++                }
 +
-+                    if (conditions.test(level, source, player)) {
-+                        double dx = player.getX() - x;
-+                        double dy = player.getY() - y;
-+                        double dz = player.getZ() - z;
-+                        double distSq = dx * dx + dy * dy + dz * dz;
++                if (conditions.test(level, source, player)) {
++                    double dx = player.getX() - x;
++                    double dy = player.getY() - y;
++                    double dz = player.getZ() - z;
++                    double distSq = dx * dx + dy * dy + dz * dz;
 +
-+                        if (closestDistSq == -1.0 || distSq < closestDistSq) {
-+                            closestDistSq = distSq;
-+                            closest = player;
-+                        }
++                    if (closestDistSq == -1.0 || distSq < closestDistSq) {
++                        closestDistSq = distSq;
++                        closest = player;
 +                    }
-+                } catch (IndexOutOfBoundsException e) {
-+                    break;
-+                } catch (Exception e) {
-+                    LOGGER.warn("Error processing player in findNearestPlayerSafely", e);
 +                }
 +            }
 +
 +            return closest;
 +        } catch (Exception e) {
-+            LOGGER.warn("Exception in findNearestPlayerSafely", e);
++            LOGGER.error("Exception in findNearestPlayerSafely", e);
 +            return null;
 +        }
 +    }
@@ -426,7 +431,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..cf06906d1a5ea823600335a123002c24
      @Override
      public void start() {
          this.mob.setTarget(this.target, this.target instanceof ServerPlayer ? org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_PLAYER : org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_ENTITY, true); // CraftBukkit - reason
-@@ -81,7 +299,9 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -81,7 +282,9 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          this.target = target;
      }
  
@@ -537,7 +542,7 @@ index 002d3c0d8b1107a275020d5c582c37e9a5c536ee..3f8c18f4040f4929df79ba85906330b1
          // Gale start - Petal - reduce line of sight cache lookups - merge sets
          int cached = this.seen.get(id);
 diff --git a/net/minecraft/world/entity/animal/Fox.java b/net/minecraft/world/entity/animal/Fox.java
-index 90452f0945e761077608692877677f522d38bccd..736eea50b4460041242bdd4b7191d67d7dd4524d 100644
+index 90452f0945e761077608692877677f522d38bccd..28dbba5494779d82b6ae7c435db0ed76dc5eaf1f 100644
 --- a/net/minecraft/world/entity/animal/Fox.java
 +++ b/net/minecraft/world/entity/animal/Fox.java
 @@ -849,13 +849,18 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
@@ -560,3 +565,35 @@ index 90452f0945e761077608692877677f522d38bccd..736eea50b4460041242bdd4b7191d67d
                      }
                  }
  
+@@ -863,6 +868,13 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
+             }
+         }
+ 
++        // Leaf start - Async target finding
++        @Override
++        public boolean poll() {
++            return false;
++        }
++        // Leaf end - Async target finding
++
+         @Override
+         public void start() {
+             this.setTarget(this.trustedLastHurtBy);
+diff --git a/net/minecraft/world/entity/monster/EnderMan.java b/net/minecraft/world/entity/monster/EnderMan.java
+index c7897532163d4fdf5a82982f7d24a47dd61e3dfa..914d171c0183f00ff474517e2fa3ec00d7f1d6f1 100644
+--- a/net/minecraft/world/entity/monster/EnderMan.java
++++ b/net/minecraft/world/entity/monster/EnderMan.java
+@@ -608,6 +608,13 @@ public class EnderMan extends Monster implements NeutralMob {
+             this.enderman.setBeingStaredAt();
+         }
+ 
++        // Leaf start - Async target finding
++        @Override
++        public boolean poll() {
++            return false;
++        }
++        // Leaf end - Async target finding
++
+         @Override
+         public void stop() {
+             this.pendingTarget = null;
