@@ -5,7 +5,7 @@ Subject: [PATCH] Async target finding
 
 
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 24926aa7ed5c78b235659daf18b224b14beb744c..64d5cebd488892c93f07b938ce8dc3e99fddcdad 100644
+index 24926aa7ed5c78b235659daf18b224b14beb744c..53716dcdb9d3409b7bc71f3064be42bc3f81a86b 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -1088,6 +1088,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
@@ -13,16 +13,16 @@ index 24926aa7ed5c78b235659daf18b224b14beb744c..64d5cebd488892c93f07b938ce8dc3e9
          } catch (java.lang.InterruptedException ignored) {}
          // Leaf end - Async playerdata saving
 +        // Leaf start - Async target finding
-+        net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal.TARGET_EXECUTOR.shutdown();
++        org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR.shutdown();
 +        try {
-+            net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal.TARGET_EXECUTOR.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
++            org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
 +        } catch (java.lang.InterruptedException ignored) {}
 +        // Leaf end - Async target finding
      }
  
      public String getLocalIp() {
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 90bdcd168ad5b1a940f81b191bd59a34d3a33070..4abc090c2ab680fbe0523b011090383449c6dc50 100644
+index 90bdcd168ad5b1a940f81b191bd59a34d3a33070..a0eb0dc2d17928108a334710e14a0d4b9eea06c8 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -177,7 +177,16 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -43,6 +43,30 @@ index 90bdcd168ad5b1a940f81b191bd59a34d3a33070..4abc090c2ab680fbe0523b0110903834
      public final ServerChunkCache chunkSource;
      private final MinecraftServer server;
      public final net.minecraft.world.level.storage.PrimaryLevelData serverLevelData; // CraftBukkit - type
+@@ -218,6 +227,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
+     final List<ServerPlayer> realPlayers; // Leaves - skip
++    public List<Runnable> asyncAITasks = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(); // Leaf
+ 
+     public LevelChunk getChunkIfLoaded(int x, int z) {
+         return this.chunkSource.getChunkAtIfLoadedImmediately(x, z); // Paper - Use getChunkIfLoadedImmediately
+@@ -861,6 +871,15 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+                     }
+                 );
+             this.tickBlockEntities();
++            // Leaf start - Async target finding
++            final List<Runnable> tasks = this.asyncAITasks;
++            this.asyncAITasks = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
++            org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR.execute(() -> {
++                for (Runnable asyncTask : tasks) {
++                    asyncTask.run();
++                }
++            });
++            // Leaf end - Async target finding
+         }
+ 
+         // Paper - rewrite chunk system
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
 index 075fcbcde23b5bb7b27ff622e8d188c3a2583973..e5aa7c542b1e9c9362aa1feeeebef45919feac70 100644
 --- a/net/minecraft/world/entity/Entity.java
@@ -182,10 +206,10 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..d7361d2f0a777f745133c3687637ba6a
  
      // Paper start - Perf: optimize goal types
 diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae78156b05f85 100644
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..49e836a012f0db9dec6578caa341a50e703ee98e 100644
 --- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 +++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-@@ -11,13 +11,28 @@ import net.minecraft.world.entity.ai.targeting.TargetingConditions;
+@@ -11,13 +11,20 @@ import net.minecraft.world.entity.ai.targeting.TargetingConditions;
  import net.minecraft.world.entity.player.Player;
  import net.minecraft.world.phys.AABB;
  
@@ -200,14 +224,6 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae781
 +    @Nullable protected TargetingConditions.Selector selector; // Leaf - create TargetingConditions instead of reusing it
 +    // Leaf start - Async Target Finding
 +    private static final org.apache.logging.log4j.Logger LOGGER = org.apache.logging.log4j.LogManager.getLogger("Leaf Async Target Lookup");
-+    // Single thread executor to prevent overwhelming the server
-+    public static final java.util.concurrent.ExecutorService TARGET_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor(
-+        new com.google.common.util.concurrent.ThreadFactoryBuilder()
-+            .setNameFormat("Leaf Async Target Finding Thread")
-+            .setDaemon(true)
-+            .setPriority(Thread.NORM_PRIORITY - 2)
-+            .build());
-+
 +    // Flag to track if a search is in progress
 +    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
 +    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
@@ -216,7 +232,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae781
  
      public NearestAttackableTargetGoal(Mob mob, Class<T> targetType, boolean mustSee) {
          this(mob, targetType, 10, mustSee, false, null);
-@@ -38,11 +53,17 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -38,11 +45,17 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          this.targetType = targetType;
          this.randomInterval = reducedTickDelay(interval);
          this.setFlags(EnumSet.of(Goal.Flag.TARGET));
@@ -235,7 +251,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae781
          if (this.randomInterval > 0 && this.mob.getRandom().nextInt(this.randomInterval) != 0) {
              return false;
          } else {
-@@ -55,8 +76,37 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -55,8 +68,37 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          return this.mob.getBoundingBox().inflate(targetDistance, targetDistance, targetDistance);
      }
  
@@ -273,7 +289,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae781
          if (this.targetType != Player.class && this.targetType != ServerPlayer.class) {
              this.target = serverLevel.getNearestEntity(
                  this.mob.level().getEntitiesOfClass(this.targetType, this.getTargetSearchArea(this.getFollowDistance()), entity -> true),
-@@ -71,6 +121,156 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -71,6 +113,156 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          }
      }
  
@@ -299,11 +315,11 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae781
 +        final Class<T> targetType = this.targetType;
 +        final double maxDistSqr = followDistance * followDistance;
 +        final AABB targetSearch = getTargetSearchArea(this.getFollowDistance());
++        final ServerLevel serverLevel = getServerLevel(mob);
 +
-+        TARGET_EXECUTOR.execute(() -> {
++        serverLevel.asyncAITasks.add(() -> {
 +            try {
-+                ServerLevel serverLevel = getServerLevel(mob);
-+                if (serverLevel == null) {
++                if (mob.level() == null || mob.level() != serverLevel) {
 +                    return;
 +                }
 +                if (mob.isRemoved() || !mob.isAlive()) {
@@ -430,7 +446,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..6d22f6982641dd3c1baff19cbefae781
      @Override
      public void start() {
          this.mob.setTarget(this.target, this.target instanceof ServerPlayer ? org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_PLAYER : org.bukkit.event.entity.EntityTargetEvent.TargetReason.CLOSEST_ENTITY, true); // CraftBukkit - reason
-@@ -81,7 +281,9 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -81,7 +273,9 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          this.target = target;
      }
  
