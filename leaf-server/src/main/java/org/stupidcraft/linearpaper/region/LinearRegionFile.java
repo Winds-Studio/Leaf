@@ -33,6 +33,8 @@ import net.minecraft.world.level.ChunkPos;
 import org.dreeam.leaf.config.modules.misc.RegionFormatConfig;
 import org.slf4j.Logger;
 
+import net.minecraft.server.MinecraftServer;
+
 public class LinearRegionFile implements IRegionFile {
 
     private static final long SUPERBLOCK = -4323716122432332390L;
@@ -144,6 +146,11 @@ public class LinearRegionFile implements IRegionFile {
     }
 
     private synchronized void save() throws IOException {
+        if (MinecraftServer.getServer().hasStopped()) {
+            // Crazy - save only once on shutdown
+            if (!closed) return;
+        }
+        
         long timestamp = getTimestamp();
         short chunkCount = 0;
 
@@ -217,7 +224,8 @@ public class LinearRegionFile implements IRegionFile {
             LOGGER.error("Chunk write IOException {} {}", e, this.path);
         }
 
-        if ((System.nanoTime() - this.lastFlushed) >= TimeUnit.NANOSECONDS.toSeconds(RegionFormatConfig.linearFlushFrequency)) {
+        // Crazy: bruh
+        if (TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - this.lastFlushed) >= (RegionFormatConfig.linearFlushFrequency)) {
             this.flushWrapper();
         }
     }
