@@ -18,7 +18,6 @@ public class AsyncTargetFinding extends ConfigModules {
 
     @Experimental
     public static boolean enabled = false;
-    @Experimental
     public static boolean alertOther = true;
     public static boolean searchBlock = false;
     public static boolean searchEntity = true;
