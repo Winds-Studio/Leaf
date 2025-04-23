@@ -21,7 +21,7 @@ public class AsyncTargetFinding extends ConfigModules {
     @Experimental
     public static boolean alertOther = true;
     public static boolean searchBlock = false;
-    public static boolean searchEntities = true;
+    public static boolean searchEntity = true;
     public static boolean asyncTargetFindingInitialized;
 
     @Override
@@ -40,10 +40,10 @@ public class AsyncTargetFinding extends ConfigModules {
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", false);
-        searchEntities = config.getBoolean(getBasePath() + ".async-search-entities", true);
+        searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
         if (!enabled) {
             alertOther = false;
-            searchEntities = false;
+            searchEntity = false;
             searchBlock = false;
             return;
         }
