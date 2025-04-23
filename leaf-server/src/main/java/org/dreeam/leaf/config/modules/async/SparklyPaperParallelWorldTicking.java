@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.LeafConfig;
 import org.dreeam.leaf.config.annotations.Experimental;
 
 public class SparklyPaperParallelWorldTicking extends ConfigModules {
@@ -16,11 +17,11 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
     public static int threads = 8;
     public static boolean logContainerCreationStacktraces = false;
     public static boolean disableHardThrow = false;
-    @Deprecated // "Replaced" by asyncUnsafeReadHandling
-    public static boolean runAsyncTasksSync = false; // Keep for potential backward compat or remove
+    @Deprecated
+    public static boolean runAsyncTasksSync = false;
 
     // STRICT, BUFFERED, DISABLED
-    public static String asyncUnsafeReadHandling = "STRICT";
+    public static String asyncUnsafeReadHandling = "BUFFERED";
 
     @Override
     public void onLoaded() {
@@ -30,11 +31,15 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
                 Enables parallel world ticking to improve performance on multi-core systems..""",
             """
                 **实验性功能**
-                启用并行世界处理以提高多核系统的性能.""");
+                启用并行世界处理以提高多核 CPU 使用率.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         threads = config.getInt(getBasePath() + ".threads", threads);
-        threads = enabled ? threads : 0; // Ensure threads is 0 if disabled
+        if (enabled) {
+            if (threads <= 0) threads = 8;
+        } else {
+            threads = 0;
+        }
 
         logContainerCreationStacktraces = config.getBoolean(getBasePath() + ".log-container-creation-stacktraces", logContainerCreationStacktraces);
         logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
@@ -53,9 +58,12 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
         runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync", false); // Default to false now
         if (runAsyncTasksSync) {
             System.err.println("[Leaf] WARNING: The setting '" + getBasePath() + ".run-async-tasks-sync' is deprecated. Use 'async-unsafe-read-handling: STRICT' for similar safety checks or 'BUFFERED' for buffered reads.");
-            // Optionally force STRICT mode if the old setting is true
-            // asyncUnsafeReadHandling = "STRICT";
         }
+
+        if (enabled) {
+            LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", threads);
+        }
+
         runAsyncTasksSync = enabled && runAsyncTasksSync; // Auto-disable if main feature is off
     }
 }
