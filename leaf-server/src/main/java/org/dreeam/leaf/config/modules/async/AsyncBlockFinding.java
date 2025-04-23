@@ -14,6 +14,7 @@ public class AsyncBlockFinding extends ConfigModules {
 
     @Override
     public void onLoaded() {
+        /*
         config.addCommentRegionBased(getBasePath(), """
                 This moves the expensive search calculations to a background thread while
                 keeping the actual block validation on the main thread.""",
@@ -24,5 +25,6 @@ public class AsyncBlockFinding extends ConfigModules {
             asyncBlockFindingInitialized = true;
             enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         }
+        */
     }
 }

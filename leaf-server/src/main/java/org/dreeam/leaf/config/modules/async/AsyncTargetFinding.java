@@ -20,6 +20,8 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean enabled = false;
     @Experimental
     public static boolean alertOther = true;
+    public static boolean searchBlock = false;
+    public static boolean searchEntities = true;
     public static boolean asyncTargetFindingInitialized;
 
     @Override
@@ -37,8 +39,12 @@ public class AsyncTargetFinding extends ConfigModules {
         asyncTargetFindingInitialized = true;
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
+        searchBlock = config.getBoolean(getBasePath() + ".async-search-block", false);
+        searchEntities = config.getBoolean(getBasePath() + ".async-search-entities", true);
         if (!enabled) {
             alertOther = false;
+            searchEntities = false;
+            searchBlock = false;
             return;
         }
         AsyncGoalExecutor.EXECUTOR = new ThreadPoolExecutor(
