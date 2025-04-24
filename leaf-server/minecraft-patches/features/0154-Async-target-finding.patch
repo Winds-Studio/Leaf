@@ -826,6 +826,113 @@ index 95fa516910a3834bbd4db6d11279e13a1f0dac41..89ddf86b6c9f3d650277d01a257fa56d
 +    }
 +    // Leaf end - Async search block
  }
+diff --git a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
+index 4644f3f7af89623ca6218c0dd24bb6cd67db553b..66a94f6d2a09a2bc164287c5559f24ca50543dd7 100644
+--- a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
+@@ -16,7 +16,7 @@ public class DefendVillageTargetGoal extends TargetGoal {
+     private final IronGolem golem;
+     @Nullable
+     private LivingEntity potentialTarget;
+-    private final TargetingConditions attackTargeting = TargetingConditions.forCombat().range(64.0);
++    private static final TargetingConditions attackTargeting = TargetingConditions.forCombat().range(64.0); // Leaf - static
+ 
+     public DefendVillageTargetGoal(IronGolem golem) {
+         super(golem, false, true);
+@@ -24,8 +24,85 @@ public class DefendVillageTargetGoal extends TargetGoal {
+         this.setFlags(EnumSet.of(Goal.Flag.TARGET));
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    protected boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        ServerLevel serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive()) {
++            return false;
++        }
++        if ((t instanceof Player player && (player.isSpectator() || player.isCreative()))) {
++            return false;
++        }
++        this.potentialTarget = t;
++
++        return true;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final IronGolem mob = this.golem;
++
++        // Safety check
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        AABB bound = this.golem.getBoundingBox().inflate(10.0, 8.0, 10.0);
++        final ServerLevel serverLevel = getServerLevel(mob);
++
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob.level() != serverLevel || !mob.isAlive()) {
++                    return;
++                }
++
++                List<? extends LivingEntity> nearbyEntities = serverLevel.getNearbyEntities(Villager.class, attackTargeting, this.golem, bound);
++                List<Player> nearbyPlayers = serverLevel.getNearbyPlayers(attackTargeting, this.golem, bound);
++
++                for (LivingEntity livingEntity : nearbyEntities) {
++                    Villager villager = (Villager)livingEntity;
++
++                    for (Player player : nearbyPlayers) {
++                        int playerReputation = villager.getPlayerReputation(player);
++                        if (playerReputation <= -100) {
++                            pendingTarget.setRelease(player);
++                        }
++                    }
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async target finding
++        if (poll()) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            this.findTargetAsync();
++            return false;
++        }
++        // Leaf end - Async target finding
+         AABB aabb = this.golem.getBoundingBox().inflate(10.0, 8.0, 10.0);
+         ServerLevel serverLevel = getServerLevel(this.golem);
+         List<? extends LivingEntity> nearbyEntities = serverLevel.getNearbyEntities(Villager.class, this.attackTargeting, this.golem, aabb);
+@@ -42,6 +119,7 @@ public class DefendVillageTargetGoal extends TargetGoal {
+             }
+         }
+ 
++        // Leaf - Async target finding
+         return this.potentialTarget != null
+             && (!(this.potentialTarget instanceof Player) || !this.potentialTarget.isSpectator() && !((Player)this.potentialTarget).isCreative());
+     }
 diff --git a/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
 index 25fe78116ce01eeefe5c958423734195d27302eb..ecd9500c22b215b6a726f6a46417c4267cd0b738 100644
 --- a/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
