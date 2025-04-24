@@ -1,0 +1,2060 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sat, 29 Mar 2025 13:40:46 +0100
+Subject: [PATCH] Async target finding
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 24926aa7ed5c78b235659daf18b224b14beb744c..2603f5ca5e5f3fd86af76aec7e16039bf9c9292d 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1088,6 +1088,15 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             org.dreeam.leaf.async.AsyncPlayerDataSaving.IO_POOL.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
+         } catch (java.lang.InterruptedException ignored) {}
+         // Leaf end - Async playerdata saving
++        // Leaf start - Async target finding
++        if (org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR != null) {
++            org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR.shutdown();
++            try {
++                org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
++            } catch (java.lang.InterruptedException ignored) {
++            }
++        }
++        // Leaf end - Async target finding
+     }
+ 
+     public String getLocalIp() {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 90bdcd168ad5b1a940f81b191bd59a34d3a33070..252591f0192f8cb5b2bdbb51625e50ae631301ad 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -177,7 +177,16 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private static final int EMPTY_TIME_NO_TICK = 300;
+     private static final int MAX_SCHEDULED_TICKS_PER_TICK = 65536;
+-    final List<ServerPlayer> players = Lists.newArrayList();
++    // Leaf start - Async target finding
++    final List<ServerPlayer> players;
++    {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.players = Lists.newCopyOnWriteArrayList();
++        } else {
++            this.players = Lists.newArrayList();
++        }
++    }
++    // Leaf end - Async target finding
+     public final ServerChunkCache chunkSource;
+     private final MinecraftServer server;
+     public final net.minecraft.world.level.storage.PrimaryLevelData serverLevelData; // CraftBukkit - type
+@@ -218,6 +227,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
+     final List<ServerPlayer> realPlayers; // Leaves - skip
++    public List<Runnable> asyncAITasks = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(); // Leaf
+ 
+     public LevelChunk getChunkIfLoaded(int x, int z) {
+         return this.chunkSource.getChunkAtIfLoadedImmediately(x, z); // Paper - Use getChunkIfLoadedImmediately
+@@ -861,6 +871,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+                     }
+                 );
+             this.tickBlockEntities();
++            // Leaf start - Async target finding
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++                final var tasks = this.asyncAITasks;
++                this.asyncAITasks = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
++                org.dreeam.leaf.async.ai.AsyncGoalExecutor.EXECUTOR.execute(
++                    () -> org.dreeam.leaf.async.ai.AsyncGoalExecutor.runTasks(tasks));
++            }
++            // Leaf end - Async target finding
+         }
+ 
+         // Paper - rewrite chunk system
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 075fcbcde23b5bb7b27ff622e8d188c3a2583973..e5aa7c542b1e9c9362aa1feeeebef45919feac70 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -243,6 +243,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     protected Vec3 stuckSpeedMultiplier = Vec3.ZERO;
+     @Nullable
+     private Entity.RemovalReason removalReason;
++    private final java.util.concurrent.atomic.AtomicBoolean isRemoved = new java.util.concurrent.atomic.AtomicBoolean(false); // Leaf - atomic removal check
+     public static final float DEFAULT_BB_WIDTH = 0.6F;
+     public static final float DEFAULT_BB_HEIGHT = 1.8F;
+     public float moveDist;
+@@ -5028,7 +5029,13 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     public final boolean isRemoved() {
+-        return this.removalReason != null;
++        // Leaf start - atomic removal check
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            return this.isRemoved.getAcquire();
++        } else {
++            return this.removalReason != null;
++        }
++        // Leaf end - atomic removal check
+     }
+ 
+     @Nullable
+@@ -5055,6 +5062,11 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         final boolean alreadyRemoved = this.removalReason != null; // Paper - Folia schedulers
+         if (this.removalReason == null) {
+             this.removalReason = removalReason;
++            // Leaf start - atomic removal check
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++                this.isRemoved.setRelease(true);
++            }
++            // Leaf end - atomic removal check
+         }
+ 
+         if (this.removalReason.shouldDestroy()) {
+@@ -5074,6 +5086,11 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+ 
+     public void unsetRemoved() {
+         this.removalReason = null;
++        // Leaf start - atomic removal check
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            this.isRemoved.setRelease(false);
++        }
++        // Leaf end - atomic removal check
+     }
+ 
+     // Paper start - Folia schedulers
+diff --git a/net/minecraft/world/entity/ai/goal/AvoidEntityGoal.java b/net/minecraft/world/entity/ai/goal/AvoidEntityGoal.java
+index 4b24bb47a53a46586a642f3fb2656b1b8b670bf2..77e51ffce5afc9089fd3a2e382cdfde7a6cf1c35 100644
+--- a/net/minecraft/world/entity/ai/goal/AvoidEntityGoal.java
++++ b/net/minecraft/world/entity/ai/goal/AvoidEntityGoal.java
+@@ -65,17 +65,32 @@ public class AvoidEntityGoal<T extends LivingEntity> extends Goal {
+         this(mob, entityClassToAvoid, livingEntity -> true, maxDistance, walkSpeedModifier, sprintSpeedModifier, predicateOnAvoidEntity);
+     }
+ 
++    // Leaf start - Async Avoid Entity Finding
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<T> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    // Leaf end - Async Avoid Entity Finding
++
+     @Override
+     public boolean canUse() {
+-        this.toAvoid = getServerLevel(this.mob)
+-            .getNearestEntity(
+-                this.mob.level().getEntitiesOfClass(this.avoidClass, this.mob.getBoundingBox().inflate(this.maxDist, 3.0, this.maxDist), livingEntity -> true),
+-                this.avoidEntityTargeting,
+-                this.mob,
+-                this.mob.getX(),
+-                this.mob.getY(),
+-                this.mob.getZ()
+-            );
++        // Leaf start - Async Avoid Entity Finding
++        if (poll()) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            getNearestEntityAsync();
++        } else {
++            this.toAvoid = getServerLevel(this.mob)
++                .getNearestEntity(
++                    this.mob.level().getEntitiesOfClass(this.avoidClass, this.mob.getBoundingBox().inflate(this.maxDist, 3.0, this.maxDist), livingEntity -> true),
++                    this.avoidEntityTargeting,
++                    this.mob,
++                    this.mob.getX(),
++                    this.mob.getEyeY(),
++                    this.mob.getZ()
++                );
++        }
++        // Leaf end - Async Avoid Entity Finding
+         if (this.toAvoid == null) {
+             return false;
+         } else {
+@@ -91,6 +106,62 @@ public class AvoidEntityGoal<T extends LivingEntity> extends Goal {
+         }
+     }
+ 
++    // Leaf start - Async Avoid Entity Finding
++    private boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || !this.avoidEntityTargeting.test(serverLevel, this.mob, t)) {
++            return false;
++        }
++        this.toAvoid = (T) t;
++        return true;
++    }
++
++    private void getNearestEntityAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final var mob = this.mob;
++
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        final var serverLevel = getServerLevel(mob);
++        final var avoidClass = this.avoidClass;
++        final var bound = mob.getBoundingBox().inflate(this.maxDist, 3.0, this.maxDist);
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob == null || mob.isRemoved() || !mob.isAlive() || mob.level() != serverLevel) {
++                    return;
++                }
++                var avoid = serverLevel.getNearestEntity(
++                    serverLevel.getEntitiesOfClass(avoidClass, bound, LivingEntity::isAlive),
++                    avoidEntityTargeting,
++                    mob,
++                    x,
++                    y,
++                    z
++                );
++                pendingTarget.setRelease(avoid);
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Avoid Entity Finding
++
+     @Override
+     public boolean canContinueToUse() {
+         return !this.pathNav.isDone();
+diff --git a/net/minecraft/world/entity/ai/goal/BegGoal.java b/net/minecraft/world/entity/ai/goal/BegGoal.java
+index 28ef40e8a645989ea181297069cf2bbe571f3082..56a5fda5f1e2482e1c89c7c2f9c34ea85562702e 100644
+--- a/net/minecraft/world/entity/ai/goal/BegGoal.java
++++ b/net/minecraft/world/entity/ai/goal/BegGoal.java
+@@ -27,8 +27,74 @@ public class BegGoal extends Goal {
+         this.setFlags(EnumSet.of(Goal.Flag.LOOK));
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Player> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    protected boolean poll() {
++        Player t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        ServerLevel serverLevel = getServerLevel(this.wolf);
++        if (serverLevel == null || !t.isAlive() || !playerHoldingInteresting(t)) {
++            return false;
++        }
++        this.player = t;
++        return true;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        // Capture mutable state to avoid race conditions
++        final Wolf wolf = this.wolf;
++
++        // Safety check
++        if (wolf == null || wolf.isRemoved() || !wolf.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = wolf.getX();
++        final double y = wolf.getEyeY();
++        final double z = wolf.getZ();
++        final ServerLevel serverLevel = getServerLevel(wolf);
++        final TargetingConditions begTargeting = this.begTargeting;
++        final var pendingTarget = this.pendingTarget;
++
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (wolf.level() != serverLevel || wolf.isRemoved() || !wolf.isAlive()) {
++                    return;
++                }
++
++                var player = serverLevel.getNearestPlayer(begTargeting, wolf);
++                if (player != null && playerHoldingInteresting(player)) {
++                    pendingTarget.setRelease(player);
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting player", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async Target Finding
++        if (poll()) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayer) {
++            findTargetAsync();
++            return false;
++        }
++        // Leaf end - Async Target Finding
+         this.player = this.level.getNearestPlayer(this.begTargeting, this.wolf);
+         return this.player != null && this.playerHoldingInteresting(this.player);
+     }
+@@ -59,14 +125,16 @@ public class BegGoal extends Goal {
+         this.lookTime--;
+     }
+ 
+-    private boolean playerHoldingInteresting(Player player) {
++    // Leaf start - static
++    private static boolean playerHoldingInteresting(Player player) {
+         for (InteractionHand interactionHand : InteractionHand.values()) {
+             ItemStack itemInHand = player.getItemInHand(interactionHand);
+-            if (itemInHand.is(Items.BONE) || this.wolf.isFood(itemInHand)) {
++            if (itemInHand.is(Items.BONE) || itemInHand.is(net.minecraft.tags.ItemTags.WOLF_FOOD)) {
+                 return true;
+             }
+         }
+ 
+         return false;
+     }
++    // Leaf end - static
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java b/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java
+index 4c46cd105cde3cbcde65a02ff691c3a8edd56c76..d26bebdc66bf30a30fba5c1ba70e71479aff68a1 100644
+--- a/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java
++++ b/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java
+@@ -52,6 +52,14 @@ public class CatLieOnBedGoal extends MoveToBlockGoal {
+ 
+     @Override
+     protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++        // Leaf - Async search block
+         return level.isEmptyBlock(pos.above()) && level.getBlockState(pos).is(BlockTags.BEDS);
+     }
++
++    // Leaf start - Async search block
++    @Override
++    protected TypeToCheck typeToCheck() {
++        return TypeToCheck.CatLie;
++    }
++    // Leaf end - Async search block
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/CatSitOnBlockGoal.java b/net/minecraft/world/entity/ai/goal/CatSitOnBlockGoal.java
+index 9954f49bc364969c7ccb37f4186fa2ab8710f6ae..b0a93215a7d5e8fe58331f261d7b4f87852cd4b2 100644
+--- a/net/minecraft/world/entity/ai/goal/CatSitOnBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/CatSitOnBlockGoal.java
+@@ -44,9 +44,11 @@ public class CatSitOnBlockGoal extends MoveToBlockGoal {
+ 
+     @Override
+     protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++        // Leaf - Async search block
+         if (!level.isEmptyBlock(pos.above())) {
+             return false;
+         } else {
++            // Leaf - Async search block
+             BlockState blockState = level.getBlockState(pos);
+             return blockState.is(Blocks.CHEST)
+                 ? ChestBlockEntity.getOpenCount(level, pos) < 1
+@@ -54,4 +56,11 @@ public class CatSitOnBlockGoal extends MoveToBlockGoal {
+                     || blockState.is(BlockTags.BEDS, state -> state.getOptionalValue(BedBlock.PART).map(bedPart -> bedPart != BedPart.HEAD).orElse(true));
+         }
+     }
++
++    // Leaf start - Async search block
++    @Override
++    protected TypeToCheck typeToCheck() {
++        return TypeToCheck.CatSit;
++    }
++    // Leaf end - Async search block
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/FollowBoatGoal.java b/net/minecraft/world/entity/ai/goal/FollowBoatGoal.java
+index 1fe4d1877ed52017d4d22ddb9b77f78e2b93dff9..1f478e26a743fe6fdeccbe2c1f0efed0387fcb1e 100644
+--- a/net/minecraft/world/entity/ai/goal/FollowBoatGoal.java
++++ b/net/minecraft/world/entity/ai/goal/FollowBoatGoal.java
+@@ -23,8 +23,71 @@ public class FollowBoatGoal extends Goal {
+         this.mob = mob;
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Player> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++
++    private boolean poll() {
++        Player t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        return serverLevel != null && t.isAlive() && !t.isSpectator() && (Mth.abs(t.xxa) > 0.0F || Mth.abs(t.zza) > 0.0F);
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final PathfinderMob mob = this.mob;
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final var bound = mob.getBoundingBox().inflate(5.0);
++        final var serverLevel = getServerLevel(mob);
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob.level() != serverLevel || mob.isRemoved() || !mob.isAlive()) {
++                    return;
++                }
++
++                List<AbstractBoat> entitiesOfClass = serverLevel.getEntitiesOfClass(AbstractBoat.class, bound);
++                for (AbstractBoat abstractBoat : entitiesOfClass) {
++                    Entity controllingPassenger = abstractBoat.getControllingPassenger();
++                    if (controllingPassenger instanceof Player player
++                        && (Mth.abs(player.xxa) > 0.0F || Mth.abs(player.zza) > 0.0F)) {
++                        pendingTarget.setRelease(player);
++                        break;
++                    }
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async Target Finding
++        if (poll()) {
++            return true;
++        }
++        if (this.following != null && (Mth.abs(this.following.xxa) > 0.0F || Mth.abs(this.following.zza) > 0.0F)) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            findTargetAsync();
++            return false;
++        }
++        // Leaf end - Async Target Finding
+         List<AbstractBoat> entitiesOfClass = this.mob.level().getEntitiesOfClass(AbstractBoat.class, this.mob.getBoundingBox().inflate(5.0));
+         boolean flag = false;
+ 
+@@ -37,7 +100,7 @@ public class FollowBoatGoal extends Goal {
+             }
+         }
+ 
+-        return this.following != null && (Mth.abs(this.following.xxa) > 0.0F || Mth.abs(this.following.zza) > 0.0F) || flag;
++        return flag; // Leaf - move above
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/entity/ai/goal/FollowMobGoal.java b/net/minecraft/world/entity/ai/goal/FollowMobGoal.java
+index c9cf985173d3da9e84ce178f161e2fd5fb8ce472..48708da53db05f2668b4e1eb52cd3effa49ea983 100644
+--- a/net/minecraft/world/entity/ai/goal/FollowMobGoal.java
++++ b/net/minecraft/world/entity/ai/goal/FollowMobGoal.java
+@@ -36,8 +36,23 @@ public class FollowMobGoal extends Goal {
+         }
+     }
+ 
++    // Leaf start - Async Follow Mob Finding
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Mob> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    // Leaf end - Async Follow Mob Finding
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async Follow Mob Finding
++        if (poll()) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            getFollowingMobAsync();
++            return false;
++        }
++        // Leaf end - Async Follow Mob Finding
+         List<Mob> entitiesOfClass = this.mob.level().getEntitiesOfClass(Mob.class, this.mob.getBoundingBox().inflate(this.areaSize), this.followPredicate);
+         if (!entitiesOfClass.isEmpty()) {
+             for (Mob mob : entitiesOfClass) {
+@@ -51,6 +66,62 @@ public class FollowMobGoal extends Goal {
+         return false;
+     }
+ 
++    // Leaf start - Async Follow Mob Finding
++    private boolean poll() {
++        var t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || t.isInvisible()) {
++            return false;
++        }
++        this.followingMob = t;
++        return true;
++    }
++
++    private void getFollowingMobAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final var mob = this.mob;
++
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        final var serverLevel = getServerLevel(mob);
++        final var bound = this.mob.getBoundingBox().inflate(this.areaSize);
++        final var followPredicate = this.followPredicate;
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob == null || mob.isRemoved() || !mob.isAlive() || mob.level() != serverLevel) {
++                    return;
++                }
++                List<Mob> entitiesOfClass = serverLevel.getEntitiesOfClass(Mob.class, bound, followPredicate);
++                if (!entitiesOfClass.isEmpty()) {
++                    for (final Mob follow : entitiesOfClass) {
++                        if (!follow.isInvisible()) {
++                            pendingTarget.setRelease(follow);
++                            return;
++                        }
++                    }
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Follow Mob Finding
++
+     @Override
+     public boolean canContinueToUse() {
+         return this.followingMob != null && !this.navigation.isDone() && this.mob.distanceToSqr(this.followingMob) > this.stopDistance * this.stopDistance;
+diff --git a/net/minecraft/world/entity/ai/goal/FollowParentGoal.java b/net/minecraft/world/entity/ai/goal/FollowParentGoal.java
+index 3093f03d4f298bf39fec8bad2b6c22518774aea8..7d97345e8a5c630bf53cce3bd543e46e0b596237 100644
+--- a/net/minecraft/world/entity/ai/goal/FollowParentGoal.java
++++ b/net/minecraft/world/entity/ai/goal/FollowParentGoal.java
+@@ -19,11 +19,84 @@ public class FollowParentGoal extends Goal {
+         this.speedModifier = speedModifier;
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Animal> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    protected boolean poll() {
++        var t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(animal);
++        if (serverLevel == null || !t.isAlive() || animal.distanceToSqr(t) < 9.0) {
++            return false;
++        }
++        this.parent = animal;
++        return true;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final Animal animal = this.animal;
++        if (animal == null || animal.isRemoved() || !animal.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final var targetType = animal.getClass();
++        final var bound = animal.getBoundingBox().inflate(8.0, 4.0, 8.0);
++        final var serverLevel = getServerLevel(animal);
++        final var pos = animal.position();
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (animal.level() != serverLevel || animal.isRemoved() || !animal.isAlive()) {
++                    return;
++                }
++
++                List<? extends Animal> entitiesOfClass = serverLevel.getEntitiesOfClass(targetType, bound);
++                Animal target = null;
++                double d = Double.MAX_VALUE;
++
++                for (Animal animal1 : entitiesOfClass) {
++                    if (animal1.getAge() >= 0) {
++                        double d1 = animal1.distanceToSqr(pos);
++                        if (!(d1 > d)) {
++                            d = d1;
++                            target = animal1;
++                        }
++                    }
++                }
++                if (target != null) {
++                    pendingTarget.setRelease(target);
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
++
+     @Override
+     public boolean canUse() {
+         if (this.animal.getAge() >= 0) {
+             return false;
+         } else {
++            // Leaf start - Async Target Finding
++            if (poll()) {
++                return true;
++            }
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++                findTargetAsync();
++                return false;
++            }
++            // Leaf end - Async Target Finding
+             List<? extends Animal> entitiesOfClass = this.animal
+                 .level()
+                 .getEntitiesOfClass((Class<? extends Animal>)this.animal.getClass(), this.animal.getBoundingBox().inflate(8.0, 4.0, 8.0));
+@@ -43,6 +116,7 @@ public class FollowParentGoal extends Goal {
+             if (animal == null) {
+                 return false;
+             } else if (d < 9.0) {
++                // Leaf - Async Target Finding
+                 return false;
+             } else {
+                 this.parent = animal;
+diff --git a/net/minecraft/world/entity/ai/goal/LlamaFollowCaravanGoal.java b/net/minecraft/world/entity/ai/goal/LlamaFollowCaravanGoal.java
+index be59d0c27a83b329ec3f97c029cfb9c114e22472..23c5e933ccb98a38228810953a7e2447d5115c84 100644
+--- a/net/minecraft/world/entity/ai/goal/LlamaFollowCaravanGoal.java
++++ b/net/minecraft/world/entity/ai/goal/LlamaFollowCaravanGoal.java
+@@ -20,19 +20,110 @@ public class LlamaFollowCaravanGoal extends Goal {
+         this.setFlags(EnumSet.of(Goal.Flag.MOVE));
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Llama> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private @javax.annotation.Nullable Llama poll() {
++        var t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return null;
++        }
++        var serverLevel = getServerLevel(this.llama);
++        if (serverLevel == null || !t.isAlive()) {
++            return null;
++        }
++        return t;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final Llama llama = this.llama;
++        if (llama == null || llama.isRemoved() || !llama.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final var bound = llama.getBoundingBox().inflate(9.0, 4.0, 9.0);
++        final var serverLevel = getServerLevel(llama);
++        final var pos = llama.position();
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (llama.level() != serverLevel || llama.isRemoved() || !llama.isAlive()) {
++                    return;
++                }
++
++                List<Entity> entities = serverLevel.getEntities(llama, bound, entity1 -> {
++                    EntityType<?> type = entity1.getType();
++                    return type == EntityType.LLAMA || type == EntityType.TRADER_LLAMA;
++                });
++                Llama target = null;
++                double d = Double.MAX_VALUE;
++
++                for (Entity entity : entities) {
++                    Llama llama1 = (Llama)entity;
++                    if (llama1.inCaravan() && !llama1.hasCaravanTail()) {
++                        double d1 = llama1.distanceToSqr(pos);
++                        if (!(d1 > d)) {
++                            d = d1;
++                            target = llama1;
++                        }
++                    }
++                }
++
++                if (target == null) {
++                    for (Entity entityx : entities) {
++                        Llama llama1 = (Llama)entityx;
++                        if (llama1.isLeashed() && !llama1.hasCaravanTail()) {
++                            double d1 = llama1.distanceToSqr(pos);
++                            if (!(d1 > d)) {
++                                d = d1;
++                                target = llama1;
++                            }
++                        }
++                    }
++                }
++                if (target != null) {
++                    pendingTarget.setRelease(target);
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
+     @Override
+     public boolean canUse() {
+         if (!this.llama.level().purpurConfig.llamaJoinCaravans || !this.llama.shouldJoinCaravan) return false; // Purpur - Llama API // Purpur - Config to disable Llama caravans
+         if (!this.llama.isLeashed() && !this.llama.inCaravan()) {
++            // Leaf start - Async Target Finding
++            Llama llama = poll();
++            double d = Double.MAX_VALUE;
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++                if (llama == null) {
++                    findTargetAsync();
++                    return false;
++                } else {
++                    d = this.llama.distanceToSqr(llama);
++                }
++            } else {
++            // Leaf end - Async Target Finding
+             List<Entity> entities = this.llama.level().getEntities(this.llama, this.llama.getBoundingBox().inflate(9.0, 4.0, 9.0), entity1 -> {
+                 EntityType<?> type = entity1.getType();
+                 return type == EntityType.LLAMA || type == EntityType.TRADER_LLAMA;
+             });
+-            Llama llama = null;
+-            double d = Double.MAX_VALUE;
++            // Llama llama = null; // Leaf
++            // double d = Double.MAX_VALUE; // Leaf
+ 
+             for (Entity entity : entities) {
+                 Llama llama1 = (Llama)entity;
++                // Leaf - Async Target Finding
+                 if (llama1.inCaravan() && !llama1.hasCaravanTail()) {
+                     double d1 = this.llama.distanceToSqr(llama1);
+                     if (!(d1 > d)) {
+@@ -45,6 +136,7 @@ public class LlamaFollowCaravanGoal extends Goal {
+             if (llama == null) {
+                 for (Entity entityx : entities) {
+                     Llama llama1 = (Llama)entityx;
++                    // Leaf - Async Target Finding
+                     if (llama1.isLeashed() && !llama1.hasCaravanTail()) {
+                         double d1 = this.llama.distanceToSqr(llama1);
+                         if (!(d1 > d)) {
+@@ -54,6 +146,7 @@ public class LlamaFollowCaravanGoal extends Goal {
+                     }
+                 }
+             }
++            } // Leaf
+ 
+             if (llama == null) {
+                 return false;
+diff --git a/net/minecraft/world/entity/ai/goal/LookAtPlayerGoal.java b/net/minecraft/world/entity/ai/goal/LookAtPlayerGoal.java
+index 6463c3c9b08d6058f2843c225b08a40fc30a960b..0f39eca165f3eae1b05d1e0548f63467bc21bbf5 100644
+--- a/net/minecraft/world/entity/ai/goal/LookAtPlayerGoal.java
++++ b/net/minecraft/world/entity/ai/goal/LookAtPlayerGoal.java
+@@ -48,32 +48,123 @@ public class LookAtPlayerGoal extends Goal {
+ 
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async look finding
++        if (poll()) {
++            return true;
++        }
++
+         if (this.mob.getRandom().nextFloat() >= this.probability) {
+             return false;
+-        } else {
+-            if (this.mob.getTarget() != null) {
+-                this.lookAt = this.mob.getTarget();
++        }
++        if (this.lookAtType == Player.class) {
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayer) {
++                getLookAsync();
++                return false;
+             }
++        } else if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            getLookAsync();
++            return false;
++        }
+ 
+-            ServerLevel serverLevel = getServerLevel(this.mob);
+-            if (this.lookAtType == Player.class) {
+-                this.lookAt = serverLevel.getNearestPlayer(this.lookAtContext, this.mob, this.mob.getX(), this.mob.getEyeY(), this.mob.getZ());
+-            } else {
+-                this.lookAt = serverLevel.getNearestEntity(
+-                    this.mob
+-                        .level()
+-                        .getEntitiesOfClass(this.lookAtType, this.mob.getBoundingBox().inflate(this.lookDistance, 3.0, this.lookDistance), livingEntity -> true),
+-                    this.lookAtContext,
+-                    this.mob,
+-                    this.mob.getX(),
+-                    this.mob.getEyeY(),
+-                    this.mob.getZ()
+-                );
+-            }
++        if (this.mob.getTarget() != null) {
++            this.lookAt = this.mob.getTarget();
++        }
++
++        ServerLevel serverLevel = getServerLevel(this.mob);
++        if (this.lookAtType == Player.class) {
++            this.lookAt = serverLevel.getNearestPlayer(this.lookAtContext, this.mob, this.mob.getX(), this.mob.getEyeY(), this.mob.getZ());
++        } else {
++            this.lookAt = serverLevel.getNearestEntity(
++                this.mob
++                    .level()
++                    .getEntitiesOfClass(this.lookAtType, this.mob.getBoundingBox().inflate(this.lookDistance, 3.0, this.lookDistance), livingEntity -> true),
++                this.lookAtContext,
++                this.mob,
++                this.mob.getX(),
++                this.mob.getEyeY(),
++                this.mob.getZ()
++            );
++        }
++
++        return this.lookAt != null;
++        // Leaf end - Async look finding
++    }
+ 
+-            return this.lookAt != null;
++    // Leaf start - Async look finding
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    protected boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        if (this.mob.getTarget() != null) {
++            this.lookAt = this.mob.getTarget();
++            return true;
++        }
++        ServerLevel serverLevel = getServerLevel(this.mob);
++        if (!t.isAlive() || !this.lookAtContext.test(serverLevel, this.mob, t)) {
++            return false;
++        }
++        this.lookAt = t;
++        return true;
++    }
++
++    protected void getLookAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
+         }
++
++        final var mob = this.mob;
++
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        final var serverLevel = getServerLevel(mob);
++        final var bound = mob.getBoundingBox().inflate(this.lookDistance, 3.0, this.lookDistance);
++        final var target = mob.getTarget();
++        final var lookAtContext = this.lookAtContext;
++        final var lookAtType = this.lookAtType;
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob == null || !mob.isAlive() || mob.level() != serverLevel) {
++                    return;
++                }
++                if (target != null) {
++                    pendingTarget.setRelease(target);
++                    return;
++                }
++
++                if (lookAtType == Player.class) {
++                    var result = serverLevel.getNearestPlayer(lookAtContext, mob, x, y, z);
++                    pendingTarget.setRelease(result);
++                } else {
++                    var result = serverLevel.getNearestEntity(
++                        serverLevel
++                            .getEntitiesOfClass(lookAtType, bound, livingEntity -> true),
++                        lookAtContext,
++                        mob,
++                        x,
++                        y,
++                        z
++                    );
++                    pendingTarget.setRelease(result);
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
+     }
++    // Leaf end - Async look finding
+ 
+     @Override
+     public boolean canContinueToUse() {
+diff --git a/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java b/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
+index 3f080b15543bf8c5fa0774b62d7f12e13b82511a..6ff92396c6c97f4185e287f04eb197842d8b5fec 100644
+--- a/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
+@@ -41,8 +41,90 @@ public abstract class MoveToBlockGoal extends Goal {
+         this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.JUMP));
+     }
+ 
++    // Leaf start - Async search block
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<BlockPos> pendingBlock = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    protected boolean poll() {
++        BlockPos blockPos1 = pendingBlock.getAndSet(null);
++        if (blockPos1 == null) {
++            return false;
++        }
++        if (!this.mob.level().hasChunkAt(blockPos1)
++            || !this.mob.isWithinRestriction(blockPos1)
++            || !this.isValidTarget(this.mob.level(), blockPos1)) {
++            return false;
++        }
++        this.blockPos = blockPos1;
++        this.mob.movingTarget = blockPos1 == BlockPos.ZERO ? null : blockPos1;
++        return true;
++    }
++
++    protected void getBlockAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final var mob = this.mob;
++
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        final var serverLevel = getServerLevel(mob);
++
++        final java.util.concurrent.atomic.AtomicReference<BlockPos> pendingBlock = this.pendingBlock;
++        final TypeToCheck ty = this.typeToCheck();
++        final net.minecraft.world.level.block.Block toRemove;
++        if (this instanceof RemoveBlockGoal removeBlockGoal) {
++            toRemove = removeBlockGoal.blockToRemove;
++        } else {
++            toRemove = null;
++        }
++        final int verticalSearchStart = this.verticalSearchStart;
++        final int searchRange = this.searchRange;
++        final int verticalSearchRange = this.verticalSearchRange;
++        final BlockPos blockPos = mob.blockPosition();
++        final float restrictRadius = mob.getRestrictRadius();
++        final BlockPos restrictCenter = mob.getRestrictCenter();
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob == null || !mob.isAlive() || mob.level() != serverLevel) {
++                    return;
++                }
++                findNearestBlockAsync(pendingBlock, ty, toRemove, mob, serverLevel, verticalSearchStart, searchRange, verticalSearchRange, blockPos, restrictRadius, restrictCenter);
++            } catch (Exception e) {
++                LOGGER.error("Exception getting block", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++
++    protected enum TypeToCheck {
++        CatLie,
++        CatSit,
++        Drowned,
++        FoxEat,
++        RaidGarden,
++        RemoveBlock,
++        Strider,
++        TurtleToWater,
++        TurtleLay,
++    }
++    // Leaf end - Async search block
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async search block
++        if (poll()) {
++            return true;
++        }
++        // Leaf end - Async search block
+         if (this.nextStartTick > 0) {
+             this.nextStartTick--;
+             return false;
+@@ -109,6 +191,10 @@ public abstract class MoveToBlockGoal extends Goal {
+     }
+ 
+     protected boolean findNearestBlock() {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchBlock) {
++            getBlockAsync();
++            return false;
++        }
+         int i = this.searchRange;
+         int i1 = this.verticalSearchRange;
+         BlockPos blockPos = this.mob.blockPosition();
+@@ -133,5 +219,104 @@ public abstract class MoveToBlockGoal extends Goal {
+         return false;
+     }
+ 
++    protected static boolean findNearestBlockAsync(
++        final java.util.concurrent.atomic.AtomicReference<BlockPos> pendingBlock,
++        final TypeToCheck ty,
++        @org.jetbrains.annotations.Nullable final net.minecraft.world.level.block.Block toRemove,
++        final PathfinderMob mob,
++        final net.minecraft.server.level.ServerLevel serverLevel,
++        final int verticalSearchStart,
++        final int searchRange,
++        final int verticalSearchRange,
++        final BlockPos blockPos,
++        final float restrictRadius,
++        final BlockPos restrictCenter
++    ) {
++        BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
++        for (int i2 = verticalSearchStart; i2 <= verticalSearchRange; i2 = i2 > 0 ? -i2 : 1 - i2) {
++            for (int i3 = 0; i3 < searchRange; i3++) {
++                for (int i4 = 0; i4 <= i3; i4 = i4 > 0 ? -i4 : 1 - i4) {
++                    for (int i5 = i4 < i3 && i4 > -i3 ? i3 : 0; i5 <= i3; i5 = i5 > 0 ? -i5 : 1 - i5) {
++                        mutableBlockPos.setWithOffset(blockPos, i4, i2 - 1, i5);
++                        if (!serverLevel.hasChunkAt(mutableBlockPos)) continue;
++                        if (isWithinRestriction(restrictRadius, restrictCenter, mutableBlockPos)
++                            && isValidTargetAsync(ty, toRemove, mob, serverLevel, mutableBlockPos)) {
++                            pendingBlock.setRelease(mutableBlockPos.immutable());
++                            return true;
++                        }
++                    }
++                }
++            }
++        }
++
++        return false;
++    }
++
++    private static boolean isWithinRestriction(float restrictRadius, BlockPos restrictCenter, BlockPos pos) {
++        return restrictRadius == -1.0F || restrictCenter.distSqr(pos) < restrictRadius * restrictRadius;
++    }
++
+     protected abstract boolean isValidTarget(LevelReader level, BlockPos pos);
++
++    protected abstract TypeToCheck typeToCheck();
++
++    private static boolean isValidTargetAsync(
++        TypeToCheck ty,
++        @org.jetbrains.annotations.Nullable net.minecraft.world.level.block.Block blockToRemoveTy,
++        PathfinderMob mob,
++        LevelReader level,
++        BlockPos pos
++    ) {
++        switch (ty) {
++            case CatLie -> {
++                return level.isEmptyBlock(pos.above()) && level.getBlockState(pos).is(net.minecraft.tags.BlockTags.BEDS);
++            }
++            case CatSit -> {
++                if (!level.isEmptyBlock(pos.above())) {
++                    return false;
++                } else {
++                    var blockState = level.getBlockState(pos);
++                    return blockState.is(net.minecraft.world.level.block.Blocks.CHEST)
++                        ? net.minecraft.world.level.block.entity.ChestBlockEntity.getOpenCount(level, pos) < 1
++                        : blockState.is(net.minecraft.world.level.block.Blocks.FURNACE) && blockState.getValue(net.minecraft.world.level.block.FurnaceBlock.LIT)
++                        || blockState.is(net.minecraft.tags.BlockTags.BEDS, state -> state.getOptionalValue(net.minecraft.world.level.block.BedBlock.PART).map(bedPart -> bedPart != net.minecraft.world.level.block.state.properties.BedPart.HEAD).orElse(true));
++                }
++            }
++            case Drowned -> {
++                BlockPos blockPos = pos.above();
++                return level.isEmptyBlock(blockPos) && level.isEmptyBlock(blockPos.above()) && level.getBlockState(pos).entityCanStandOn(level, pos, mob);
++            }
++            case FoxEat -> {
++                var blockState = level.getBlockState(pos);
++                return blockState.is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH) && blockState.getValue(net.minecraft.world.level.block.SweetBerryBushBlock.AGE) >= 2 || net.minecraft.world.level.block.CaveVines.hasGlowBerries(blockState);
++            }
++            case RaidGarden -> {
++                var blockState = level.getBlockState(pos);
++                if (blockState.is(net.minecraft.world.level.block.Blocks.FARMLAND)) {
++                    blockState = level.getBlockState(pos.above());
++                    return blockState.getBlock() instanceof net.minecraft.world.level.block.CarrotBlock carrot && carrot.isMaxAge(blockState);
++                } else {
++                    return false;
++                }
++
++            }
++            case RemoveBlock -> {
++                var chunk = level.getChunkIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4); // Paper - Prevent AI rules from loading chunks
++                return chunk != null
++                    && chunk.getBlockState(pos).is(blockToRemoveTy)
++                    && chunk.getBlockState(pos.above()).isAir()
++                    && chunk.getBlockState(pos.above(2)).isAir();
++            }
++            case Strider -> {
++                return level.getBlockState(pos).is(net.minecraft.world.level.block.Blocks.LAVA) && level.getBlockState(pos.above()).isPathfindable(net.minecraft.world.level.pathfinder.PathComputationType.LAND);
++            }
++            case TurtleToWater -> {
++                return level.getBlockState(pos).is(net.minecraft.world.level.block.Blocks.WATER);
++            }
++            case TurtleLay -> {
++                return level.isEmptyBlock(pos.above()) && net.minecraft.world.level.block.TurtleEggBlock.isSand(level, pos);
++            }
++            case null -> throw new IllegalStateException();
++        }
++    }
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/OfferFlowerGoal.java b/net/minecraft/world/entity/ai/goal/OfferFlowerGoal.java
+index 3c274d917bca9de87abfb842f5f332e112a7a2d7..f001bd12a2ec5696b8ee628484597de09b2eed32 100644
+--- a/net/minecraft/world/entity/ai/goal/OfferFlowerGoal.java
++++ b/net/minecraft/world/entity/ai/goal/OfferFlowerGoal.java
+@@ -19,10 +19,20 @@ public class OfferFlowerGoal extends Goal {
+ 
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async offer flower finding
+         if (!this.golem.level().isDay()) {
+             return false;
+-        } else if (this.golem.getRandom().nextInt(8000) != 0) {
++        }
++        if (poll()) {
++            return true;
++        }
++        if (this.golem.getRandom().nextInt(8000) != 0) {
+             return false;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            getVillagerAsync();
++            return false;
++        // Leaf end - Async offer flower finding
+         } else {
+             this.villager = getServerLevel(this.golem)
+                 .getNearestEntity(
+@@ -38,6 +48,65 @@ public class OfferFlowerGoal extends Goal {
+         }
+     }
+ 
++
++    // Leaf start - Async look finding
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Villager> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    protected boolean poll() {
++        Villager t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.golem);
++        if (!t.isAlive() || !OFFER_TARGER_CONTEXT.test(serverLevel, this.golem, t)) {
++            return false;
++        }
++        this.villager = t;
++        return true;
++    }
++
++    protected void getVillagerAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final var golem = this.golem;
++
++        if (golem == null || golem.isRemoved() || !golem.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = golem.getX();
++        final double y = golem.getEyeY();
++        final double z = golem.getZ();
++        final var serverLevel = getServerLevel(golem);
++        final var bound = golem.getBoundingBox().inflate(6.0, 2.0, 6.0);
++        final var pendingTarget = this.pendingTarget;
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (golem == null || !golem.isAlive() || golem.level() != serverLevel) {
++                    return;
++                }
++                var result = serverLevel.getNearestEntity(
++                    serverLevel.getEntitiesOfClass(Villager.class, bound, livingEntity -> true),
++                    OFFER_TARGER_CONTEXT,
++                    golem,
++                    x,
++                    y,
++                    z
++                );
++                pendingTarget.setRelease(result);
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async look finding
++
+     @Override
+     public boolean canContinueToUse() {
+         return this.tick > 0;
+diff --git a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+index 95fa516910a3834bbd4db6d11279e13a1f0dac41..f7ddae601abbe9e22a35c7cb4f9763e61fa7ff81 100644
+--- a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+@@ -22,7 +22,7 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
+ import net.minecraft.world.phys.Vec3;
+ 
+ public class RemoveBlockGoal extends MoveToBlockGoal {
+-    private final Block blockToRemove;
++    protected final Block blockToRemove; // Leaf - Async search block
+     private final Mob removerMob;
+     private int ticksSinceReachedGoal;
+     private static final int WAIT_AFTER_BLOCK_FOUND = 20;
+@@ -37,7 +37,14 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+     public boolean canUse() {
+         if (!getServerLevel(this.removerMob).purpurConfig.zombieBypassMobGriefing == !getServerLevel(this.removerMob).getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) { // Purpur - Add mobGriefing bypass to everything affected
+             return false;
+-        } else if (this.nextStartTick > 0) {
++        }
++        // Leaf start - async search block
++        if (poll()) {
++            this.nextStartTick = reducedTickDelay(20);
++            return true;
++        }
++        // Leaf end - async search block
++        if (this.nextStartTick > 0) {
+             this.nextStartTick--;
+             return false;
+         } else if (this.findNearestBlock()) {
+@@ -149,10 +156,18 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+ 
+     @Override
+     protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++        // Leaf - Async search block
+         ChunkAccess chunk = level.getChunkIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4); // Paper - Prevent AI rules from loading chunks
+         return chunk != null
+             && chunk.getBlockState(pos).is(this.blockToRemove)
+             && chunk.getBlockState(pos.above()).isAir()
+             && chunk.getBlockState(pos.above(2)).isAir();
+     }
++
++    // Leaf start - Async search block
++    @Override
++    protected TypeToCheck typeToCheck() {
++        return TypeToCheck.RemoveBlock;
++    }
++    // Leaf end - Async search block
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/TemptGoal.java b/net/minecraft/world/entity/ai/goal/TemptGoal.java
+index f88f618d34fb343b31de3af1a875d6633703df71..7c6d90ed1878b29904ceaca1089eaadd05a0d570 100644
+--- a/net/minecraft/world/entity/ai/goal/TemptGoal.java
++++ b/net/minecraft/world/entity/ai/goal/TemptGoal.java
+@@ -36,14 +36,84 @@ public class TemptGoal extends Goal {
+         this.targetingConditions = TEMPT_TARGETING.copy().selector((entity, level) -> this.shouldFollow(entity));
+     }
+ 
++    // Leaf start - Async Tempt Finding
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++
++    private boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            t = this.player;
++        }
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || !this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)).test(serverLevel, this.mob, t)) {
++            return false;
++        }
++        this.player = t;
++        return true;
++    }
++
++    private void getNearestPlayerAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final var mob = this.mob;
++
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final var serverLevel = getServerLevel(mob);
++        final var pendingTarget = this.pendingTarget;
++        final var conditions = this.targetingConditions
++            .range(mob.getAttributeValue(Attributes.TEMPT_RANGE))
++            .copy();
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob == null || mob.isRemoved() || !mob.isAlive() || mob.level() != serverLevel) {
++                    return;
++                }
++                pendingTarget.setRelease(serverLevel.getNearestPlayer(conditions, mob));
++            } catch (Exception e) {
++                LOGGER.error("Exception getting player", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Tempt Finding
+     @Override
+     public boolean canUse() {
+         if (this.calmDown > 0) {
+             this.calmDown--;
+             return false;
+         } else {
+-            this.player = getServerLevel(this.mob)
+-                .getNearestPlayer(this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)), this.mob);
++            // Leaf start - Async Tempt Finding
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayerTempt) {
++                if (poll()) {
++                    if (this.player != null) {
++                        org.bukkit.event.entity.EntityTargetLivingEntityEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callEntityTargetLivingEvent(this.mob, this.player, org.bukkit.event.entity.EntityTargetEvent.TargetReason.TEMPT);
++                        if (event.isCancelled()) {
++                            return false;
++                        }
++                        this.player = (event.getTarget() == null) ? null : ((org.bukkit.craftbukkit.entity.CraftLivingEntity) event.getTarget()).getHandle();
++                    }
++                    return this.player != null;
++                } else {
++                    getNearestPlayerAsync();
++                    return false;
++                }
++            } else {
++                this.player = getServerLevel(this.mob)
++                    .getNearestPlayer(this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)), this.mob);
++            }
++            // Leaf end - Async Tempt Finding
+             // CraftBukkit start
+             if (this.player != null) {
+                 org.bukkit.event.entity.EntityTargetLivingEntityEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callEntityTargetLivingEvent(this.mob, this.player, org.bukkit.event.entity.EntityTargetEvent.TargetReason.TEMPT);
+diff --git a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
+index 4644f3f7af89623ca6218c0dd24bb6cd67db553b..04bc007a138d5f5875fa89f52d573693fa96c656 100644
+--- a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
+@@ -16,7 +16,7 @@ public class DefendVillageTargetGoal extends TargetGoal {
+     private final IronGolem golem;
+     @Nullable
+     private LivingEntity potentialTarget;
+-    private final TargetingConditions attackTargeting = TargetingConditions.forCombat().range(64.0);
++    private static final TargetingConditions attackTargeting = TargetingConditions.forCombat().range(64.0); // Leaf - static
+ 
+     public DefendVillageTargetGoal(IronGolem golem) {
+         super(golem, false, true);
+@@ -24,8 +24,82 @@ public class DefendVillageTargetGoal extends TargetGoal {
+         this.setFlags(EnumSet.of(Goal.Flag.TARGET));
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    protected boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        ServerLevel serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || !attackTargeting.test(serverLevel, golem, t)) {
++            return false;
++        }
++        if ((t instanceof Player player && (player.isSpectator() || player.isCreative()))) {
++            return false;
++        }
++        this.potentialTarget = t;
++
++        return true;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final IronGolem mob = this.golem;
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        AABB bound = this.golem.getBoundingBox().inflate(10.0, 8.0, 10.0);
++        final ServerLevel serverLevel = getServerLevel(mob);
++        final var pendingTarget = this.pendingTarget;
++
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob.level() != serverLevel || !mob.isAlive()) {
++                    return;
++                }
++
++                List<Villager> nearbyEntities = serverLevel.getNearbyEntities(Villager.class, attackTargeting, mob, bound);
++                List<Player> nearbyPlayers = serverLevel.getNearbyPlayers(attackTargeting, mob, bound);
++
++                for (Villager villager : nearbyEntities) {
++                    for (Player player : nearbyPlayers) {
++                        int playerReputation = villager.getPlayerReputation(player);
++                        if (playerReputation <= -100) {
++                            pendingTarget.setRelease(player);
++                        }
++                    }
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async target finding
++        if (poll()) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            this.findTargetAsync();
++            return false;
++        }
++        // Leaf end - Async target finding
+         AABB aabb = this.golem.getBoundingBox().inflate(10.0, 8.0, 10.0);
+         ServerLevel serverLevel = getServerLevel(this.golem);
+         List<? extends LivingEntity> nearbyEntities = serverLevel.getNearbyEntities(Villager.class, this.attackTargeting, this.golem, aabb);
+@@ -42,6 +116,7 @@ public class DefendVillageTargetGoal extends TargetGoal {
+             }
+         }
+ 
++        // Leaf - Async target finding
+         return this.potentialTarget != null
+             && (!(this.potentialTarget instanceof Player) || !this.potentialTarget.isSpectator() && !((Player)this.potentialTarget).isCreative());
+     }
+diff --git a/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
+index 25fe78116ce01eeefe5c958423734195d27302eb..50228ccc92181d021b2f1cf164671ce4b2095c75 100644
+--- a/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
+@@ -73,6 +73,59 @@ public class HurtByTargetGoal extends TargetGoal {
+     protected void alertOthers() {
+         double followDistance = this.getFollowDistance();
+         AABB aabb = AABB.unitCubeFromLowerCorner(this.mob.position()).inflate(followDistance, 10.0, followDistance);
++
++        // Leaf start - async alert other
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.alertOther) {
++            final var self = this.mob;
++            final var serverLevel = getServerLevel(self);
++            final var alertTarget = this.mob.getLastHurtByMob();
++            final var toIgnoreAlert = this.toIgnoreAlert;
++            serverLevel.asyncAITasks.add(() -> {
++                try {
++                    if (alertTarget == null || self == null || self.level() != serverLevel) {
++                        return;
++                    }
++                    var toAlert = new java.util.ArrayList<Mob>();
++                    List<? extends Mob> entitiesOfClass = serverLevel
++                        .getEntitiesOfClass(self.getClass(), aabb, EntitySelector.NO_SPECTATORS);
++                    for (Mob mob : entitiesOfClass) {
++                        if (self != mob
++                            && mob.getTarget() == null
++                            && (!(self instanceof TamableAnimal) || ((TamableAnimal) self).getOwner() == ((TamableAnimal) mob).getOwner())
++                            && !mob.isAlliedTo(self.getLastHurtByMob())) {
++                            if (toIgnoreAlert == null) {
++                                continue;
++                            }
++
++                            boolean flag = false;
++
++                            for (Class<?> clazz : toIgnoreAlert) {
++                                if (mob.getClass() == clazz) {
++                                    flag = true;
++                                    break;
++                                }
++                            }
++
++                            if (!flag) {
++                                continue;
++                            }
++
++                            toAlert.add(mob);
++                        }
++                    }
++                    serverLevel.getServer().execute(() -> {
++                        for (var livingEntity : toAlert) {
++                            alertOther(livingEntity, alertTarget);
++                        }
++                    });
++                } catch (Exception e) {
++                    org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER.error("Exception alertOthers", e);
++                }
++            });
++            return;
++        }
++        // Leaf end - async alert other
++
+         List<? extends Mob> entitiesOfClass = this.mob
+             .level()
+             .getEntitiesOfClass((Class<? extends Mob>)this.mob.getClass(), aabb, EntitySelector.NO_SPECTATORS);
+@@ -86,6 +139,7 @@ public class HurtByTargetGoal extends TargetGoal {
+                 }
+ 
+                 mob = (Mob)var5.next();
++                // Leaf - async alert other
+                 if (this.mob != mob
+                     && mob.getTarget() == null
+                     && (!(this.mob instanceof TamableAnimal) || ((TamableAnimal)this.mob).getOwner() == ((TamableAnimal)mob).getOwner())
+@@ -96,6 +150,7 @@ public class HurtByTargetGoal extends TargetGoal {
+ 
+                     boolean flag = false;
+ 
++                    // Leaf - async alert other
+                     for (Class<?> clazz : this.toIgnoreAlert) {
+                         if (mob.getClass() == clazz) {
+                             flag = true;
+diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..24c7567ffe88d4767371ac0082aa26cf5d2c2ed8 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
+@@ -41,8 +41,73 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    protected boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        ServerLevel serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || !this.getTargetConditions().test(serverLevel, this.mob, t)) {
++            return false;
++        }
++        this.target = t;
++        return true;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final Mob mob = this.mob;
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = mob.getX();
++        final double y = mob.getEyeY();
++        final double z = mob.getZ();
++        final TargetingConditions targetConditions = this.getTargetConditions().copy();
++        final Class<T> targetType = this.targetType;
++        final AABB targetSearch = getTargetSearchArea(this.getFollowDistance());
++        final ServerLevel serverLevel = getServerLevel(mob);
++        final var pendingTarget = this.pendingTarget;
++
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob.level() != serverLevel || mob.isRemoved() || !mob.isAlive()) {
++                    return;
++                }
++
++                if (targetType != Player.class && targetType != ServerPlayer.class) {
++                    final java.util.List<T> entities = mob.level().getEntitiesOfClass(targetType, targetSearch, entity -> entity != null && entity != mob && entity.isAlive());
++                    var result = serverLevel.getNearestEntity(entities, targetConditions, mob, x,y,z);
++                    pendingTarget.setRelease(result);
++                } else {
++                    var result = serverLevel.getNearestPlayer(targetConditions, mob, x, y, z);
++                    pendingTarget.setRelease(result);
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting entities", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async target finding
++        if (poll()) {
++            return true;
++        }
++        // Leaf end - Async target finding
+         if (this.randomInterval > 0 && this.mob.getRandom().nextInt(this.randomInterval) != 0) {
+             return false;
+         } else {
+@@ -57,6 +122,21 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+ 
+     protected void findTarget() {
+         ServerLevel serverLevel = getServerLevel(this.mob);
++
++        // Leaf start - Async Target Finding
++        if (targetType == Player.class) {
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayer) {
++                this.findTargetAsync();
++                this.target = null;
++                return;
++            }
++        } else if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++            this.findTargetAsync();
++            this.target = null;
++            return;
++        }
++        // Leaf end - Async Target Finding
++
+         if (this.targetType != Player.class && this.targetType != ServerPlayer.class) {
+             this.target = serverLevel.getNearestEntity(
+                 this.mob.level().getEntitiesOfClass(this.targetType, this.getTargetSearchArea(this.getFollowDistance()), entity -> true),
+@@ -81,7 +161,7 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         this.target = target;
+     }
+ 
+-    private TargetingConditions getTargetConditions() {
++    protected TargetingConditions getTargetConditions() {
+         return this.targetConditions.range(this.getFollowDistance());
+     }
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
+index 4604a603c4ddd0a9242e859aaa5a511c2d4c4f84..7274dfb52ca4a08cdebcd04294cedc73460593e5 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
+@@ -23,7 +23,15 @@ public class NearestHealableRaiderTargetGoal<T extends LivingEntity> extends Nea
+ 
+     @Override
+     public boolean canUse() {
+-        if (this.cooldown > 0 || !this.mob.getRandom().nextBoolean()) {
++        // Leaf start - Async target finding
++        if (this.cooldown > 0) {
++            return false;
++        }
++        if (poll()) {
++            return ((Raider) this.mob).hasActiveRaid();
++        }
++        if (/*this.cooldown > 0 || */ !this.mob.getRandom().nextBoolean()) {
++        // Leaf end - Async target finding
+             return false;
+         } else if (!((Raider)this.mob).hasActiveRaid()) {
+             return false;
+diff --git a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
+index abf57494950f55bbd75f335f26736cb9e703c197..683722fbd07fcae9cdd72928ed25fd084202b57e 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NonTameRandomTargetGoal.java
+@@ -20,6 +20,15 @@ public class NonTameRandomTargetGoal<T extends LivingEntity> extends NearestAtta
+ 
+     @Override
+     public boolean canContinueToUse() {
+-        return this.targetConditions != null ? this.targetConditions.test(getServerLevel(this.mob), this.mob, this.target) : super.canContinueToUse();
++        // Leaf start
++        if (this.target == null || !this.target.isAlive() || this.target.isRemoved()) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null) {
++            return false;
++        }
++        return this.getTargetConditions().test(serverLevel, this.mob, this.target) && super.canContinueToUse();
++        // Leaf end
+     }
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/target/ResetUniversalAngerTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/ResetUniversalAngerTargetGoal.java
+index 61a7bb5f1760d47a13b6aafc123bcf3dff420860..8db8dc0b9a79bc56568e22a8e99354de599ed23b 100644
+--- a/net/minecraft/world/entity/ai/goal/target/ResetUniversalAngerTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/ResetUniversalAngerTargetGoal.java
+@@ -37,6 +37,36 @@ public class ResetUniversalAngerTargetGoal<T extends Mob & NeutralMob> extends G
+         this.lastHurtByPlayerTimestamp = this.mob.getLastHurtByMobTimestamp();
+         this.mob.forgetCurrentTargetAndRefreshUniversalAnger();
+         if (this.alertOthersOfSameType) {
++            // Leaf start - async alert other
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.alertOther) {
++                final var mob = this.mob;
++                final var serverLevel = getServerLevel(mob);
++                final double followRange = this.mob.getAttributeValue(Attributes.FOLLOW_RANGE);
++                final AABB aabb = AABB.unitCubeFromLowerCorner(this.mob.position()).inflate(followRange, 10.0, followRange);
++                serverLevel.asyncAITasks.add(() -> {
++                    try {
++                        if (mob == null || serverLevel != mob.level() || !mob.isAlive()) {
++                            return;
++                        }
++                        var entities = serverLevel.getEntitiesOfClass(mob.getClass(), aabb, EntitySelector.NO_SPECTATORS);
++                        List<NeutralMob> toStop = new java.util.ArrayList<>(entities.size());
++                        for (Mob entity : entities) {
++                            if (entity != mob) {
++                                toStop.add((NeutralMob) entity);
++                            }
++                        }
++                        serverLevel.getServer().execute(() -> {
++                            for (NeutralMob neutralMob : toStop) {
++                                neutralMob.forgetCurrentTargetAndRefreshUniversalAnger();
++                            }
++                        });
++                    } catch (Exception e) {
++                        org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER.error("Exception alertOthers forgetCurrentTargetAndRefreshUniversalAnger", e);
++                    }
++                });
++                return;
++            }
++            // Leaf end - async alert other
+             this.getNearbyMobsOfSameType()
+                 .stream()
+                 .filter(mob -> mob != this.mob)
+@@ -48,6 +78,7 @@ public class ResetUniversalAngerTargetGoal<T extends Mob & NeutralMob> extends G
+     }
+ 
+     private List<? extends Mob> getNearbyMobsOfSameType() {
++        // Leaf - async alert other
+         double attributeValue = this.mob.getAttributeValue(Attributes.FOLLOW_RANGE);
+         AABB aabb = AABB.unitCubeFromLowerCorner(this.mob.position()).inflate(attributeValue, 10.0, attributeValue);
+         return this.mob.level().getEntitiesOfClass((Class<? extends Mob>)this.mob.getClass(), aabb, EntitySelector.NO_SPECTATORS);
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index 002d3c0d8b1107a275020d5c582c37e9a5c536ee..3f8c18f4040f4929df79ba85906330b150720cb0 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -32,9 +32,21 @@ public class Sensing {
+         // Gale end - Petal - reduce line of sight updates - expiring entity id lists
+     }
+ 
++    // Leaf start - async target finding
+     public void tick() {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            synchronized (this) {
++                tick1();
++            }
++        } else {
++            tick1();
++        }
++    }
++
++    private void tick1() {
++    // Leaf end - async target finding
+         if (this.expiring == null) { // Gale - Petal - reduce line of sight updates
+-        this.seen.clear();
++            this.seen.clear();
+             // Gale start - Petal - reduce line of sight updates
+         } else {
+             var expiringNow = this.expiring[this.nextToExpireIndex];
+@@ -62,7 +74,19 @@ public class Sensing {
+         // Gale end - Petal - reduce line of sight updates
+     }
+ 
++    // Leaf start - async target finding
+     public boolean hasLineOfSight(Entity entity) {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            synchronized (this) {
++                return hasLineOfSight1(entity);
++            }
++        } else {
++            return hasLineOfSight1(entity);
++        }
++    }
++
++    private boolean hasLineOfSight1(Entity entity) {
++    // Leaf end - async target finding
+         int id = entity.getId();
+         // Gale start - Petal - reduce line of sight cache lookups - merge sets
+         int cached = this.seen.get(id);
+diff --git a/net/minecraft/world/entity/animal/Fox.java b/net/minecraft/world/entity/animal/Fox.java
+index 90452f0945e761077608692877677f522d38bccd..9e380f5b4dcedb115f8893dd382f28ea05fab121 100644
+--- a/net/minecraft/world/entity/animal/Fox.java
++++ b/net/minecraft/world/entity/animal/Fox.java
+@@ -849,13 +849,18 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
+                 return false;
+             } else {
+                 ServerLevel serverLevel = getServerLevel(Fox.this.level());
++                // Leaf start
++                if (serverLevel == null) {
++                    return false;
++                }
++                // Leaf end
+ 
+                 for (UUID uuid : Fox.this.getTrustedUUIDs()) {
+                     if (serverLevel.getEntity(uuid) instanceof LivingEntity livingEntity) {
+                         this.trustedLastHurt = livingEntity;
+                         this.trustedLastHurtBy = livingEntity.getLastHurtByMob();
+                         int lastHurtByMobTimestamp = livingEntity.getLastHurtByMobTimestamp();
+-                        return lastHurtByMobTimestamp != this.timestamp && this.canAttack(this.trustedLastHurtBy, this.targetConditions);
++                        return lastHurtByMobTimestamp != this.timestamp && this.canAttack(this.trustedLastHurtBy, this.getTargetConditions()); // Leaf
+                     }
+                 }
+ 
+@@ -1032,6 +1037,7 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
+ 
+         @Override
+         protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++            // Leaf - Async search block
+             BlockState blockState = level.getBlockState(pos);
+             return blockState.is(Blocks.SWEET_BERRY_BUSH) && blockState.getValue(SweetBerryBushBlock.AGE) >= 2 || CaveVines.hasGlowBerries(blockState);
+         }
+@@ -1097,6 +1103,13 @@ public class Fox extends Animal implements VariantHolder<Fox.Variant> {
+             Fox.this.setSitting(false);
+             super.start();
+         }
++
++        // Leaf start - Async search block
++        @Override
++        protected TypeToCheck typeToCheck() {
++            return TypeToCheck.FoxEat;
++        }
++        // Leaf end - Async search block
+     }
+ 
+     class FoxFloatGoal extends FloatGoal {
+diff --git a/net/minecraft/world/entity/animal/Panda.java b/net/minecraft/world/entity/animal/Panda.java
+index 0a6a3060f3690ab2d8439d66e6fd6f0c5dc20688..050b060c711ea33d413fba506653618d8c4c4bd4 100644
+--- a/net/minecraft/world/entity/animal/Panda.java
++++ b/net/minecraft/world/entity/animal/Panda.java
+@@ -991,31 +991,44 @@ public class Panda extends Animal {
+ 
+         @Override
+         public boolean canUse() {
++            // Leaf start - Async look finding
++            if (poll()) {
++                return true;
++            }
+             if (this.mob.getRandom().nextFloat() >= this.probability) {
+                 return false;
+-            } else {
+-                if (this.lookAt == null) {
+-                    ServerLevel serverLevel = getServerLevel(this.mob);
+-                    if (this.lookAtType == Player.class) {
+-                        this.lookAt = serverLevel.getNearestPlayer(this.lookAtContext, this.mob, this.mob.getX(), this.mob.getEyeY(), this.mob.getZ());
+-                    } else {
+-                        this.lookAt = serverLevel.getNearestEntity(
+-                            this.mob
+-                                .level()
+-                                .getEntitiesOfClass(
+-                                    this.lookAtType, this.mob.getBoundingBox().inflate(this.lookDistance, 3.0, this.lookDistance), entity -> true
+-                                ),
+-                            this.lookAtContext,
+-                            this.mob,
+-                            this.mob.getX(),
+-                            this.mob.getEyeY(),
+-                            this.mob.getZ()
+-                        );
+-                    }
++            }
++            if (this.lookAtType == Player.class) {
++                if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayer) {
++                    getLookAsync();
++                    return false;
++                }
++            } else if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchEntity) {
++                getLookAsync();
++                return false;
++            }
++            if (this.lookAt == null) {
++                ServerLevel serverLevel = getServerLevel(this.mob);
++                if (this.lookAtType == Player.class) {
++                    this.lookAt = serverLevel.getNearestPlayer(this.lookAtContext, this.mob, this.mob.getX(), this.mob.getEyeY(), this.mob.getZ());
++                } else {
++                    this.lookAt = serverLevel.getNearestEntity(
++                        this.mob
++                            .level()
++                            .getEntitiesOfClass(
++                                this.lookAtType, this.mob.getBoundingBox().inflate(this.lookDistance, 3.0, this.lookDistance), entity -> true
++                            ),
++                        this.lookAtContext,
++                        this.mob,
++                        this.mob.getX(),
++                        this.mob.getEyeY(),
++                        this.mob.getZ()
++                    );
+                 }
+-
+-                return this.panda.canPerformAction() && this.lookAt != null;
+             }
++
++            return this.panda.canPerformAction() && this.lookAt != null;
++            // Leaf end - Async look finding
+         }
+ 
+         @Override
+diff --git a/net/minecraft/world/entity/animal/Rabbit.java b/net/minecraft/world/entity/animal/Rabbit.java
+index da5b32a17283e540615373097acc511d928aeff5..a9cc92d2ae2b1548b27288c190a3f99799dcefbe 100644
+--- a/net/minecraft/world/entity/animal/Rabbit.java
++++ b/net/minecraft/world/entity/animal/Rabbit.java
+@@ -642,7 +642,13 @@ public class Rabbit extends Animal implements VariantHolder<Rabbit.Variant> {
+                 this.wantsToRaid = this.rabbit.wantsMoreFood();
+             }
+ 
+-            return super.canUse();
++            // Leaf start
++            if (this.wantsToRaid && !this.canRaid) {
++                return super.canUse();
++            } else {
++                return false;
++            }
++            // Leaf end
+         }
+ 
+         @Override
+@@ -684,6 +690,7 @@ public class Rabbit extends Animal implements VariantHolder<Rabbit.Variant> {
+ 
+         @Override
+         protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++            // Leaf - Async search block
+             BlockState blockState = level.getBlockState(pos);
+             if (blockState.is(Blocks.FARMLAND) && this.wantsToRaid && !this.canRaid) {
+                 blockState = level.getBlockState(pos.above());
+@@ -692,9 +699,17 @@ public class Rabbit extends Animal implements VariantHolder<Rabbit.Variant> {
+                     return true;
+                 }
+             }
++            // Leaf - Async search block
+ 
+             return false;
+         }
++
++        // Leaf start - Async search block
++        @Override
++        protected TypeToCheck typeToCheck() {
++            return TypeToCheck.RaidGarden;
++        }
++        // Leaf end - Async search block
+     }
+ 
+     public static enum Variant implements StringRepresentable {
+diff --git a/net/minecraft/world/entity/animal/Turtle.java b/net/minecraft/world/entity/animal/Turtle.java
+index 10477fea8fcd70bf0c1ba4b6e1113625be690e68..65bbfc7d0078465faa6f18ff2f611d813fea310a 100644
+--- a/net/minecraft/world/entity/animal/Turtle.java
++++ b/net/minecraft/world/entity/animal/Turtle.java
+@@ -527,8 +527,16 @@ public class Turtle extends Animal {
+ 
+         @Override
+         protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++            // Leaf - Async search block
+             return level.getBlockState(pos).is(Blocks.WATER);
+         }
++
++        // Leaf start - Async search block
++        @Override
++        protected TypeToCheck typeToCheck() {
++            return TypeToCheck.TurtleToWater;
++        }
++        // Leaf end - Async search block
+     }
+ 
+     static class TurtleLayEggGoal extends MoveToBlockGoal {
+@@ -584,8 +592,16 @@ public class Turtle extends Animal {
+ 
+         @Override
+         protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++            // Leaf - Async search block
+             return level.isEmptyBlock(pos.above()) && TurtleEggBlock.isSand(level, pos);
+         }
++
++        // Leaf start - Async search block
++        @Override
++        protected TypeToCheck typeToCheck() {
++            return TypeToCheck.TurtleLay;
++        }
++        // Leaf end - Async search block
+     }
+ 
+     static class TurtleMoveControl extends org.purpurmc.purpur.controller.MoveControllerWASD { // Purpur - Ridables
+diff --git a/net/minecraft/world/entity/animal/Wolf.java b/net/minecraft/world/entity/animal/Wolf.java
+index 7cb292de6b27fa4ba3c5fce526a4e939c576789f..856bfeaa91a476c1008909ac35f76dfe0b792c9c 100644
+--- a/net/minecraft/world/entity/animal/Wolf.java
++++ b/net/minecraft/world/entity/animal/Wolf.java
+@@ -672,6 +672,7 @@ public class Wolf extends TamableAnimal implements NeutralMob, VariantHolder<Hol
+ 
+     @Override
+     public boolean isFood(ItemStack stack) {
++        // Leaf - Async target finding
+         return stack.is(ItemTags.WOLF_FOOD);
+     }
+ 
+diff --git a/net/minecraft/world/entity/monster/Drowned.java b/net/minecraft/world/entity/monster/Drowned.java
+index d44ed0d6a672a0b1eb0a8781e3e094096a2b753d..d1b13080e88f4b409f5393be7f2591d72af9aabb 100644
+--- a/net/minecraft/world/entity/monster/Drowned.java
++++ b/net/minecraft/world/entity/monster/Drowned.java
+@@ -393,6 +393,7 @@ public class Drowned extends Zombie implements RangedAttackMob {
+ 
+         @Override
+         protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++            // Leaf - Async search block
+             BlockPos blockPos = pos.above();
+             return level.isEmptyBlock(blockPos) && level.isEmptyBlock(blockPos.above()) && level.getBlockState(pos).entityCanStandOn(level, pos, this.drowned);
+         }
+@@ -408,6 +409,13 @@ public class Drowned extends Zombie implements RangedAttackMob {
+         public void stop() {
+             super.stop();
+         }
++
++        // Leaf start - Async search block
++        @Override
++        protected TypeToCheck typeToCheck() {
++            return TypeToCheck.Drowned;
++        }
++        // Leaf end - Async search block
+     }
+ 
+     static class DrownedGoToWaterGoal extends Goal {
+diff --git a/net/minecraft/world/entity/monster/Strider.java b/net/minecraft/world/entity/monster/Strider.java
+index ae4ee948971e931e4fdc4ec2187f5182195c626c..7b878761eefc41fa735ef67c4a6dcbe92e9a2004 100644
+--- a/net/minecraft/world/entity/monster/Strider.java
++++ b/net/minecraft/world/entity/monster/Strider.java
+@@ -570,8 +570,16 @@ public class Strider extends Animal implements ItemSteerable, Saddleable {
+ 
+         @Override
+         protected boolean isValidTarget(LevelReader level, BlockPos pos) {
++            // Leaf - Async search block
+             return level.getBlockState(pos).is(Blocks.LAVA) && level.getBlockState(pos.above()).isPathfindable(PathComputationType.LAND);
+         }
++
++        // Leaf start - Async search block
++        @Override
++        protected TypeToCheck typeToCheck() {
++            return TypeToCheck.Strider;
++        }
++        // Leaf end - Async search block
+     }
+ 
+     static class StriderPathNavigation extends GroundPathNavigation {
