@@ -229,6 +229,103 @@ index 4b24bb47a53a46586a642f3fb2656b1b8b670bf2..77e51ffce5afc9089fd3a2e382cdfde7
      @Override
      public boolean canContinueToUse() {
          return !this.pathNav.isDone();
+diff --git a/net/minecraft/world/entity/ai/goal/BegGoal.java b/net/minecraft/world/entity/ai/goal/BegGoal.java
+index 28ef40e8a645989ea181297069cf2bbe571f3082..a0d31b5eae1a4364e30ec75aa1e25176626714b3 100644
+--- a/net/minecraft/world/entity/ai/goal/BegGoal.java
++++ b/net/minecraft/world/entity/ai/goal/BegGoal.java
+@@ -27,8 +27,73 @@ public class BegGoal extends Goal {
+         this.setFlags(EnumSet.of(Goal.Flag.LOOK));
+     }
+ 
++    // Leaf start - Async Target Finding
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<Player> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    protected boolean poll() {
++        Player t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        ServerLevel serverLevel = getServerLevel(this.wolf);
++        if (serverLevel == null || !t.isAlive() || !playerHoldingInteresting(t)) {
++            return false;
++        }
++        this.player = t;
++        return true;
++    }
++
++    private void findTargetAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        // Capture mutable state to avoid race conditions
++        final Wolf wolf = this.wolf;
++
++        // Safety check
++        if (wolf == null || wolf.isRemoved() || !wolf.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final double x = wolf.getX();
++        final double y = wolf.getEyeY();
++        final double z = wolf.getZ();
++        final ServerLevel serverLevel = getServerLevel(wolf);
++        final TargetingConditions begTargeting = this.begTargeting;
++
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (wolf.level() != serverLevel || wolf.isRemoved() || !wolf.isAlive()) {
++                    return;
++                }
++
++                var player = serverLevel.getNearestPlayer(begTargeting, wolf);
++                if (player != null && playerHoldingInteresting(player)) {
++                    pendingTarget.setRelease(player);
++                }
++            } catch (Exception e) {
++                LOGGER.error("Exception getting player", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Target Finding
++
+     @Override
+     public boolean canUse() {
++        // Leaf start - Async Target Finding
++        if (poll()) {
++            return true;
++        }
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayer) {
++            findTargetAsync();
++            return false;
++        }
++        // Leaf end - Async Target Finding
+         this.player = this.level.getNearestPlayer(this.begTargeting, this.wolf);
+         return this.player != null && this.playerHoldingInteresting(this.player);
+     }
+@@ -59,14 +124,16 @@ public class BegGoal extends Goal {
+         this.lookTime--;
+     }
+ 
+-    private boolean playerHoldingInteresting(Player player) {
++    // Leaf start - static
++    private static boolean playerHoldingInteresting(Player player) {
+         for (InteractionHand interactionHand : InteractionHand.values()) {
+             ItemStack itemInHand = player.getItemInHand(interactionHand);
+-            if (itemInHand.is(Items.BONE) || this.wolf.isFood(itemInHand)) {
++            if (itemInHand.is(Items.BONE) || itemInHand.is(net.minecraft.tags.ItemTags.WOLF_FOOD)) {
+                 return true;
+             }
+         }
+ 
+         return false;
+     }
++    // Leaf end - static
+ }
 diff --git a/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java b/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java
 index 4c46cd105cde3cbcde65a02ff691c3a8edd56c76..d26bebdc66bf30a30fba5c1ba70e71479aff68a1 100644
 --- a/net/minecraft/world/entity/ai/goal/CatLieOnBedGoal.java
@@ -1397,6 +1494,18 @@ index 10477fea8fcd70bf0c1ba4b6e1113625be690e68..65bbfc7d0078465faa6f18ff2f611d81
      }
  
      static class TurtleMoveControl extends org.purpurmc.purpur.controller.MoveControllerWASD { // Purpur - Ridables
+diff --git a/net/minecraft/world/entity/animal/Wolf.java b/net/minecraft/world/entity/animal/Wolf.java
+index 7cb292de6b27fa4ba3c5fce526a4e939c576789f..856bfeaa91a476c1008909ac35f76dfe0b792c9c 100644
+--- a/net/minecraft/world/entity/animal/Wolf.java
++++ b/net/minecraft/world/entity/animal/Wolf.java
+@@ -672,6 +672,7 @@ public class Wolf extends TamableAnimal implements NeutralMob, VariantHolder<Hol
+ 
+     @Override
+     public boolean isFood(ItemStack stack) {
++        // Leaf - Async target finding
+         return stack.is(ItemTags.WOLF_FOOD);
+     }
+ 
 diff --git a/net/minecraft/world/entity/monster/Drowned.java b/net/minecraft/world/entity/monster/Drowned.java
 index d44ed0d6a672a0b1eb0a8781e3e094096a2b753d..d1b13080e88f4b409f5393be7f2591d72af9aabb 100644
 --- a/net/minecraft/world/entity/monster/Drowned.java
