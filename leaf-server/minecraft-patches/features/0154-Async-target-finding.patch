@@ -1237,6 +1237,87 @@ index 95fa516910a3834bbd4db6d11279e13a1f0dac41..f7ddae601abbe9e22a35c7cb4f9763e6
 +    }
 +    // Leaf end - Async search block
  }
+diff --git a/net/minecraft/world/entity/ai/goal/TemptGoal.java b/net/minecraft/world/entity/ai/goal/TemptGoal.java
+index f88f618d34fb343b31de3af1a875d6633703df71..40349a2d14eb4acff33365a6f6c8b2c648fb249b 100644
+--- a/net/minecraft/world/entity/ai/goal/TemptGoal.java
++++ b/net/minecraft/world/entity/ai/goal/TemptGoal.java
+@@ -36,14 +36,74 @@ public class TemptGoal extends Goal {
+         this.targetingConditions = TEMPT_TARGETING.copy().selector((entity, level) -> this.shouldFollow(entity));
+     }
+ 
++    // Leaf start - Async Tempt Finding
++    private final java.util.concurrent.atomic.AtomicBoolean isSearching = new java.util.concurrent.atomic.AtomicBoolean(false);
++    private final java.util.concurrent.atomic.AtomicReference<LivingEntity> pendingTarget = new java.util.concurrent.atomic.AtomicReference<>(null);
++    private static final org.apache.logging.log4j.Logger LOGGER = org.dreeam.leaf.async.ai.AsyncGoalExecutor.LOGGER;
++
++    private boolean poll() {
++        LivingEntity t = pendingTarget.getAndSet(null);
++        if (t == null) {
++            return false;
++        }
++        var serverLevel = getServerLevel(this.mob);
++        if (serverLevel == null || !t.isAlive() || !this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)).test(serverLevel, this.mob, t)) {
++            return false;
++        }
++        this.player = t;
++        return true;
++    }
++
++    private void getNearestPlayerAsync() {
++        if (!isSearching.compareAndSet(false, true)) {
++            return;
++        }
++
++        final var mob = this.mob;
++
++        if (mob == null || mob.isRemoved() || !mob.isAlive()) {
++            isSearching.setRelease(false);
++            return;
++        }
++
++        final var serverLevel = getServerLevel(mob);
++        final var pendingTarget = this.pendingTarget;
++        final var conditions = this.targetingConditions
++            .range(mob.getAttributeValue(Attributes.TEMPT_RANGE))
++            .copy();
++        serverLevel.asyncAITasks.add(() -> {
++            try {
++                if (mob == null || mob.isRemoved() || !mob.isAlive() || mob.level() != serverLevel) {
++                    return;
++                }
++                pendingTarget.setRelease(serverLevel.getNearestPlayer(conditions, mob));
++            } catch (Exception e) {
++                LOGGER.error("Exception getting player", e);
++            } finally {
++                isSearching.setRelease(false);
++            }
++        });
++    }
++    // Leaf end - Async Tempt Finding
+     @Override
+     public boolean canUse() {
+         if (this.calmDown > 0) {
+             this.calmDown--;
+             return false;
+         } else {
+-            this.player = getServerLevel(this.mob)
+-                .getNearestPlayer(this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)), this.mob);
++            // Leaf start - Async Tempt Finding
++            if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.searchPlayerTempt) {
++                if (poll()) {
++                    return true;
++                } else {
++                    getNearestPlayerAsync();
++                    return false;
++                }
++            } else {
++                this.player = getServerLevel(this.mob)
++                    .getNearestPlayer(this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)), this.mob);
++            }
++            // Leaf end - Async Tempt Finding
+             // CraftBukkit start
+             if (this.player != null) {
+                 org.bukkit.event.entity.EntityTargetLivingEntityEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callEntityTargetLivingEvent(this.mob, this.player, org.bukkit.event.entity.EntityTargetEvent.TargetReason.TEMPT);
 diff --git a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
 index 4644f3f7af89623ca6218c0dd24bb6cd67db553b..04bc007a138d5f5875fa89f52d573693fa96c656 100644
 --- a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
@@ -1422,24 +1503,11 @@ index 25fe78116ce01eeefe5c958423734195d27302eb..50228ccc92181d021b2f1cf164671ce4
                          if (mob.getClass() == clazz) {
                              flag = true;
 diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-index 41ee3cdc45ecc8376a2203ed588bb544ed377294..4718a04eca72150d94b15a8d5476ced38772247a 100644
+index 41ee3cdc45ecc8376a2203ed588bb544ed377294..702e006051c80fb7135df9f2a91147508912179f 100644
 --- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
 +++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
-@@ -17,7 +17,7 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
-     protected final int randomInterval;
-     @Nullable
-     protected LivingEntity target;
--    protected TargetingConditions targetConditions;
-+    @Nullable protected TargetingConditions.Selector selector; // Leaf - create TargetingConditions instead of reusing it
- 
-     public NearestAttackableTargetGoal(Mob mob, Class<T> targetType, boolean mustSee) {
-         this(mob, targetType, 10, mustSee, false, null);
-@@ -38,11 +38,76 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
-         this.targetType = targetType;
-         this.randomInterval = reducedTickDelay(interval);
-         this.setFlags(EnumSet.of(Goal.Flag.TARGET));
--        this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
-+        this.selector = selector; // Leaf
+@@ -41,8 +41,73 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+         this.targetConditions = TargetingConditions.forCombat().range(this.getFollowDistance()).selector(selector);
      }
  
 +    // Leaf start - Async Target Finding
@@ -1473,7 +1541,7 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..4718a04eca72150d94b15a8d5476ced3
 +        final double x = mob.getX();
 +        final double y = mob.getEyeY();
 +        final double z = mob.getZ();
-+        final TargetingConditions targetConditions = this.getTargetConditions();
++        final TargetingConditions targetConditions = this.getTargetConditions().copy();
 +        final Class<T> targetType = this.targetType;
 +        final AABB targetSearch = getTargetSearchArea(this.getFollowDistance());
 +        final ServerLevel serverLevel = getServerLevel(mob);
@@ -1528,17 +1596,14 @@ index 41ee3cdc45ecc8376a2203ed588bb544ed377294..4718a04eca72150d94b15a8d5476ced3
          if (this.targetType != Player.class && this.targetType != ServerPlayer.class) {
              this.target = serverLevel.getNearestEntity(
                  this.mob.level().getEntitiesOfClass(this.targetType, this.getTargetSearchArea(this.getFollowDistance()), entity -> true),
-@@ -81,7 +155,9 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+@@ -81,7 +155,7 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
          this.target = target;
      }
  
 -    private TargetingConditions getTargetConditions() {
--        return this.targetConditions.range(this.getFollowDistance());
-+    // Leaf start
 +    protected TargetingConditions getTargetConditions() {
-+        return TargetingConditions.forCombat().range(this.getFollowDistance()).selector(this.selector);
+         return this.targetConditions.range(this.getFollowDistance());
      }
-+    // Leaf end
  }
 diff --git a/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestHealableRaiderTargetGoal.java
 index 4604a603c4ddd0a9242e859aaa5a511c2d4c4f84..7274dfb52ca4a08cdebcd04294cedc73460593e5 100644
