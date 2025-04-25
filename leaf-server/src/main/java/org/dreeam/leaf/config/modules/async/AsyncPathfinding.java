@@ -16,9 +16,16 @@ public class AsyncPathfinding extends ConfigModules {
     public static int asyncPathfindingKeepalive = 60;
     public static int asyncPathfindingQueueSize = 0;
     public static PathfindTaskRejectPolicy asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.FLUSH_ALL;
+    private static boolean asyncPathfindingInitialized;
 
     @Override
     public void onLoaded() {
+        if (asyncPathfindingInitialized) {
+            config.getConfigSection(getBasePath());
+            return;
+        }
+        asyncPathfindingInitialized = true;
+
         final int availableProcessors = Runtime.getRuntime().availableProcessors();
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         asyncPathfindingMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncPathfindingMaxThreads);
