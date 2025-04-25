@@ -10,7 +10,7 @@ public class AsyncMobSpawning extends ConfigModules {
     }
 
     public static boolean enabled = true;
-    public static boolean asyncMobSpawningInitialized;
+    private static boolean asyncMobSpawningInitialized;
 
     @Override
     public void onLoaded() {
@@ -26,9 +26,12 @@ public class AsyncMobSpawning extends ConfigModules {
                 须在Paper配置文件中打开 per-player-mob-spawns 才能生效.""");
 
         // This prevents us from changing the value during a reload.
-        if (!asyncMobSpawningInitialized) {
-            asyncMobSpawningInitialized = true;
-            enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        if (asyncMobSpawningInitialized) {
+            config.getConfigSection(getBasePath());
+            return;
         }
+        asyncMobSpawningInitialized = true;
+
+        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
     }
 }

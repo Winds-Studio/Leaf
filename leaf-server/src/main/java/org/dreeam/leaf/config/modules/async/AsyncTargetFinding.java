@@ -4,6 +4,7 @@ package org.dreeam.leaf.config.modules.async;
 import org.dreeam.leaf.async.ai.AsyncGoalExecutor;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.LeafConfig;
 import org.dreeam.leaf.config.annotations.Experimental;
 
 import java.util.concurrent.ArrayBlockingQueue;
@@ -23,7 +24,7 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean searchEntity = true;
     public static boolean searchPlayer = false;
     public static boolean searchPlayerTempt = false;
-    public static boolean asyncTargetFindingInitialized;
+    private static boolean asyncTargetFindingInitialized;
 
     @Override
     public void onLoaded() {
@@ -32,12 +33,15 @@ public class AsyncTargetFinding extends ConfigModules {
                 This moves the expensive entity target search calculations to a background thread while
                 keeping the actual entity validation on the main thread.""",
             """
+                **实验性功能**
                 这会将昂贵的实体目标搜索计算移至后台线程, 同时在主线程上保持实际的实体验证.""");
 
         if (asyncTargetFindingInitialized) {
+            config.getConfigSection(getBasePath());
             return;
         }
         asyncTargetFindingInitialized = true;
+
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", false);
@@ -64,5 +68,6 @@ public class AsyncTargetFinding extends ConfigModules {
                 .setPriority(Thread.NORM_PRIORITY - 2)
                 .build(),
             new ThreadPoolExecutor.CallerRunsPolicy());
+        LeafConfig.LOGGER.info("Using 1 threads for Async Target Finding");
     }
 }
