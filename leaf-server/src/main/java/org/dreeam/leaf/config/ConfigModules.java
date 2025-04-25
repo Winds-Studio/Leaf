@@ -46,6 +46,13 @@ public abstract class ConfigModules extends LeafConfig {
         for (ConfigModules module : MODULES) {
             module.onPostLoaded();
         }
+
+        // Save config to disk
+        try {
+            LeafConfig.config().saveConfig();
+        } catch (Exception e) {
+            LeafConfig.LOGGER.error("Failed to save config file!", e);
+        }
     }
 
     private static List<Field> getAnnotatedStaticFields(Class<?> clazz, Class<? extends Annotation> annotation) {

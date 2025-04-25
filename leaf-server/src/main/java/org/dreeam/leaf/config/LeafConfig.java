@@ -58,6 +58,7 @@ public class LeafConfig {
 
     /* Load & Reload */
 
+    // Reload config (async)
     public static @NotNull CompletableFuture<Void> reloadAsync(CommandSender sender) {
         return CompletableFuture.runAsync(() -> {
             try {
@@ -76,6 +77,7 @@ public class LeafConfig {
         }, Util.ioPool());
     }
 
+    // Init config
     public static void loadConfig() {
         try {
             long begin = System.nanoTime();
@@ -100,9 +102,6 @@ public class LeafConfig {
 
         // Load config modules
         ConfigModules.initModules();
-
-        // Save config to disk
-        leafGlobalConfig.saveConfig();
     }
 
     public static LeafGlobalConfig config() {
