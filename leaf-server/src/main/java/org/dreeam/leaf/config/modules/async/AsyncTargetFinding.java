@@ -1,10 +1,10 @@
 
 package org.dreeam.leaf.config.modules.async;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.dreeam.leaf.async.ai.AsyncGoalExecutor;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
-import org.dreeam.leaf.config.LeafConfig;
 import org.dreeam.leaf.config.annotations.Experimental;
 
 import java.util.concurrent.ArrayBlockingQueue;
@@ -62,12 +62,11 @@ public class AsyncTargetFinding extends ConfigModules {
             0L,
             TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(128),
-            new com.google.common.util.concurrent.ThreadFactoryBuilder()
+            new ThreadFactoryBuilder()
                 .setNameFormat("Leaf Async Target Finding Thread")
                 .setDaemon(true)
                 .setPriority(Thread.NORM_PRIORITY - 2)
                 .build(),
             new ThreadPoolExecutor.CallerRunsPolicy());
-        LeafConfig.LOGGER.info("Using 1 threads for Async Target Finding");
     }
 }

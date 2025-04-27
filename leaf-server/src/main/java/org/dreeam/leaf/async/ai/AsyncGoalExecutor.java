@@ -1,14 +1,15 @@
 package org.dreeam.leaf.async.ai;
 
-import org.jetbrains.annotations.Nullable;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 public class AsyncGoalExecutor {
-    @Nullable
-    public static java.util.concurrent.ExecutorService EXECUTOR;
+    public static ExecutorService EXECUTOR;
 
-    public static final org.apache.logging.log4j.Logger LOGGER = org.apache.logging.log4j.LogManager.getLogger("Leaf Async Entity Lookup");
+    public static final Logger LOGGER = LogManager.getLogger("Leaf Async Entity Lookup");
 
     public static void runTasks(List<Runnable> tasks) {
         for (Runnable task : tasks) {

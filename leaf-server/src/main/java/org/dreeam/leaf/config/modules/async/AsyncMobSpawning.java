@@ -22,7 +22,7 @@ public class AsyncMobSpawning extends ConfigModules {
                 This just offloads some expensive calculations that are required for mob spawning.""",
             """
                 是否异步化生物生成.
-                在实体较多的服务器上, 异步生成可最高带来15%的性能提升.
+                在实体较多的服务器上, 异步生成可最高带来 15% 的性能提升.
                 须在Paper配置文件中打开 per-player-mob-spawns 才能生效.""");
 
         // This prevents us from changing the value during a reload.

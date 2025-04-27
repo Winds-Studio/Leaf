@@ -67,8 +67,8 @@ public class FastRNG extends ConfigModules {
                     Use direct random implementation instead of delegating to Java's RandomGenerator.
                     This may improve performance but potentially changes RNG behavior.""",
                 """
-                    使用直接随机实现而不是委托给Java的RandomGenerator.
-                    这可能会提高性能，但可能会改变RNG行为。"""));
+                    使用直接随机实现而不是委派给 RandomGenerator.
+                    这可能会提高性能, 但可能会改变 RNG 行为."""));
 
         if (enabled) {
             try {

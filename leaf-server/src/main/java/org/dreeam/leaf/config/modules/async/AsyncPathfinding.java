@@ -24,11 +24,13 @@ public class AsyncPathfinding extends ConfigModules {
             """
             The policy to use when the queue is full and a new task is submitted.
             FLUSH_ALL: All pending tasks will be run on server thread.
-            CALLER_RUNS: Newly submitted task will be run on server thread.""",
+            CALLER_RUNS: Newly submitted task will be run on server thread.
+            DISCARD: Newly submitted task will be dropped directly.""",
             """
             当队列满时, 新提交的任务将使用以下策略处理.
             FLUSH_ALL: 所有等待中的任务都将在主线程上运行.
-            CALLER_RUNS: 新提交的任务将在主线程上运行."""
+            CALLER_RUNS: 新提交的任务将在主线程上运行.
+            DISCARD: 新提交的任务会被直接丢弃."""
         );
         if (asyncPathfindingInitialized) {
             config.getConfigSection(getBasePath());

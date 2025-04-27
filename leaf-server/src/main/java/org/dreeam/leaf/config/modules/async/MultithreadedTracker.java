@@ -18,7 +18,8 @@ public class MultithreadedTracker extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        config.addCommentRegionBased(getBasePath(),
+            """
                 Make entity tracking saving asynchronously, can improve performance significantly,
                 especially in some massive entities in small area situations.""",
             """
