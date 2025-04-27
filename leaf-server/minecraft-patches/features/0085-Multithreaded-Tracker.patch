@@ -177,7 +177,7 @@ index f106373ef3ac4a8685c2939c9e8361688a285913..51ae390c68e7a3aa193329cc3bc47ca6
      public boolean visible = true;
  
 diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
-index d8298c7925e3bcea07ead4d438478cc51abcfa16..75670751064add901c2628d53d8028350f966c5d 100644
+index d8298c7925e3bcea07ead4d438478cc51abcfa16..78798a84c6b49708f2650b52b40e397e4f26b532 100644
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
 @@ -110,8 +110,16 @@ public class ServerEntity {
@@ -199,24 +199,15 @@ index d8298c7925e3bcea07ead4d438478cc51abcfa16..75670751064add901c2628d53d802835
                          }
                      }
                  );
-@@ -435,12 +443,15 @@ public class ServerEntity {
-         if (this.entity instanceof LivingEntity) {
-             Set<AttributeInstance> attributesToSync = ((LivingEntity)this.entity).getAttributes().getAttributesToSync();
-             if (!attributesToSync.isEmpty()) {
-+                // Leaf start - petal - Multithreaded tracker - send in main thread
-+                final Set<AttributeInstance> copy = new it.unimi.dsi.fastutil.objects.ObjectOpenHashSet<>(attributesToSync);
-                 // CraftBukkit start - Send scaled max health
-                 if (this.entity instanceof ServerPlayer serverPlayer) {
--                    serverPlayer.getBukkitEntity().injectScaledMaxHealth(attributesToSync, false);
-+                    serverPlayer.getBukkitEntity().injectScaledMaxHealth(copy, false);
-                 }
-                 // CraftBukkit end
--                this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), attributesToSync));
-+                this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), copy));
-+                // Leaf end - petal - Multithreaded tracker - send in main thread
+@@ -443,7 +451,7 @@ public class ServerEntity {
+                 this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), attributesToSync));
              }
  
-             attributesToSync.clear();
+-            attributesToSync.clear();
++            ((LivingEntity)this.entity).getAttributes().getAttributesIdToSync().clear(); // Leaf - Multithreaded tracker
+         }
+     }
+ 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
 index d6ebc25dc5f04194edde5ad3a1166113e5542a1d..49cbdf014d0626b36eb4c451b6de09508822b7fd 100644
 --- a/net/minecraft/server/level/ServerLevel.java
@@ -252,6 +243,31 @@ index 04bf8bba0d8c0d5459605253dcc3f135bf43fd95..abe79d07196de0a10a382d4c37161c7e
          // Paper start - Prevent teleporting dead entities
          if (this.player.isRemoved()) {
              LOGGER.info("Attempt to teleport removed player {} restricted", player.getScoreboardName());
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index d502325d693539842fd6f5485365e0e9b786b7aa..6a0b1d4f17e9c3c3152ea1696ecb4a054abd56ce 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -1317,7 +1317,7 @@ public abstract class LivingEntity extends Entity implements Attackable {
+             this.onAttributeUpdated(attributeInstance.getAttribute());
+         }
+ 
+-        attributesToUpdate.clear();
++        this.getAttributes().getAttributesIdToUpdate().clear(); // Leaf - Multithreaded tracker
+     }
+ 
+     protected void onAttributeUpdated(Holder<Attribute> attribute) {
+diff --git a/net/minecraft/world/entity/ai/attributes/Attribute.java b/net/minecraft/world/entity/ai/attributes/Attribute.java
+index f8419dde44ebc7324e783f8bee42132d5ec973c3..8b18ec1644eb743483ed6ed79e9c98d287fd7e20 100644
+--- a/net/minecraft/world/entity/ai/attributes/Attribute.java
++++ b/net/minecraft/world/entity/ai/attributes/Attribute.java
+@@ -16,6 +16,7 @@ public class Attribute {
+     private boolean syncable;
+     private final String descriptionId;
+     private Attribute.Sentiment sentiment = Attribute.Sentiment.POSITIVE;
++    public int uniqueId; // Leaf
+ 
+     protected Attribute(String descriptionId, double defaultValue) {
+         this.defaultValue = defaultValue;
 diff --git a/net/minecraft/world/entity/ai/attributes/AttributeInstance.java b/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
 index 8013594bb4844e7a8abf28123958e7f632d39341..ceff383d565267edd13a6d9006030b8e1f8053e3 100644
 --- a/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
@@ -271,27 +287,276 @@ index 8013594bb4844e7a8abf28123958e7f632d39341..ceff383d565267edd13a6d9006030b8e
      private boolean dirty = true;
      private double cachedValue;
 diff --git a/net/minecraft/world/entity/ai/attributes/AttributeMap.java b/net/minecraft/world/entity/ai/attributes/AttributeMap.java
-index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..371dd51c62c9a109014851c8a1562a5cb78b18b6 100644
+index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..91288444d42b162bdbeec8d1906511c335fbc574 100644
 --- a/net/minecraft/world/entity/ai/attributes/AttributeMap.java
 +++ b/net/minecraft/world/entity/ai/attributes/AttributeMap.java
-@@ -19,11 +19,14 @@ import org.slf4j.Logger;
+@@ -19,13 +19,14 @@ import org.slf4j.Logger;
  
  public class AttributeMap {
      private static final Logger LOGGER = LogUtils.getLogger();
 +    // Leaf start - Multithreaded tracker
-+    private final boolean multiThreadedTrackingEnabled = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled;
      // Gale start - Lithium - replace AI attributes with optimized collections
 -    private final Map<Holder<Attribute>, AttributeInstance> attributes = new it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap<>(0);
 -    private final Set<AttributeInstance> attributesToSync = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(0);
 -    private final Set<AttributeInstance> attributesToUpdate = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(0);
-+    private final Map<Holder<Attribute>, AttributeInstance> attributes = multiThreadedTrackingEnabled ? new java.util.concurrent.ConcurrentHashMap<>() : new it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap<>(0);
-+    private final Set<AttributeInstance> attributesToSync = multiThreadedTrackingEnabled ? com.google.common.collect.Sets.newConcurrentHashSet() : new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(0);
-+    private final Set<AttributeInstance> attributesToUpdate = multiThreadedTrackingEnabled ? com.google.common.collect.Sets.newConcurrentHashSet() : new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(0);
++    private final java.util.concurrent.atomic.AtomicReferenceArray<AttributeInstance> attributes; // Leaf
++    private final it.unimi.dsi.fastutil.ints.IntSet attributesToSync = it.unimi.dsi.fastutil.ints.IntSets.synchronize(new it.unimi.dsi.fastutil.ints.IntArraySet()); // Leaf
++    private final it.unimi.dsi.fastutil.ints.IntSet attributesToUpdate = it.unimi.dsi.fastutil.ints.IntSets.synchronize(new it.unimi.dsi.fastutil.ints.IntArraySet()); // Leaf
      // Gale end - Lithium - replace AI attributes with optimized collections
 +    // Leaf end - Multithreaded tracker
      private final AttributeSupplier supplier;
-     private final java.util.function.Function<Holder<Attribute>, AttributeInstance> createInstance; // Gale - Airplane - reduce entity allocations
+-    private final java.util.function.Function<Holder<Attribute>, AttributeInstance> createInstance; // Gale - Airplane - reduce entity allocations
      private final net.minecraft.world.entity.LivingEntity entity; // Purpur - Ridables
+ 
+     public AttributeMap(AttributeSupplier supplier) {
+@@ -36,54 +37,105 @@ public class AttributeMap {
+         this.entity = entity;
+         // Purpur end - Ridables
+         this.supplier = defaultAttributes;
+-        this.createInstance = holder -> this.supplier.createInstance(this::onAttributeModified, holder); // Gale - Airplane - reduce entity allocations
++        this.attributes = new java.util.concurrent.atomic.AtomicReferenceArray<>(BuiltInRegistries.ATTRIBUTE.size()); // Leaf
+     }
+ 
+     private void onAttributeModified(AttributeInstance instance) {
+-        this.attributesToUpdate.add(instance);
++        this.attributesToUpdate.add(instance.getAttribute().value().uniqueId);
+         if (instance.getAttribute().value().isClientSyncable() && (entity == null || entity.shouldSendAttribute(instance.getAttribute().value()))) { // Purpur - Ridables
+-            this.attributesToSync.add(instance);
++            this.attributesToSync.add(instance.getAttribute().value().uniqueId);
+         }
+     }
+ 
+-    public Set<AttributeInstance> getAttributesToSync() {
++    // Leaf start - Multithreaded tracker
++    public it.unimi.dsi.fastutil.ints.IntSet getAttributesIdToSync() {
+         return this.attributesToSync;
+     }
+ 
+-    public Set<AttributeInstance> getAttributesToUpdate() {
++    public it.unimi.dsi.fastutil.ints.IntSet getAttributesIdToUpdate() {
+         return this.attributesToUpdate;
+     }
+ 
++    @Deprecated
++    public Set<AttributeInstance> getAttributesToSync() {
++        var set = new it.unimi.dsi.fastutil.objects.ObjectArraySet<AttributeInstance>();
++        for (int i : this.attributesToSync.toIntArray()) {
++            var attribute = this.attributes.get(i);
++            if (attribute == null) {
++                throw new NullPointerException("attribute cannot be null");
++            }
++            set.add(attribute);
++        }
++        return set;
++    }
++
++    @Deprecated
++    public Set<AttributeInstance> getAttributesToUpdate() {
++        var set = new it.unimi.dsi.fastutil.objects.ObjectArraySet<AttributeInstance>();
++        for (int i : this.attributesToUpdate.toIntArray()) {
++            var attribute = this.attributes.get(i);
++            if (attribute == null) {
++                throw new NullPointerException("attribute cannot be null");
++            }
++            set.add(attribute);
++        }
++        return set;
++    }
++    // Leaf end - Multithreaded tracker
++
+     public Collection<AttributeInstance> getSyncableAttributes() {
+-        return this.attributes.values().stream().filter(instance -> instance.getAttribute().value().isClientSyncable() && (entity == null || entity.shouldSendAttribute(instance.getAttribute().value()))).collect(Collectors.toList()); // Purpur - Ridables
++        // Leaf start
++        var attrs = this.attributes;
++        var result = new java.util.ArrayList<AttributeInstance>();
++        int len = attrs.length();
++        for (int i = 0; i < len; i++) {
++            AttributeInstance instance = attrs.get(i);
++            if (instance != null
++                && instance.getAttribute().value().isClientSyncable()
++                && (entity == null || entity.shouldSendAttribute(instance.getAttribute().value()))
++            ) {
++                result.add(instance);
++            }
++        }
++        return result;
++        // Leaf end
+     }
+ 
+     @Nullable
+     public AttributeInstance getInstance(Holder<Attribute> attribute) {
+-        return this.attributes.computeIfAbsent(attribute, this.createInstance); // Gale - Airplane - reduce entity allocations - cache lambda, as for some reason java allocates it anyways
++        // Leaf start
++        int id = attribute.value().uniqueId;
++        var attr = this.attributes.getAcquire(id);
++        if (attr != null) {
++            return attr;
++        }
++        var newAttr = this.supplier.createInstance(this::onAttributeModified, attribute);
++        attributes.compareAndExchangeRelease(id, null, newAttr);
++        return attributes.getAcquire(id);
++        // Leaf end
+     }
+ 
+     public boolean hasAttribute(Holder<Attribute> attribute) {
+-        return this.attributes.get(attribute) != null || this.supplier.hasAttribute(attribute);
++        return this.attributes.get(attribute.value().uniqueId) != null || this.supplier.hasAttribute(attribute); // Leaf
+     }
+ 
+     public boolean hasModifier(Holder<Attribute> attribute, ResourceLocation id) {
+-        AttributeInstance attributeInstance = this.attributes.get(attribute);
++        AttributeInstance attributeInstance = this.attributes.get(attribute.value().uniqueId); // Leaf
+         return attributeInstance != null ? attributeInstance.getModifier(id) != null : this.supplier.hasModifier(attribute, id);
+     }
+ 
+     public double getValue(Holder<Attribute> attribute) {
+-        AttributeInstance attributeInstance = this.attributes.get(attribute);
++        AttributeInstance attributeInstance = this.attributes.get(attribute.value().uniqueId); // Leaf
+         return attributeInstance != null ? attributeInstance.getValue() : this.supplier.getValue(attribute);
+     }
+ 
+     public double getBaseValue(Holder<Attribute> attribute) {
+-        AttributeInstance attributeInstance = this.attributes.get(attribute);
++        AttributeInstance attributeInstance = this.attributes.get(attribute.value().uniqueId); // Leaf
+         return attributeInstance != null ? attributeInstance.getBaseValue() : this.supplier.getBaseValue(attribute);
+     }
+ 
+     public double getModifierValue(Holder<Attribute> attribute, ResourceLocation id) {
+-        AttributeInstance attributeInstance = this.attributes.get(attribute);
++        AttributeInstance attributeInstance = this.attributes.get(attribute.value().uniqueId); // Leaf
+         return attributeInstance != null ? attributeInstance.getModifier(id).amount() : this.supplier.getModifierValue(attribute, id);
+     }
+ 
+@@ -99,7 +151,7 @@ public class AttributeMap {
+ 
+     public void removeAttributeModifiers(Multimap<Holder<Attribute>, AttributeModifier> modifiers) {
+         modifiers.asMap().forEach((holder, collection) -> {
+-            AttributeInstance attributeInstance = this.attributes.get(holder);
++            AttributeInstance attributeInstance = this.attributes.get(holder.value().uniqueId); // Leaf
+             if (attributeInstance != null) {
+                 collection.forEach(attributeModifier -> attributeInstance.removeModifier(attributeModifier.id()));
+             }
+@@ -107,37 +159,58 @@ public class AttributeMap {
+     }
+ 
+     public void assignAllValues(AttributeMap map) {
+-        map.attributes.values().forEach(attribute -> {
+-            AttributeInstance instance = this.getInstance(attribute.getAttribute());
++        // Leaf start
++        var attrs = map.attributes;
++        int len = attrs.length();
++        for (int i = 0; i < len; i++) {
++            AttributeInstance instance = attrs.get(i);
+             if (instance != null) {
+-                instance.replaceFrom(attribute);
++                AttributeInstance self = this.getInstance(instance.getAttribute());
++                if (self != null) {
++                    self.replaceFrom(instance);
++                }
+             }
+-        });
++        }
++        // Leaf end
+     }
+ 
+     public void assignBaseValues(AttributeMap map) {
+-        map.attributes.values().forEach(attribute -> {
+-            AttributeInstance instance = this.getInstance(attribute.getAttribute());
++        // Leaf start
++        var attrs = map.attributes;
++        int len = attrs.length();
++        for (int i = 0; i < len; i++) {
++            AttributeInstance instance = attrs.get(i);
+             if (instance != null) {
+-                instance.setBaseValue(attribute.getBaseValue());
++                AttributeInstance self = this.getInstance(instance.getAttribute());
++                if (self != null) {
++                    self.setBaseValue(instance.getBaseValue());
++                }
+             }
+-        });
++        }
++        // Leaf end
+     }
+ 
+     public void assignPermanentModifiers(AttributeMap map) {
+-        map.attributes.values().forEach(attribute -> {
+-            AttributeInstance instance = this.getInstance(attribute.getAttribute());
++        // Leaf start
++        var attrs = map.attributes;
++        int len = attrs.length();
++        for (int i = 0; i < len; i++) {
++            AttributeInstance instance = attrs.get(i);
+             if (instance != null) {
+-                instance.addPermanentModifiers(attribute.getPermanentModifiers());
++                AttributeInstance self = this.getInstance(instance.getAttribute());
++                if (self != null) {
++                    self.addPermanentModifiers(instance.getPermanentModifiers());
++                }
+             }
+-        });
++        }
++        // Leaf end
+     }
+ 
+     public boolean resetBaseValue(Holder<Attribute> attribute) {
+         if (!this.supplier.hasAttribute(attribute)) {
+             return false;
+         } else {
+-            AttributeInstance attributeInstance = this.attributes.get(attribute);
++            AttributeInstance attributeInstance = this.attributes.get(attribute.value().uniqueId); // Leaf
+             if (attributeInstance != null) {
+                 attributeInstance.setBaseValue(this.supplier.getBaseValue(attribute));
+             }
+@@ -149,9 +222,16 @@ public class AttributeMap {
+     public ListTag save() {
+         ListTag listTag = new ListTag();
+ 
+-        for (AttributeInstance attributeInstance : this.attributes.values()) {
+-            listTag.add(attributeInstance.save());
++        // Leaf start
++        var attrs = this.attributes;
++        int len = attrs.length();
++        for (int i = 0; i < len; i++) {
++            AttributeInstance instance = attrs.get(i);
++            if (instance != null) {
++                listTag.add(instance.save());
++            }
+         }
++        // Leaf end
+ 
+         return listTag;
+     }
+@@ -177,7 +257,7 @@ public class AttributeMap {
+     // Paper - start - living entity allow attribute registration
+     public void registerAttribute(Holder<Attribute> attributeBase) {
+         AttributeInstance attributeModifiable = new AttributeInstance(attributeBase, AttributeInstance::getAttribute);
+-        attributes.put(attributeBase, attributeModifiable);
++        attributes.setRelease(attributeBase.value().uniqueId, attributeModifiable); // Leaf
+     }
+     // Paper - end - living entity allow attribute registration
+ 
+diff --git a/net/minecraft/world/entity/ai/attributes/Attributes.java b/net/minecraft/world/entity/ai/attributes/Attributes.java
+index 26e4f766640f28068b6c07174285768e7d251b4f..59dca559ff875d710ecc5bafda23b7125b86b8ac 100644
+--- a/net/minecraft/world/entity/ai/attributes/Attributes.java
++++ b/net/minecraft/world/entity/ai/attributes/Attributes.java
+@@ -6,6 +6,8 @@ import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.resources.ResourceLocation;
+ 
+ public class Attributes {
++    private static final java.util.concurrent.atomic.AtomicInteger LENGTH = new java.util.concurrent.atomic.AtomicInteger(0); // Leaf
++
+     public static final Holder<Attribute> ARMOR = register("armor", new RangedAttribute("attribute.name.armor", 0.0, 0.0, 30.0).setSyncable(true));
+     public static final Holder<Attribute> ARMOR_TOUGHNESS = register(
+         "armor_toughness", new RangedAttribute("attribute.name.armor_toughness", 0.0, 0.0, 20.0).setSyncable(true)
+@@ -93,6 +95,7 @@ public class Attributes {
+     );
+ 
+     private static Holder<Attribute> register(String name, Attribute attribute) {
++        attribute.uniqueId = LENGTH.getAndIncrement(); // Leaf
+         return Registry.registerForHolder(BuiltInRegistries.ATTRIBUTE, ResourceLocation.withDefaultNamespace(name), attribute);
+     }
+ 
 diff --git a/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java b/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
 index 681dec447486138088fe5f705ef4fadab531139f..27f8a22d798a17dbd5949d1b6ff0526837fe91d5 100644
 --- a/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
