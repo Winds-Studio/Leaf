@@ -269,7 +269,7 @@ index f8419dde44ebc7324e783f8bee42132d5ec973c3..8b18ec1644eb743483ed6ed79e9c98d2
      protected Attribute(String descriptionId, double defaultValue) {
          this.defaultValue = defaultValue;
 diff --git a/net/minecraft/world/entity/ai/attributes/AttributeInstance.java b/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
-index 8013594bb4844e7a8abf28123958e7f632d39341..ceff383d565267edd13a6d9006030b8e1f8053e3 100644
+index 8013594bb4844e7a8abf28123958e7f632d39341..943b68ec0dfd3baba2dcbcc80be366c950187f3c 100644
 --- a/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
 +++ b/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
 @@ -24,8 +24,11 @@ public class AttributeInstance {
@@ -280,14 +280,49 @@ index 8013594bb4844e7a8abf28123958e7f632d39341..ceff383d565267edd13a6d9006030b8e
 -    private final Map<ResourceLocation, AttributeModifier> permanentModifiers = new Object2ObjectArrayMap<>();
 +    // Leaf start - Multithreaded tracker
 +    private final boolean multiThreadedTrackingEnabled = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled;
-+    private final Map<ResourceLocation, AttributeModifier> modifierById = multiThreadedTrackingEnabled ? new java.util.concurrent.ConcurrentHashMap<>() : new Object2ObjectArrayMap<>();
-+    private final Map<ResourceLocation, AttributeModifier> permanentModifiers = multiThreadedTrackingEnabled ? new java.util.concurrent.ConcurrentHashMap<>() : new Object2ObjectArrayMap<>();
++    private final Map<ResourceLocation, AttributeModifier> modifierById = multiThreadedTrackingEnabled ? it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectArrayMap<>(), this) : new Object2ObjectArrayMap<>();
++    private final Map<ResourceLocation, AttributeModifier> permanentModifiers = multiThreadedTrackingEnabled ? it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectArrayMap<>(), this) : new Object2ObjectArrayMap<>();
 +    // Leaf end - Multithreaded tracker
      private double baseValue;
      private boolean dirty = true;
      private double cachedValue;
+@@ -114,7 +117,15 @@ public class AttributeInstance {
+     }
+ 
+     protected void setDirty() {
+-        this.dirty = true;
++        // Leaf start
++        if (multiThreadedTrackingEnabled) {
++            synchronized (this) {
++                this.dirty = true;
++            }
++        } else {
++            this.dirty = true;
++        }
++        // Leaf end
+         this.onDirty.accept(this);
+     }
+ 
+@@ -141,7 +152,16 @@ public class AttributeInstance {
+     }
+ 
+     public double getValue() {
+-        if (this.dirty) {
++        // Leaf start
++        if (multiThreadedTrackingEnabled) {
++            synchronized (this) {
++                if (this.dirty) {
++                    this.cachedValue = this.calculateValue();
++                    this.dirty = false;
++                }
++            }
++        } else if (this.dirty) {
++        // Leaf end
+             this.cachedValue = this.calculateValue();
+             this.dirty = false;
+         }
 diff --git a/net/minecraft/world/entity/ai/attributes/AttributeMap.java b/net/minecraft/world/entity/ai/attributes/AttributeMap.java
-index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..bfff04e3df0692fec01368252a24ec520d6d69c9 100644
+index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..9e26059285e56b9337478f5f21aa48741b828a76 100644
 --- a/net/minecraft/world/entity/ai/attributes/AttributeMap.java
 +++ b/net/minecraft/world/entity/ai/attributes/AttributeMap.java
 @@ -19,13 +19,13 @@ import org.slf4j.Logger;
@@ -310,15 +345,20 @@ index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..bfff04e3df0692fec01368252a24ec52
      private final net.minecraft.world.entity.LivingEntity entity; // Purpur - Ridables
  
      public AttributeMap(AttributeSupplier supplier) {
-@@ -36,54 +36,110 @@ public class AttributeMap {
+@@ -36,54 +36,115 @@ public class AttributeMap {
          this.entity = entity;
          // Purpur end - Ridables
          this.supplier = defaultAttributes;
 -        this.createInstance = holder -> this.supplier.createInstance(this::onAttributeModified, holder); // Gale - Airplane - reduce entity allocations
 +        // Leaf start - Multithreaded tracker
 +        this.attributes = new java.util.concurrent.atomic.AtomicReferenceArray<>(BuiltInRegistries.ATTRIBUTE.size());
-+        this.attributesToSync = it.unimi.dsi.fastutil.ints.IntSets.synchronize(new it.unimi.dsi.fastutil.ints.IntArraySet());
-+        this.attributesToUpdate = it.unimi.dsi.fastutil.ints.IntSets.synchronize(new it.unimi.dsi.fastutil.ints.IntArraySet());
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            this.attributesToSync = it.unimi.dsi.fastutil.ints.IntSets.synchronize(new it.unimi.dsi.fastutil.ints.IntArraySet());
++            this.attributesToUpdate = it.unimi.dsi.fastutil.ints.IntSets.synchronize(new it.unimi.dsi.fastutil.ints.IntArraySet());
++        } else {
++            this.attributesToSync = new it.unimi.dsi.fastutil.ints.IntArraySet();
++            this.attributesToUpdate = new it.unimi.dsi.fastutil.ints.IntArraySet();
++        }
 +        this.onDirty = this::onAttributeModified;
 +        // Leaf end - Multithreaded tracker
      }
@@ -433,7 +473,7 @@ index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..bfff04e3df0692fec01368252a24ec52
          return attributeInstance != null ? attributeInstance.getModifier(id).amount() : this.supplier.getModifierValue(attribute, id);
      }
  
-@@ -99,7 +155,7 @@ public class AttributeMap {
+@@ -99,7 +160,7 @@ public class AttributeMap {
  
      public void removeAttributeModifiers(Multimap<Holder<Attribute>, AttributeModifier> modifiers) {
          modifiers.asMap().forEach((holder, collection) -> {
@@ -442,7 +482,7 @@ index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..bfff04e3df0692fec01368252a24ec52
              if (attributeInstance != null) {
                  collection.forEach(attributeModifier -> attributeInstance.removeModifier(attributeModifier.id()));
              }
-@@ -107,37 +163,58 @@ public class AttributeMap {
+@@ -107,37 +168,58 @@ public class AttributeMap {
      }
  
      public void assignAllValues(AttributeMap map) {
@@ -514,7 +554,7 @@ index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..bfff04e3df0692fec01368252a24ec52
              if (attributeInstance != null) {
                  attributeInstance.setBaseValue(this.supplier.getBaseValue(attribute));
              }
-@@ -149,9 +226,16 @@ public class AttributeMap {
+@@ -149,9 +231,16 @@ public class AttributeMap {
      public ListTag save() {
          ListTag listTag = new ListTag();
  
@@ -533,7 +573,7 @@ index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..bfff04e3df0692fec01368252a24ec52
  
          return listTag;
      }
-@@ -177,7 +261,7 @@ public class AttributeMap {
+@@ -177,7 +266,7 @@ public class AttributeMap {
      // Paper - start - living entity allow attribute registration
      public void registerAttribute(Holder<Attribute> attributeBase) {
          AttributeInstance attributeModifiable = new AttributeInstance(attributeBase, AttributeInstance::getAttribute);
