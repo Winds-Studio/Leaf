@@ -15,6 +15,7 @@ public class MultithreadedTracker extends ConfigModules {
     public static int asyncEntityTrackerMaxThreads = 0;
     public static int asyncEntityTrackerKeepalive = 60;
     public static int asyncEntityTrackerQueueSize = 0;
+    private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
     public void onLoaded() {
@@ -25,15 +26,23 @@ public class MultithreadedTracker extends ConfigModules {
             """
                 异步实体跟踪,
                 在实体数量多且密集的情况下效果明显.""");
-
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        compatModeEnabled = config.getBoolean(getBasePath() + ".compat-mode", compatModeEnabled, config.pickStringRegionBased("""
+        config.addCommentRegionBased(getBasePath() + ".compat-mode",
+                """
                 Enable compat mode ONLY if Citizens or NPC plugins using real entity has installed,
                 Compat mode fixed visible issue with player type NPCs of Citizens,
                 But still recommend to use packet based / virtual entity NPC plugin, e.g. ZNPC Plus, Adyeshach, Fancy NPC or else.""",
             """
                 是否启用兼容模式,
-                如果你的服务器安装了 Citizens 或其他类似非发包 NPC 插件, 请开启此项."""));
+                如果你的服务器安装了 Citizens 或其他类似非发包 NPC 插件, 请开启此项.""");
+
+        if (asyncMultithreadedTrackerInitialized) {
+            config.getConfigSection(getBasePath());
+            return;
+        }
+        asyncMultithreadedTrackerInitialized = true;
+
+        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        compatModeEnabled = config.getBoolean(getBasePath() + ".compat-mode", compatModeEnabled);
         asyncEntityTrackerMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncEntityTrackerMaxThreads);
         asyncEntityTrackerKeepalive = config.getInt(getBasePath() + ".keepalive", asyncEntityTrackerKeepalive);
         asyncEntityTrackerQueueSize = config.getInt(getBasePath() + ".queue-size", asyncEntityTrackerQueueSize);
