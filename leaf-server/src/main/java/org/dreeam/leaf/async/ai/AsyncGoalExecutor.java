@@ -38,10 +38,8 @@ public class AsyncGoalExecutor {
 
     public final void submit(int entityId) {
         if (!this.queue.send(entityId)) {
-            while (wake(entityId)) {
-                if (!poll(entityId)) {
-                    break;
-                }
+            LockSupport.unpark(thread);
+            while (!this.queue.send(entityId)) {
                 Thread.onSpinWait();
             }
         }
@@ -59,24 +57,20 @@ public class AsyncGoalExecutor {
             if (id == Integer.MAX_VALUE) {
                 break;
             }
-            if (poll(id)) {
+            Entity entity = this.serverLevel.getEntities().get(id);
+            if (entity == null || !entity.isAlive() || !(entity instanceof Mob mob)) {
+                continue;
+            }
+            mob.tickingTarget = true;
+            boolean a = mob.targetSelector.poll();
+            mob.tickingTarget = false;
+            boolean b = mob.goalSelector.poll();
+            if (a || b) {
                 submit(id);
             }
         }
         if ((tickCount & 3L) == 0L) unpark();
         tickCount += 1;
-    }
-
-    private boolean poll(int id) {
-        Entity entity = this.serverLevel.getEntities().get(id);
-        if (entity == null || !entity.isAlive() || !(entity instanceof Mob mob)) {
-            return false;
-        }
-        mob.tickingTarget = true;
-        boolean a = mob.targetSelector.poll();
-        mob.tickingTarget = false;
-        boolean b = mob.goalSelector.poll();
-        return a || b;
     }
 }
 
