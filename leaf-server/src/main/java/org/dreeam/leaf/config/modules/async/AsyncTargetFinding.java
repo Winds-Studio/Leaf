@@ -16,7 +16,7 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean alertOther = true;
     public static boolean searchBlock = true;
     public static boolean searchEntity = true;
-    public static int queueSize = 100_000;
+    public static int queueSize = 0;
     private static boolean asyncTargetFindingInitialized;
 
     @Override
