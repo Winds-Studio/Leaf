@@ -16,7 +16,7 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean alertOther = true;
     public static boolean searchBlock = true;
     public static boolean searchEntity = true;
-    public static int queueSize = 0;
+    public static int queueSize = 4096;
     private static boolean asyncTargetFindingInitialized;
 
     @Override
@@ -41,7 +41,7 @@ public class AsyncTargetFinding extends ConfigModules {
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
         queueSize = config.getInt(getBasePath() + ".queue-size", 100_000);
         if (queueSize <= 0) {
-            queueSize = 100_000;
+            queueSize = 4096;
         }
         if (!enabled) {
             alertOther = false;
