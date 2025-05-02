@@ -1,0 +1,214 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Thu, 24 Apr 2025 16:36:16 -0400
+Subject: [PATCH] paw optimization
+
+Some random optimizations
+
+- Remove Paper's dead code
+- Only set shuffle random seed if is really used
+- Secret patches (WIP)
+
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index f3e9de8716f5e1a72ec465ee897c8f0413f7b1c3..f998cf8d70302a21289de4d84b46d322d0b8a8fe 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -617,13 +617,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+             if (!(this.packetListener instanceof net.minecraft.server.network.ServerLoginPacketListenerImpl loginPacketListener)
+                 || loginPacketListener.state != net.minecraft.server.network.ServerLoginPacketListenerImpl.State.VERIFYING
+                 || Connection.joinAttemptsThisTick++ < MAX_PER_TICK) {
+-            // Paper start - detailed watchdog information
+-            net.minecraft.network.protocol.PacketUtils.packetProcessing.push(this.packetListener);
+-            try {
+             tickablePacketListener.tick();
+-            } finally {
+-                net.minecraft.network.protocol.PacketUtils.packetProcessing.pop();
+-            } // Paper end - detailed watchdog information
+             } // Paper end - Buffer joins to world
+         }
+ 
+diff --git a/net/minecraft/network/protocol/PacketUtils.java b/net/minecraft/network/protocol/PacketUtils.java
+index 4535858701b2bb232b9d2feb2af6551526232ddc..e65c62dbe4c1560ae153e4c4344e9194c783a2f4 100644
+--- a/net/minecraft/network/protocol/PacketUtils.java
++++ b/net/minecraft/network/protocol/PacketUtils.java
+@@ -21,8 +21,6 @@ public class PacketUtils {
+     public static <T extends PacketListener> void ensureRunningOnSameThread(Packet<T> packet, T processor, BlockableEventLoop<?> executor) throws RunningOnDifferentThreadException {
+         if (!executor.isSameThread()) {
+             executor.executeIfPossible(() -> {
+-                packetProcessing.push(processor); // Paper - detailed watchdog information
+-                try { // Paper - detailed watchdog information
+                 if (processor instanceof net.minecraft.server.network.ServerCommonPacketListenerImpl serverCommonPacketListener && serverCommonPacketListener.processedDisconnect) return; // Paper - Don't handle sync packets for kicked players
+                 if (processor.shouldHandleMessage(packet)) {
+                     try {
+@@ -37,12 +35,6 @@ public class PacketUtils {
+                 } else {
+                     LOGGER.debug("Ignoring packet due to disconnection: {}", packet);
+                 }
+-                // Paper start - detailed watchdog information
+-                } finally {
+-                    totalMainThreadPacketsProcessed.getAndIncrement();
+-                    packetProcessing.pop();
+-                }
+-                // Paper end - detailed watchdog information
+             });
+             throw RunningOnDifferentThreadException.RUNNING_ON_DIFFERENT_THREAD;
+         }
+@@ -69,22 +61,4 @@ public class PacketUtils {
+ 
+         packetListener.fillCrashReport(crashReport);
+     }
+-
+-    // Paper start - detailed watchdog information
+-    public static final java.util.concurrent.ConcurrentLinkedDeque<PacketListener> packetProcessing = new java.util.concurrent.ConcurrentLinkedDeque<>();
+-    static final java.util.concurrent.atomic.AtomicLong totalMainThreadPacketsProcessed = new java.util.concurrent.atomic.AtomicLong();
+-
+-    public static long getTotalProcessedPackets() {
+-        return totalMainThreadPacketsProcessed.get();
+-    }
+-
+-    public static java.util.List<PacketListener> getCurrentPacketProcessors() {
+-        java.util.List<PacketListener> listeners = new java.util.ArrayList<>(4);
+-        for (PacketListener listener : packetProcessing) {
+-            listeners.add(listener);
+-        }
+-
+-        return listeners;
+-    }
+-    // Paper end - detailed watchdog information
+ }
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index d75f85208da0c7424fc95ae0d8ebb0a725dda0a7..4c0a6dcee5e63f788e532208ef3485726eedf8cc 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -504,9 +504,10 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+                 try {
+                     this.collectTickingChunks(list);
+                     // Paper start - chunk tick iteration optimisation
+-                    this.shuffleRandom.setSeed(this.level.random.nextLong());
+-                    if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns)
++                    if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) {
++                        this.shuffleRandom.setSeed(this.level.random.nextLong()); // Leaf - paw optimization - Only set seed if is really used
+                         Util.shuffle(list, this.shuffleRandom); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
++                    }
+                     // Paper end - chunk tick iteration optimisation
+                     this.tickChunks(l, list); // Gale - Purpur - remove vanilla profiler
+                 } finally {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index fbfb35dad8b07c31f967d33fb04cfcfc94557d72..ba1dd51e7187a80e8438e46383257c22f5382130 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1387,13 +1387,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     // Paper end - log detailed entity tick information
+ 
+     public void tickNonPassenger(Entity entity) {
+-        // Paper start - log detailed entity tick information
+         ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread("Cannot tick an entity off-main");
+-        try {
+-            if (currentlyTickingEntity.get() == null) {
+-                currentlyTickingEntity.lazySet(entity);
+-            }
+-            // Paper end - log detailed entity tick information
+         entity.setOldPosAndRot();
+         entity.tickCount++;
+         entity.totalEntityAge++; // Paper - age-like counter for all entities
+@@ -1406,13 +1400,6 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         for (Entity entity1 : entity.getPassengers()) {
+             this.tickPassenger(entity, entity1, isActive); // Paper - EAR 2
+         }
+-        // Paper start - log detailed entity tick information
+-        } finally {
+-            if (currentlyTickingEntity.get() == entity) {
+-                currentlyTickingEntity.lazySet(null);
+-            }
+-        }
+-        // Paper end - log detailed entity tick information
+     }
+ 
+     private void tickPassenger(Entity ridingEntity, Entity passengerEntity, final boolean isActive) { // Paper - EAR 2
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index a81983182ee3e3b874ba83ddf9bbc6ea772a2997..4221e5322fa3a3ff6ab53946aa71d54144d2c4b2 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1143,31 +1143,6 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         return this.onGround;
+     }
+ 
+-    // Paper start - detailed watchdog information
+-    public final Object posLock = new Object(); // Paper - log detailed entity tick information
+-
+-    private Vec3 moveVector;
+-    private double moveStartX;
+-    private double moveStartY;
+-    private double moveStartZ;
+-
+-    public final Vec3 getMoveVector() {
+-        return this.moveVector;
+-    }
+-
+-    public final double getMoveStartX() {
+-        return this.moveStartX;
+-    }
+-
+-    public final double getMoveStartY() {
+-        return this.moveStartY;
+-    }
+-
+-    public final double getMoveStartZ() {
+-        return this.moveStartZ;
+-    }
+-    // Paper end - detailed watchdog information
+-
+     public void move(MoverType type, Vec3 movement) {
+         // Gale start - VMP - skip entity move if movement is zero
+         if (!this.boundingBoxChanged && movement.equals(Vec3.ZERO)) {
+@@ -1175,16 +1150,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         }
+         // Gale end - VMP - skip entity move if movement is zero
+         final Vec3 originalMovement = movement; // Paper - Expose pre-collision velocity
+-        // Paper start - detailed watchdog information
+         ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread("Cannot move an entity off-main");
+-        synchronized (this.posLock) {
+-            this.moveStartX = this.getX();
+-            this.moveStartY = this.getY();
+-            this.moveStartZ = this.getZ();
+-            this.moveVector = movement;
+-        }
+-        try {
+-        // Paper end - detailed watchdog information
+         if (this.noPhysics) {
+             this.setPos(this.getX() + movement.x, this.getY() + movement.y, this.getZ() + movement.z);
+         } else {
+@@ -1305,13 +1271,6 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                 // Gale end - skip negligible planar movement multiplication
+             }
+         }
+-        // Paper start - detailed watchdog information
+-        } finally {
+-            synchronized (this.posLock) { // Paper
+-                this.moveVector = null;
+-            } // Paper
+-        }
+-        // Paper end - detailed watchdog information
+     }
+ 
+     private void applyMovementEmissionAndPlaySound(Entity.MovementEmission movementEmission, Vec3 movement, BlockPos pos, BlockState state) {
+@@ -4833,9 +4792,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     public void setDeltaMovement(Vec3 deltaMovement) {
+-        synchronized (this.posLock) { // Paper - detailed watchdog information
+         this.deltaMovement = deltaMovement;
+-        } // Paper - detailed watchdog information
+     }
+ 
+     public void addDeltaMovement(Vec3 addend) {
+@@ -4941,9 +4898,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         }
+         // Paper end - Fix MC-4
+         if (this.position.x != x || this.position.y != y || this.position.z != z) {
+-            synchronized (this.posLock) { // Paper - detailed watchdog information
+             this.position = new Vec3(x, y, z);
+-            } // Paper - detailed watchdog information
+             int floor = Mth.floor(x);
+             int floor1 = Mth.floor(y);
+             int floor2 = Mth.floor(z);

@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Penilla <11360596+jpenilla@users.noreply.github.com>
+Date: Fri, 13 Sep 2024 14:32:32 -0700
+Subject: [PATCH] PaperPR: Add ticket on player join to avoid chunk
+ load-unload-load cycle
+
+Original license: GPLv3
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/11398
+
+Adding the entity will add and then immediately remove an entity load ticket, which would result in the chunk loading and then unloading before being loaded again once the player chunk loader reacts (delay can vary based on rate limit configs)
+By adding a ticket with a short removal delay we attempt to keep the chunk loaded until the player chunk loader reacts, but this is not a guarantee due to the aforementioned rate limit configs. Plugins should still handle load/unload events as normal, however this will reduce redundant calls.
+The delay is currently set to 2 seconds, however, we may want to adjust this before merging (for example the player chunk unload delay is 5 seconds)
+
+fixes Paper#9581
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+index c0f14d2bc30a186511bafddc2e80f29b686887c5..d8040bb5a07546b97f66a4db1f8f25a63c613e17 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+@@ -47,6 +47,7 @@ public final class RegionizedPlayerChunkLoader {
+ 
+     public static final TicketType<Long> PLAYER_TICKET         = TicketType.create("chunk_system:player_ticket", Long::compareTo);
+     public static final TicketType<Long> PLAYER_TICKET_DELAYED = TicketType.create("chunk_system:player_ticket_delayed", Long::compareTo, 5 * 20);
++    public static final TicketType<net.minecraft.util.Unit> PLAYER_JOIN = TicketType.create("chunk_system:player_join", (a, b) -> 0, 5 * 20); // Paper - Add ticket on player join to avoid chunk load-unload-load cycle
+ 
+     public static final int MIN_VIEW_DISTANCE = 2;
+     public static final int MAX_VIEW_DISTANCE = 32;
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index 0b8b4658dbbad1bacc13e97b4fc0cdcea7e36a06..eba382a63e9ed13c4ccbc05c6f2132e03a6b3007 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -432,6 +432,13 @@ public abstract class PlayerList {
+         // this.broadcastAll(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(player))); // CraftBukkit - replaced with loop below
+         // Paper start - Fire PlayerJoinEvent when Player is actually ready; correctly register player BEFORE PlayerJoinEvent, so the entity is valid and doesn't require tick delay hacks
+         player.supressTrackerForLogin = true;
++        // Paper start - Add ticket on player join to avoid chunk load-unload-load cycle
++        serverLevel.moonrise$getChunkTaskScheduler().chunkHolderManager.addTicketAtLevel(
++            ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.PLAYER_JOIN,
++            player.chunkPosition(),
++            ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.TICK_TICKET_LEVEL,
++            net.minecraft.util.Unit.INSTANCE);
++        // Paper end - Add ticket on player join to avoid chunk load-unload-load cycle
+         serverLevel.addNewPlayer(player);
+         this.server.getCustomBossEvents().onPlayerConnect(player); // see commented out section below serverLevel.addPlayerJoin(player);
+         // Paper end - Fire PlayerJoinEvent when Player is actually ready
