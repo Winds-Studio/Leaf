@@ -25,8 +25,7 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(),
-            """
+        config.addCommentRegionBased(getBasePath(), """
                 **Experimental feature**
                 Enables parallel world ticking to improve performance on multi-core systems.""",
             """

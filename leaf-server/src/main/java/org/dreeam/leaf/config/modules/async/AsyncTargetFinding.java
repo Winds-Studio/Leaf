@@ -37,6 +37,7 @@ public class AsyncTargetFinding extends ConfigModules {
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
         queueSize = config.getInt(getBasePath() + ".queue-size", 4096);
+
         if (queueSize <= 0) {
             queueSize = 4096;
         }

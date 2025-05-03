@@ -11,9 +11,11 @@ import org.dreeam.leaf.util.queue.SpscIntQueue;
 import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalExecutor {
+
     public static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
-    final SpscIntQueue queue;
-    final SpscIntQueue wake;
+
+    protected final SpscIntQueue queue;
+    protected final SpscIntQueue wake;
     private final AsyncGoalThread thread;
     private final ServerLevel serverLevel;
     private boolean dirty = false;
@@ -22,18 +24,18 @@ public class AsyncGoalExecutor {
 
     public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel serverLevel) {
         this.serverLevel = serverLevel;
-        queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.thread = thread;
     }
 
     boolean wake(int id) {
         Entity entity = this.serverLevel.getEntities().get(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob m)) {
+        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
-        m.goalSelector.wake();
-        m.targetSelector.wake();
+        mob.goalSelector.wake();
+        mob.targetSelector.wake();
         return true;
     }
 
@@ -42,7 +44,7 @@ public class AsyncGoalExecutor {
             int spinCount = 0;
             while (!this.queue.send(entityId)) {
                 spinCount++;
-                // Unpark thread after some spinning to help clear the queue
+                // Unpark the thread after some spinning to help clear the queue
                 if (spinCount > SPIN_LIMIT) {
                     unpark();
                     spinCount = 0;

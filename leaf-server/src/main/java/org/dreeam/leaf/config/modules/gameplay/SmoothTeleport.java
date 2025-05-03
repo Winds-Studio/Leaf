@@ -15,8 +15,7 @@ public class SmoothTeleport extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath(), enabled, config.pickStringRegionBased(
-            """
+        enabled = config.getBoolean(getBasePath(), enabled, config.pickStringRegionBased("""
                 **Experimental feature**
                 Whether to make a "smooth teleport" when players changing dimension.
                 This requires original world and target world have same logical height to work.""",

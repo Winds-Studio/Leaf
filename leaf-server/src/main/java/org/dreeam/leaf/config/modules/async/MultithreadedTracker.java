@@ -19,15 +19,13 @@ public class MultithreadedTracker extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(),
-            """
+        config.addCommentRegionBased(getBasePath(), """
                 Make entity tracking saving asynchronously, can improve performance significantly,
                 especially in some massive entities in small area situations.""",
             """
                 异步实体跟踪,
                 在实体数量多且密集的情况下效果明显.""");
-        config.addCommentRegionBased(getBasePath() + ".compat-mode",
-                """
+        config.addCommentRegionBased(getBasePath() + ".compat-mode", """
                 Enable compat mode ONLY if Citizens or NPC plugins using real entity has installed,
                 Compat mode fixed visible issue with player type NPCs of Citizens,
                 But still recommend to use packet based / virtual entity NPC plugin, e.g. ZNPC Plus, Adyeshach, Fancy NPC or else.""",

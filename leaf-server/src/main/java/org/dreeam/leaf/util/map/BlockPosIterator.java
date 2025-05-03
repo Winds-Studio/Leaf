@@ -11,6 +11,7 @@ import org.jspecify.annotations.Nullable;
 
 @NullMarked
 public final class BlockPosIterator extends AbstractIterator<BlockPos> {
+
     private final int startX;
     private final int startY;
     private final int startZ;

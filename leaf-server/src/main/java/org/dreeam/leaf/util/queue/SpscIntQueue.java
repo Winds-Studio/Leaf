@@ -2,6 +2,7 @@ package org.dreeam.leaf.util.queue;
 
 /// Lock-free Single Producer Single Consumer Queue
 public class SpscIntQueue {
+
     private final int[] data;
     private final PaddedAtomicInteger producerIdx = new PaddedAtomicInteger();
     private final PaddedAtomicInteger producerCachedIdx = new PaddedAtomicInteger();

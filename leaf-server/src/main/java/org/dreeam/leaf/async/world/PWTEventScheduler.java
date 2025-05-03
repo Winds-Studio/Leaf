@@ -6,8 +6,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class PWTEventScheduler {
+
     private static volatile PWTEventScheduler instance;
     private final ExecutorService executor;
+
     private PWTEventScheduler() {
         this.executor = Executors.newCachedThreadPool(
             new ThreadFactoryBuilder()

@@ -8,12 +8,18 @@ import ca.spottedleaf.concurrentutil.util.ThrowUtil;
 import ca.spottedleaf.concurrentutil.util.Validate;
 
 import java.lang.invoke.VarHandle;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.PrimitiveIterator;
+import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
 import java.util.function.Predicate;
@@ -47,8 +53,9 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
 
     protected static final int DEFAULT_CAPACITY = 16;
     protected static final float DEFAULT_LOAD_FACTOR = 0.75f;
-    /** The maximum capacity, used if a higher value is implicitly specified by either
-     *  of the constructors with arguments. MUST be a power of two <= 1<<30.
+    /**
+     * The maximum capacity, used if a higher value is implicitly specified by either
+     * of the constructors with arguments. MUST be a power of two <= 1<<30.
      */
     protected static final int MAXIMUM_CAPACITY = 1 << 30; // 2^30
 
@@ -57,13 +64,19 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
 
     // --- Instance Fields ---
 
-    /** Tracks the number of mappings, using LongAdder for better high-contention performance. */
+    /**
+     * Tracks the number of mappings, using LongAdder for better high-contention performance.
+     */
     protected final LongAdder size = new LongAdder();
 
-    /** The load factor for the hash table. */
+    /**
+     * The load factor for the hash table.
+     */
     protected final float loadFactor;
 
-    /** The hash table array. Elements are accessed using VarHandles. */
+    /**
+     * The hash table array. Elements are accessed using VarHandles.
+     */
     protected volatile TableEntry<V>[] table;
 
     /**
@@ -75,6 +88,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
     // --- VarHandles ---
 
     protected static final VarHandle THRESHOLD_HANDLE;
+
     static {
         try {
             THRESHOLD_HANDLE = ConcurrentUtil.getVarHandle(LeafConcurrentLong2ReferenceChainedHashTable.class, "threshold", int.class);
@@ -135,7 +149,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
     /**
      * Creates a new, empty map with the specified initial capacity and load factor.
      *
-     * @param capacity The initial capacity.
+     * @param capacity   The initial capacity.
      * @param loadFactor The load factor threshold.
      * @throws IllegalArgumentException if the initial capacity is negative or the load factor is non-positive/NaN.
      */
@@ -158,7 +172,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * Creates a new, empty map with an initial capacity sufficient to hold the specified number of elements
      * without resizing, using the specified load factor.
      *
-     * @param expected The expected number of elements.
+     * @param expected   The expected number of elements.
      * @param loadFactor The load factor threshold.
      * @throws IllegalArgumentException if the expected size is negative or the load factor is non-positive/NaN.
      */
@@ -176,7 +190,9 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
 
     // --- Internal Helper Methods ---
 
-    /** Calculates the target resize threshold. */
+    /**
+     * Calculates the target resize threshold.
+     */
     protected static int getTargetThreshold(final int capacity, final float loadFactor) {
         if (capacity >= MAXIMUM_CAPACITY) {
             return THRESHOLD_NO_RESIZE; // Max capacity reached, no more resizing
@@ -191,7 +207,9 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
     }
 
 
-    /** Calculates the power-of-two capacity for a given initial capacity request. */
+    /**
+     * Calculates the power-of-two capacity for a given initial capacity request.
+     */
     protected static int getCapacityFor(final int requestedCapacity) {
         if (requestedCapacity <= 0) {
             // Default capacity if non-positive requested, could also throw exception
@@ -204,12 +222,16 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         return IntegerUtil.roundCeilLog2(Math.max(DEFAULT_CAPACITY, requestedCapacity));
     }
 
-    /** Computes the hash code for the key. Uses mixing to spread keys more evenly. */
+    /**
+     * Computes the hash code for the key. Uses mixing to spread keys more evenly.
+     */
     protected static int getHash(final long key) {
         return (int) HashUtil.mix(key); // Assumes HashUtil.mix provides good distribution
     }
 
-    /** Returns the load factor associated with this map. */
+    /**
+     * Returns the load factor associated with this map.
+     */
     public final float getLoadFactor() {
         return this.loadFactor;
     }
@@ -269,7 +291,6 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * Returns null if the key is not found.
      * The returned node's value might be null if it's a placeholder during a compute operation.
      */
-    @SuppressWarnings("unchecked")
     protected final TableEntry<V> getNode(final long key) {
         final int hash = getHash(key);
         TableEntry<V>[] currentTable = this.table; // Volatile read
@@ -364,7 +385,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * Returns the value to which the specified key is mapped, or
      * {@code defaultValue} if this map contains no mapping for the key.
      *
-     * @param key the key whose associated value is to be returned
+     * @param key          the key whose associated value is to be returned
      * @param defaultValue the default mapping of the key
      * @return the value mapped to the key, or {@code defaultValue} if none
      */
@@ -405,7 +426,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         TableEntry<V> node;
         while ((node = iterator.findNext()) != null) { // findNext safely iterates through nodes
             V nodeValue = node.getValueVolatile(); // Volatile read for visibility
-            if (nodeValue != null && value.equals(nodeValue)) {
+            if (value.equals(nodeValue)) {
                 return true;
             }
         }
@@ -541,10 +562,12 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                     int hash = getHash(current.key);
 
                     if ((hash & oldCapacity) == 0) { // Low bin (index i)
-                        if (lowT == null) lowH = current; else lowT.setNextPlain(current);
+                        if (lowT == null) lowH = current;
+                        else lowT.setNextPlain(current);
                         lowT = current;
                     } else { // High bin (index i + oldCapacity)
-                        if (highT == null) highH = current; else highT.setNextPlain(current);
+                        if (highT == null) highH = current;
+                        else highT.setNextPlain(current);
                         highT = current;
                     }
                     current = next;
@@ -575,20 +598,24 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * @param key   key with which the specified value is to be associated
      * @param value value to be associated with the specified key
      * @return the previous value associated with {@code key}, or
-     *         {@code null} if there was no mapping for {@code key}.
+     * {@code null} if there was no mapping for {@code key}.
      * @throws NullPointerException if the specified value is null
      */
     public V put(final long key, final V value) {
         Validate.notNull(value, "Value may not be null");
         final int hash = getHash(key);
-        int sizeDelta = 0;
-        V oldValue = null;
+        int sizeDelta;
+        V oldValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
         for (;;) {
             final int tableLength = currentTable.length;
-            if (tableLength == 0) { currentTable = this.table; if (currentTable.length == 0) continue; } // Init check
+            // Init check
+            if (tableLength == 0) {
+                currentTable = this.table;
+                if (currentTable.length == 0) continue;
+            }
 
             final int index = hash & (tableLength - 1);
             TableEntry<V> head = getAtIndexVolatile(currentTable, index);
@@ -653,8 +680,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                     sizeDelta = 1;
                     oldValue = null;
                 } else {
-                    // Should not happen if head was non-null/non-marker. Retry.
-                    continue table_loop;
+                    continue table_loop; // Should not happen if head was non-null/non-marker. Retry.
                 }
             } // End synchronized
             break table_loop; // Operation completed within lock
@@ -674,20 +700,23 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * @param key   key with which the specified value is to be associated
      * @param value value to be associated with the specified key
      * @return the previous value associated with the specified key, or
-     *         {@code null} if there was no mapping for the key.
+     * {@code null} if there was no mapping for the key.
      * @throws NullPointerException if the specified value is null
      */
     public V putIfAbsent(final long key, final V value) {
         Validate.notNull(value, "Value may not be null");
         final int hash = getHash(key);
         int sizeDelta = 0;
-        V existingValue = null;
+        V existingValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
-            if (tableLength == 0) { currentTable = this.table; continue; }
+            if (tableLength == 0) {
+                currentTable = this.table;
+                continue;
+            }
 
             final int index = hash & (tableLength - 1);
             TableEntry<V> head = getAtIndexVolatile(currentTable, index);
@@ -710,7 +739,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
 
             // Case 3: Lock-free check (optimistic)
             TableEntry<V> node = head;
-            while(node != null) {
+            while (node != null) {
                 if (node.key == key) {
                     existingValue = node.getValueVolatile(); // Volatile read
                     if (existingValue != null) {
@@ -774,17 +803,17 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * @param key   key with which the specified value is associated
      * @param value value to be associated with the specified key
      * @return the previous value associated with the specified key, or
-     *         {@code null} if there was no mapping for the key.
+     * {@code null} if there was no mapping for the key.
      * @throws NullPointerException if the specified value is null
      */
     public V replace(final long key, final V value) {
         Validate.notNull(value, "Value may not be null");
         final int hash = getHash(key);
-        V oldValue = null;
+        V oldValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
             if (tableLength == 0) return null;
 
@@ -859,7 +888,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
             if (tableLength == 0) return false;
 
@@ -922,7 +951,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      *
      * @param key key whose mapping is to be removed from the map
      * @return the previous value associated with {@code key}, or
-     *         {@code null} if there was no mapping for {@code key}
+     * {@code null} if there was no mapping for {@code key}
      */
     public V remove(final long key) {
         final int hash = getHash(key);
@@ -931,7 +960,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
             if (tableLength == 0) return null;
 
@@ -986,7 +1015,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
     /**
      * Removes the entry for a key only if currently mapped to a given value.
      *
-     * @param key   key with which the specified value is associated
+     * @param key    key with which the specified value is associated
      * @param expect value expected to be associated with the specified key
      * @return {@code true} if the value was removed
      */
@@ -997,7 +1026,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
             if (tableLength == 0) return false;
 
@@ -1056,10 +1085,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
     /**
      * Removes the entry for the specified key only if its value satisfies the given predicate.
      *
-     * @param key key whose mapping is to be removed from the map
+     * @param key       key whose mapping is to be removed from the map
      * @param predicate the predicate to apply to the value associated with the key
      * @return the value associated with the key before removal if the predicate was satisfied and the entry was removed,
-     *         otherwise {@code null}.
+     * otherwise {@code null}.
      * @throws NullPointerException if the specified predicate is null
      */
     public V removeIf(final long key, final Predicate<? super V> predicate) {
@@ -1071,7 +1100,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
             if (tableLength == 0) return null;
 
@@ -1134,7 +1163,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * (or {@code null} if there is no current mapping). The function is
      * applied atomically.
      *
-     * @param key key with which the specified value is to be associated
+     * @param key      key with which the specified value is to be associated
      * @param function the function to compute a value
      * @return the new value associated with the specified key, or null if none
      * @throws NullPointerException if the specified function is null
@@ -1143,13 +1172,16 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         Validate.notNull(function, "Function cannot be null");
         final int hash = getHash(key);
         int sizeDelta = 0;
-        V finalValue = null;
+        V finalValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
-            if (tableLength == 0) { currentTable = this.table; continue; }
+            if (tableLength == 0) {
+                currentTable = this.table;
+                continue;
+            }
 
             final int index = hash & (tableLength - 1);
             TableEntry<V> head = getAtIndexVolatile(currentTable, index);
@@ -1162,7 +1194,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                     if (getAtIndexVolatile(currentTable, index) == null) { // Re-check bin
                         try {
                             computedValue = function.apply(key, null); // Compute with null old value
-                        } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                        } catch (Throwable t) {
+                            ThrowUtil.throwUnchecked(t);
+                            return null;
+                        }
 
                         if (computedValue != null) {
                             placeholder.setValuePlain(computedValue); // Set value before CAS
@@ -1205,7 +1240,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                         V computedValue;
                         try {
                             computedValue = function.apply(key, oldValue);
-                        } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                        } catch (Throwable t) {
+                            ThrowUtil.throwUnchecked(t);
+                            return null;
+                        }
 
                         if (computedValue != null) {
                             node.setValueVolatile(computedValue); // Update value (volatile write)
@@ -1229,7 +1267,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                 V computedValue;
                 try {
                     computedValue = function.apply(key, null);
-                } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                } catch (Throwable t) {
+                    ThrowUtil.throwUnchecked(t);
+                    return null;
+                }
 
                 if (computedValue != null) {
                     // Add new mapping
@@ -1237,7 +1278,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                     sizeDelta = 1;
                     TableEntry<V> newNode = new TableEntry<>(key, computedValue);
                     if (prev != null) prev.setNextRelease(newNode); // Release write
-                    else { continue table_loop; } // Should not happen
+                    else continue table_loop; // Should not happen
                 } else {
                     finalValue = null;
                     sizeDelta = 0;
@@ -1257,23 +1298,26 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * compute its value using the given mapping function and enters it into
      * this map unless {@code null}.
      *
-     * @param key key with which the specified value is to be associated
+     * @param key      key with which the specified value is to be associated
      * @param function the function to compute a value
      * @return the current (existing or computed) value associated with the specified key,
-     *         or null if the computed value is null
+     * or null if the computed value is null
      * @throws NullPointerException if the specified function is null
      */
     public V computeIfAbsent(final long key, final LongFunction<? extends V> function) {
         Validate.notNull(function, "Function cannot be null");
         final int hash = getHash(key);
         int sizeDelta = 0;
-        V finalValue = null;
+        V finalValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
-            if (tableLength == 0) { currentTable = this.table; continue; }
+            if (tableLength == 0) {
+                currentTable = this.table;
+                continue;
+            }
 
             final int index = hash & (tableLength - 1);
             TableEntry<V> head = getAtIndexVolatile(currentTable, index);
@@ -1286,7 +1330,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                     if (getAtIndexVolatile(currentTable, index) == null) {
                         try {
                             computedValue = function.apply(key);
-                        } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                        } catch (Throwable t) {
+                            ThrowUtil.throwUnchecked(t);
+                            return null;
+                        }
 
                         if (computedValue != null) {
                             placeholder.setValuePlain(computedValue);
@@ -1344,7 +1391,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                             V computedValue;
                             try {
                                 computedValue = function.apply(key);
-                            } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                            } catch (Throwable t) {
+                                ThrowUtil.throwUnchecked(t);
+                                return null;
+                            }
 
                             if (computedValue != null) {
                                 node.setValueVolatile(computedValue); // Volatile write
@@ -1364,14 +1414,17 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                 V computedValue;
                 try {
                     computedValue = function.apply(key);
-                } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                } catch (Throwable t) {
+                    ThrowUtil.throwUnchecked(t);
+                    return null;
+                }
 
                 if (computedValue != null) {
                     finalValue = computedValue;
                     sizeDelta = 1;
                     TableEntry<V> newNode = new TableEntry<>(key, computedValue);
                     if (prev != null) prev.setNextRelease(newNode); // Release write
-                    else { continue table_loop; } // Should not happen
+                    else continue table_loop; // Should not happen
                 } else {
                     finalValue = null;
                     sizeDelta = 0;
@@ -1389,7 +1442,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * If the value for the specified key is present, attempts to compute a new
      * mapping given the key and its current mapped value.
      *
-     * @param key key with which the specified value is to be associated
+     * @param key      key with which the specified value is to be associated
      * @param function the function to compute a value
      * @return the new value associated with the specified key, or null if none
      * @throws NullPointerException if the specified function is null
@@ -1397,12 +1450,12 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
     public V computeIfPresent(final long key, final BiLong1Function<? super V, ? extends V> function) {
         Validate.notNull(function, "Function cannot be null");
         final int hash = getHash(key);
-        int sizeDelta = 0;
-        V finalValue = null;
+        int sizeDelta;
+        V finalValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
             if (tableLength == 0) return null;
 
@@ -1432,7 +1485,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                             V computedValue;
                             try {
                                 computedValue = function.apply(key, oldValue);
-                            } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                            } catch (Throwable t) {
+                                ThrowUtil.throwUnchecked(t);
+                                return null;
+                            }
 
                             if (computedValue != null) {
                                 node.setValueVolatile(computedValue); // Update (volatile write)
@@ -1474,25 +1530,28 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
      * Otherwise, replaces the associated value with the results of the given
      * remapping function, or removes if the result is {@code null}.
      *
-     * @param key key with which the resulting value is to be associated
-     * @param value the non-null value to be merged with the existing value
+     * @param key      key with which the resulting value is to be associated
+     * @param value    the non-null value to be merged with the existing value
      * @param function the function to recompute a value if present
      * @return the new value associated with the specified key, or null if no
-     *         value is associated with the key
+     * value is associated with the key
      * @throws NullPointerException if the specified value or function is null
      */
     public V merge(final long key, final V value, final BiFunction<? super V, ? super V, ? extends V> function) {
         Validate.notNull(value, "Value cannot be null");
         Validate.notNull(function, "Function cannot be null");
         final int hash = getHash(key);
-        int sizeDelta = 0;
-        V finalValue = null;
+        int sizeDelta;
+        V finalValue;
         TableEntry<V>[] currentTable = this.table;
 
         table_loop:
-        for(;;) {
+        for (;;) {
             final int tableLength = currentTable.length;
-            if (tableLength == 0) { currentTable = this.table; continue; }
+            if (tableLength == 0) {
+                currentTable = this.table;
+                continue;
+            }
 
             final int index = hash & (tableLength - 1);
             TableEntry<V> head = getAtIndexVolatile(currentTable, index);
@@ -1531,7 +1590,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                         if (oldValue != null) {
                             try {
                                 computedValue = function.apply(oldValue, value); // Apply function
-                            } catch (Throwable t) { ThrowUtil.throwUnchecked(t); return null; }
+                            } catch (Throwable t) {
+                                ThrowUtil.throwUnchecked(t);
+                                return null;
+                            }
                         } else {
                             computedValue = value; // Use provided value if old was placeholder
                         }
@@ -1559,7 +1621,7 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
                 sizeDelta = 1;
                 TableEntry<V> newNode = new TableEntry<>(key, value);
                 if (prev != null) prev.setNextRelease(newNode); // Release write
-                else { continue table_loop; } // Should not happen
+                else continue table_loop; // Should not happen
                 break table_loop; // Done
             } // End synchronized(head)
         } // End table_loop
@@ -1612,17 +1674,34 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
 
     // --- Iterators and Views ---
 
-    /** Returns an iterator over the map entries. */
-    public Iterator<TableEntry<V>> entryIterator() { return new EntryIterator<>(this); }
+    /**
+     * Returns an iterator over the map entries.
+     */
+    public Iterator<TableEntry<V>> entryIterator() {
+        return new EntryIterator<>(this);
+    }
 
-    /** Returns an iterator over the map entries (implements Iterable). */
-    @Override public final Iterator<TableEntry<V>> iterator() { return this.entryIterator(); }
+    /**
+     * Returns an iterator over the map entries (implements Iterable).
+     */
+    @Override
+    public final Iterator<TableEntry<V>> iterator() {
+        return this.entryIterator();
+    }
 
-    /** Returns an iterator over the keys. */
-    public PrimitiveIterator.OfLong keyIterator() { return new KeyIterator<>(this); }
+    /**
+     * Returns an iterator over the keys.
+     */
+    public PrimitiveIterator.OfLong keyIterator() {
+        return new KeyIterator<>(this);
+    }
 
-    /** Returns an iterator over the values. */
-    public Iterator<V> valueIterator() { return new ValueIterator<>(this); }
+    /**
+     * Returns an iterator over the values.
+     */
+    public Iterator<V> valueIterator() {
+        return new ValueIterator<>(this);
+    }
 
     /**
      * Returns a {@link Collection} view of the values contained in this map.
@@ -1666,52 +1745,95 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         private volatile TableEntry<V> next;
         private final boolean resizeMarker;
 
-        /** Constructor for regular map entries. */
+        /**
+         * Constructor for regular map entries.
+         */
         TableEntry(final long key, final V value) {
             this(key, value, false);
         }
 
-        /** Constructor for potentially creating resize markers. */
+        /**
+         * Constructor for potentially creating resize markers.
+         */
         TableEntry(final long key, final V value, final boolean resize) {
             this.key = key;
             this.resizeMarker = resize;
             this.setValuePlain(value); // Initial plain set
         }
 
-        public long getKey() { return this.key; }
-        public V getValue() { return getValueVolatile(); }
+        public long getKey() {
+            return this.key;
+        }
+
+        public V getValue() {
+            return getValueVolatile();
+        }
 
         public V setValue(V newValue) {
             throw new UnsupportedOperationException("Direct setValue on TableEntry is not supported; use map methods.");
         }
 
-        @SuppressWarnings("unchecked") final V getValuePlain() { return (V) VALUE_HANDLE.get(this); }
-        @SuppressWarnings("unchecked") final V getValueAcquire() { return (V) VALUE_HANDLE.getAcquire(this); }
-        @SuppressWarnings("unchecked") final V getValueVolatile() { return (V) VALUE_HANDLE.getVolatile(this); }
-
-        final void setValuePlain(final V value) { VALUE_HANDLE.set(this, value); }
-        final void setValueRelease(final V value) { VALUE_HANDLE.setRelease(this, value); }
-        final void setValueVolatile(final V value) { VALUE_HANDLE.setVolatile(this, value); }
+        @SuppressWarnings("unchecked")
+        V getValuePlain() {
+            return (V) VALUE_HANDLE.get(this);
+        }
 
         @SuppressWarnings("unchecked")
-        final boolean compareAndSetValueVolatile(final V expect, final V update) {
+        V getValueAcquire() {
+            return (V) VALUE_HANDLE.getAcquire(this);
+        }
+
+        @SuppressWarnings("unchecked")
+        V getValueVolatile() {
+            return (V) VALUE_HANDLE.getVolatile(this);
+        }
+
+        void setValuePlain(final V value) {
+            VALUE_HANDLE.set(this, value);
+        }
+
+        void setValueRelease(final V value) {
+            VALUE_HANDLE.setRelease(this, value);
+        }
+
+        void setValueVolatile(final V value) {
+            VALUE_HANDLE.setVolatile(this, value);
+        }
+
+        boolean compareAndSetValueVolatile(final V expect, final V update) {
             return VALUE_HANDLE.compareAndSet(this, expect, update);
         }
 
-        @SuppressWarnings("unchecked") final TableEntry<V> getNextPlain() { return (TableEntry<V>) NEXT_HANDLE.get(this); }
-        @SuppressWarnings("unchecked") final TableEntry<V> getNextVolatile() { return (TableEntry<V>) NEXT_HANDLE.getVolatile(this); }
+        @SuppressWarnings("unchecked")
+        TableEntry<V> getNextPlain() {
+            return (TableEntry<V>) NEXT_HANDLE.get(this);
+        }
 
-        final void setNextPlain(final TableEntry<V> next) { NEXT_HANDLE.set(this, next); }
-        final void setNextRelease(final TableEntry<V> next) { NEXT_HANDLE.setRelease(this, next); }
-        final void setNextVolatile(final TableEntry<V> next) { NEXT_HANDLE.setVolatile(this, next); }
+        @SuppressWarnings("unchecked")
+        TableEntry<V> getNextVolatile() {
+            return (TableEntry<V>) NEXT_HANDLE.getVolatile(this);
+        }
 
-        final boolean isResizeMarker() { return this.resizeMarker; }
+        void setNextPlain(final TableEntry<V> next) {
+            NEXT_HANDLE.set(this, next);
+        }
+
+        void setNextRelease(final TableEntry<V> next) {
+            NEXT_HANDLE.setRelease(this, next);
+        }
+
+        void setNextVolatile(final TableEntry<V> next) {
+            NEXT_HANDLE.setVolatile(this, next);
+        }
+
+        boolean isResizeMarker() {
+            return this.resizeMarker;
+        }
 
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
-            if (o == null || !(o instanceof LeafConcurrentLong2ReferenceChainedHashTable.TableEntry)) return false;
-            TableEntry<?> that = (TableEntry<?>) o;
+            if (!(o instanceof TableEntry<?> that)) return false;
             return key == that.key && Objects.equals(getValueVolatile(), that.getValueVolatile()); // Use volatile read for value
         }
 
@@ -1824,7 +1946,9 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return this.nextNode != null;
         }
 
-        /** Internal method to get the next node and advance. */
+        /**
+         * Internal method to get the next node and advance.
+         */
         final TableEntry<V> findNext() {
             TableEntry<V> e = this.nextNode;
             if (e == null) {
@@ -1847,7 +1971,9 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             this.lastReturned = null;
         }
 
-        /** Gets the next node, updates lastReturned, advances iterator. */
+        /**
+         * Gets the next node, updates lastReturned, advances iterator.
+         */
         protected final TableEntry<V> nextNode() throws NoSuchElementException {
             TableEntry<V> node = this.nextNode; // Node pre-fetched by advance()
             if (node == null) {
@@ -1880,35 +2006,48 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         }
     }
 
-    /** Iterator over map entries (TableEntry objects). */
+    /**
+     * Iterator over map entries (TableEntry objects).
+     */
     protected static final class EntryIterator<V> extends BaseIteratorImpl<V, TableEntry<V>> {
-        EntryIterator(final LeafConcurrentLong2ReferenceChainedHashTable<V> map) { super(map); }
+        EntryIterator(final LeafConcurrentLong2ReferenceChainedHashTable<V> map) {
+            super(map);
+        }
 
-        @Override public TableEntry<V> next() throws NoSuchElementException {
+        @Override
+        public TableEntry<V> next() throws NoSuchElementException {
             return nextNode();
         }
     }
 
-    /** Iterator over map keys (long primitives). */
+    /**
+     * Iterator over map keys (long primitives).
+     */
     protected static final class KeyIterator<V> extends BaseIteratorImpl<V, Long> implements PrimitiveIterator.OfLong {
-        KeyIterator(final LeafConcurrentLong2ReferenceChainedHashTable<V> map) { super(map); }
+        KeyIterator(final LeafConcurrentLong2ReferenceChainedHashTable<V> map) {
+            super(map);
+        }
 
-        @Override public long nextLong() throws NoSuchElementException {
+        @Override
+        public long nextLong() throws NoSuchElementException {
             return nextNode().key;
         }
 
-        @Override public Long next() throws NoSuchElementException {
+        @Override
+        public Long next() throws NoSuchElementException {
             return nextLong(); // Autoboxing
         }
 
-        @Override public void forEachRemaining(final LongConsumer action) {
+        @Override
+        public void forEachRemaining(final LongConsumer action) {
             Validate.notNull(action, "Action may not be null");
             while (hasNext()) {
                 action.accept(nextLong());
             }
         }
 
-        @Override public void forEachRemaining(final Consumer<? super Long> action) {
+        @Override
+        public void forEachRemaining(final Consumer<? super Long> action) {
             if (action instanceof LongConsumer) {
                 forEachRemaining((LongConsumer) action);
             } else {
@@ -1920,18 +2059,25 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         }
     }
 
-    /** Iterator over map values. */
+    /**
+     * Iterator over map values.
+     */
     protected static final class ValueIterator<V> extends BaseIteratorImpl<V, V> {
-        ValueIterator(final LeafConcurrentLong2ReferenceChainedHashTable<V> map) { super(map); }
+        ValueIterator(final LeafConcurrentLong2ReferenceChainedHashTable<V> map) {
+            super(map);
+        }
 
-        @Override public V next() throws NoSuchElementException {
+        @Override
+        public V next() throws NoSuchElementException {
             return nextNode().getValueVolatile(); // Volatile read for value
         }
     }
 
     // --- Collection Views ---
 
-    /** Base class for Collection views (Values, EntrySet). */
+    /**
+     * Base class for Collection views (Values, EntrySet).
+     */
     protected static abstract class BaseCollection<V, E> implements Collection<E> {
         protected final LeafConcurrentLong2ReferenceChainedHashTable<V> map;
 
@@ -1939,11 +2085,21 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             this.map = Validate.notNull(map);
         }
 
-        @Override public int size() { return map.size(); }
-        @Override public boolean isEmpty() { return map.isEmpty(); }
-        @Override public abstract boolean contains(Object o); // Subclass responsibility
+        @Override
+        public int size() {
+            return map.size();
+        }
 
-        @Override public boolean containsAll(Collection<?> c) {
+        @Override
+        public boolean isEmpty() {
+            return map.isEmpty();
+        }
+
+        @Override
+        public abstract boolean contains(Object o); // Subclass responsibility
+
+        @Override
+        public boolean containsAll(Collection<?> c) {
             Validate.notNull(c);
             for (Object e : c) {
                 if (!contains(e)) return false;
@@ -1951,13 +2107,14 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return true;
         }
 
-        @Override public Object[] toArray() {
+        @Override
+        public Object[] toArray() {
             List<E> list = new ArrayList<>(map.size());
             for (E e : this) list.add(e); // Uses iterator() from subclass
             return list.toArray();
         }
 
-        @Override @SuppressWarnings("unchecked")
+        @Override
         public <T> T[] toArray(T[] a) {
             Validate.notNull(a);
             List<E> list = new ArrayList<>(map.size());
@@ -1965,11 +2122,23 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return list.toArray(a);
         }
 
-        @Override public void clear() { map.clear(); }
-        @Override public boolean add(E e) { throw new UnsupportedOperationException(); }
-        @Override public boolean addAll(Collection<? extends E> c) { throw new UnsupportedOperationException(); }
+        @Override
+        public void clear() {
+            map.clear();
+        }
 
-        @Override public boolean remove(Object o) {
+        @Override
+        public boolean add(E e) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean addAll(Collection<? extends E> c) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean remove(Object o) {
             Iterator<E> it = iterator(); // Subclass provides iterator
             while (it.hasNext()) {
                 if (Objects.equals(o, it.next())) {
@@ -1980,7 +2149,8 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return false;
         }
 
-        @Override public boolean removeAll(Collection<?> c) {
+        @Override
+        public boolean removeAll(Collection<?> c) {
             Validate.notNull(c);
             boolean modified = false;
             Iterator<E> it = iterator();
@@ -1993,7 +2163,8 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return modified;
         }
 
-        @Override public boolean retainAll(Collection<?> c) {
+        @Override
+        public boolean retainAll(Collection<?> c) {
             Validate.notNull(c);
             boolean modified = false;
             Iterator<E> it = iterator();
@@ -2006,7 +2177,8 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return modified;
         }
 
-        @Override public boolean removeIf(Predicate<? super E> filter) {
+        @Override
+        public boolean removeIf(Predicate<? super E> filter) {
             Validate.notNull(filter);
             boolean removed = false;
             Iterator<E> it = iterator();
@@ -2019,19 +2191,21 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return removed;
         }
 
-        @Override public String toString() {
+        @Override
+        public String toString() {
             Iterator<E> it = iterator();
-            if (! it.hasNext()) return "[]";
+            if (!it.hasNext()) return "[]";
             StringBuilder sb = new StringBuilder("[");
             for (;;) {
                 E e = it.next();
                 sb.append(e == this ? "(this Collection)" : e);
-                if (! it.hasNext()) return sb.append(']').toString();
+                if (!it.hasNext()) return sb.append(']').toString();
                 sb.append(',').append(' ');
             }
         }
 
-        @Override public void forEach(Consumer<? super E> action) {
+        @Override
+        public void forEach(Consumer<? super E> action) {
             Validate.notNull(action);
             for (E e : this) { // Uses iterator() from subclass
                 action.accept(e);
@@ -2039,46 +2213,64 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
         }
     }
 
-    /** Collection view for the map's values. */
+    /**
+     * Collection view for the map's values.
+     */
     protected static final class Values<V> extends BaseCollection<V, V> {
-        Values(LeafConcurrentLong2ReferenceChainedHashTable<V> map) { super(map); }
-
-        @Override public boolean contains(Object o) {
-            try {
-                return o != null && map.containsValue((V)o);
-            } catch (ClassCastException cce) { return false; }
+        Values(LeafConcurrentLong2ReferenceChainedHashTable<V> map) {
+            super(map);
         }
 
-        @Override public Iterator<V> iterator() { return map.valueIterator(); }
+        @Override
+        public boolean contains(Object o) {
+            try {
+                return o != null && map.containsValue((V) o);
+            } catch (ClassCastException cce) {
+                return false;
+            }
+        }
+
+        @Override
+        public Iterator<V> iterator() {
+            return map.valueIterator();
+        }
     }
 
-    /** Set view for the map's entries (TableEntry objects). */
+    /**
+     * Set view for the map's entries (TableEntry objects).
+     */
     protected static final class EntrySet<V> extends BaseCollection<V, TableEntry<V>> implements Set<TableEntry<V>> {
-        EntrySet(LeafConcurrentLong2ReferenceChainedHashTable<V> map) { super(map); }
+        EntrySet(LeafConcurrentLong2ReferenceChainedHashTable<V> map) {
+            super(map);
+        }
 
-        @Override public boolean contains(Object o) {
-            if (!(o instanceof LeafConcurrentLong2ReferenceChainedHashTable.TableEntry<?>)) return false;
-            TableEntry<?> entry = (TableEntry<?>) o;
+        @Override
+        public boolean contains(Object o) {
+            if (!(o instanceof LeafConcurrentLong2ReferenceChainedHashTable.TableEntry<?> entry)) return false;
             V mappedValue = map.get(entry.getKey()); // Concurrent read
             // Use volatile read on entry's value for consistent comparison
             return mappedValue != null && Objects.equals(mappedValue, entry.getValueVolatile());
         }
 
-        @Override public Iterator<TableEntry<V>> iterator() { return map.entryIterator(); }
+        @Override
+        public Iterator<TableEntry<V>> iterator() {
+            return map.entryIterator();
+        }
 
-        @Override public boolean remove(Object o) {
-            if (!(o instanceof LeafConcurrentLong2ReferenceChainedHashTable.TableEntry<?>)) return false;
-            TableEntry<?> entry = (TableEntry<?>) o;
+        @Override
+        public boolean remove(Object o) {
+            if (!(o instanceof LeafConcurrentLong2ReferenceChainedHashTable.TableEntry<?> entry)) return false;
             try {
                 // Use map's atomic remove(key, value)
                 // Use volatile read for the expected value
-                return map.remove(entry.getKey(), (V)entry.getValueVolatile());
-            } catch(ClassCastException | NullPointerException cce) { // Handle potential type/null issues
+                return map.remove(entry.getKey(), (V) entry.getValueVolatile());
+            } catch (ClassCastException | NullPointerException cce) { // Handle potential type/null issues
                 return false;
             }
         }
 
-        @Override public int hashCode() {
+        @Override
+        public int hashCode() {
             int h = 0;
             for (TableEntry<V> e : this) {
                 h += e.hashCode(); // Uses entry's hashCode
@@ -2086,10 +2278,10 @@ public class LeafConcurrentLong2ReferenceChainedHashTable<V> implements Iterable
             return h;
         }
 
-        @Override public boolean equals(Object o) {
+        @Override
+        public boolean equals(Object o) {
             if (o == this) return true;
-            if (!(o instanceof Set)) return false;
-            Set<?> c = (Set<?>) o;
+            if (!(o instanceof Set<?> c)) return false;
             if (c.size() != size()) return false;
             try {
                 // relies on containsAll checking entry equality correctly

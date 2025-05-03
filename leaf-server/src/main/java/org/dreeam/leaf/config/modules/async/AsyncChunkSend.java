@@ -13,8 +13,7 @@ public class AsyncChunkSend extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(),
-            """
+        config.addCommentRegionBased(getBasePath(), """
                 Makes chunk packet preparation and sending asynchronous to improve server performance.
                 This can significantly reduce main thread load when many players are loading chunks.""",
             """

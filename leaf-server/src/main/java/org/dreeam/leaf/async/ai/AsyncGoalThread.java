@@ -7,11 +7,12 @@ import net.minecraft.server.level.ServerLevel;
 import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalThread extends Thread {
+
     private static final int SPIN_TRIES = 1000;
 
     public AsyncGoalThread(final MinecraftServer server) {
         super(() -> run(server), "Leaf Async Goal Thread");
-        this.setDaemon(true);
+        this.setDaemon(false);
         this.setUncaughtExceptionHandler(Util::onThreadException);
         this.setPriority(Thread.NORM_PRIORITY - 1);
         this.start();

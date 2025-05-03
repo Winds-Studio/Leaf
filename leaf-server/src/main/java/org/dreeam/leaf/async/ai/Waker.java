@@ -3,6 +3,7 @@ package org.dreeam.leaf.async.ai;
 import org.jetbrains.annotations.Nullable;
 
 public class Waker {
+
     @Nullable
     public volatile Runnable wake = null;
     @Nullable

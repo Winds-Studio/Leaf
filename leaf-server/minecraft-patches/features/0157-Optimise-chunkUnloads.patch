@@ -212,10 +212,10 @@ index b8ac6a9ba7b56ccd034757f7d135d272b8e69e90..dc158e981199b507531af810ff9ced3c
      }
  }
 diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
-index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389dc365eb88 100644
+index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..dff2fed559a274ee7896ee136999eaf288cf82bb 100644
 --- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
 +++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
-@@ -526,14 +526,14 @@ public record SerializableChunkData(
+@@ -526,14 +526,16 @@ public record SerializableChunkData(
              throw new IllegalArgumentException("Chunk can't be serialized: " + chunk);
          } else {
              ChunkPos pos = chunk.getPos();
@@ -227,16 +227,19 @@ index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389d
              final int minLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinLightSection(level);
              final int maxLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMaxLightSection(level);
              final int minBlockSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(level);
++            // Leaf start - Optimize chunkUnload
 +            // Pre-allocate with correct capacity to avoid resizing
 +            final int expectedSectionCount = maxLightSection - minLightSection + 1;
 +            List<SerializableChunkData.SectionData> list = new ArrayList<>(expectedSectionCount);
++            // Leaf end - Optimize chunkUnload
  
              final LevelChunkSection[] chunkSections = chunk.getSections();
              final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles = ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)chunk).starlight$getBlockNibbles();
-@@ -551,10 +551,18 @@ public record SerializableChunkData(
+@@ -551,10 +553,20 @@ public record SerializableChunkData(
                      continue;
                  }
  
++                // Leaf start - Optimize chunkUnload
 +                DataLayer blockDataLayer = null;
 +                if (blockNibble != null && blockNibble.data != null) {
 +                    blockDataLayer = new DataLayer(blockNibble.data);
@@ -246,50 +249,48 @@ index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389d
 +                if (skyNibble != null && skyNibble.data != null) {
 +                    skyDataLayer = new DataLayer(skyNibble.data);
 +                }
++                // Leaf end - Optimize chunkUnload
 +
                  final SerializableChunkData.SectionData sectionData = new SerializableChunkData.SectionData(
 -                    lightSection, chunkSection,
 -                    blockNibble == null ? null : (blockNibble.data == null ? null : new DataLayer(blockNibble.data)),
 -                    skyNibble == null ? null : (skyNibble.data == null ? null : new DataLayer(skyNibble.data))
-+                    lightSection, chunkSection, blockDataLayer, skyDataLayer
++                    lightSection, chunkSection, blockDataLayer, skyDataLayer // Leaf - Optimize chunkUnload
                  );
  
                  if (blockNibble != null) {
-@@ -565,28 +573,42 @@ public record SerializableChunkData(
+@@ -565,12 +577,16 @@ public record SerializableChunkData(
                      ((ca.spottedleaf.moonrise.patches.starlight.storage.StarlightSectionData)(Object)sectionData).starlight$setSkyLightState(skyNibble.state);
                  }
  
 -                sectionsList.add(sectionData);
-+                list.add(sectionData);
++                list.add(sectionData); // Leaf - Optimize chunkUnload
              }
              // Paper end - starlight
  
 -            List<CompoundTag> list1 = new ArrayList<>(chunk.getBlockEntitiesPos().size());
++            // Leaf start - Optimize chunkUnload
 +            // Pre-allocate block entities list with exact size needed
 +            final int blockEntityCount = chunk.getBlockEntitiesPos().size();
 +            List<CompoundTag> list1 = blockEntityCount > 0 ? new ArrayList<>(blockEntityCount) : java.util.Collections.emptyList();
  
--            for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
--                CompoundTag blockEntityNbtForSaving = chunk.getBlockEntityNbtForSaving(blockPos, level.registryAccess());
--                if (blockEntityNbtForSaving != null) {
--                    list1.add(blockEntityNbtForSaving);
-+            if (blockEntityCount > 0) {
-+                for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
-+                    CompoundTag blockEntityNbtForSaving = chunk.getBlockEntityNbtForSaving(blockPos, level.registryAccess());
-+                    if (blockEntityNbtForSaving != null) {
-+                        list1.add(blockEntityNbtForSaving);
-+                    }
++            if (blockEntityCount > 0) // Leaf - Optimize chunkUnload
+             for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
+                 CompoundTag blockEntityNbtForSaving = chunk.getBlockEntityNbtForSaving(blockPos, level.registryAccess());
+                 if (blockEntityNbtForSaving != null) {
+@@ -578,15 +594,27 @@ public record SerializableChunkData(
                  }
              }
  
 -            List<CompoundTag> list2 = new ArrayList<>();
++            // Leaf start - Optimize chunkUnload
 +            // For entities, use an initial estimated capacity if it's a ProtoChunk
 +            List<CompoundTag> list2;
              long[] longs = null;
-+
              if (chunk.getPersistedStatus().getChunkType() == ChunkType.PROTOCHUNK) {
                  ProtoChunk protoChunk = (ProtoChunk)chunk;
 -                list2.addAll(protoChunk.getEntities());
++                // Leaf start - Optimize chunkUnload
 +                int entitySize = protoChunk.getEntities().size();
 +                if (entitySize > 0) {
 +                    list2 = new ArrayList<>(Math.max(16, entitySize));
@@ -297,21 +298,22 @@ index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389d
 +                } else {
 +                    list2 = java.util.Collections.emptyList();
 +                }
++                // Leaf end - Optimize chunkUnload
                  CarvingMask carvingMask = protoChunk.getCarvingMask();
                  if (carvingMask != null) {
                      longs = carvingMask.toArray();
                  }
 +            } else {
-+                list2 = java.util.Collections.emptyList();
++                list2 = java.util.Collections.emptyList(); // Leaf - Optimize chunkUnload
              }
  
              Map<Heightmap.Types, long[]> map = new EnumMap<>(Heightmap.Types.class);
-@@ -594,14 +616,25 @@ public record SerializableChunkData(
+@@ -594,14 +622,26 @@ public record SerializableChunkData(
              for (Entry<Heightmap.Types, Heightmap> entry : chunk.getHeightmaps()) {
                  if (chunk.getPersistedStatus().heightmapsAfter().contains(entry.getKey())) {
                      long[] rawData = entry.getValue().getRawData();
 -                    map.put(entry.getKey(), (long[])rawData.clone());
-+                    map.put(entry.getKey(), Arrays.copyOf(rawData, rawData.length));
++                    map.put(entry.getKey(), Arrays.copyOf(rawData, rawData.length)); // Leaf - Optimize chunkUnload
                  }
              }
  
@@ -319,7 +321,7 @@ index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389d
 -            ShortList[] lists = Arrays.stream(chunk.getPostProcessing())
 -                .map(list3 -> list3 != null ? new ShortArrayList(list3) : null)
 -                .toArray(ShortList[]::new);
-+            // Leaf start - Some Optimizations on SerializableChunkData
++            // Leaf start - Optimize chunkUnload - remove stream
 +            ShortList[] postProcessing = chunk.getPostProcessing();
 +            ShortList[] lists = new ShortList[postProcessing.length];
 +            for (int i = 0; i < postProcessing.length; i++) {
@@ -333,6 +335,7 @@ index e9ece9b618b0a9eb82b9f07a09ee6cb60cf7ec16..18d2ec110fc6670edb079eccf448389d
 +                    }
 +                }
 +            }
++            // Leaf end - Optimize chunkUnload - remove stream
              CompoundTag compoundTag = packStructureData(
                  StructurePieceSerializationContext.fromLevel(level), pos, chunk.getAllStarts(), chunk.getAllReferences()
              );

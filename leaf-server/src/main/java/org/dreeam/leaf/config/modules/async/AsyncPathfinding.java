@@ -20,8 +20,7 @@ public class AsyncPathfinding extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath() + ".reject-policy",
-            """
+        config.addCommentRegionBased(getBasePath() + ".reject-policy", """
             The policy to use when the queue is full and a new task is submitted.
             FLUSH_ALL: All pending tasks will be run on server thread.
             CALLER_RUNS: Newly submitted task will be run on server thread.
@@ -56,6 +55,10 @@ public class AsyncPathfinding extends ConfigModules {
         if (asyncPathfindingQueueSize <= 0)
             asyncPathfindingQueueSize = asyncPathfindingMaxThreads * 256;
 
-        asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.fromString(config.getString(getBasePath() + ".reject-policy", availableProcessors >= 12 && asyncPathfindingQueueSize < 512 ? PathfindTaskRejectPolicy.FLUSH_ALL.toString() : PathfindTaskRejectPolicy.CALLER_RUNS.toString()));
+        asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.fromString(config.getString(getBasePath() + ".reject-policy",
+            availableProcessors >= 12 && asyncPathfindingQueueSize < 512
+                ? PathfindTaskRejectPolicy.FLUSH_ALL.toString()
+                : PathfindTaskRejectPolicy.CALLER_RUNS.toString())
+        );
     }
 }

@@ -15,8 +15,7 @@ public class DontSaveEntity extends ConfigModules {
     @Override
     public void onLoaded() {
         dontSavePrimedTNT = config.getBoolean(getBasePath() + ".dont-save-primed-tnt", dontSavePrimedTNT,
-            config.pickStringRegionBased(
-                """
+            config.pickStringRegionBased("""
                     Disable save primed tnt on chunk unloads.
                     Useful for redstone/technical servers, can prevent machines from being exploded by TNT,
                     when player disconnected caused by Internet issue.""",
