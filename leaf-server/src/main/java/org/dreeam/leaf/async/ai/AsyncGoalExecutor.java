@@ -17,20 +17,20 @@ public class AsyncGoalExecutor {
     protected final SpscIntQueue queue;
     protected final SpscIntQueue wake;
     private final AsyncGoalThread thread;
-    private final ServerLevel serverLevel;
+    private final ServerLevel world;
     private boolean dirty = false;
     private long tickCount = 0L;
     private static final int SPIN_LIMIT = 100;
 
-    public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel serverLevel) {
-        this.serverLevel = serverLevel;
+    public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
+        this.world = world;
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.thread = thread;
     }
 
     boolean wake(int id) {
-        Entity entity = this.serverLevel.getEntities().get(id);
+        Entity entity = this.world.getEntities().get(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
@@ -40,19 +40,23 @@ public class AsyncGoalExecutor {
     }
 
     public final void submit(int entityId) {
-        if (!this.queue.send(entityId)) {
-            int spinCount = 0;
-            while (!this.queue.send(entityId)) {
-                spinCount++;
-                // Unpark the thread after some spinning to help clear the queue
-                if (spinCount > SPIN_LIMIT) {
-                    unpark();
-                    spinCount = 0;
-                }
-                Thread.onSpinWait();
-            }
-        }
         dirty = true;
+        if (!this.queue.send(entityId)) {
+            onFull(entityId);
+        }
+    }
+
+    private void onFull(int id) {
+        int spinCount = 0;
+        while (!this.queue.send(id)) {
+            spinCount++;
+            // Unpark the thread after some spinning to help clear the queue
+            if (spinCount > SPIN_LIMIT) {
+                unpark();
+                spinCount = 0;
+            }
+            Thread.onSpinWait();
+        }
     }
 
     public final void unpark() {
@@ -63,12 +67,12 @@ public class AsyncGoalExecutor {
     public final void midTick() {
         boolean didWork = false;
         while (true) {
-            int id = this.wake.recv();
-            if (id == Integer.MAX_VALUE) {
+            var id = this.wake.recv();
+            if (id == null) {
                 break;
             }
             didWork = true;
-            Entity entity = this.serverLevel.getEntities().get(id);
+            Entity entity = this.world.getEntities().get(id);
             if (entity == null || !entity.isAlive() || !(entity instanceof Mob mob)) {
                 continue;
             }

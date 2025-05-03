@@ -1,5 +1,7 @@
 package org.dreeam.leaf.util.queue;
 
+import org.jetbrains.annotations.Nullable;
+
 /// Lock-free Single Producer Single Consumer Queue
 public class SpscIntQueue {
 
@@ -33,14 +35,14 @@ public class SpscIntQueue {
     }
 
 
-    public final int recv() {
+    public final @Nullable Integer recv() {
         final int idx = consumerIdx.getOpaque();
         int cachedIdx = producerCachedIdx.getPlain();
         if (idx == cachedIdx) {
             cachedIdx = producerIdx.getAcquire();
             producerCachedIdx.setPlain(cachedIdx);
             if (idx == cachedIdx) {
-                return Integer.MAX_VALUE;
+                return null;
             }
         }
         int e = data[idx];

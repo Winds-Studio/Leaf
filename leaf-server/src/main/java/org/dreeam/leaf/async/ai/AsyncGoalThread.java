@@ -27,8 +27,8 @@ public class AsyncGoalThread extends Thread {
                 var exec = level.asyncGoalExecutor;
                 boolean levelWork = false;
                 while (true) {
-                    int id = exec.queue.recv();
-                    if (id == Integer.MAX_VALUE) {
+                    Integer id = exec.queue.recv();
+                    if (id == null) {
                         break;
                     }
                     levelWork = true;

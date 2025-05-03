@@ -1,5 +1,6 @@
 package org.dreeam.leaf.async;
 
+import net.minecraft.Util;
 import org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave;
 
 import java.util.Optional;
@@ -17,7 +18,7 @@ public class AsyncPlayerDataSaving {
         new com.google.common.util.concurrent.ThreadFactoryBuilder()
             .setPriority(Thread.NORM_PRIORITY - 2)
             .setNameFormat("Leaf IO Thread")
-            .setUncaughtExceptionHandler(new net.minecraft.DefaultUncaughtExceptionHandlerWithName(net.minecraft.server.MinecraftServer.LOGGER))
+            .setUncaughtExceptionHandler(Util::onThreadException)
             .build(),
         new ThreadPoolExecutor.DiscardPolicy()
     );
