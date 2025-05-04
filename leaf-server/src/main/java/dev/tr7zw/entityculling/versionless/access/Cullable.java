@@ -10,8 +10,4 @@ public interface Cullable {
 
     boolean isCulled();
 
-    void setOutOfCamera(boolean value);
-
-    boolean isOutOfCamera();
-
 }
