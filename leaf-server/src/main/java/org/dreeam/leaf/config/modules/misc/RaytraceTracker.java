@@ -23,6 +23,7 @@ public class RaytraceTracker extends ConfigModules {
     public static boolean skipMarkerArmorStand = false;
     public static int boundingBoxLimit = 20;
     public static int traceInterval = 50;
+    public static double boundingBoxExpansion = 0.5D;
     public static List<String> skippedEntities = List.of("PLAYER");
 
     @Override
@@ -64,6 +65,13 @@ public class RaytraceTracker extends ConfigModules {
                 Lower value means more frequent trace.""",
             """
                 追踪间隔(单位: 毫秒), 越小越频繁."""));
+        boundingBoxExpansion = config.getDouble(getBasePath() + ".bounding-box-expansion", boundingBoxExpansion, config.pickStringRegionBased(
+            """
+                The expansion of bounding box.
+                This modifier will be added to the actual bounding box when tracing.""",
+            """
+                碰撞箱扩大量.
+                此值将会在射线追踪时添加到实际碰撞箱上."""));
         skippedEntities = config.getList(getBasePath() + ".skipped-entities", skippedEntities, config.pickStringRegionBased(
             """
                 The entities to skip tracing.""",

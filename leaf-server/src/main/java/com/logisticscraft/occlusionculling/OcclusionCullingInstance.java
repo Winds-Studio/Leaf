@@ -34,7 +34,7 @@ public class OcclusionCullingInstance {
 
 
     public OcclusionCullingInstance(int maxDistance, DataProvider provider) {
-        this(maxDistance, provider, new ArrayOcclusionCache(maxDistance), 0.5);
+        this(maxDistance, provider, new ArrayOcclusionCache(maxDistance), org.dreeam.leaf.config.modules.misc.RaytraceTracker.boundingBoxExpansion);
     }
 
     public OcclusionCullingInstance(int maxDistance, DataProvider provider, OcclusionCache cache, double aabbExpansion) {
