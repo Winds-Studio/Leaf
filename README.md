@@ -43,7 +43,7 @@ You can find the latest successful build in [GitHub Action](https://github.com/W
 **Please note Java >= 21 is required.**
 
 ## 📄 Documentation
-Documentation on how to use/configure Leaf: [leafmc.one/docs/](https://www.leafmc.one/docs/)
+Documentation on how to use/configure Leaf: [www.leafmc.one/docs](https://www.leafmc.one/docs)
 
 ## 📦 Building
 Building a Paperclip JAR for distribution:

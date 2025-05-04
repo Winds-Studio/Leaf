@@ -147,7 +147,7 @@ public class LinearRegionFile implements IRegionFile {
 
     private synchronized void save() throws IOException {
         if (MinecraftServer.getServer().hasStopped()) {
-            // Crazy - save only once on shutdown
+            // Save only once on shutdown
             if (!closed) return;
         }
         
@@ -224,7 +224,6 @@ public class LinearRegionFile implements IRegionFile {
             LOGGER.error("Chunk write IOException {} {}", e, this.path);
         }
 
-        // Crazy: bruh
         if (TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - this.lastFlushed) >= (RegionFormatConfig.linearFlushFrequency)) {
             this.flushWrapper();
         }
