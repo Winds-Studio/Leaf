@@ -23,6 +23,7 @@ public class RaytraceTracker extends ConfigModules {
     public static boolean skipMarkerArmorStand = false;
     public static int boundingBoxLimit = 20;
     public static int traceInterval = 50;
+    public static double forceVisibleRadius = 2.0D;
     public static double boundingBoxExpansion = 0.5D;
     public static List<String> skippedEntities = List.of("PLAYER");
     public static boolean invertSkipEntities = false;
@@ -66,6 +67,15 @@ public class RaytraceTracker extends ConfigModules {
                 Lower value means more frequent trace.""",
             """
                 追踪间隔(单位: 毫秒), 越小越频繁."""));
+        forceVisibleRadius = config.getDouble(getBasePath() + ".force-visible-radius", forceVisibleRadius, config.pickStringRegionBased(
+            """
+                The radius to force visible entities.
+                Entities within this radius will be forced visible.
+                Set to values less than or equal to zero to disable.""",
+            """
+                强制可见半径,
+                实体在范围内将被强制可见.
+                设置为小于等于 0 的值来禁用强制可见."""));
         boundingBoxExpansion = config.getDouble(getBasePath() + ".bounding-box-expansion", boundingBoxExpansion, config.pickStringRegionBased(
             """
                 The expansion of bounding box.

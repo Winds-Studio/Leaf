@@ -104,7 +104,13 @@ public class CullTask implements Runnable {
                     continue;
                 }
 
-                if (!entity.position().closerThan(cameraMC, RaytraceTracker.maxTraceDistance)) {
+                final double distanceSqr = entity.position().distanceToSqr(cameraMC);
+                if (distanceSqr < RaytraceTracker.forceVisibleRadius * RaytraceTracker.forceVisibleRadius) {
+                    cullable.setCulled(false);
+                    continue;
+                }
+
+                if (distanceSqr >= RaytraceTracker.maxTraceDistance * RaytraceTracker.maxTraceDistance) {
                     cullable.setCulled(false); // If your entity view distance is larger than tracingDistance just
                     // render it
                     continue;
