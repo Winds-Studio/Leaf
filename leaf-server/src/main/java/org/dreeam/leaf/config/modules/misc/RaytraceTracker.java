@@ -25,6 +25,7 @@ public class RaytraceTracker extends ConfigModules {
     public static int traceInterval = 50;
     public static double boundingBoxExpansion = 0.5D;
     public static List<String> skippedEntities = List.of("PLAYER");
+    public static boolean invertSkipEntities = false;
 
     @Override
     public void onLoaded() {
@@ -77,12 +78,17 @@ public class RaytraceTracker extends ConfigModules {
                 The entities to skip tracing.""",
             """
                 跳过追踪的实体."""));
+        invertSkipEntities = config.getBoolean(getBasePath() + ".invert-skip-entities", invertSkipEntities, config.pickStringRegionBased(
+            """
+                Whether to invert the skip entities list.""",
+            """
+                是否反转跳过实体列表."""));
     }
 
     @Override
     public void onPostLoaded() {
         for (EntityType<?> entityType : BuiltInRegistries.ENTITY_TYPE) {
-            entityType.skipRaytraceCheck = false;
+            entityType.skipRaytraceCheck = invertSkipEntities;
         }
 
         final String DEFAULT_PREFIX = ResourceLocation.DEFAULT_NAMESPACE + ResourceLocation.NAMESPACE_SEPARATOR;
@@ -92,7 +98,7 @@ public class RaytraceTracker extends ConfigModules {
             String typeId = lowerName.startsWith(DEFAULT_PREFIX) ? lowerName : DEFAULT_PREFIX + lowerName;
 
             EntityType.byString(typeId).ifPresentOrElse(entityType ->
-                    entityType.skipRaytraceCheck = true,
+                    entityType.skipRaytraceCheck = !invertSkipEntities,
                 () -> LeafConfig.LOGGER.warn("Skip unknown entity {}, in {}", name, getBasePath() + ".skipped-entities")
             );
         }
