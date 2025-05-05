@@ -4,6 +4,7 @@ import net.minecraft.Util;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 
+import java.util.OptionalInt;
 import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalThread extends Thread {
@@ -22,10 +23,11 @@ public class AsyncGoalThread extends Thread {
             for (ServerLevel level : server.getAllLevels()) {
                 var exec = level.asyncGoalExecutor;
                 while (true) {
-                    Integer id = exec.queue.recv();
-                    if (id == null) {
+                    OptionalInt result = exec.queue.recv();
+                    if (result.isEmpty()) {
                         break;
                     }
+                    int id = result.getAsInt();
                     retry = true;
                     if (exec.wake(id)) {
                         while (!exec.wake.send(id)) {

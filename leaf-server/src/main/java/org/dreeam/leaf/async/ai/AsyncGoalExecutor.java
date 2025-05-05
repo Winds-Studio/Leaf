@@ -8,6 +8,7 @@ import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
 import org.dreeam.leaf.util.queue.SpscIntQueue;
 
+import java.util.OptionalInt;
 import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalExecutor {
@@ -55,10 +56,11 @@ public class AsyncGoalExecutor {
 
     public final void midTick() {
         while (true) {
-            Integer id = this.wake.recv();
-            if (id == null) {
+            OptionalInt result = this.wake.recv();
+            if (result.isEmpty()) {
                 break;
             }
+            int id = result.getAsInt();
             if (poll(id)) {
                 submit(id);
             }
