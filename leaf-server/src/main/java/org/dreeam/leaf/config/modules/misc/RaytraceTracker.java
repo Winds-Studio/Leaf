@@ -25,7 +25,7 @@ public class RaytraceTracker extends ConfigModules {
     public static int traceInterval = 50;
     public static double forceVisibleRadius = 2.0D;
     public static double boundingBoxExpansion = 0.5D;
-    public static List<String> skippedEntities = List.of("PLAYER");
+    public static List<String> skippedEntities = List.of();
     public static boolean invertSkipEntities = false;
 
     @Override
