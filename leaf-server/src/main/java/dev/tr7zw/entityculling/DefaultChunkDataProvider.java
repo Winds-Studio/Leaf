@@ -4,6 +4,7 @@ import com.logisticscraft.occlusionculling.DataProvider;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 
 public class DefaultChunkDataProvider implements DataProvider {
@@ -28,9 +29,11 @@ public class DefaultChunkDataProvider implements DataProvider {
         }
 
         if (this.level.isOutsideBuildHeight(pos)) {
-            return Blocks.VOID_AIR.defaultBlockState().isSolidRender();
+            BlockState bs = Blocks.VOID_AIR.defaultBlockState();
+            return !bs.canOcclude();
         } else {
-            return access.getBlockState(pos).isSolidRender();
+            BlockState bs = access.getBlockState(pos);
+            return !bs.canOcclude();
         }
     }
 
