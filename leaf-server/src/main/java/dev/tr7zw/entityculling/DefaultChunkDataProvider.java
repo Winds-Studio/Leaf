@@ -30,10 +30,10 @@ public class DefaultChunkDataProvider implements DataProvider {
 
         if (this.level.isOutsideBuildHeight(pos)) {
             BlockState bs = Blocks.VOID_AIR.defaultBlockState();
-            return !bs.canOcclude();
+            return !bs.canOcclude() && bs.isSolidRender();
         } else {
             BlockState bs = access.getBlockState(pos);
-            return !bs.canOcclude();
+            return !bs.canOcclude() && bs.isSolidRender();
         }
     }
 
