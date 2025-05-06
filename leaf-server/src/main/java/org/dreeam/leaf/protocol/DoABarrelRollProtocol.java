@@ -37,7 +37,7 @@ public class DoABarrelRollProtocol implements Protocol {
     );
 
     private ModConfigServer config = DEFAULT;
-    private boolean firstTick = false;
+    private boolean configUpdated = false;
 
     private final Reference2ReferenceMap<ServerGamePacketListenerImpl, ClientInfo> syncStates = new Reference2ReferenceOpenHashMap<>();
     private final Reference2ReferenceMap<ServerGamePacketListenerImpl, DelayedRunnable> scheduledKicks = new Reference2ReferenceOpenHashMap<>();
@@ -65,7 +65,7 @@ public class DoABarrelRollProtocol implements Protocol {
             Protocols.register(INSTANCE);
         }
         INSTANCE.config = new ModConfigServer(allowThrusting, forceEnabled, forceInstalled, installedTimeout, kineticDamage);
-        INSTANCE.firstTick = true;
+        INSTANCE.configUpdated = true;
     }
 
     @Override
@@ -172,8 +172,8 @@ public class DoABarrelRollProtocol implements Protocol {
             }
         }
 
-        if (firstTick) {
-            firstTick = false;
+        if (configUpdated) {
+            configUpdated = false;
             for (ServerPlayer player : server.getPlayerList().players) {
                 sendHandshake(player);
             }
