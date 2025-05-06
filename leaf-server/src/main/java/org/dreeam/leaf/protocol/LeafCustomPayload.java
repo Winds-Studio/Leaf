@@ -5,5 +5,6 @@ import org.jetbrains.annotations.NotNull;
 
 public interface LeafCustomPayload extends CustomPacketPayload {
     @NotNull
+    @Override
     Type<? extends LeafCustomPayload> type();
 }
