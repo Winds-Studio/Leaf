@@ -65,6 +65,8 @@ public class ProtocolSupport extends ConfigModules {
                 doABarrelRollInstalledTimeout,
                 doABarrelRollKineticDamage
             );
+        } else {
+            DoABarrelRollProtocol.deinit();
         }
     }
 }

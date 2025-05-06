@@ -37,7 +37,7 @@ public class DoABarrelRollProtocol implements Protocol {
     );
 
     private ModConfigServer config = DEFAULT;
-    private boolean configUpdated = false;
+    private boolean firstTick = false;
 
     private final Reference2ReferenceMap<ServerGamePacketListenerImpl, ClientInfo> syncStates = new Reference2ReferenceOpenHashMap<>();
     private final Reference2ReferenceMap<ServerGamePacketListenerImpl, DelayedRunnable> scheduledKicks = new Reference2ReferenceOpenHashMap<>();
@@ -45,6 +45,13 @@ public class DoABarrelRollProtocol implements Protocol {
     public final Reference2FloatMap<ServerGamePacketListenerImpl> rollMap = Reference2FloatMaps.synchronize(new Reference2FloatOpenHashMap<>());
     public final Reference2BooleanMap<ServerGamePacketListenerImpl> lastIsRollingMap = Reference2BooleanMaps.synchronize(new Reference2BooleanOpenHashMap<>());
     public final Reference2FloatMap<ServerGamePacketListenerImpl> lastRollMap = Reference2FloatMaps.synchronize(new Reference2FloatOpenHashMap<>());
+
+    public static void deinit() {
+        if (INSTANCE != null) {
+            INSTANCE = null;
+            Protocols.unregister(INSTANCE);
+        }
+    }
 
     public static void init(
         boolean allowThrusting,
@@ -58,11 +65,7 @@ public class DoABarrelRollProtocol implements Protocol {
             Protocols.register(INSTANCE);
         }
         INSTANCE.config = new ModConfigServer(allowThrusting, forceEnabled, forceInstalled, installedTimeout, kineticDamage);
-        INSTANCE.configUpdated = true;
-    }
-
-    boolean disabled() {
-        return !org.dreeam.leaf.config.modules.network.ProtocolSupport.doABarrelRollProtocol;
+        INSTANCE.firstTick = true;
     }
 
     @Override
@@ -82,9 +85,6 @@ public class DoABarrelRollProtocol implements Protocol {
 
     @Override
     public void handle(ServerPlayer player, @NotNull LeafCustomPayload payload) {
-        if (disabled()) {
-            return;
-        }
         switch (payload) {
             case ConfigUpdateC2SPacket ignored ->
                 player.connection.send(Protocols.createPacket(new ConfigUpdateAckS2CPacket(PROTOCOL_VERSION, false)));
@@ -114,9 +114,6 @@ public class DoABarrelRollProtocol implements Protocol {
 
     @Override
     public void disconnected(ServerPlayer player) {
-        if (disabled()) {
-            return;
-        }
         final var handler = player.connection;
         syncStates.remove(handler);
         isRollingMap.removeBoolean(handler);
@@ -127,9 +124,6 @@ public class DoABarrelRollProtocol implements Protocol {
 
     @Override
     public void tickTracker(ServerPlayer player) {
-        if (disabled()) {
-            return;
-        }
         if (!isRollingMap.containsKey(player.connection)) {
             return;
         }
@@ -155,9 +149,6 @@ public class DoABarrelRollProtocol implements Protocol {
 
     @Override
     public void tickPlayer(ServerPlayer player) {
-        if (disabled()) {
-            return;
-        }
         if (getHandshakeState(player.connection).state == HandshakeState.NOT_SENT) {
             sendHandshake(player);
         }
@@ -171,9 +162,6 @@ public class DoABarrelRollProtocol implements Protocol {
 
     @Override
     public void tickServer(MinecraftServer server) {
-        if (disabled()) {
-            return;
-        }
         var it = scheduledKicks.entrySet().iterator();
         while (it.hasNext()) {
             var entry = it.next();
@@ -184,8 +172,8 @@ public class DoABarrelRollProtocol implements Protocol {
             }
         }
 
-        if (configUpdated) {
-            configUpdated = false;
+        if (firstTick) {
+            firstTick = false;
             for (ServerPlayer player : server.getPlayerList().players) {
                 sendHandshake(player);
             }

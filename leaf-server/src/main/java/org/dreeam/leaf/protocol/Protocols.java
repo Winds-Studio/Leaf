@@ -19,6 +19,10 @@ public class Protocols {
         PROTOCOLS.add(protocol);
     }
 
+    static void unregister(Protocol protocol) {
+        PROTOCOLS.remove(protocol);
+    }
+
     public record TypeAndCodec<B extends FriendlyByteBuf, T extends LeafCustomPayload>(LeafCustomPayload.Type<T> type, StreamCodec<B, T> codec) {}
 
     public static <B extends FriendlyByteBuf> void write(B byteBuf, LeafCustomPayload payload) {
