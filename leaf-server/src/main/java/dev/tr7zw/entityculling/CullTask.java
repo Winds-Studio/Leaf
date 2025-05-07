@@ -4,9 +4,13 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.logisticscraft.occlusionculling.OcclusionCullingInstance;
 import com.logisticscraft.occlusionculling.util.Vec3d;
 import dev.tr7zw.entityculling.versionless.access.Cullable;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.dreeam.leaf.config.modules.misc.RaytraceTracker;
@@ -23,8 +27,6 @@ public class CullTask implements Runnable {
     private final Player checkTarget;
 
     private final int hitboxLimit;
-
-    public long lastCheckedTime = 0;
 
     private final Vec3d lastPos = new Vec3d(0, 0, 0);
     private final Vec3d aabbMin = new Vec3d(0, 0, 0);
@@ -70,16 +72,13 @@ public class CullTask implements Runnable {
         try {
             if (this.checkTarget.tickCount > 10) {
                 Vec3 cameraMC = this.checkTarget.getEyePosition(0);
-                long start = System.currentTimeMillis();
-                if (!(cameraMC.x == lastPos.x && cameraMC.y == lastPos.y && cameraMC.z == lastPos.z) || (start - lastCheckedTime) > 2500) {
-
+                if (!(cameraMC.x == lastPos.x && cameraMC.y == lastPos.y && cameraMC.z == lastPos.z)) {
                     lastPos.set(cameraMC.x, cameraMC.y, cameraMC.z);
-                    culling.resetCache();
-
-                    cullEntities(cameraMC, lastPos);
-
-                    lastCheckedTime = System.currentTimeMillis() - start;
+                    synchronized (culling) {
+                        culling.resetCache();
+                    }
                 }
+                cullEntities(cameraMC, lastPos);
             }
         } finally {
             if (this.scheduleNext) {
@@ -126,10 +125,42 @@ public class CullTask implements Runnable {
                 aabbMin.set(boundingBox.minX, boundingBox.minY, boundingBox.minZ);
                 aabbMax.set(boundingBox.maxX, boundingBox.maxY, boundingBox.maxZ);
 
-                boolean visible = culling.isAABBVisible(aabbMin, aabbMax, camera);
+                synchronized (culling) {
+                    boolean visible = culling.isAABBVisible(aabbMin, aabbMax, camera);
 
-                cullable.setCulled(!visible);
+                    cullable.setCulled(!visible);
+                }
             }
+        }
+    }
+
+    public static void onBlockChange(Level level, BlockPos pos) {
+        if (RaytraceTracker.enabled) {
+            MinecraftServer server = level.getServer();
+            if (server == null) { // tbh this cant be null
+                return;
+            }
+            PlayerList playerList = server.getPlayerList();
+            CompletableFuture.runAsync(() -> {
+                for (Player player : playerList.realPlayers) {
+                    CullTask cullTask = player.cullTask;
+                    if (cullTask == null) continue;
+                    if (player.level() == level) {
+                        int posX = pos.getX();
+                        int posY = pos.getY();
+                        int posZ = pos.getZ();
+                        BlockPos playerPos = player.blockPosition();
+                        final int playerX = playerPos.getX(), playerY = playerPos.getY(), playerZ = playerPos.getZ();
+                        if (Math.abs(posX - playerX) < RaytraceTracker.maxTraceDistance
+                            && Math.abs(posY - playerY) < RaytraceTracker.maxTraceDistance
+                            && Math.abs(posZ - playerZ) < RaytraceTracker.maxTraceDistance) {
+                            synchronized (cullTask.culling) {
+                                cullTask.culling.resetCache();
+                            }
+                        }
+                    }
+                }
+            }, backgroundWorker);
         }
     }
 
