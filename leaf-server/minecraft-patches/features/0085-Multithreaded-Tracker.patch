@@ -37,7 +37,7 @@ index dd2509996bfd08e8c3f9f2be042229eac6d7692d..a35e9fae8f8da0c42f0616c4f78dc396
          private static final byte CHUNK_TICKET_STAGE_NONE           = 0;
          private static final byte CHUNK_TICKET_STAGE_LOADING        = 1;
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10f9faa6b2 100644
+index 5d9d233e3a568aa6297ed9c703fa450f98158602..c9222a1a8ea9f88eadbb3c16925f96e92867b682 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
 @@ -248,6 +248,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -70,7 +70,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10
          // Paper start - optimise entity tracker
          if (true) {
              this.newTrackerTick();
-@@ -1073,7 +1089,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1073,12 +1089,14 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          final Entity entity;
          private final int range;
          SectionPos lastSectionPos;
@@ -79,7 +79,14 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10
  
          // Paper start - optimise entity tracker
          private long lastChunkUpdate = -1L;
-@@ -1100,7 +1116,39 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         private ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk lastTrackedChunk;
+ 
++        public final Object sync = new Object(); // Leaf
++
+         @Override
+         public final void moonrise$tick(final ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk) {
+             if (chunk == null) {
+@@ -1100,8 +1118,41 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              this.lastTrackedChunk = chunk;
  
              final ServerPlayer[] playersRaw = players.getRawDataUnchecked();
@@ -95,6 +102,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10
 +                        this.updatePlayer(player);
 +                    }
  
+-            for (int i = 0, len = players.size(); i < len; ++i) {
 +                    if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
 +                        // need to purge any players possible not in the chunk list
 +                        for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
@@ -116,10 +124,12 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10
 +                    updatePlayerTasks.run();
 +                }
 +            } else {
-             for (int i = 0, len = players.size(); i < len; ++i) {
++            final int playersLength = Math.min(playersRaw.length, players.size());
++            for (int i = 0; i < playersLength; ++i) {
                  final ServerPlayer player = playersRaw[i];
                  this.updatePlayer(player);
-@@ -1115,6 +1163,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+             }
+@@ -1115,6 +1166,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                      }
                  }
              }
@@ -128,7 +138,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10
          }
  
          @Override
-@@ -1176,7 +1226,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1176,7 +1229,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcast(Packet<?> packet) {
@@ -137,7 +147,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..8986c059e7aadb58ae8d9ab7b848de10
                  serverPlayerConnection.send(packet);
              }
          }
-@@ -1189,21 +1239,22 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1189,21 +1242,22 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcastRemoved() {
@@ -177,7 +187,7 @@ index f106373ef3ac4a8685c2939c9e8361688a285913..51ae390c68e7a3aa193329cc3bc47ca6
      public boolean visible = true;
  
 diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
-index d8298c7925e3bcea07ead4d438478cc51abcfa16..a13ce614722d26dcbb2f7f3ceeb68915bbaec304 100644
+index d8298c7925e3bcea07ead4d438478cc51abcfa16..38314fcb660f6cbb36d60434d24df5b579425eb3 100644
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
 @@ -110,8 +110,16 @@ public class ServerEntity {
@@ -199,28 +209,37 @@ index d8298c7925e3bcea07ead4d438478cc51abcfa16..a13ce614722d26dcbb2f7f3ceeb68915
                          }
                      }
                  );
-@@ -434,15 +442,17 @@ public class ServerEntity {
+@@ -434,6 +442,21 @@ public class ServerEntity {
  
          if (this.entity instanceof LivingEntity) {
              Set<AttributeInstance> attributesToSync = ((LivingEntity)this.entity).getAttributes().getAttributesToSync();
--            if (!attributesToSync.isEmpty()) {
-+            // Leaf start - petal - Multithreaded tracker - send in the main thread
-+            var clonedAttributes = new it.unimi.dsi.fastutil.objects.ObjectArraySet<>(attributesToSync);
-+            if (!clonedAttributes.isEmpty()) {
++            // Leaf start
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                synchronized (attributesToSync) {
++                    if (!attributesToSync.isEmpty()) {
++                        // CraftBukkit start - Send scaled max health
++                        if (this.entity instanceof ServerPlayer serverPlayer) {
++                            serverPlayer.getBukkitEntity().injectScaledMaxHealth(attributesToSync, false);
++                        }
++                        // CraftBukkit end
++                        this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), attributesToSync));
++                    }
++
++                    attributesToSync.clear();
++                }
++            } else {
+             if (!attributesToSync.isEmpty()) {
                  // CraftBukkit start - Send scaled max health
                  if (this.entity instanceof ServerPlayer serverPlayer) {
--                    serverPlayer.getBukkitEntity().injectScaledMaxHealth(attributesToSync, false);
-+                    serverPlayer.getBukkitEntity().injectScaledMaxHealth(clonedAttributes, false);
-                 }
-                 // CraftBukkit end
--                this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), attributesToSync));
-+                this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), clonedAttributes)); // Leaf - petal - Multithreaded tracker - send in the main thread
+@@ -444,6 +467,8 @@ public class ServerEntity {
              }
--
-+            // Leaf end - petal - Multithreaded tracker - send in the main thread
+ 
              attributesToSync.clear();
++            }
++            // Leaf end
          }
      }
+ 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
 index d6ebc25dc5f04194edde5ad3a1166113e5542a1d..49cbdf014d0626b36eb4c451b6de09508822b7fd 100644
 --- a/net/minecraft/server/level/ServerLevel.java
@@ -348,6 +367,32 @@ index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..d6e7685cb0e9beaa017bcc665f0f1c7c
      }
  
      private void onAttributeModified(AttributeInstance instance) {
+diff --git a/net/minecraft/world/entity/vehicle/NewMinecartBehavior.java b/net/minecraft/world/entity/vehicle/NewMinecartBehavior.java
+index 724466d14c925704671e510cea1919ee95a2ae02..4426b344677ab9f2753dd2d219921bcb7cf39980 100644
+--- a/net/minecraft/world/entity/vehicle/NewMinecartBehavior.java
++++ b/net/minecraft/world/entity/vehicle/NewMinecartBehavior.java
+@@ -35,13 +35,20 @@ public class NewMinecartBehavior extends MinecartBehavior {
+     private int cachedLerpDelay;
+     private float cachedPartialTick;
+     private int lerpDelay = 0;
+-    public final List<NewMinecartBehavior.MinecartStep> lerpSteps = new LinkedList<>();
++    public final List<NewMinecartBehavior.MinecartStep> lerpSteps; // Leaf - Multithreaded tracker
+     public final List<NewMinecartBehavior.MinecartStep> currentLerpSteps = new LinkedList<>();
+     public double currentLerpStepsTotalWeight = 0.0;
+     public NewMinecartBehavior.MinecartStep oldLerp = NewMinecartBehavior.MinecartStep.ZERO;
+ 
+     public NewMinecartBehavior(AbstractMinecart minecart) {
+         super(minecart);
++        // Leaf start - Multithreaded tracker
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            lerpSteps = it.unimi.dsi.fastutil.objects.ObjectLists.synchronize(new it.unimi.dsi.fastutil.objects.ObjectArrayList<>());
++        } else {
++            lerpSteps = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
++        }
++        // Leaf end - Multithreaded tracker
+     }
+ 
+     @Override
 diff --git a/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java b/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
 index 681dec447486138088fe5f705ef4fadab531139f..27f8a22d798a17dbd5949d1b6ff0526837fe91d5 100644
 --- a/net/minecraft/world/level/saveddata/maps/MapItemSavedData.java
