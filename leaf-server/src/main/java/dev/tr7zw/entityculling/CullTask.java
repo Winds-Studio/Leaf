@@ -15,6 +15,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.dreeam.leaf.config.modules.misc.RaytraceTracker;
 
+import java.util.Set;
 import java.util.concurrent.*;
 
 public class CullTask implements Runnable {
@@ -39,6 +40,8 @@ public class CullTask implements Runnable {
             .setPriority(Thread.NORM_PRIORITY - 1)
             .build()
     );
+
+    private final Set<Integer> culledEntities = ConcurrentHashMap.newKeySet();
 
     private final Executor worker;
 
@@ -96,21 +99,22 @@ public class CullTask implements Runnable {
             if (entity.getType().skipRaytraceCheck) {
                 continue;
             }
+            Player player = this.checkTarget;
 
-            if (!cullable.isForcedVisible()) {
+            if (!cullable.isForcedVisible() || true) { // TODO
                 if (entity.isCurrentlyGlowing() || isSkippableArmorstand(entity)) {
-                    cullable.setCulled(false);
+                    cullable.setCulled(false, player);
                     continue;
                 }
 
                 final double distanceSqr = entity.position().distanceToSqr(cameraMC);
                 if (distanceSqr < RaytraceTracker.forceVisibleRadius * RaytraceTracker.forceVisibleRadius) {
-                    cullable.setCulled(false);
+                    cullable.setCulled(false, player);
                     continue;
                 }
 
                 if (distanceSqr >= RaytraceTracker.maxTraceDistance * RaytraceTracker.maxTraceDistance) {
-                    cullable.setCulled(false); // If your entity view distance is larger than tracingDistance just
+                    cullable.setCulled(false, player); // If your entity view distance is larger than tracingDistance just
                     // render it
                     continue;
                 }
@@ -118,7 +122,7 @@ public class CullTask implements Runnable {
                 AABB boundingBox = entity.getBoundingBox();
                 if (boundingBox.getXsize() > hitboxLimit || boundingBox.getYsize() > hitboxLimit
                     || boundingBox.getZsize() > hitboxLimit) {
-                    cullable.setCulled(false); // Too big to bother to cull
+                    cullable.setCulled(false, player); // Too big to bother to cull
                     continue;
                 }
 
@@ -128,7 +132,7 @@ public class CullTask implements Runnable {
                 synchronized (culling) {
                     boolean visible = culling.isAABBVisible(aabbMin, aabbMax, camera);
 
-                    cullable.setCulled(!visible);
+                    cullable.setCulled(!visible, player);
                 }
             }
         }
@@ -167,5 +171,17 @@ public class CullTask implements Runnable {
     private boolean isSkippableArmorstand(Entity entity) {
         if (!RaytraceTracker.skipMarkerArmorStand) return false;
         return entity instanceof ArmorStand && entity.isInvisible();
+    }
+
+    public boolean isEntityCulled(Entity entity) {
+        return culledEntities.contains(entity.getId());
+    }
+
+    public void setCulled(Entity entity, boolean value) {
+        if (value) {
+            culledEntities.add(entity.getId());
+        } else {
+            culledEntities.remove(entity.getId());
+        }
     }
 }
