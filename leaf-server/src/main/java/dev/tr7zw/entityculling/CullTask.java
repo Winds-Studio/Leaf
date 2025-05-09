@@ -4,6 +4,8 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.logisticscraft.occlusionculling.OcclusionCullingInstance;
 import com.logisticscraft.occlusionculling.util.Vec3d;
 import dev.tr7zw.entityculling.versionless.access.Cullable;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.ints.IntSets;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.players.PlayerList;
@@ -15,6 +17,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.dreeam.leaf.config.modules.misc.RaytraceTracker;
 
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.*;
 
@@ -41,7 +44,9 @@ public class CullTask implements Runnable {
             .build()
     );
 
-    private final Set<Integer> culledEntities = ConcurrentHashMap.newKeySet();
+    private static final Set<CullTask> tasks = ConcurrentHashMap.newKeySet();
+    private final Set<Integer> culledEntities = IntSets.synchronize(new IntOpenHashSet());
+    private final Queue<Integer> removalQueue = new ConcurrentLinkedQueue<>();
 
     private final Executor worker;
 
@@ -59,6 +64,7 @@ public class CullTask implements Runnable {
 
     public void signalStop() {
         this.scheduleNext = false;
+        tasks.remove(this);
     }
 
     public void setup() {
@@ -68,12 +74,17 @@ public class CullTask implements Runnable {
             return;
         }
         this.worker.execute(this);
+        tasks.add(this);
     }
 
     @Override
     public synchronized void run() {
         try {
             if (this.checkTarget.tickCount > 10) {
+                while (!removalQueue.isEmpty()) {
+                    int entityId = removalQueue.poll();
+                    culledEntities.remove(entityId);
+                }
                 Vec3 cameraMC = this.checkTarget.getEyePosition(0);
                 if (!(cameraMC.x == lastPos.x && cameraMC.y == lastPos.y && cameraMC.z == lastPos.z)) {
                     lastPos.set(cameraMC.x, cameraMC.y, cameraMC.z);
@@ -166,6 +177,20 @@ public class CullTask implements Runnable {
                 }
             }, backgroundWorker);
         }
+    }
+
+    public static void onEntityRemoval(Entity entity) {
+        if (!RaytraceTracker.enabled) return;
+        int id = entity.getId();
+        CompletableFuture.runAsync(() -> {
+            for (CullTask cullTask : tasks) {
+                cullTask.scheduleForRemoval(id);
+            }
+        }, backgroundWorker);
+    }
+
+    public void scheduleForRemoval(int entityId) {
+        removalQueue.offer(entityId);
     }
 
     private boolean isSkippableArmorstand(Entity entity) {
