@@ -1,0 +1,161 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Wed, 7 May 2025 21:48:29 +0200
+Subject: [PATCH] Async container broadcasts
+
+
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index d4fc9466d61a680b85859965a8f7dc795b8c7130..45f33d4601656222689cadf0522ee0e3e7d36fdb 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -53,7 +53,7 @@ public abstract class AbstractContainerMenu {
+     private ItemStack carried = ItemStack.EMPTY;
+     public NonNullList<ItemStack> remoteSlots = NonNullList.create();
+     public IntList remoteDataSlots = new IntArrayList();
+-    private ItemStack remoteCarried = ItemStack.EMPTY;
++    private volatile ItemStack remoteCarried = ItemStack.EMPTY;
+     private int stateId;
+     @Nullable
+     private final MenuType<?> menuType;
+@@ -93,6 +93,33 @@ public abstract class AbstractContainerMenu {
+     public void startOpen() {}
+     // CraftBukkit end
+     public Throwable containerCreationStacktrace; // SparklyPaper - parallel world ticking (debugging)
++    private static final java.util.concurrent.ExecutorService ASYNC_TASK_EXECUTOR;
++
++    static {
++        java.util.concurrent.ExecutorService selectedExecutor = net.minecraft.Util.backgroundExecutor().service();
++
++        // Only attempt to use virtual threads if async updates are enabled AND configured to attempt VTs
++        if (org.dreeam.leaf.config.modules.async.AsyncContainerUpdates.enabled && org.dreeam.leaf.config.modules.async.AsyncContainerUpdates.attemptVirtualThreads) {
++            org.galemc.gale.virtualthread.VirtualThreadService vts = org.galemc.gale.virtualthread.VirtualThreadService.get();
++            if (vts != null) {
++                try {
++                    java.util.concurrent.ThreadFactory virtualThreadFactory = vts.createFactory();
++                    Thread testThread = virtualThreadFactory.newThread(() -> {});
++                    if (testThread.isVirtual()) {selectedExecutor = java.util.concurrent.Executors.newThreadPerTaskExecutor(virtualThreadFactory);
++                    } else {
++                         LOGGER.warn("Async Container Updates: VirtualThreadService factory did not produce a virtual thread as expected. Falling back to platform threads.");
++                    }
++                } catch (Throwable t) {
++                    LOGGER.warn("Async Container Updates: Error initializing virtual thread executor. Falling back to platform threads.", t);
++                }
++            } else {
++                LOGGER.info("Async Container Updates: Virtual threads not supported by the runtime. Using platform threads for async container updates (if enabled).");
++            }
++        } else if (org.dreeam.leaf.config.modules.async.AsyncContainerUpdates.enabled) {
++            LOGGER.info("Async Container Updates: Configured to use platform threads for async container updates (if enabled).");
++        }
++        ASYNC_TASK_EXECUTOR = selectedExecutor;
++    }
+ 
+     protected AbstractContainerMenu(@Nullable MenuType<?> menuType, int containerId) {
+         // SparklyPaper - parallel world ticking (debugging)
+@@ -232,29 +259,98 @@ public abstract class AbstractContainerMenu {
+ 
+     public void broadcastChanges() {
+         for (int i = 0; i < this.slots.size(); i++) {
+-            ItemStack item = this.slots.get(i).getItem();
+-            Supplier<ItemStack> supplier = Suppliers.memoize(item::copy);
+-            this.triggerSlotListeners(i, item, supplier);
+-            this.synchronizeSlotToRemote(i, item, supplier);
++            ItemStack currentItemInSlot = this.slots.get(i).getItem();
++            // Supplier that captures a copy of currentItemInSlot at this moment for listeners
++            Supplier<ItemStack> currentItemCopierForListener = Suppliers.memoize(currentItemInSlot::copy);
++
++            this.triggerSlotListeners(i, currentItemInSlot, currentItemCopierForListener);
++
++            // Asynchronous synchronization path
++            if (org.dreeam.leaf.config.modules.async.AsyncContainerUpdates.enabled && !this.suppressRemoteUpdates && this.synchronizer != null) {
++                final int slotIndex = i;
++                ItemStack remoteSlotItem = this.remoteSlots.get(slotIndex);
++
++                // Pre-filter: Check if an update is needed before submitting the task
++                if (!this.matchesRemote(remoteSlotItem, currentItemInSlot)) {
++                    // Capture the snapshot of the item for async processing only if an update is likely.
++                    final ItemStack capturedItemForAsync = currentItemInSlot.isEmpty() ? ItemStack.EMPTY : currentItemInSlot.copy();
++                    java.util.concurrent.CompletableFuture.runAsync(() -> {
++                        // Re-check suppressRemoteUpdates and synchronizer in async task as state could change
++                        if (this.suppressRemoteUpdates || this.synchronizer == null) return;
++
++                        // Create a new copy from the captured snapshot to set and send.
++                        // This ensures the ItemStack instance set in remoteSlots and sent is consistent
++                        // and isolated from further changes to capturedItemForAsync if it were mutable and shared.
++                        ItemStack itemToSetAndSend = capturedItemForAsync.copy();
++                        this.remoteSlots.set(slotIndex, itemToSetAndSend);
++                        this.synchronizer.sendSlotChange(this, slotIndex, itemToSetAndSend);
++                    }, ASYNC_TASK_EXECUTOR);
++                }
++            } else {
++                // Synchronous path: call original method with a fresh supplier based on the current live item
++                this.synchronizeSlotToRemote(i, currentItemInSlot, currentItemCopierForListener);
++            }
+         }
+ 
+-        this.synchronizeCarriedToRemote();
++        // Carried item update
++        if (org.dreeam.leaf.config.modules.async.AsyncContainerUpdates.enabled && !this.suppressRemoteUpdates && this.synchronizer != null) {
++            final ItemStack currentCarried = this.getCarried();
++            final ItemStack currentRemoteCarried = this.remoteCarried; // Volatile read
+ 
++            final boolean needsUpdate;
++            if (org.dreeam.leaf.config.modules.gameplay.HideItemComponent.enabled) {
++                needsUpdate = !org.dreeam.leaf.util.item.ItemStackStripper.matchesStripped(currentCarried, currentRemoteCarried);
++            } else {
++                needsUpdate = !this.matchesRemote(currentCarried, currentRemoteCarried);
++            }
++
++            if (needsUpdate) {
++                // Capture a snapshot of the carried item for async processing
++                final ItemStack capturedCarriedForAsync = currentCarried.isEmpty() ? ItemStack.EMPTY : currentCarried.copy();
++                java.util.concurrent.CompletableFuture.runAsync(() -> {
++                    // Re-check suppressRemoteUpdates and synchronizer
++                    if (this.suppressRemoteUpdates || this.synchronizer == null) return;
++
++                    // Create a new copy from the captured snapshot to be the new remoteCarried and send it
++                    ItemStack newRemoteCarriedToSend = capturedCarriedForAsync.copy();
++                    this.remoteCarried = newRemoteCarriedToSend; // Volatile write
++                    this.synchronizer.sendCarriedChange(this, newRemoteCarriedToSend);
++                }, ASYNC_TASK_EXECUTOR);
++            }
++        } else {
++            this.synchronizeCarriedToRemote();
++        }
++
++        // Data slot updates
+         for (int i = 0; i < this.dataSlots.size(); i++) {
+             DataSlot dataSlot = this.dataSlots.get(i);
+-            int i1 = dataSlot.get();
++            int currentValue = dataSlot.get();
+             if (dataSlot.checkAndClearUpdateFlag()) {
+-                this.updateDataSlotListeners(i, i1);
++                this.updateDataSlotListeners(i, currentValue); // Notify listeners synchronously
+             }
+ 
+-            this.synchronizeDataSlotToRemote(i, i1);
++            if (org.dreeam.leaf.config.modules.async.AsyncContainerUpdates.enabled && !this.suppressRemoteUpdates && this.synchronizer != null) {
++                final int dataSlotIndex = i;
++                int remoteIntValue = this.remoteDataSlots.getInt(dataSlotIndex);
++
++                if (remoteIntValue != currentValue) {
++                    java.util.concurrent.CompletableFuture.runAsync(() -> {
++                        if (this.suppressRemoteUpdates || this.synchronizer == null) return;
++
++                        this.remoteDataSlots.set(dataSlotIndex, currentValue);
++                        this.synchronizer.sendDataChange(this, dataSlotIndex, currentValue);
++                    }, ASYNC_TASK_EXECUTOR);
++                }
++            } else {
++                this.synchronizeDataSlotToRemote(i, currentValue);
++            }
+         }
+     }
+ 
+     public void broadcastFullState() {
+         for (int i = 0; i < this.slots.size(); i++) {
+             ItemStack item = this.slots.get(i).getItem();
+-            this.triggerSlotListeners(i, item, item::copy);
++            this.triggerSlotListeners(i, item, Suppliers.memoize(item::copy));
+         }
+ 
+         for (int i = 0; i < this.dataSlots.size(); i++) {
