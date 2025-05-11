@@ -23,20 +23,28 @@ public class MultithreadedTracker {
     private static final String THREAD_PREFIX = "Leaf Async Tracker";
     private static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
     private static long lastWarnMillis = System.currentTimeMillis();
-    private static final ThreadPoolExecutor trackerExecutor = new ThreadPoolExecutor(
-        getCorePoolSize(),
-        getMaxPoolSize(),
-        getKeepAliveTime(), TimeUnit.SECONDS,
-        getQueueImpl(),
-        getThreadFactory(),
-        getRejectedPolicy()
-    );
+    private static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
     private MultithreadedTracker() {
     }
 
+    public static void init() {
+        if (TRACKER_EXECUTOR == null) {
+            TRACKER_EXECUTOR = new ThreadPoolExecutor(
+                getCorePoolSize(),
+                getMaxPoolSize(),
+                getKeepAliveTime(), TimeUnit.SECONDS,
+                getQueueImpl(),
+                getThreadFactory(),
+                getRejectedPolicy()
+            );
+        } else {
+            throw new IllegalStateException();
+        }
+    }
+
     public static Executor getTrackerExecutor() {
-        return trackerExecutor;
+        return TRACKER_EXECUTOR;
     }
 
     public static void tick(ChunkSystemServerLevel level) {
@@ -59,7 +67,7 @@ public class MultithreadedTracker {
         final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
 
         // Move tracking to off-main
-        trackerExecutor.execute(() -> {
+        TRACKER_EXECUTOR.execute(() -> {
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -67,8 +75,11 @@ public class MultithreadedTracker {
 
                 if (tracker == null) continue;
 
-                tracker.moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
-                tracker.serverEntity.sendChanges();
+                // Don't Parallel Tick Tracker of Entity
+                synchronized (tracker.sync) {
+                    tracker.moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
+                    tracker.serverEntity.sendChanges();
+                }
             }
         });
     }
@@ -94,7 +105,7 @@ public class MultithreadedTracker {
         }
 
         // batch submit tasks
-        trackerExecutor.execute(() -> {
+        TRACKER_EXECUTOR.execute(() -> {
             for (final Runnable sendChanges : sendChangesTasks) {
                 if (sendChanges == null) continue;
 

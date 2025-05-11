@@ -16,6 +16,7 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean searchBlock = true;
     public static boolean searchEntity = true;
     public static int queueSize = 4096;
+    public static long threshold = 10L;
     private static boolean asyncTargetFindingInitialized;
 
     @Override
@@ -36,10 +37,14 @@ public class AsyncTargetFinding extends ConfigModules {
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
-        queueSize = config.getInt(getBasePath() + ".queue-size", 4096);
+        queueSize = config.getInt(getBasePath() + ".queue-size", 0);
+        threshold = config.getLong(getBasePath() + ".threshold", 0);
 
         if (queueSize <= 0) {
             queueSize = 4096;
+        }
+        if (threshold <= 0L) {
+            threshold = 10L;
         }
         if (!enabled) {
             alertOther = false;
