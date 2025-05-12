@@ -11,7 +11,7 @@ public class AsyncPathfinding extends ConfigModules {
         return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-pathfinding";
     }
 
-    public static boolean enabled = false;
+    public static boolean enabled = true;
     public static int asyncPathfindingMaxThreads = 0;
     public static int asyncPathfindingKeepalive = 60;
     public static int asyncPathfindingQueueSize = 0;
