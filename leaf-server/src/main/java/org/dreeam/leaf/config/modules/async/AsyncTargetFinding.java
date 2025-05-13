@@ -34,6 +34,8 @@ public class AsyncTargetFinding extends ConfigModules {
         asyncTargetFindingInitialized = true;
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        // TODO
+        enabled = false;
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
