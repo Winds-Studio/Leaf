@@ -223,6 +223,9 @@ public class LeafConfig {
             "config/gale-world-defaults.yml"
         ));
 
+        String existing = System.getProperty("spark.serverconfigs.extra");
+        extraConfigs.addAll(Arrays.asList(existing.split(",")));
+
         for (World world : Bukkit.getWorlds()) {
             extraConfigs.add(world.getWorldFolder().getName() + "/gale-world.yml"); // Gale world config
         }
@@ -230,10 +233,13 @@ public class LeafConfig {
         return extraConfigs;
     }
 
-    private static String[] buildSparkHiddenPaths() {
-        return new String[]{
-            SentryDSN.sentryDsnConfigPath // Hide Sentry DSN key
-        };
+    private static List<String> buildSparkHiddenPaths() {
+        String existing = System.getProperty("spark.serverconfigs.hiddenpaths");
+
+        List<String> extraHidden = new ArrayList<>(Arrays.asList(existing.split(",")));
+        extraHidden.add(SentryDSN.sentryDsnConfigPath); // Hide Sentry DSN key
+
+        return extraHidden;
     }
 
     public static void regSparkExtraConfig() {
