@@ -34,8 +34,6 @@ public class AsyncTargetFinding extends ConfigModules {
         asyncTargetFindingInitialized = true;
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        // TODO
-        enabled = false;
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
@@ -45,7 +43,7 @@ public class AsyncTargetFinding extends ConfigModules {
         if (queueSize <= 0) {
             queueSize = 4096;
         }
-        if (threshold <= 0L) {
+        if (threshold == 0L) {
             threshold = 10L;
         }
         if (!enabled) {

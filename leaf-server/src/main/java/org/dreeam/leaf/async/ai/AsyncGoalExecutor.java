@@ -13,19 +13,19 @@ import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalExecutor {
 
-    public static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
-
+    protected static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
     protected final SpscIntQueue queue;
     protected final SpscIntQueue wake;
+    protected final SpscIntQueue submit;
     private final AsyncGoalThread thread;
     private final ServerLevel world;
-    private boolean dirty = false;
-    private long tickCount = 0L;
+    private long midTickCount = 0L;
 
     public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
         this.world = world;
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.submit = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.thread = thread;
     }
 
@@ -34,24 +34,33 @@ public class AsyncGoalExecutor {
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
-        mob.goalSelector.wake();
-        mob.targetSelector.wake();
+        mob.goalSelector.ctx.wake();
+        mob.targetSelector.ctx.wake();
         return true;
     }
 
     public final void submit(int entityId) {
-        dirty = true;
-        if (!this.queue.send(entityId)) {
-            unpark();
-            do {
+        if (!this.submit.send(entityId)) {
+            while (poll(entityId)) {
                 wake(entityId);
-            } while (poll(entityId));
+            }
         }
     }
 
-    public final void unpark() {
-        if (dirty) LockSupport.unpark(thread);
-        dirty = false;
+    public final void tick() {
+        while (true) {
+            OptionalInt result = this.submit.recv();
+            if (result.isEmpty()) {
+                break;
+            }
+            int id = result.getAsInt();
+            if (poll(id) && !this.queue.send(id)) {
+                do {
+                    wake(id);
+                } while (poll(id));
+            }
+        }
+        LockSupport.unpark(thread);
     }
 
     public final void midTick() {
@@ -61,26 +70,51 @@ public class AsyncGoalExecutor {
                 break;
             }
             int id = result.getAsInt();
-            if (poll(id)) {
-                submit(id);
+            if (poll(id) && !this.queue.send(id)) {
+                do {
+                    wake(id);
+                } while (poll(id));
             }
         }
-        if ((tickCount % AsyncTargetFinding.threshold) == 0L) {
-            unpark();
+        if (AsyncTargetFinding.threshold <= 0L || (midTickCount % AsyncTargetFinding.threshold) == 0L) {
+            boolean submitted = false;
+            while (true) {
+                OptionalInt result = this.submit.recv();
+                if (result.isEmpty()) {
+                    break;
+                }
+                submitted = true;
+                int id = result.getAsInt();
+                if (poll(id) && !this.queue.send(id)) {
+                    do {
+                        wake(id);
+                    } while (poll(id));
+                }
+            }
+            if (submitted) {
+                LockSupport.unpark(thread);
+            }
         }
-        tickCount += 1;
+
+        midTickCount += 1;
     }
 
     private boolean poll(int id) {
         Entity entity = this.world.getEntities().get(id);
-        if (entity == null || !entity.isAlive() || !(entity instanceof Mob mob)) {
+        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
 
-        mob.tickingTarget = true;
-        boolean a = mob.targetSelector.poll();
-        mob.tickingTarget = false;
-        boolean b = mob.goalSelector.poll();
-        return a || b;
+        try {
+            mob.tickingTarget = true;
+            boolean a = mob.targetSelector.poll();
+            mob.tickingTarget = false;
+            boolean b = mob.goalSelector.poll();
+            return a || b;
+        } catch (Exception e) {
+            LOGGER.error("Exception while polling", e);
+            // retry
+            return true;
+        }
     }
 }
