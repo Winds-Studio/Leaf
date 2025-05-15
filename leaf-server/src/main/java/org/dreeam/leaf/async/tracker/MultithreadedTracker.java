@@ -90,11 +90,19 @@ public class MultithreadedTracker {
                     }
                 }
             }
-            level.getServer().execute(() -> {
-                for (ServerEntity entity : sendDirty.elements()) {
-                    entity.sendDirtyEntityData();
-                }
-            });
+            if (!sendDirty.isEmpty()) {
+                level.getServer().execute(() -> {
+                    var entities = sendDirty.elements();
+                    var size = sendDirty.size();
+                    if (size > entities.length) {
+                        throw new IndexOutOfBoundsException();
+                    }
+                    for (int i = 0; i < size; i++) {
+                        final ServerEntity serverEntity = entities[i];
+                        serverEntity.sendDirtyEntityData();
+                    }
+                });
+            }
         });
     }
 
@@ -134,7 +142,7 @@ public class MultithreadedTracker {
 
                 sendChanges.run();
             }
-            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>(trackerEntitiesRaw.length);
+            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -146,11 +154,19 @@ public class MultithreadedTracker {
                     sendDirty.add(tracker.serverEntity);
                 }
             }
-            level.getServer().execute(() -> {
-                for (ServerEntity entity : sendDirty.elements()) {
-                    entity.sendDirtyEntityData();
-                }
-            });
+            if (!sendDirty.isEmpty()) {
+                level.getServer().execute(() -> {
+                    var entities = sendDirty.elements();
+                    var size = sendDirty.size();
+                    if (size > entities.length) {
+                        throw new IndexOutOfBoundsException();
+                    }
+                    for (int i = 0; i < size; i++) {
+                        final ServerEntity serverEntity = entities[i];
+                        serverEntity.sendDirtyEntityData();
+                    }
+                });
+            }
         });
     }
 
