@@ -1,5 +1,6 @@
 package org.dreeam.leaf.async.ai;
 
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
@@ -16,7 +17,7 @@ public class AsyncGoalExecutor {
     protected static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
     protected final SpscIntQueue queue;
     protected final SpscIntQueue wake;
-    protected final SpscIntQueue submit;
+    protected final IntArrayList submit;
     private final AsyncGoalThread thread;
     private final ServerLevel world;
     private long midTickCount = 0L;
@@ -25,7 +26,7 @@ public class AsyncGoalExecutor {
         this.world = world;
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        this.submit = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.submit = new IntArrayList();
         this.thread = thread;
     }
 
@@ -40,27 +41,29 @@ public class AsyncGoalExecutor {
     }
 
     public final void submit(int entityId) {
-        if (!this.submit.send(entityId)) {
-            while (poll(entityId)) {
-                wake(entityId);
-            }
-        }
+        this.submit.add(entityId);
     }
 
     public final void tick() {
-        while (true) {
-            OptionalInt result = this.submit.recv();
-            if (result.isEmpty()) {
-                break;
-            }
-            int id = result.getAsInt();
+        batchSubmit();
+        LockSupport.unpark(thread);
+    }
+
+    private void batchSubmit() {
+        if (submit.isEmpty()) {
+            return;
+        }
+        int[] raw = submit.elements();
+        int size = submit.size();
+        for (int i = 0; i < size; i++) {
+            int id = raw[i];
             if (poll(id) && !this.queue.send(id)) {
                 do {
                     wake(id);
                 } while (poll(id));
             }
         }
-        LockSupport.unpark(thread);
+        this.submit.clear();
     }
 
     public final void midTick() {
@@ -77,23 +80,7 @@ public class AsyncGoalExecutor {
             }
         }
         if (AsyncTargetFinding.threshold <= 0L || (midTickCount % AsyncTargetFinding.threshold) == 0L) {
-            boolean submitted = false;
-            while (true) {
-                OptionalInt result = this.submit.recv();
-                if (result.isEmpty()) {
-                    break;
-                }
-                submitted = true;
-                int id = result.getAsInt();
-                if (poll(id) && !this.queue.send(id)) {
-                    do {
-                        wake(id);
-                    } while (poll(id));
-                }
-            }
-            if (submitted) {
-                LockSupport.unpark(thread);
-            }
+            batchSubmit();
         }
 
         midTickCount += 1;

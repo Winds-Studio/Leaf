@@ -235,7 +235,7 @@ index 9af7dafe03812d96aa477584d4147a68c240ab21..e6fd46b8148e050c4807abf6c8a03e47
  
      // Paper start - log detailed entity tick information
 diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
-index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..99362471bee4f8404f7cecd860ff339241705d63 100644
+index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..88809afe30bb970a7de8bdfd269268800516c426 100644
 --- a/net/minecraft/world/entity/Mob.java
 +++ b/net/minecraft/world/entity/Mob.java
 @@ -144,6 +144,12 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
@@ -256,7 +256,7 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..99362471bee4f8404f7cecd860ff3392
          // Paper end - Skip AI during inactive ticks for non-aware mobs
          boolean isThrottled = org.dreeam.leaf.config.modules.opt.ThrottleInactiveGoalSelectorTick.enabled && _pufferfish_inactiveTickDisableCounter++ % 20 != 0; // Pufferfish - throttle inactive goal selector ticking
 +        // Leaf start - Async target finding
-+        boolean running = this.targetSelector.ctxGoals != null || this.goalSelector.ctxGoals != null;
++        boolean running = this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1;
 +        this.tickingTarget = false;
          if (this.goalSelector.inactiveTick(this.activatedPriority, true) && !isThrottled) { // Pufferfish - pass activated priroity // Pufferfish - throttle inactive goal selector ticking
              this.goalSelector.tick();
@@ -266,7 +266,7 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..99362471bee4f8404f7cecd860ff3392
              this.targetSelector.tick();
          }
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            if (!running && (this.targetSelector.ctxGoals != null || this.goalSelector.ctxGoals != null)) {
++            if (!running && (this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1)) {
 +                ((ServerLevel) this.level()).asyncGoalExecutor.submit(this.getId());
 +            }
 +        }
@@ -279,7 +279,7 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..99362471bee4f8404f7cecd860ff3392
          this.sensing.tick();
          int i = this.tickCount + this.getId();
 +        // Leaf start - Async target finding
-+        boolean running = this.targetSelector.ctxGoals != null || this.goalSelector.ctxGoals != null;
++        boolean running = this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1;
          if (i % 2 != 0 && this.tickCount > 1) {
 +            this.tickingTarget = true;
              if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
@@ -296,7 +296,7 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..99362471bee4f8404f7cecd860ff3392
              this.goalSelector.tick();
          }
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            if (!running && (this.targetSelector.ctxGoals != null || this.goalSelector.ctxGoals != null)) {
++            if (!running && (this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1)) {
 +                ((ServerLevel) this.level()).asyncGoalExecutor.submit(this.getId());
 +            }
 +        }
@@ -667,24 +667,54 @@ index 3093f03d4f298bf39fec8bad2b6c22518774aea8..0a41797fd7beddce0b93d42bac6e0270
              } else {
                  this.parent = animal;
 diff --git a/net/minecraft/world/entity/ai/goal/GoalSelector.java b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-index e82e32407cec6109b9c3b0106295217f4a3f4aa2..287b531610327c61fdc505df4ea8e538d289b7b2 100644
+index e82e32407cec6109b9c3b0106295217f4a3f4aa2..a177505c84697b93d828db9f111bdeb14f57de43 100644
 --- a/net/minecraft/world/entity/ai/goal/GoalSelector.java
 +++ b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-@@ -26,6 +26,13 @@ public class GoalSelector {
+@@ -26,13 +26,23 @@ public class GoalSelector {
      private final ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<net.minecraft.world.entity.ai.goal.Goal.Flag> goalTypes = new ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<>(Goal.Flag.class); // Paper - remove streams from GoalSelector
      private int curRate; // Paper - EAR 2
  
 +    // Leaf start - Async target finding
-+    public WrappedGoal @org.jetbrains.annotations.Nullable[] ctxGoals = null;
++    private boolean availableGoalsDirty = true;
++    private WrappedGoal @org.jetbrains.annotations.Nullable[] ctxGoals = null;
 +    private int ctxIndex = 0;
-+    private int ctxState = 0;
++    public int ctxState = -1;
 +    public final org.dreeam.leaf.async.ai.Waker ctx = new org.dreeam.leaf.async.ai.Waker();
 +    // Leaf end - Async target finding
 +
      public void addGoal(int priority, Goal goal) {
          this.availableGoals.add(new WrappedGoal(priority, goal));
++        availableGoalsDirty = true; // Leaf
      }
-@@ -85,7 +92,103 @@ public class GoalSelector {
+ 
+     @VisibleForTesting
+     public void removeAllGoals(Predicate<Goal> filter) {
+         this.availableGoals.removeIf(wrappedGoal -> filter.test(wrappedGoal.getGoal()));
++        availableGoalsDirty = true; // Leaf
+     }
+ 
+     // Paper start - EAR 2
+@@ -63,16 +73,19 @@ public class GoalSelector {
+         }
+ 
+         this.availableGoals.removeIf(wrappedGoal1 -> wrappedGoal1.getGoal() == goal);
++        availableGoalsDirty = true; // Leaf
+     }
+ 
+     // Paper start - Perf: optimize goal types
+     private static boolean goalContainsAnyFlags(WrappedGoal goal, ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<Goal.Flag> flags) {
++        // Leaf - inline diff
+         return goal.getFlags().hasCommonElements(flags);
+     }
+ 
+     private static boolean goalCanBeReplacedForAllFlags(WrappedGoal goal, Map<Goal.Flag, WrappedGoal> flag) {
+         long flagIterator = goal.getFlags().getBackingSet();
+         int wrappedGoalSize = goal.getFlags().size();
++        // Leaf - inline diff
+         for (int i = 0; i < wrappedGoalSize; ++i) {
+             final Goal.Flag flag1 = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator)];
+             flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
+@@ -85,7 +98,131 @@ public class GoalSelector {
          return true;
      }
  
@@ -718,27 +748,39 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..287b531610327c61fdc505df4ea8e538
 +        if (ctxState == 1) {
 +            while (ctxIndex < this.ctxGoals.length) {
 +                WrappedGoal goal = this.ctxGoals[ctxIndex];
++                var flags = goal.getFlags();
 +                // entity and block
-+                if (!goal.isRunning()
-+                    && !goalContainsAnyFlags(goal, this.goalTypes)
-+                    && goalCanBeReplacedForAllFlags(goal, this.lockedFlags)
-+                ) {
-+                    if (goal.canUse()) {
-+                        long flagIterator = goal.getFlags().getBackingSet();
-+                        int wrappedGoalSize = goal.getFlags().size();
-+                        for (int i = 0; i < wrappedGoalSize; ++i) {
-+                            final Goal.Flag flag = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator)];
-+                            flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
-+                            WrappedGoal wrappedGoal1 = this.lockedFlags.getOrDefault(flag, NO_GOAL);
-+                            wrappedGoal1.stop();
-+                            this.lockedFlags.put(flag, goal);
++                if (!goal.isRunning() && !flags.hasCommonElements(this.goalTypes)) {
++                    // inline
++                    boolean result = true;
++                    long flagIterator1 = flags.getBackingSet();
++                    int wrappedGoalSize1 = flags.size();
++                    for (int i1 = 0; i1 < wrappedGoalSize1; ++i1) {
++                        final Goal.Flag flag1 = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator1)];
++                        flagIterator1 ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator1);
++                        if (!this.lockedFlags.getOrDefault(flag1, NO_GOAL).canBeReplacedBy(goal)) {
++                            result = false;
++                            break;
 +                        }
-+
-+                        goal.start();
 +                    }
-+                    ctx.state = false;
-+                    if (ctx.wake != null) {
-+                        return true;
++                    if (result) {
++                        if (goal.canUse()) {
++                            long flagIterator = flags.getBackingSet();
++                            int wrappedGoalSize = flags.size();
++                            for (int i = 0; i < wrappedGoalSize; ++i) {
++                                final Goal.Flag flag = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator)];
++                                flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
++                                WrappedGoal wrappedGoal1 = this.lockedFlags.getOrDefault(flag, NO_GOAL);
++                                wrappedGoal1.stop();
++                                this.lockedFlags.put(flag, goal);
++                            }
++
++                            goal.start();
++                        }
++                        ctx.state = false;
++                        if (ctx.wake != null) {
++                            return true;
++                        }
 +                    }
 +                }
 +                // entity alert other
@@ -766,8 +808,20 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..287b531610327c61fdc505df4ea8e538
 +                ctxIndex++;
 +            }
 +
-+            ctxGoals = null;
-+            ctxState = 0;
++            ctxState = -1;
++            ctxIndex = 0;
++            ctx.state = true;
++        }
++        if (ctxState == 3) {
++            while (ctxIndex < this.ctxGoals.length) {
++                WrappedGoal goal = this.ctxGoals[ctxIndex];
++                if (goal.isRunning() && goal.requiresUpdateEveryTick()) {
++                    goal.tick();
++                }
++                ctxIndex++;
++            }
++
++            ctxState = -1;
 +            ctxIndex = 0;
 +            ctx.state = true;
 +        }
@@ -778,8 +832,12 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..287b531610327c61fdc505df4ea8e538
      public void tick() {
 +        // Leaf start - Async target finding
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            if (this.ctxGoals == null) {
-+                this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);
++            if (ctxState == -1) {
++                if (availableGoalsDirty || this.ctxGoals == null) {
++                    this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);
++                    availableGoalsDirty = false;
++                }
++                ctxState = 0;
 +            }
 +            return;
 +        }
@@ -788,15 +846,18 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..287b531610327c61fdc505df4ea8e538
          for (WrappedGoal wrappedGoal : this.availableGoals) {
              if (wrappedGoal.isRunning() && (goalContainsAnyFlags(wrappedGoal, this.goalTypes) || !wrappedGoal.canContinueToUse())) { // Paper - Perf: optimize goal types by removing streams
                  wrappedGoal.stop();
-@@ -116,6 +219,15 @@ public class GoalSelector {
+@@ -116,6 +253,18 @@ public class GoalSelector {
      }
  
      public void tickRunningGoals(boolean tickAllRunning) {
 +        // Leaf start - Async target finding
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            if (this.ctxGoals == null) {
-+                this.ctxState = 2;
-+                this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);
++            if (ctxState == -1) {
++                if (availableGoalsDirty || this.ctxGoals == null) {
++                    this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);
++                    availableGoalsDirty = false;
++                }
++                ctxState = tickAllRunning ? 2 : 3;
 +            }
 +            return;
 +        }
@@ -1427,10 +1488,10 @@ index 4644f3f7af89623ca6218c0dd24bb6cd67db553b..c9750ad322ddaa9c457f0e652d87c7ab
  
      @Override
 diff --git a/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
-index 25fe78116ce01eeefe5c958423734195d27302eb..c11cc768f14a9bf29f40b86c05a37d7711702e97 100644
+index 25fe78116ce01eeefe5c958423734195d27302eb..e306c1cfc44878ea130d8046b31cf617aa32c3cc 100644
 --- a/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
 +++ b/net/minecraft/world/entity/ai/goal/target/HurtByTargetGoal.java
-@@ -73,6 +73,49 @@ public class HurtByTargetGoal extends TargetGoal {
+@@ -73,6 +73,46 @@ public class HurtByTargetGoal extends TargetGoal {
      protected void alertOthers() {
          double followDistance = this.getFollowDistance();
          AABB aabb = AABB.unitCubeFromLowerCorner(this.mob.position()).inflate(followDistance, 10.0, followDistance);
@@ -1447,27 +1508,24 @@ index 25fe78116ce01eeefe5c958423734195d27302eb..c11cc768f14a9bf29f40b86c05a37d77
 +                List<? extends Mob> entitiesOfClass = serverLevel
 +                    .getEntitiesOfClass(self.getClass(), aabb, EntitySelector.NO_SPECTATORS);
 +                for (Mob mob : entitiesOfClass) {
-+                    if (self != mob
-+                        && mob.getTarget() == null
-+                        && (!(self instanceof TamableAnimal) || ((TamableAnimal) self).getOwner() == ((TamableAnimal) mob).getOwner())
-+                        && !mob.isAlliedTo(self.getLastHurtByMob())) {
-+                        if (toIgnoreAlert == null) {
-+                            continue;
++                    if (self == mob
++                        || mob.getTarget() != null
++                        || (self instanceof TamableAnimal && ((TamableAnimal) self).getOwner() != ((TamableAnimal) mob).getOwner())
++                        || mob.isAlliedTo(self.getLastHurtByMob())) {
++                        continue;
++                    }
++                    if (toIgnoreAlert == null) {
++                        toAlert.add(mob);
++                        continue;
++                    }
++                    boolean flag = false;
++                    for (Class<?> clazz : toIgnoreAlert) {
++                        if (mob.getClass() == clazz) {
++                            flag = true;
++                            break;
 +                        }
-+
-+                        boolean flag = false;
-+
-+                        for (Class<?> clazz : toIgnoreAlert) {
-+                            if (mob.getClass() == clazz) {
-+                                flag = true;
-+                                break;
-+                            }
-+                        }
-+
-+                        if (!flag) {
-+                            continue;
-+                        }
-+
++                    }
++                    if (!flag) {
 +                        toAlert.add(mob);
 +                    }
 +                }
@@ -1480,7 +1538,7 @@ index 25fe78116ce01eeefe5c958423734195d27302eb..c11cc768f14a9bf29f40b86c05a37d77
          List<? extends Mob> entitiesOfClass = this.mob
              .level()
              .getEntitiesOfClass((Class<? extends Mob>)this.mob.getClass(), aabb, EntitySelector.NO_SPECTATORS);
-@@ -87,7 +130,7 @@ public class HurtByTargetGoal extends TargetGoal {
+@@ -87,7 +127,7 @@ public class HurtByTargetGoal extends TargetGoal {
  
                  mob = (Mob)var5.next();
                  if (this.mob != mob
@@ -1489,7 +1547,7 @@ index 25fe78116ce01eeefe5c958423734195d27302eb..c11cc768f14a9bf29f40b86c05a37d77
                      && (!(this.mob instanceof TamableAnimal) || ((TamableAnimal)this.mob).getOwner() == ((TamableAnimal)mob).getOwner())
                      && !mob.isAlliedTo(this.mob.getLastHurtByMob())) {
                      if (this.toIgnoreAlert == null) {
-@@ -96,7 +139,7 @@ public class HurtByTargetGoal extends TargetGoal {
+@@ -96,7 +136,7 @@ public class HurtByTargetGoal extends TargetGoal {
  
                      boolean flag = false;
  
@@ -1498,7 +1556,7 @@ index 25fe78116ce01eeefe5c958423734195d27302eb..c11cc768f14a9bf29f40b86c05a37d77
                          if (mob.getClass() == clazz) {
                              flag = true;
                              break;
-@@ -113,6 +156,30 @@ public class HurtByTargetGoal extends TargetGoal {
+@@ -113,6 +153,36 @@ public class HurtByTargetGoal extends TargetGoal {
          }
      }
  
@@ -1514,13 +1572,19 @@ index 25fe78116ce01eeefe5c958423734195d27302eb..c11cc768f14a9bf29f40b86c05a37d77
 +                return;
 +            }
 +        }
++        if (this.mob.getTarget() == null) {
++            return;
++        }
++        if (!canContinueToUse()) {
++            return;
++        }
 +        if (!this.canAttack(lastHurtByMob, HURT_BY_TARGETING)) {
 +            return;
 +        }
 +        for (var obj : toAlert) {
 +            Mob mob = (Mob) obj;
-+            if (EntitySelector.NO_SPECTATORS.test(mob) && mob.getTarget() == null && mob.isAlliedTo(this.mob.getLastHurtByMob())) {
-+                alertOther(mob, this.mob.getLastHurtByMob());
++            if (mob.getTarget() == null) {
++                alertOther(mob, lastHurtByMob);
 +            }
 +        }
 +    }
