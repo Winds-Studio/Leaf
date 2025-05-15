@@ -72,7 +72,7 @@ public class MultithreadedTracker {
 
         // Move tracking to off-main
         TRACKER_EXECUTOR.execute(() -> {
-            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>(trackerEntitiesRaw.length);
+            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -91,17 +91,7 @@ public class MultithreadedTracker {
                 }
             }
             if (!sendDirty.isEmpty()) {
-                level.getServer().execute(() -> {
-                    var entities = sendDirty.elements();
-                    var size = sendDirty.size();
-                    if (size > entities.length) {
-                        throw new IndexOutOfBoundsException();
-                    }
-                    for (int i = 0; i < size; i++) {
-                        final ServerEntity serverEntity = entities[i];
-                        serverEntity.sendDirtyEntityData();
-                    }
-                });
+                level.getServer().execute(() -> sendDirty.forEach(ServerEntity::sendDirtyEntityData));
             }
         });
     }
@@ -155,17 +145,7 @@ public class MultithreadedTracker {
                 }
             }
             if (!sendDirty.isEmpty()) {
-                level.getServer().execute(() -> {
-                    var entities = sendDirty.elements();
-                    var size = sendDirty.size();
-                    if (size > entities.length) {
-                        throw new IndexOutOfBoundsException();
-                    }
-                    for (int i = 0; i < size; i++) {
-                        final ServerEntity serverEntity = entities[i];
-                        serverEntity.sendDirtyEntityData();
-                    }
-                });
+                level.getServer().execute(() -> sendDirty.forEach(ServerEntity::sendDirtyEntityData));
             }
         });
     }
