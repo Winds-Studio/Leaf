@@ -153,7 +153,7 @@ index d4048661575ebfaf128ba25da365843774364e0e..482a5388276d7a171292077077044691
  
      @Override
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f167efccf 100644
+index 5d9d233e3a568aa6297ed9c703fa450f98158602..fa11526bf799910da9193ae6e3366542d50e7a98 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
 @@ -248,6 +248,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -186,12 +186,13 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
          // Paper start - optimise entity tracker
          if (true) {
              this.newTrackerTick();
-@@ -1073,12 +1089,20 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1073,12 +1089,24 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          final Entity entity;
          private final int range;
          SectionPos lastSectionPos;
 -        public final Set<ServerPlayerConnection> seenBy = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(); // Paper - Perf: optimise map impl
 +        public final Set<ServerPlayerConnection> seenBy = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled ? it.unimi.dsi.fastutil.objects.ReferenceSets.synchronize(new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>()) : new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(); // Paper - Perf: optimise map impl // Leaf - petal - Multithreaded tracker
++        public volatile ServerPlayerConnection[] seenByArray = EMPTY_OBJECT_ARRAY; // Leaf
  
          // Paper start - optimise entity tracker
          private long lastChunkUpdate = -1L;
@@ -201,14 +202,17 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
 +        // Leaf start - Multithreaded tracker
 +        public static final ServerPlayerConnection[] EMPTY_OBJECT_ARRAY = new ServerPlayerConnection[0];
 +        public ServerPlayerConnection[] seenBy() {
-+            return seenBy.toArray(EMPTY_OBJECT_ARRAY);
++            return seenByArray;
++        }
++        public void seenByUpdated() {
++            this.seenByArray = this.seenBy.toArray(EMPTY_OBJECT_ARRAY);
 +        }
 +        // Leaf end - Multithreaded tracker
 +
          @Override
          public final void moonrise$tick(final ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk) {
              if (chunk == null) {
-@@ -1100,15 +1124,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1100,27 +1128,95 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              this.lastTrackedChunk = chunk;
  
              final ServerPlayer[] playersRaw = players.getRawDataUnchecked();
@@ -223,14 +227,22 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
              if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
                  // need to purge any players possible not in the chunk list
 -                for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
-+                for (final ServerPlayerConnection conn : this.seenBy()) { // Leaf
++                // Leaf start
++                boolean removed = false;
++                for (final ServerPlayerConnection conn : this.seenBy()) {
                      final ServerPlayer player = conn.getPlayer();
                      if (!players.contains(player)) {
-                         this.removePlayer(player);
-@@ -1117,10 +1141,68 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
-             }
-         }
- 
+-                        this.removePlayer(player);
++                        removed |= this.removePlayerMulti(player);
++                    }
++                }
++                if (removed) {
++                    this.seenByUpdated();
++                }
++                // Leaf end
++            }
++        }
++
 +        // Leaf start - Multithreaded tracker
 +        public final @Nullable Runnable leafTickCompact(final ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk) {
 +            if (chunk == null) {
@@ -267,13 +279,17 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
 +
 +                if (lastChunkUpdate != currChunkUpdate || lastTrackedChunk != chunk) {
 +                    // need to purge any players possible not in the chunk list
-+                    for (final ServerPlayerConnection conn : this.seenBy()) { // Leaf
++                    boolean removed = false;
++                    for (final ServerPlayerConnection conn : this.seenBy()) {
 +                        final ServerPlayer player = conn.getPlayer();
 +                        if (!players.contains(player)) {
-+                            this.removePlayer(player);
++                            removed |= this.removePlayerMulti(player);
 +                        }
 +                    }
-+                }
++                    if (removed) {
++                        this.seenByUpdated();
+                     }
+                 }
 +            };
 +
 +            // Only update asynchronously for real player, and sync update for fake players
@@ -285,10 +301,10 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
 +            } else {
 +                updatePlayerTasks.run();
 +                return null;
-+            }
-+        }
+             }
+         }
 +        // Leaf end - Multithreaded tracker
-+
+ 
          @Override
          public final void moonrise$removeNonTickThreadPlayers() {
              boolean foundToRemove = false;
@@ -297,7 +313,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
                  if (!ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(conn.getPlayer())) {
                      foundToRemove = true;
                      break;
-@@ -1131,7 +1213,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1131,12 +1227,13 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                  return;
              }
  
@@ -305,17 +321,29 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
 +            for (final ServerPlayerConnection conn : this.seenBy()) { // Leaf
                  ServerPlayer player = conn.getPlayer();
                  if (!ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(player)) {
-                     this.removePlayer(player);
-@@ -1146,7 +1228,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+-                    this.removePlayer(player);
++                    this.removePlayerMulti(player); // Leaf
+                 }
+             }
++            this.seenByUpdated(); // Leaf
+         }
+ 
+         @Override
+@@ -1146,10 +1243,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              if (this.seenBy.isEmpty()) {
                  return;
              }
 -            for (final ServerPlayerConnection conn : new java.util.ArrayList<>(this.seenBy)) {
 +            for (final ServerPlayerConnection conn : this.seenBy()) { // Leaf
                  ServerPlayer player = conn.getPlayer();
-                 this.removePlayer(player);
+-                this.removePlayer(player);
++                this.removePlayerMulti(player); // Leaf
              }
-@@ -1176,7 +1258,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
++            this.seenByUpdated(); // Leaf
+         }
+ 
+         @Override
+@@ -1176,7 +1274,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcast(Packet<?> packet) {
@@ -324,7 +352,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
                  serverPlayerConnection.send(packet);
              }
          }
-@@ -1189,21 +1271,22 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1189,21 +1287,34 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcastRemoved() {
@@ -334,12 +362,24 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
              }
          }
  
++        // Leaf start
++        public boolean removePlayerMulti(ServerPlayer player) {
++            if (this.seenBy.remove(player.connection)) {
++                this.serverEntity.removePairing(player);
++                return true;
++            } else {
++                return false;
++            }
++        }
++        // Leaf end
++
          public void removePlayer(ServerPlayer player) {
 -            org.spigotmc.AsyncCatcher.catchOp("player tracker clear"); // Spigot
 +            //org.spigotmc.AsyncCatcher.catchOp("player tracker clear"); // Spigot // Leaf - petal - Multithreaded tracker - We can remove async too
              if (this.seenBy.remove(player.connection)) {
                  this.serverEntity.removePairing(player);
              }
++            this.seenByUpdated(); // Leaf
          }
  
          public void updatePlayer(ServerPlayer player) {
@@ -350,6 +390,22 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..fc005ec1bca8bb54127e77e940a2388f
                  // Paper start - remove allocation of Vec3D here
                  // Vec3 vec3 = player.position().subtract(this.entity.position());
                  double vec3_dx = player.getX() - this.entity.getX();
+@@ -1231,6 +1342,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                 // CraftBukkit end
+                 if (flag) {
+                     if (this.seenBy.add(player.connection)) {
++                        this.seenByUpdated(); // Leaf
+                         // Paper start - entity tracking events
+                         if (io.papermc.paper.event.player.PlayerTrackEntityEvent.getHandlerList().getRegisteredListeners().length == 0 || new io.papermc.paper.event.player.PlayerTrackEntityEvent(player.getBukkitEntity(), this.entity.getBukkitEntity()).callEvent()) {
+                         this.serverEntity.addPairing(player);
+@@ -1239,6 +1351,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                         this.serverEntity.onPlayerAdd(); // Paper - fix desync when a player is added to the tracker
+                     }
+                 } else if (this.seenBy.remove(player.connection)) {
++                    this.seenByUpdated(); // Leaf
+                     this.serverEntity.removePairing(player);
+                 }
+             }
 diff --git a/net/minecraft/server/level/ServerBossEvent.java b/net/minecraft/server/level/ServerBossEvent.java
 index f106373ef3ac4a8685c2939c9e8361688a285913..51ae390c68e7a3aa193329cc3bc47ca675930ff2 100644
 --- a/net/minecraft/server/level/ServerBossEvent.java

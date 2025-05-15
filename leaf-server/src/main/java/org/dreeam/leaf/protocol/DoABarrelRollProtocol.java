@@ -151,7 +151,7 @@ public class DoABarrelRollProtocol implements Protocol {
         }
         var payload = new RollSyncS2CPacket(player.getId(), isRolling, roll);
         var packet = Protocols.createPacket(payload);
-        for (ServerPlayerConnection seenBy : player.moonrise$getTrackedEntity().seenBy.toArray(new ServerPlayerConnection[0])) {
+        for (ServerPlayerConnection seenBy : player.moonrise$getTrackedEntity().seenBy()) {
             if (seenBy instanceof ServerGamePacketListenerImpl conn
                 && getHandshakeState(conn).state == HandshakeState.ACCEPTED) {
                 seenBy.send(packet);
