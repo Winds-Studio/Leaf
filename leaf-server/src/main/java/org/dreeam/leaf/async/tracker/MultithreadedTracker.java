@@ -5,6 +5,7 @@ import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
 import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import net.minecraft.Util;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
@@ -71,7 +72,7 @@ public class MultithreadedTracker {
 
         // Move tracking to off-main
         TRACKER_EXECUTOR.execute(() -> {
-            ArrayList<ServerEntity> entities = new ArrayList<>(trackerEntitiesRaw.length);
+            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>(trackerEntitiesRaw.length);
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -85,12 +86,12 @@ public class MultithreadedTracker {
                     tracker.serverEntity.sendChanges();
                     if (tracker.serverEntity.wantSendDirtyEntityData) {
                         tracker.serverEntity.wantSendDirtyEntityData = false;
-                        entities.add(tracker.serverEntity);
+                        sendDirty.add(tracker.serverEntity);
                     }
                 }
             }
             level.getServer().execute(() -> {
-                for (ServerEntity entity : entities) {
+                for (ServerEntity entity : sendDirty.elements()) {
                     entity.sendDirtyEntityData();
                 }
             });
@@ -133,7 +134,7 @@ public class MultithreadedTracker {
 
                 sendChanges.run();
             }
-            ArrayList<ServerEntity> entities = new ArrayList<>(trackerEntitiesRaw.length);
+            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>(trackerEntitiesRaw.length);
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -142,11 +143,11 @@ public class MultithreadedTracker {
                 if (tracker == null) continue;
                 if (tracker.serverEntity.wantSendDirtyEntityData) {
                     tracker.serverEntity.wantSendDirtyEntityData = false;
-                    entities.add(tracker.serverEntity);
+                    sendDirty.add(tracker.serverEntity);
                 }
             }
             level.getServer().execute(() -> {
-                for (ServerEntity entity : entities) {
+                for (ServerEntity entity : sendDirty.elements()) {
                     entity.sendDirtyEntityData();
                 }
             });
