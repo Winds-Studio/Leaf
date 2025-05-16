@@ -4,9 +4,15 @@ import io.papermc.paper.configuration.GlobalConfiguration;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.minecraft.Util;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
-import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.bukkit.Bukkit;
+import org.bukkit.World;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,13 +35,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.bukkit.Bukkit;
-import org.bukkit.World;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandSender;
 
 /*
  *  Yoinked from: https://github.com/xGinko/AnarchyExploitFixes/ & https://github.com/LuminolMC/Luminol
@@ -223,6 +222,11 @@ public class LeafConfig {
             "config/gale-world-defaults.yml"
         ));
 
+        @Nullable String existing = System.getProperty("spark.serverconfigs.extra");
+        if (existing != null) {
+            extraConfigs.addAll(Arrays.asList(existing.split(",")));
+        }
+
         for (World world : Bukkit.getWorlds()) {
             extraConfigs.add(world.getWorldFolder().getName() + "/gale-world.yml"); // Gale world config
         }
@@ -230,10 +234,13 @@ public class LeafConfig {
         return extraConfigs;
     }
 
-    private static String[] buildSparkHiddenPaths() {
-        return new String[]{
-            SentryDSN.sentryDsnConfigPath // Hide Sentry DSN key
-        };
+    private static List<String> buildSparkHiddenPaths() {
+        @Nullable String existing = System.getProperty("spark.serverconfigs.hiddenpaths");
+
+        List<String> extraHidden = existing != null ? new ArrayList<>(Arrays.asList(existing.split(","))) : new ArrayList<>();
+        extraHidden.add(SentryDSN.sentryDsnConfigPath); // Hide Sentry DSN key
+
+        return extraHidden;
     }
 
     public static void regSparkExtraConfig() {

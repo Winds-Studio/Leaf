@@ -1,11 +1,11 @@
 package org.dreeam.leaf.util;
 
-import java.util.List;
-import java.util.Arrays;
 import net.minecraft.world.entity.Entity;
-import java.lang.reflect.Array; // Required for Array.newInstance
 
-public class fastBitRadixSort {
+import java.lang.reflect.Array; // Required for Array.newInstance
+import java.util.List;
+
+public class FastBitRadixSort {
 
     private static final int SMALL_ARRAY_THRESHOLD = 2;
     private Entity[] entityBuffer = new Entity[0];

@@ -23,7 +23,9 @@ public class Protocols {
         PROTOCOLS.remove(protocol);
     }
 
-    public record TypeAndCodec<B extends FriendlyByteBuf, T extends LeafCustomPayload>(LeafCustomPayload.Type<T> type, StreamCodec<B, T> codec) {}
+    public record TypeAndCodec<B extends FriendlyByteBuf, T extends LeafCustomPayload>(LeafCustomPayload.Type<T> type,
+                                                                                       StreamCodec<B, T> codec) {
+    }
 
     public static <B extends FriendlyByteBuf> void write(B byteBuf, LeafCustomPayload payload) {
         for (Protocol protocol : PROTOCOLS) {

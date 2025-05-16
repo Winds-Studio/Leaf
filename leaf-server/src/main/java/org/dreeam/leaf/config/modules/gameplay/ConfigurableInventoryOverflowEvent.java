@@ -10,7 +10,7 @@ public class ConfigurableInventoryOverflowEvent extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    public static String listenerClass = "com.example.package.PlayerInventoryOverflowEvent" ;
+    public static String listenerClass = "com.example.package.PlayerInventoryOverflowEvent";
 
     @Override
     public void onLoaded() {

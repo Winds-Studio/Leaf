@@ -35,11 +35,12 @@ public class AsyncGoalThread extends Thread {
                         }
                     }
                 }
-            }
-            if (retry) {
+
                 Thread.yield();
-            } else {
-                LockSupport.park();
+            }
+
+            if (!retry) {
+                LockSupport.parkNanos(10_000L);
             }
         }
     }
