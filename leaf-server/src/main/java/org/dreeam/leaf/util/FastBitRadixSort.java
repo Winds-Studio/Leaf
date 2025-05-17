@@ -5,7 +5,7 @@ import net.minecraft.world.entity.Entity;
 import java.lang.reflect.Array; // Required for Array.newInstance
 import java.util.List;
 
-public class fastBitRadixSort {
+public class FastBitRadixSort {
 
     private static final int SMALL_ARRAY_THRESHOLD = 2;
     private Entity[] entityBuffer = new Entity[0];
