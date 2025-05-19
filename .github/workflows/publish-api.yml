@@ -42,7 +42,7 @@ jobs:
                    --no-daemon
 
       - name: Build
-        run: ./gradlew build -x test
+        run: ./gradlew createMojmapPaperclipJar --stacktrace --parallel --no-daemon
 
       - name: Publish API
         continue-on-error: true
@@ -52,3 +52,47 @@ jobs:
         env:
           REPO_USER: ${{ secrets.REPO_USER }}
           REPO_PASSWORD: ${{ secrets.REPO_PASSWORD }}
+
+      - name: Calculate SHA-256
+        id: hash
+        run: |
+          FILE_NAME="leaf-1.21.4-${{ env.BUILD_NUMBER }}-mojmap.jar"
+          HASH=$(sha256sum "$FILE_NAME" | awk '{ print $1 }')
+          echo "sha256=$HASH" >> $GITHUB_OUTPUT
+
+      - name: Rename JAR
+        run: |
+          mv "leaf-1.21.4-${{ env.BUILD_NUMBER }}-mojmap.jar" "leaf-1.21.4-${{ env.BUILD_NUMBER }}.jar"
+
+      - name: Upload JAR to download API
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.API_HOST }}
+          username: ${{ secrets.API_USER }}
+          password: ${{ secrets.API_PASS }}
+          source: "./leaf-1.21.4-${{ env.BUILD_NUMBER }}.jar"
+          target: "~/api/uploads/"
+
+      - name: Insert build to download API
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.API_HOST }}
+          username: ${{ secrets.API_USER }}
+          password: ${{ secrets.API_PASS }}
+          script: |
+            BRANCH="${{ github.ref_name }}"
+            REPO_DIR="/root/Leaf-${BRANCH//\//-}"  # Replace slashes with dashes to avoid directory issues
+
+            [ -d "$REPO_DIR/.git" ] && cd "$REPO_DIR" && git fetch origin && git checkout "$BRANCH" && git reset --hard "origin/$BRANCH" || git clone --branch "$BRANCH" --depth 1 https://github.com/Winds-Studio/Leaf "$REPO_DIR"
+
+            # Proceed to insert the build into the API
+            cd ~/api/cli
+            node insertBuild.js \
+              --projectName leaf \
+              --projectFriendlyName "Leaf" \
+              --version 1.21.4 \
+              --build-number ${{ env.BUILD_NUMBER }} \
+              --repositoryPath "$REPO_DIR" \
+              --storagePath /root/api/storage \
+              --download "primary:/root/api/uploads/leaf-1.21.4-${{ env.BUILD_NUMBER }}.jar:${{ steps.hash.outputs.sha256 }}" \
+              --buildChannel default
