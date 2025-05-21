@@ -869,32 +869,48 @@ index 88b07fbb96b20124777889830afa480673629d43..f8bb32840129e57b7799f883cb4570d2
 +    // Leaf end - SparklyPaper - parallel world ticking mod (prevent clearing portal process)
  }
 diff --git a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
-index 3614551856c594f3c0cfee984fcf03fad672b007..1a41dd00a1ea4d0587d833c85545baf1b5f660d5 100644
+index 3614551856c594f3c0cfee984fcf03fad672b007..f4577f908ca9f279b72d89e5b0822d34b6fb7dd1 100644
 --- a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
 +++ b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
-@@ -46,12 +46,20 @@ public class GoToPotentialJobSite extends Behavior<Villager> {
+@@ -44,14 +44,34 @@ public class GoToPotentialJobSite extends Behavior<Villager> {
+         Optional<GlobalPos> memory = entity.getBrain().getMemory(MemoryModuleType.POTENTIAL_JOB_SITE);
+         memory.ifPresent(globalPos -> {
              BlockPos blockPos = globalPos.pos();
-             ServerLevel level1 = level.getServer().getLevel(globalPos.dimension());
-             if (level1 != null) {
+-            ServerLevel level1 = level.getServer().getLevel(globalPos.dimension());
+-            if (level1 != null) {
 -                PoiManager poiManager = level1.getPoiManager();
 -                if (poiManager.exists(blockPos, holder -> true)) {
 -                    poiManager.release(blockPos);
 -                }
-+                // Leaf start - SparklyPaper - parallel world ticking mod (handling for navigating to potential job site cross-dimension)
-+                Runnable releasePoiTask = () -> {
-+                    PoiManager poiManager = level1.getPoiManager();
++            // Leaf start - SparklyPaper - parallel world ticking
++            ServerLevel entityLevel = level; // Villager's current level
++            ServerLevel poiLevel = entityLevel.getServer().getLevel(globalPos.dimension()); // POI's actual level
++
++            if (poiLevel != null) {
++                Runnable poiOperationsTask = () -> {
++                    PoiManager poiManager = poiLevel.getPoiManager();
 +                    if (poiManager.exists(blockPos, holder -> true)) {
 +                        poiManager.release(blockPos);
 +                    }
++                };
++
++                // DebugPackets.sendPoiTicketCountPacket uses the entity's level for its PoiManager context.
++                Runnable debugPacketTask = () -> {
++                    DebugPackets.sendPoiTicketCountPacket(entityLevel, blockPos);
++                };
  
 -                DebugPackets.sendPoiTicketCountPacket(level, blockPos);
-+                    DebugPackets.sendPoiTicketCountPacket(level, blockPos);
-+                };
-+                if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled)
-+                    level.moonrise$getChunkTaskScheduler().scheduleChunkTask(0, 0, releasePoiTask, ca.spottedleaf.concurrentutil.util.Priority.BLOCKING);
-+                else
-+                    releasePoiTask.run();
-+                // Leaf end - SparklyPaper - parallel world ticking mod (handling for navigating to potential job site cross-dimension)
++                if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) { // Added curly braces here
++                    // Schedule POI operations on the POI's level thread, using POI's chunk coordinates for locality
++                    poiLevel.moonrise$getChunkTaskScheduler().scheduleChunkTask(blockPos.getX() >> 4, blockPos.getZ() >> 4, poiOperationsTask, ca.spottedleaf.concurrentutil.util.Priority.BLOCKING);
++                    // Schedule debug packet on the entity's level thread, using entity's chunk coordinates for locality
++                    entityLevel.moonrise$getChunkTaskScheduler().scheduleChunkTask(entity.chunkPosition().x, entity.chunkPosition().z, debugPacketTask, ca.spottedleaf.concurrentutil.util.Priority.BLOCKING);
++                }
++                else { // PWT disabled, run inline on current (entity's) thread
++                    poiOperationsTask.run(); // This will use poiLevel's PoiManager but thread checks are permissive
++                    debugPacketTask.run();   // This will use entityLevel's PoiManager
++                }
++                // Leaf end - SparklyPaper - parallel world ticking
              }
          });
          entity.getBrain().eraseMemory(MemoryModuleType.POTENTIAL_JOB_SITE);
@@ -1015,7 +1031,7 @@ index d212f57c8c0b2086f567fd30237b110203d9e8cb..ed4df82581b5411e54068ccc59ea85a7
                  } else {
                      Entity entity = owner.teleport(
 diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
-index 1e8a6b132926525fad405cbf3a2fab5d32e003e1..ea3ddc712676b09298f821fac4145a164bccd7c7 100644
+index cee7daa4908efde754442bf7ef0932b94cf5ebca..ff2ff95ec9d94e2e31e8174196b384c37d56f38a 100644
 --- a/net/minecraft/world/inventory/AbstractContainerMenu.java
 +++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
 @@ -92,8 +92,14 @@ public abstract class AbstractContainerMenu {

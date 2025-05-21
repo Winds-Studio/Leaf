@@ -15,8 +15,8 @@ import java.util.NoSuchElementException;
  * A List implementation that maintains a hash-based counter for O(1) element lookup.
  * Combines an array-based list for order with a hash map for fast containment checks.
  */
-public class HashedReferenceList<T>
-    implements List<T> {
+public class HashedReferenceList<T> implements List<T> {
+
     // The actual ordered storage of elements
     private final ReferenceArrayList<T> list = new ReferenceArrayList<>();
     // Tracks occurrence count of each element for O(1) contains checks

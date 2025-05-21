@@ -10,7 +10,7 @@ CURRENT_TAG="ver-1.21.4"
 RELEASE_NOTES="release_notes.md"
 
 # Rename Leaf jar
-mv ./$JAR_NAME-${BUILD_NUMBER}-mojmap.jar ./$JAR_NAME-${BUILD_NUMBER}.jar
+mv ./leaf-server/build/libs/leaf-paperclip-1.21.4-R0.1-SNAPSHOT-mojmap.jar ./$JAR_NAME-${BUILD_NUMBER}.jar
 
 # Branch name
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)

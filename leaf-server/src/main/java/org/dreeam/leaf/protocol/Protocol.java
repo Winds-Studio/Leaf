@@ -8,6 +8,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.List;
 
 interface Protocol {
+
     String namespace();
 
     List<Protocols.TypeAndCodec<FriendlyByteBuf, ? extends LeafCustomPayload>> c2s();

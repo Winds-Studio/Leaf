@@ -13,6 +13,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class Protocols {
+
     private static final ObjectArrayList<Protocol> PROTOCOLS = new ObjectArrayList<>();
 
     static void register(Protocol protocol) {
