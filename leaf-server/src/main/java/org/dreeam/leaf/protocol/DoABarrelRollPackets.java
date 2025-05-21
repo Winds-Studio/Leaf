@@ -8,6 +8,7 @@ import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.NotNull;
 
 public class DoABarrelRollPackets {
+
     private static <T extends LeafCustomPayload> LeafCustomPayload.@NotNull Type<T> createType(String path) {
         return new LeafCustomPayload.Type<>(ResourceLocation.fromNamespaceAndPath(DoABarrelRollProtocol.NAMESPACE, path));
     }

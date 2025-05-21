@@ -19,7 +19,6 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
     public static boolean disableHardThrow = false;
     @Deprecated
     public static boolean runAsyncTasksSync = false;
-
     // STRICT, BUFFERED, DISABLED
     public static String asyncUnsafeReadHandling = "BUFFERED";
 

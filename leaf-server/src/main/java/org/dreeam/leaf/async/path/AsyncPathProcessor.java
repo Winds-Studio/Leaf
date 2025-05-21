@@ -1,10 +1,8 @@
 package org.dreeam.leaf.async.path;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.pathfinder.Path;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
@@ -12,7 +10,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
@@ -97,4 +101,5 @@ public class AsyncPathProcessor {
         final int queueCapacity = org.dreeam.leaf.config.modules.async.AsyncPathfinding.asyncPathfindingQueueSize;
 
         return new LinkedBlockingQueue<>(queueCapacity);
-    }}
+    }
+}

@@ -2,7 +2,6 @@ package org.dreeam.leaf.async.path;
 
 import ca.spottedleaf.concurrentutil.collection.MultiThreadedQueue;
 import net.minecraft.world.level.pathfinder.NodeEvaluator;
-
 import org.apache.commons.lang.Validate;
 import org.jetbrains.annotations.NotNull;
 

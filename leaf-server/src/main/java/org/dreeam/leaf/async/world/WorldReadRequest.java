@@ -6,4 +6,5 @@ public record WorldReadRequest(
     ReadOperationType type,
     Object[] params, // Parameters for the read operation
     CompletableFuture<Object> future // Future to complete with the result
-) {}
+) {
+}

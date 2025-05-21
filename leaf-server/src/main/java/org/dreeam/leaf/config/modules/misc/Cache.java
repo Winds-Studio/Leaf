@@ -9,7 +9,7 @@ public class Cache extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".cache";
     }
 
-    public static boolean cachePlayerProfileResult = true;
+    public static boolean cachePlayerProfileResult = false;
     public static int cachePlayerProfileResultTimeout = 1440;
 
     @Override

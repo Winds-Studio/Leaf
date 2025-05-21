@@ -12,116 +12,40 @@ In non-strict test, this can give ~60-110% improvement (524ms on Paper, 204ms on
 under 625 villagers situation.
 
 diff --git a/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java b/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
-index b0c5e41fefc7c9adf1a61bd5b52861736657d37e..83af90c7a2e425b775abd7907895d211ced07955 100644
+index b0c5e41fefc7c9adf1a61bd5b52861736657d37e..ef87b95d53e5ea2555778e6020ea07a11c474961 100644
 --- a/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
 +++ b/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
-@@ -13,18 +13,102 @@ import net.minecraft.world.entity.ai.memory.NearestVisibleLivingEntities;
+@@ -13,17 +13,27 @@ import net.minecraft.world.entity.ai.memory.NearestVisibleLivingEntities;
  import net.minecraft.world.phys.AABB;
  
  public class NearestLivingEntitySensor<T extends LivingEntity> extends Sensor<T> {
 +
-+    // Leaf start - Optimized entity sorting with buffer reuse
-+    private static final int SMALL_ARRAY_THRESHOLD = 2;
-+    private LivingEntity[] entityBuffer = new LivingEntity[0];
-+    private long[] bitsBuffer = new long[0];
++    // Leaf start - Smart sort entities in NearestLivingEntitySensor
++    private final org.dreeam.leaf.util.FastBitRadixSort sorter;
++    public NearestLivingEntitySensor() {
++        this.sorter = new org.dreeam.leaf.util.FastBitRadixSort();
++    }
++    // Leaf end - Smart sort entities in NearestLivingEntitySensor
 +
      @Override
      protected void doTick(ServerLevel level, T entity) {
--        double attributeValue = entity.getAttributeValue(Attributes.FOLLOW_RANGE);
--        AABB aabb = entity.getBoundingBox().inflate(attributeValue, attributeValue, attributeValue);
+         double attributeValue = entity.getAttributeValue(Attributes.FOLLOW_RANGE);
+         AABB aabb = entity.getBoundingBox().inflate(attributeValue, attributeValue, attributeValue);
 -        List<LivingEntity> entitiesOfClass = level.getEntitiesOfClass(
 -            LivingEntity.class, aabb, matchableEntity -> matchableEntity != entity && matchableEntity.isAlive()
-+        double range = entity.getAttributeValue(Attributes.FOLLOW_RANGE);
-+        double rangeSqr = range * range;
-+        AABB aabb = entity.getBoundingBox().inflate(range, range, range);
-+
-+        List<LivingEntity> entities = level.getEntitiesOfClass(
-+            LivingEntity.class, aabb, e -> e != entity && e.isAlive() && entity.distanceToSqr(e) <= rangeSqr
-         );
+-        );
 -        entitiesOfClass.sort(Comparator.comparingDouble(entity::distanceToSqr));
-+
-+        LivingEntity[] sorted = smartSort(entities, entity);
++        // Leaf start - Smart sort entities in NearestLivingEntitySensor
++        double rangeSqr = attributeValue * attributeValue;
++        List<LivingEntity> entities = level.getEntitiesOfClass(LivingEntity.class, aabb, e -> e != entity && e.isAlive() && entity.distanceToSqr(e) <= rangeSqr);
++        LivingEntity[] sorted = this.sorter.sort(entities, entity, LivingEntity.class);
 +        List<LivingEntity> sortedList = java.util.Arrays.asList(sorted);
-+
          Brain<?> brain = entity.getBrain();
 -        brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES, entitiesOfClass);
 -        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(level, entity, entitiesOfClass));
 +        brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES, sortedList);
-+        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES,
-+            new NearestVisibleLivingEntities(level, entity, sortedList));
-+    }
-+
-+    private LivingEntity[] smartSort(List<LivingEntity> entities, T reference) {
-+        int size = entities.size();
-+        if (size <= 1) return entities.toArray(new LivingEntity[0]);
-+
-+        if (entityBuffer.length < size) {
-+            entityBuffer = new LivingEntity[size];
-+            bitsBuffer = new long[size];
-+        }
-+
-+        for (int i = 0; i < size; i++) {
-+            LivingEntity e = entities.get(i);
-+            entityBuffer[i] = e;
-+            bitsBuffer[i] = Double.doubleToRawLongBits(reference.distanceToSqr(e));
-+        }
-+
-+        fastRadixSort(entityBuffer, bitsBuffer, 0, size - 1, 62);
-+
-+        return java.util.Arrays.copyOf(entityBuffer, size);
-+    }
-+
-+    private void fastRadixSort(LivingEntity[] ents, long[] bits, int low, int high, int bit) {
-+        if (bit < 0 || low >= high) return;
-+
-+        if (high - low <= SMALL_ARRAY_THRESHOLD) {
-+            insertionSort(ents, bits, low, high);
-+            return;
-+        }
-+
-+        int i = low, j = high;
-+        final long mask = 1L << bit;
-+
-+        while (i <= j) {
-+            while (i <= j && (bits[i] & mask) == 0) i++;
-+            while (i <= j && (bits[j] & mask) != 0) j--;
-+
-+            if (i < j) {
-+                swap(ents, bits, i++, j--);
-+            }
-+        }
-+
-+        if (low < j) fastRadixSort(ents, bits, low, j, bit - 1);
-+        if (i < high) fastRadixSort(ents, bits, i, high, bit - 1);
-+    }
-+
-+    private void insertionSort(LivingEntity[] ents, long[] bits, int low, int high) {
-+        for (int i = low + 1; i <= high; i++) {
-+            int j = i;
-+            LivingEntity e = ents[j];
-+            long b = bits[j];
-+
-+            while (j > low && bits[j - 1] > b) {
-+                ents[j] = ents[j - 1];
-+                bits[j] = bits[j - 1];
-+                j--;
-+            }
-+
-+            ents[j] = e;
-+            bits[j] = b;
-+        }
-+    }
-+
-+    private void swap(LivingEntity[] ents, long[] bits, int a, int b) {
-+        LivingEntity te = ents[a];
-+        ents[a] = ents[b];
-+        ents[b] = te;
-+
-+        long tb = bits[a];
-+        bits[a] = bits[b];
-+        bits[b] = tb;
++        brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(level, entity, sortedList));
++        // Leaf end - Smart sort entities in NearestLivingEntitySensor
      }
-+    // Leaf end - Optimized entity sorting with buffer reuse
  
      @Override
-     public Set<MemoryModuleType<?>> requires() {

@@ -1,6 +1,7 @@
 package org.dreeam.leaf.async.world;
 
 public enum ReadOperationType {
+
     GET_HIGHEST_BLOCK_Y_AT,
     GET_BLOCK_DATA,
     GET_BLOCK_STATE,

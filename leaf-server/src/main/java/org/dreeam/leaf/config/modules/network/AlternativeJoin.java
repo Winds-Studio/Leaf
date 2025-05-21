@@ -9,12 +9,12 @@ public class AlternativeJoin extends ConfigModules {
         return EnumConfigCategory.NETWORK.getBaseKeyName();
     }
 
-    public static boolean AlternativeJoin = true;
+    public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        AlternativeJoin = config.getBoolean(getBasePath() + ".alternative-join", AlternativeJoin, config.pickStringRegionBased(
-            "Use alternative login logic to skip synchronization.",
-            "使用替代登录逻辑以跳过同步。"));
+        enabled = config.getBoolean(getBasePath() + ".async-switch-state", enabled, config.pickStringRegionBased(
+            "Async switch connection state.",
+            "异步切换连接状态."));
     }
 }

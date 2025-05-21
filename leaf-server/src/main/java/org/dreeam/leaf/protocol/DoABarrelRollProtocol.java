@@ -1,7 +1,14 @@
 package org.dreeam.leaf.protocol;
 
 import com.google.common.collect.ImmutableList;
-import it.unimi.dsi.fastutil.objects.*;
+import it.unimi.dsi.fastutil.objects.Reference2BooleanMap;
+import it.unimi.dsi.fastutil.objects.Reference2BooleanMaps;
+import it.unimi.dsi.fastutil.objects.Reference2BooleanOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Reference2FloatMap;
+import it.unimi.dsi.fastutil.objects.Reference2FloatMaps;
+import it.unimi.dsi.fastutil.objects.Reference2FloatOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
+import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -10,14 +17,22 @@ import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.server.network.ServerPlayerConnection;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.bukkit.event.player.PlayerKickEvent;
-import org.dreeam.leaf.protocol.DoABarrelRollPackets.*;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.ConfigResponseC2SPacket;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.ConfigSyncS2CPacket;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.ConfigUpdateAckS2CPacket;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.ConfigUpdateC2SPacket;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.KineticDamage;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.ModConfigServer;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.RollSyncC2SPacket;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets.RollSyncS2CPacket;
 import org.jetbrains.annotations.NotNull;
+import org.bukkit.event.player.PlayerKickEvent;
 
 import java.util.List;
 import java.util.OptionalInt;
 
 public class DoABarrelRollProtocol implements Protocol {
+
     protected static final String NAMESPACE = "do_a_barrel_roll";
     private static final Logger LOGGER = LogManager.getLogger(NAMESPACE);
     private static final int PROTOCOL_VERSION = 4;
@@ -137,7 +152,7 @@ public class DoABarrelRollProtocol implements Protocol {
         }
         var payload = new RollSyncS2CPacket(player.getId(), isRolling, roll);
         var packet = Protocols.createPacket(payload);
-        for (ServerPlayerConnection seenBy : player.moonrise$getTrackedEntity().seenBy.toArray(new ServerPlayerConnection[0])) {
+        for (ServerPlayerConnection seenBy : player.moonrise$getTrackedEntity().seenBy()) {
             if (seenBy instanceof ServerGamePacketListenerImpl conn
                 && getHandshakeState(conn).state == HandshakeState.ACCEPTED) {
                 seenBy.send(packet);

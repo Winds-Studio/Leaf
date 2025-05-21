@@ -2,12 +2,14 @@ package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
-import ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
 import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
+import net.minecraft.Util;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
+import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import org.apache.logging.log4j.LogManager;
@@ -16,7 +18,12 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class MultithreadedTracker {
 
@@ -43,11 +50,7 @@ public class MultithreadedTracker {
         }
     }
 
-    public static Executor getTrackerExecutor() {
-        return TRACKER_EXECUTOR;
-    }
-
-    public static void tick(ChunkSystemServerLevel level) {
+    public static void tick(ServerLevel level) {
         try {
             if (!org.dreeam.leaf.config.modules.async.MultithreadedTracker.compatModeEnabled) {
                 tickAsync(level);
@@ -59,7 +62,7 @@ public class MultithreadedTracker {
         }
     }
 
-    private static void tickAsync(ChunkSystemServerLevel level) {
+    private static void tickAsync(ServerLevel level) {
         final NearbyPlayers nearbyPlayers = level.moonrise$getNearbyPlayers();
         final ServerEntityLookup entityLookup = (ServerEntityLookup) level.moonrise$getEntityLookup();
 
@@ -68,6 +71,7 @@ public class MultithreadedTracker {
 
         // Move tracking to off-main
         TRACKER_EXECUTOR.execute(() -> {
+            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -79,18 +83,26 @@ public class MultithreadedTracker {
                 synchronized (tracker.sync) {
                     tracker.moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
                     tracker.serverEntity.sendChanges();
+                    if (tracker.serverEntity.wantSendDirtyEntityData) {
+                        tracker.serverEntity.wantSendDirtyEntityData = false;
+                        sendDirty.add(tracker.serverEntity);
+                    }
                 }
+            }
+            if (!sendDirty.isEmpty()) {
+                level.getServer().execute(() -> sendDirty.forEach(ServerEntity::sendDirtyEntityData));
             }
         });
     }
 
-    private static void tickAsyncWithCompatMode(ChunkSystemServerLevel level) {
+    private static void tickAsyncWithCompatMode(ServerLevel level) {
         final NearbyPlayers nearbyPlayers = level.moonrise$getNearbyPlayers();
         final ServerEntityLookup entityLookup = (ServerEntityLookup) level.moonrise$getEntityLookup();
 
         final ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
         final Runnable[] sendChangesTasks = new Runnable[trackerEntitiesRaw.length];
+        final Runnable[] tickTask = new Runnable[trackerEntitiesRaw.length];
         int index = 0;
 
         for (final Entity entity : trackerEntitiesRaw) {
@@ -100,16 +112,39 @@ public class MultithreadedTracker {
 
             if (tracker == null) continue;
 
-            tracker.moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
-            sendChangesTasks[index++] = () -> tracker.serverEntity.sendChanges(); // Collect send changes to task array
+            synchronized (tracker.sync) {
+                tickTask[index] = tracker.leafTickCompact(nearbyPlayers.getChunk(entity.chunkPosition()));
+                sendChangesTasks[index] = () -> tracker.serverEntity.sendChanges(); // Collect send changes to task array
+            }
+            index++;
         }
 
         // batch submit tasks
         TRACKER_EXECUTOR.execute(() -> {
+            for (final Runnable tick : tickTask) {
+                if (tick == null) continue;
+
+                tick.run();
+            }
             for (final Runnable sendChanges : sendChangesTasks) {
                 if (sendChanges == null) continue;
 
                 sendChanges.run();
+            }
+            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
+            for (final Entity entity : trackerEntitiesRaw) {
+                if (entity == null) continue;
+
+                final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
+
+                if (tracker == null) continue;
+                if (tracker.serverEntity.wantSendDirtyEntityData) {
+                    tracker.serverEntity.wantSendDirtyEntityData = false;
+                    sendDirty.add(tracker.serverEntity);
+                }
+            }
+            if (!sendDirty.isEmpty()) {
+                level.getServer().execute(() -> sendDirty.forEach(ServerEntity::sendDirtyEntityData));
             }
         });
     }
@@ -158,6 +193,7 @@ public class MultithreadedTracker {
             .setThreadFactory(MultithreadedTrackerThread::new)
             .setNameFormat(THREAD_PREFIX + " Thread - %d")
             .setPriority(Thread.NORM_PRIORITY - 2)
+            .setUncaughtExceptionHandler(Util::onThreadException)
             .build();
     }
 

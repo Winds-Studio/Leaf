@@ -10,6 +10,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 public class AsyncChunkSend {
+
     public static final ExecutorService POOL = new ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS,
         new LinkedBlockingQueue<>(),
