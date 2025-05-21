@@ -568,64 +568,10 @@ index d4048661575ebfaf128ba25da365843774364e0e..33dd16a26edd2974f04d9a868d3e58e8
  
          // Gale start - Pufferfish - SIMD support
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6da45a2d6 100644
+index a66e5f6652d9633c856490de36d8d8fdf8a5298a..76a1c32c7f6c3bd598011101ac6795067bf877e4 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -27,6 +27,7 @@ import java.util.Objects;
- import java.util.Optional;
- import java.util.Set;
- import java.util.UUID;
-+import java.util.concurrent.ConcurrentLinkedQueue;
- import java.util.concurrent.Executor;
- import java.util.function.BooleanSupplier;
- import java.util.function.Function;
-@@ -105,18 +106,7 @@ import net.minecraft.world.entity.raid.Raids;
- import net.minecraft.world.flag.FeatureFlagSet;
- import net.minecraft.world.item.alchemy.PotionBrewing;
- import net.minecraft.world.item.crafting.RecipeManager;
--import net.minecraft.world.level.BlockEventData;
--import net.minecraft.world.level.ChunkPos;
--import net.minecraft.world.level.CustomSpawner;
--import net.minecraft.world.level.Explosion;
--import net.minecraft.world.level.ExplosionDamageCalculator;
--import net.minecraft.world.level.ForcedChunksSavedData;
--import net.minecraft.world.level.GameRules;
--import net.minecraft.world.level.Level;
--import net.minecraft.world.level.NaturalSpawner;
--import net.minecraft.world.level.ServerExplosion;
--import net.minecraft.world.level.StructureManager;
--import net.minecraft.world.level.WorldGenLevel;
-+import net.minecraft.world.level.*;
- import net.minecraft.world.level.biome.Biome;
- import net.minecraft.world.level.block.Block;
- import net.minecraft.world.level.block.Blocks;
-@@ -163,11 +153,25 @@ import net.minecraft.world.level.storage.ServerLevelData;
- import net.minecraft.world.phys.AABB;
- import net.minecraft.world.phys.Vec3;
- import net.minecraft.world.phys.shapes.BooleanOp;
-+import net.minecraft.world.phys.shapes.CollisionContext;
- import net.minecraft.world.phys.shapes.Shapes;
- import net.minecraft.world.phys.shapes.VoxelShape;
- import net.minecraft.world.ticks.LevelTicks;
-+import org.bukkit.FluidCollisionMode;
-+import org.bukkit.Location;
-+import org.bukkit.block.BlockFace;
-+import org.bukkit.block.data.BlockData;
-+import org.bukkit.craftbukkit.CraftFluidCollisionMode;
-+import org.bukkit.craftbukkit.CraftHeightMap;
-+import org.bukkit.craftbukkit.block.CraftBlock;
-+import org.bukkit.craftbukkit.block.data.CraftBlockData;
-+import org.bukkit.craftbukkit.util.CraftLocation;
-+import org.bukkit.util.Vector;
-+import org.dreeam.leaf.async.world.WorldReadRequest;
- import org.slf4j.Logger;
- 
-+import static org.bukkit.Bukkit.getLogger;
-+
- public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLevel, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevelReader, ca.spottedleaf.moonrise.patches.chunk_tick_iteration.ChunkTickServerLevel { // Paper - rewrite chunk system // Paper - chunk tick iteration
-     public static final BlockPos END_SPAWN_POINT = new BlockPos(100, 50, 0);
-     public static final IntProvider RAIN_DELAY = UniformInt.of(12000, 180000);
-@@ -182,7 +186,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -182,7 +182,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      private final MinecraftServer server;
      public final net.minecraft.world.level.storage.PrimaryLevelData serverLevelData; // CraftBukkit - type
      private int lastSpawnChunkRadius;
@@ -634,17 +580,17 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
      // Paper - rewrite chunk system
      private final GameEventDispatcher gameEventDispatcher;
      public boolean noSave;
-@@ -208,7 +212,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -208,7 +208,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      private double preciseTime; // Purpur - Configurable daylight cycle
      private boolean forceTime; // Purpur - Configurable daylight cycle
      private final RandomSequences randomSequences;
 -
 +    public java.util.concurrent.ExecutorService tickExecutor; // SparklyPaper - parallel world ticking
-+    public final ConcurrentLinkedQueue<WorldReadRequest> asyncReadRequestQueue = new ConcurrentLinkedQueue<>();
++    public final java.util.concurrent.ConcurrentLinkedQueue<org.dreeam.leaf.async.world.WorldReadRequest> asyncReadRequestQueue = new java.util.concurrent.ConcurrentLinkedQueue<>(); // Leaf - SparklyPaper - parallel world ticking
      // CraftBukkit start
      public final LevelStorageSource.LevelStorageAccess levelStorageAccess;
      public final UUID uuid;
-@@ -703,6 +708,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -703,6 +704,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
          this.preciseTime = this.serverLevelData.getDayTime(); // Purpur - Configurable daylight cycle
          this.realPlayers = Lists.newArrayList(); // Leaves - skip
@@ -652,17 +598,18 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
      }
  
      // Paper start
-@@ -737,8 +743,136 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -737,8 +739,138 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
  
      public Player[] eligibleDespawnCheckingPlayerCache = new Player[0]; // Leaf - Cache eligible players for despawn checks
  
++    // Leaf start - SparklyPaper - parallel world ticking
 +    private void processAsyncReadRequests() {
 +        // Only process if parallel ticking is enabled and buffering is active
 +        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ||
 +            !org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.asyncUnsafeReadHandling.equals("BUFFERED")) {
 +            // Clear queue if buffering gets disabled to prevent memory leaks
 +            if (!this.asyncReadRequestQueue.isEmpty()) {
-+                WorldReadRequest req;
++                org.dreeam.leaf.async.world.WorldReadRequest req;
 +                while ((req = this.asyncReadRequestQueue.poll()) != null) {
 +                    req.future().completeExceptionally(new IllegalStateException("Async read buffering disabled while request was pending."));
 +                }
@@ -670,7 +617,7 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
 +            return;
 +        }
 +
-+        WorldReadRequest request;
++        org.dreeam.leaf.async.world.WorldReadRequest request;
 +        int processed = 0;
 +        // Limit processing per tick to avoid stalling the tick loop
 +        int maxToProcess = 16384; // Consider making this configurable
@@ -686,14 +633,14 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
 +                request.future().complete(result);
 +            } catch (Throwable t) {
 +                // Log the error from the tick thread side
-+                getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type(), t);
++                org.bukkit.Bukkit.getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type(), t);
 +                request.future().completeExceptionally(t);
 +            }
 +        }
 +    }
 +
 +    // Executes the actual read operation based on the request type
-+    private Object executeReadRequest(WorldReadRequest request) {
++    private Object executeReadRequest(org.dreeam.leaf.async.world.WorldReadRequest request) {
 +        Object[] params = request.params();
 +        BlockPos pos; // Declare pos outside the switch
 +
@@ -704,7 +651,7 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
 +                int z = (int) params[1];
 +                org.bukkit.HeightMap heightMap = (org.bukkit.HeightMap) params[2];
 +                // Direct NMS call
-+                return this.getHeight(CraftHeightMap.toNMS(heightMap), x, z);
++                return this.getHeight(org.bukkit.craftbukkit.CraftHeightMap.toNMS(heightMap), x, z);
 +            }
 +            case GET_BLOCK_DATA: {
 +                int x = (int) params[0];
@@ -741,38 +688,38 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
 +            }
 +            case BLOCK_GET_BLOCK_POWER: {
 +                pos = (BlockPos) params[0];
-+                BlockFace face = (BlockFace) params[1];
++                org.bukkit.block.BlockFace face = (org.bukkit.block.BlockFace) params[1];
 +                int power = 0;
-+                Direction notchDir = CraftBlock.blockFaceToNotch(face);
++                Direction notchDir = org.bukkit.craftbukkit.block.CraftBlock.blockFaceToNotch(face);
 +
 +                // Use the assigned 'pos' variable here
-+                if ((face == BlockFace.DOWN || face == BlockFace.SELF) && this.hasSignal(pos.below(), Direction.DOWN)) power = CraftBlock.getPower(power, this.getBlockState(pos.below()));
-+                if ((face == BlockFace.UP || face == BlockFace.SELF) && this.hasSignal(pos.above(), Direction.UP)) power = CraftBlock.getPower(power, this.getBlockState(pos.above()));
-+                if ((face == BlockFace.EAST || face == BlockFace.SELF) && this.hasSignal(pos.east(), Direction.EAST)) power = CraftBlock.getPower(power, this.getBlockState(pos.east()));
-+                if ((face == BlockFace.WEST || face == BlockFace.SELF) && this.hasSignal(pos.west(), Direction.WEST)) power = CraftBlock.getPower(power, this.getBlockState(pos.west()));
-+                if ((face == BlockFace.NORTH || face == BlockFace.SELF) && this.hasSignal(pos.north(), Direction.NORTH)) power = CraftBlock.getPower(power, this.getBlockState(pos.north()));
-+                if ((face == BlockFace.SOUTH || face == BlockFace.SELF) && this.hasSignal(pos.south(), Direction.SOUTH)) power = CraftBlock.getPower(power, this.getBlockState(pos.south()));
++                if ((face == org.bukkit.block.BlockFace.DOWN || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.below(), Direction.DOWN)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.below()));
++                if ((face == org.bukkit.block.BlockFace.UP || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.above(), Direction.UP)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.above()));
++                if ((face == org.bukkit.block.BlockFace.EAST || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.east(), Direction.EAST)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.east()));
++                if ((face == org.bukkit.block.BlockFace.WEST || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.west(), Direction.WEST)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.west()));
++                if ((face == org.bukkit.block.BlockFace.NORTH || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.north(), Direction.NORTH)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.north()));
++                if ((face == org.bukkit.block.BlockFace.SOUTH || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.south(), Direction.SOUTH)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.south()));
 +
-+                boolean indirectlyPowered = (face == BlockFace.SELF) ? this.hasNeighborSignal(pos) : (this.getSignal(pos, notchDir) > 0); // Simplified indirect check for faces
++                boolean indirectlyPowered = (face == org.bukkit.block.BlockFace.SELF) ? this.hasNeighborSignal(pos) : (this.getSignal(pos, notchDir) > 0); // Simplified indirect check for faces
 +                return power > 0 ? power : (indirectlyPowered ? 15 : 0);
 +            }
 +            case BLOCK_RAY_TRACE: {
 +                pos = (BlockPos) params[0];
-+                Location start = (Location) params[1];
-+                Vector direction = (Vector) params[2];
++                org.bukkit.Location start = (org.bukkit.Location) params[1];
++                org.bukkit.util.Vector direction = (org.bukkit.util.Vector) params[2];
 +                double maxDistance = (double) params[3];
-+                FluidCollisionMode fluidCollisionMode = (FluidCollisionMode) params[4];
++                org.bukkit.FluidCollisionMode fluidCollisionMode = (org.bukkit.FluidCollisionMode) params[4];
 +
-+                Vector dir = direction.clone().normalize().multiply(maxDistance);
-+                Vec3 startPos = CraftLocation.toVec3D(start);
++                org.bukkit.util.Vector dir = direction.clone().normalize().multiply(maxDistance);
++                Vec3 startPos = org.bukkit.craftbukkit.util.CraftLocation.toVec3D(start);
 +                Vec3 endPos = startPos.add(dir.getX(), dir.getY(), dir.getZ());
 +
-+                return this.clip(new ClipContext(startPos, endPos, ClipContext.Block.OUTLINE, CraftFluidCollisionMode.toNMS(fluidCollisionMode), CollisionContext.empty()), pos); // Pass block pos
++                return this.clip(new net.minecraft.world.level.ClipContext(startPos, endPos, net.minecraft.world.level.ClipContext.Block.OUTLINE, org.bukkit.craftbukkit.CraftFluidCollisionMode.toNMS(fluidCollisionMode), net.minecraft.world.phys.shapes.CollisionContext.empty()), pos); // Pass block pos
 +            }
 +            case BLOCK_CAN_PLACE: {
 +                pos = (BlockPos) params[0];
-+                BlockData data = (BlockData) params[1];
-+                net.minecraft.world.level.block.state.BlockState nmsData = ((CraftBlockData) data).getState();
++                org.bukkit.block.data.BlockData data = (org.bukkit.block.data.BlockData) params[1];
++                net.minecraft.world.level.block.state.BlockState nmsData = ((org.bukkit.craftbukkit.block.data.CraftBlockData) data).getState();
 +                return nmsData.canSurvive(this, pos);
 +            }
 +            // Add cases for other ReadOperationType values here...
@@ -782,22 +729,25 @@ index ae5d3de44fb710b48fdabf04f5e706df1f9889b7..95776441c6e4c0cdeeb3ee2aa8e834d6
 +                throw new UnsupportedOperationException("Unsupported buffered read type: " + request.type());
 +        }
 +    }
++    // Leaf end - SparklyPaper - parallel world ticking
 +
      public void tick(BooleanSupplier hasTimeLeft) {
          this.handlingTick = true;
-+        this.processAsyncReadRequests();
++        this.processAsyncReadRequests(); // Leaf - SparklyPaper - parallel world ticking
          TickRateManager tickRateManager = this.tickRateManager();
          boolean runsNormally = tickRateManager.runsNormally();
          if (runsNormally) {
-@@ -746,6 +880,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -746,6 +878,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              this.advanceWeatherCycle();
          }
  
++        // Leaf start - SparklyPaper - parallel world ticking
 +        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
 +            this.moonrise$midTickTasks();
 +        } else if ((++this.tickedBlocksOrFluids & 7L) != 0L) { // Keep original mid-tick logic for PWT enabled
 +            this.server.moonrise$executeMidTickTasks();
 +        }
++        // Leaf end - SparklyPaper - parallel world ticking
 +
          int _int = this.getGameRules().getInt(GameRules.RULE_PLAYERS_SLEEPING_PERCENTAGE);
          if (this.purpurConfig.playersSkipNight && this.sleepStatus.areEnoughSleeping(_int) && this.sleepStatus.areEnoughDeepSleeping(_int, this.players)) { // Purpur - Config for skipping night
