@@ -255,7 +255,7 @@ index 548fcd9646dee0c40b6ba9b3dafb9ca157dfe324..d7af94890bfccd6ff665d920cecfa1e5
          } else if (!event.isAsynchronous() && !this.server.isPrimaryThread() && !this.server.isStopping()) {
              // Leaf start - Multithreaded tracker
 diff --git a/src/main/java/org/bukkit/craftbukkit/CraftWorld.java b/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
-index af33cab59932f4ec135caf94dc5828930833daf6..ec6001e376e3e8036d05ee6265cf1159737545d4 100644
+index af33cab59932f4ec135caf94dc5828930833daf6..c90497100e19a4e298bd215c8acac4675c13500b 100644
 --- a/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
 +++ b/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
 @@ -22,8 +22,11 @@ import java.util.Objects;
@@ -339,152 +339,7 @@ index af33cab59932f4ec135caf94dc5828930833daf6..ec6001e376e3e8036d05ee6265cf1159
          net.minecraft.world.level.Level.ExplosionInteraction explosionType;
          if (!breakBlocks) {
              explosionType = net.minecraft.world.level.Level.ExplosionInteraction.NONE; // Don't break blocks
-@@ -956,9 +979,71 @@ public class CraftWorld extends CraftRegionAccessor implements World {
- 
-     @Override
-     public int getHighestBlockYAt(int x, int z, org.bukkit.HeightMap heightMap) {
--        warnUnsafeChunk("getting a faraway chunk", x >> 4, z >> 4); // Paper
--        // Transient load for this tick
--        return this.world.getChunk(x >> 4, z >> 4).getHeight(CraftHeightMap.toNMS(heightMap), x, z);
-+        // Get config settings (consider caching these per-world if accessed frequently)
-+        boolean parallelTickingEnabled = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
-+        // Get world-specific config or default if per-world doesn't exist
-+        String handlingMode = asyncUnsafeReadHandling; // Use Paper's config access
-+
-+        // Determine if buffering is needed and configured
-+        boolean needsBuffering = parallelTickingEnabled
-+            && handlingMode.equals("BUFFERED")
-+            && !ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(this.world); // Check if NOT on the correct thread
-+
-+        if (needsBuffering) {
-+            // --- Buffered Path ---
-+            CompletableFuture<Object> future = new CompletableFuture<>();
-+            WorldReadRequest request = new WorldReadRequest(
-+                ReadOperationType.GET_HIGHEST_BLOCK_Y_AT,
-+                new Object[]{x, z, heightMap}, // Pass parameters
-+                future
-+            );
-+            this.world.asyncReadRequestQueue.offer(request);
-+
-+            try {
-+                // Block the async thread and wait for the result from the tick thread
-+                // .join() throws CompletionException if the future completes exceptionally
-+                Object result = future.join();
-+                return (Integer) result;
-+            } catch (CompletionException e) {
-+                // Log the error that occurred on the tick thread
-+                this.server.getLogger().log(Level.SEVERE, "Async world read failed for getHighestBlockYAt(" + x + ", " + z + ", " + heightMap + ")", e.getCause() != null ? e.getCause() : e);
-+                // Return a default/safe value using the correct NMS method
-+                return this.world.getMinY(); // Corrected method
-+            } catch (Exception e) {
-+                // Catch other potential exceptions during join/cast
-+                this.server.getLogger().log(Level.SEVERE, "Unexpected error during async world read for getHighestBlockYAt(" + x + ", " + z + ", " + heightMap + ")", e);
-+                // Return a default/safe value using the correct NMS method
-+                return this.world.getMinY(); // Corrected method
-+            }
-+
-+        } else {
-+            // --- Direct/Strict/Disabled Path ---
-+            if (parallelTickingEnabled && handlingMode.equals("STRICT")) {
-+                // Perform the strict check (will log/throw if violated)
-+                // This replaces the original ensureTickThread call here
-+                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.world, x >> 4, z >> 4, "Async unsafe world read detected (strict mode) for getHighestBlockYAt");
-+            }
-+            // If STRICT check passes, or mode is DISABLED, or parallel ticking is off, proceed with direct access
-+
-+            warnUnsafeChunk("getting a faraway chunk", x >> 4, z >> 4); // Keep this warning
-+
-+            // Original direct NMS access
-+            // Transient load for this tick
-+            // Need to ensure getChunk is safe if called off-thread in DISABLED mode (it might not be!)
-+            // If DISABLED truly means no checks, this could still fail. STRICT or BUFFERED are safer.
-+            try {
-+                // It's generally safer to assume getChunk might require the tick thread even in direct mode if PWT is on.
-+                // If mode is DISABLED, this might still need protection or documentation that it's unsafe.
-+                // For STRICT, the ensureTickThread above covers it.
-+                // For BUFFERED, we wouldn't be in this 'else' block if off-thread.
-+                return this.world.getChunk(x >> 4, z >> 4).getHeight(CraftHeightMap.toNMS(heightMap), x, z);
-+            } catch (Exception e) {
-+                // Catch potential errors from direct access if it happens off-thread (e.g., in DISABLED mode)
-+                this.server.getLogger().log(Level.SEVERE, "Direct world access failed for getHighestBlockYAt(" + x + ", " + z + ", " + heightMap + ") - Was this intended in DISABLED mode?", e);
-+                // Return a default/safe value using the correct NMS method
-+                return this.world.getMinY(); // Corrected method
-+            }
-+        }
-     }
- 
-     @Override
-@@ -971,8 +1056,69 @@ public class CraftWorld extends CraftRegionAccessor implements World {
-         return this.getHighestBlockAt(location.getBlockX(), location.getBlockZ(), heightMap);
-     }
- 
-+    @Override
-+    public Biome getBiome(int x, int y, int z) {
-+        // Get config settings
-+        boolean parallelTickingEnabled = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
-+        String handlingMode = asyncUnsafeReadHandling;
-+
-+        // Determine if buffering is needed and configured
-+        boolean needsBuffering = parallelTickingEnabled
-+            && handlingMode.equals("BUFFERED")
-+            && !ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(this.world); // Check if NOT on the correct thread
-+
-+        if (needsBuffering) {
-+            // --- Buffered Path ---
-+            CompletableFuture<Object> future = new CompletableFuture<>();
-+            WorldReadRequest request = new WorldReadRequest(
-+                ReadOperationType.GET_BIOME,
-+                new Object[]{x, y, z}, // Pass parameters
-+                future
-+            );
-+            this.world.asyncReadRequestQueue.offer(request); // Add to the world's queue
-+
-+            try {
-+                // Block the async thread and wait for the result from the tick thread
-+                Object result = future.join(); // Result is Holder<net.minecraft.world.level.biome.Biome>
-+                // Convert NMS Holder to Bukkit Biome
-+                return CraftBiome.minecraftHolderToBukkit((Holder<net.minecraft.world.level.biome.Biome>) result);
-+            } catch (CompletionException e) {
-+                // Log the error that occurred on the tick thread
-+                this.server.getLogger().log(Level.SEVERE, "Async world read failed for getBiome(" + x + ", " + y + ", " + z + ")", e.getCause() != null ? e.getCause() : e);
-+                // Return a default/safe value (e.g., PLAINS)
-+                // Using the direct method here might be okay as a fallback, but could potentially recurse if the direct method also fails.
-+                // Returning a constant is safer.
-+                return Biome.PLAINS; // Or potentially lookup the default biome for the world?
-+            } catch (Exception e) {
-+                // Catch other potential exceptions during join/cast
-+                this.server.getLogger().log(Level.SEVERE, "Unexpected error during async world read for getBiome(" + x + ", " + y + ", " + z + ")", e);
-+                return Biome.PLAINS;
-+            }
-+
-+        } else {
-+            // --- Direct/Strict/Disabled Path ---
-+            if (parallelTickingEnabled && handlingMode.equals("STRICT")) {
-+                // Perform the strict check (will log/throw if violated)
-+                // Check based on chunk coordinates as biome access uses shifted coords
-+                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.world, x >> 4, z >> 4, "Async unsafe world read detected (strict mode) for getBiome");
-+            }
-+            // If STRICT check passes, or mode is DISABLED, or parallel ticking is off, proceed with direct access
-+
-+            try {
-+                // Original direct NMS access and conversion
-+                return CraftBiome.minecraftHolderToBukkit(this.getHandle().getNoiseBiome(x >> 2, y >> 2, z >> 2));
-+            } catch (Exception e) {
-+                // Catch potential errors from direct access if it happens off-thread (e.g., in DISABLED mode)
-+                this.server.getLogger().log(Level.SEVERE, "Direct world access failed for getBiome(" + x + ", " + y + ", " + z + ") - Was this intended in DISABLED mode?", e);
-+                return Biome.PLAINS; // Default fallback
-+            }
-+        }
-+    }
-+
-+    // Also consider applying this pattern to the simpler getBiome(int x, int z)
-     @Override
-     public Biome getBiome(int x, int z) {
-+        // Delegate to the 3-coordinate version, which now has the buffering logic
-         return this.getBiome(x, 0, z);
-     }
- 
-@@ -986,6 +1132,8 @@ public class CraftWorld extends CraftRegionAccessor implements World {
+@@ -986,6 +1009,8 @@ public class CraftWorld extends CraftRegionAccessor implements World {
      @Override
      public void setBiome(int x, int y, int z, Holder<net.minecraft.world.level.biome.Biome> bb) {
          BlockPos pos = new BlockPos(x, 0, z);
@@ -493,7 +348,7 @@ index af33cab59932f4ec135caf94dc5828930833daf6..ec6001e376e3e8036d05ee6265cf1159
          if (this.world.hasChunkAt(pos)) {
              net.minecraft.world.level.chunk.LevelChunk chunk = this.world.getChunkAt(pos);
  
-@@ -2328,6 +2476,8 @@ public class CraftWorld extends CraftRegionAccessor implements World {
+@@ -2328,6 +2353,8 @@ public class CraftWorld extends CraftRegionAccessor implements World {
  
      @Override
      public void sendGameEvent(Entity sourceEntity, org.bukkit.GameEvent gameEvent, Vector position) {
@@ -503,7 +358,7 @@ index af33cab59932f4ec135caf94dc5828930833daf6..ec6001e376e3e8036d05ee6265cf1159
      }
      // Paper end
 diff --git a/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java b/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
-index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..b94efcab12d41fa8745e5bb55cfa6481d8262e74 100644
+index 811823a1a7e24a19a7e37eb4c08efdfa19e839ed..4057f335bc518fba635c8af8b0defd3acb91c43b 100644
 --- a/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
 +++ b/src/main/java/org/bukkit/craftbukkit/block/CraftBlock.java
 @@ -5,9 +5,13 @@ import java.util.ArrayList;
