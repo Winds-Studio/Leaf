@@ -14,7 +14,7 @@ public class BotStatsCounter extends ServerStatsCounter {
     private static final File UNKOWN_FILE = new File("BOT_STATS_REMOVE_THIS");
 
     public BotStatsCounter(MinecraftServer server) {
-        super(server, UNKOWN_FILE);
+        super(server, UNKOWN_FILE, "", net.minecraft.Util.NIL_UUID); // Leaf
     }
 
     @Override
