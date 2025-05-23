@@ -1,19 +1,15 @@
 package org.dreeam.leaf.async;
 
-import ca.spottedleaf.moonrise.common.util.TickThread;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.minecraft.Util;
-import net.minecraft.server.MinecraftServer;
-import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.LocalDateTime;
@@ -103,14 +99,21 @@ public class AsyncPlayerDataSaving {
             }
         } else {
             var fut = levelDatFut.get(path);
-            try {
-                if (fut != null) {
-                    fut.get();
+            if (fut != null) {
+                try {
+                    while (true) {
+                        try {
+                            fut.get();
+                            break;
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                } catch (ExecutionException e) {
+                    LOGGER.error("Failed to save level.dat for {}", path, e);
+                } finally {
+                    levelDatFut.remove(path);
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (ExecutionException e) {
-                LOGGER.error("Failed to save level.dat for {}", path, e);
             }
             if (runnable != null) {
                 IO_POOL.submit(() -> {
@@ -140,9 +143,14 @@ public class AsyncPlayerDataSaving {
             return;
         }
         try {
-            fut.get();
-        } catch (InterruptedException interruptedException) {
-            Thread.currentThread().interrupt();
+            while (true) {
+                try {
+                    fut.get();
+                    break;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         } catch (ExecutionException exception) {
             LOGGER.warn("Failed to save player {} data for {}", type, playerName, exception);
             fut.cancel(true);
