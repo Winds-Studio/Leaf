@@ -237,7 +237,7 @@ index 9af7dafe03812d96aa477584d4147a68c240ab21..e6fd46b8148e050c4807abf6c8a03e47
  
      // Paper start - log detailed entity tick information
 diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
-index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..88809afe30bb970a7de8bdfd269268800516c426 100644
+index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..44d167e9c92260e7e5a134d7dae310b90d5cd7ff 100644
 --- a/net/minecraft/world/entity/Mob.java
 +++ b/net/minecraft/world/entity/Mob.java
 @@ -144,6 +144,12 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
@@ -253,12 +253,17 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..88809afe30bb970a7de8bdfd26926880
  
      protected Mob(EntityType<? extends Mob> entityType, Level level) {
          super(entityType, level);
-@@ -225,12 +231,22 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
+@@ -225,12 +231,27 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
          }
          // Paper end - Skip AI during inactive ticks for non-aware mobs
          boolean isThrottled = org.dreeam.leaf.config.modules.opt.ThrottleInactiveGoalSelectorTick.enabled && _pufferfish_inactiveTickDisableCounter++ % 20 != 0; // Pufferfish - throttle inactive goal selector ticking
 +        // Leaf start - Async target finding
-+        boolean running = this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1;
++        boolean hasTasks;
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            hasTasks = ((ServerLevel) this.level()).asyncGoalExecutor.hasTasks(this);
++        } else {
++            hasTasks = true;
++        }
 +        this.tickingTarget = false;
          if (this.goalSelector.inactiveTick(this.activatedPriority, true) && !isThrottled) { // Pufferfish - pass activated priroity // Pufferfish - throttle inactive goal selector ticking
              this.goalSelector.tick();
@@ -268,20 +273,25 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..88809afe30bb970a7de8bdfd26926880
              this.targetSelector.tick();
          }
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            if (!running && (this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1)) {
-+                ((ServerLevel) this.level()).asyncGoalExecutor.submit(this.getId());
++            if (!hasTasks && ((ServerLevel) this.level()).asyncGoalExecutor.hasTasks(this)) {
++                ((ServerLevel) this.level()).asyncGoalExecutor.submit(this);
 +            }
 +        }
 +        // Leaf end - Async target finding
      }
      // Paper end
  
-@@ -914,17 +930,29 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
+@@ -914,17 +935,34 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
          // Paper end - Allow nerfed mobs to jump and float
          this.sensing.tick();
          int i = this.tickCount + this.getId();
 +        // Leaf start - Async target finding
-+        boolean running = this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1;
++        boolean hasTasks;
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++            hasTasks = ((ServerLevel) this.level()).asyncGoalExecutor.hasTasks(this);
++        } else {
++            hasTasks = true;
++        }
          if (i % 2 != 0 && this.tickCount > 1) {
 +            this.tickingTarget = true;
              if (this.targetSelector.inactiveTick(this.activatedPriority, false)) // Pufferfish - use this to alternate ticking
@@ -298,8 +308,8 @@ index 05d5cde42b7011091ef4ee874c0d9d5586ae3f10..88809afe30bb970a7de8bdfd26926880
              this.goalSelector.tick();
          }
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            if (!running && (this.targetSelector.ctxState != -1 || this.goalSelector.ctxState != -1)) {
-+                ((ServerLevel) this.level()).asyncGoalExecutor.submit(this.getId());
++            if (!hasTasks && ((ServerLevel) this.level()).asyncGoalExecutor.hasTasks(this)) {
++                ((ServerLevel) this.level()).asyncGoalExecutor.submit(this);
 +            }
 +        }
 +        // Leaf end - Async target finding
@@ -668,17 +678,34 @@ index 3093f03d4f298bf39fec8bad2b6c22518774aea8..0a41797fd7beddce0b93d42bac6e0270
                  return false;
              } else {
                  this.parent = animal;
+diff --git a/net/minecraft/world/entity/ai/goal/Goal.java b/net/minecraft/world/entity/ai/goal/Goal.java
+index 5f5bf0e710ecff09a571091e5a923332be70cb74..487da7485bb957ef6516c2950035ca304b84edd7 100644
+--- a/net/minecraft/world/entity/ai/goal/Goal.java
++++ b/net/minecraft/world/entity/ai/goal/Goal.java
+@@ -100,6 +100,7 @@ public abstract class Goal {
+     // Paper end - Mob goal api
+ 
+     public static enum Flag {
++        // Leaf - Async target finding - inline diff
+         UNKNOWN_BEHAVIOR, // Paper - add UNKNOWN_BEHAVIOR
+         MOVE,
+         LOOK,
 diff --git a/net/minecraft/world/entity/ai/goal/GoalSelector.java b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-index e82e32407cec6109b9c3b0106295217f4a3f4aa2..3c24382a3cced8dcea103ccc87cb506310de8461 100644
+index e82e32407cec6109b9c3b0106295217f4a3f4aa2..4811081a1ec32432958473f8f58b1a1cde76a2cd 100644
 --- a/net/minecraft/world/entity/ai/goal/GoalSelector.java
 +++ b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-@@ -26,13 +26,23 @@ public class GoalSelector {
+@@ -26,13 +26,28 @@ public class GoalSelector {
      private final ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<net.minecraft.world.entity.ai.goal.Goal.Flag> goalTypes = new ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<>(Goal.Flag.class); // Paper - remove streams from GoalSelector
      private int curRate; // Paper - EAR 2
  
 +    // Leaf start - Async target finding
-+    private boolean availableGoalsDirty = true;
-+    private WrappedGoal @org.jetbrains.annotations.Nullable[] ctxGoals = null;
++    private boolean ctxDirty = true;
++    private WrappedGoal[] ctxGoals = {};
++    private int[] ctxRunning = it.unimi.dsi.fastutil.ints.IntArrays.EMPTY_ARRAY;
++    private int[] ctxNonRunning = it.unimi.dsi.fastutil.ints.IntArrays.EMPTY_ARRAY;
++    private int[] ctxLockedFlags = it.unimi.dsi.fastutil.ints.IntArrays.EMPTY_ARRAY;
++    private int ctxRunningLength = 0;
++    private int ctxNonRunningLength = 0;
 +    private int ctxIndex = 0;
 +    public int ctxState = -1;
 +    public final org.dreeam.leaf.async.ai.Waker ctx = new org.dreeam.leaf.async.ai.Waker();
@@ -686,21 +713,21 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..3c24382a3cced8dcea103ccc87cb5063
 +
      public void addGoal(int priority, Goal goal) {
          this.availableGoals.add(new WrappedGoal(priority, goal));
-+        availableGoalsDirty = true; // Leaf - Async target finding
++        ctxDirty = true; // Leaf - Async target finding
      }
  
      @VisibleForTesting
      public void removeAllGoals(Predicate<Goal> filter) {
          this.availableGoals.removeIf(wrappedGoal -> filter.test(wrappedGoal.getGoal()));
-+        availableGoalsDirty = true; // Leaf - Async target finding
++        ctxDirty = true; // Leaf - Async target finding
      }
  
      // Paper start - EAR 2
-@@ -63,18 +73,19 @@ public class GoalSelector {
+@@ -63,18 +78,19 @@ public class GoalSelector {
          }
  
          this.availableGoals.removeIf(wrappedGoal1 -> wrappedGoal1.getGoal() == goal);
-+        availableGoalsDirty = true; // Leaf - Async target finding
++        ctxDirty = true; // Leaf - Async target finding
      }
  
      // Paper start - Perf: optimize goal types
@@ -718,118 +745,254 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..3c24382a3cced8dcea103ccc87cb5063
              flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
              // Paper end - Perf: optimize goal types
              if (!flag.getOrDefault(flag1, NO_GOAL).canBeReplacedBy(goal)) {
-@@ -85,7 +96,131 @@ public class GoalSelector {
+@@ -85,7 +101,263 @@ public class GoalSelector {
          return true;
      }
  
 +    // Leaf start - Async target finding
 +    public final boolean poll() {
-+        if (this.ctxGoals == null || ctx.wake != null) {
++        if (ctx.wake != null) {
 +            return false;
 +        }
-+        if (ctxState == 0) {
-+            while (ctxIndex < this.ctxGoals.length) {
-+                WrappedGoal goal = this.ctxGoals[ctxIndex];
-+                // entity tempt
-+                if (goal.isRunning() && (goalContainsAnyFlags(goal, this.goalTypes) || !goal.canContinueToUse())) {
-+                    ctx.state = false;
-+                    if (ctx.wake != null) {
-+                        return true;
-+                    }
-+                    goal.stop();
-+                }
-+
-+                ctxIndex++;
-+                ctx.state = true;
++        if (ctxState >= 65536) {
++            ctxState -= 65536;
++            ctxIndex = ctxRunningLength;
++            ctx.state = true;
++            if (ctxDirty) {
++                stateInit();
 +            }
-+
-+            this.lockedFlags.entrySet().removeIf(entry -> !entry.getValue().isRunning());
-+
-+            ctxIndex = 0;
++        }
++        if (ctxState == 0) {
++            if (stateCanContinueToUseStop()) return true;
++            ctxIndex = ctxNonRunningLength;
 +            ctx.state = true;
 +            ctxState = 1;
 +        }
 +        if (ctxState == 1) {
-+            while (ctxIndex < this.ctxGoals.length) {
-+                WrappedGoal goal = this.ctxGoals[ctxIndex];
-+                var flags = goal.getFlags();
-+                // entity and block
-+                if (!goal.isRunning() && !flags.hasCommonElements(this.goalTypes)) {
-+                    // inline
-+                    boolean result = true;
-+                    long flagIterator1 = flags.getBackingSet();
-+                    int wrappedGoalSize1 = flags.size();
-+                    for (int i1 = 0; i1 < wrappedGoalSize1; ++i1) {
-+                        final Goal.Flag flag1 = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator1)];
-+                        flagIterator1 ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator1);
-+                        if (!this.lockedFlags.getOrDefault(flag1, NO_GOAL).canBeReplacedBy(goal)) {
-+                            result = false;
-+                            break;
-+                        }
-+                    }
-+                    if (result) {
-+                        if (goal.canUse()) {
-+                            long flagIterator = flags.getBackingSet();
-+                            int wrappedGoalSize = flags.size();
-+                            for (int i = 0; i < wrappedGoalSize; ++i) {
-+                                final Goal.Flag flag = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator)];
-+                                flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
-+                                WrappedGoal wrappedGoal1 = this.lockedFlags.getOrDefault(flag, NO_GOAL);
-+                                wrappedGoal1.stop();
-+                                this.lockedFlags.put(flag, goal);
-+                            }
-+
-+                            goal.start();
-+                        }
-+                        ctx.state = false;
-+                        if (ctx.wake != null) {
-+                            return true;
-+                        }
-+                    }
-+                }
-+                // entity alert other
-+                if (!ctx.state) {
-+                    switch (goal.getGoal()) {
-+                        case net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal t -> t.poll();
-+                        case net.minecraft.world.entity.ai.goal.target.ResetUniversalAngerTargetGoal t -> t.poll();
-+                        default -> {}
-+                    }
-+                }
-+                ctxIndex++;
-+                ctx.state = true;
-+            }
-+
-+            ctxIndex = 0;
++            if (stateCanUseStart()) return true;
++            ctxIndex = ctxRunningLength;
 +            ctx.state = true;
 +            ctxState = 2;
 +        }
 +        if (ctxState == 2) {
-+            while (ctxIndex < this.ctxGoals.length) {
-+                WrappedGoal goal = this.ctxGoals[ctxIndex];
-+                if (goal.isRunning()) {
-+                    goal.tick();
-+                }
-+                ctxIndex++;
-+            }
-+
++            stateTickRunningAll();
 +            ctxState = -1;
-+            ctxIndex = 0;
-+            ctx.state = true;
 +        }
 +        if (ctxState == 3) {
-+            while (ctxIndex < this.ctxGoals.length) {
-+                WrappedGoal goal = this.ctxGoals[ctxIndex];
-+                if (goal.isRunning() && goal.requiresUpdateEveryTick()) {
-+                    goal.tick();
++            stateTickRunningPartial();
++            ctxState = -1;
++        }
++        return false;
++    }
++
++    private void stateInit() {
++        ctxDirty = false;
++        {
++            if (availableGoals.size() > ctxGoals.length) {
++                ctxGoals = new WrappedGoal[availableGoals.size()];
++            }
++            int i = 0;
++            for (WrappedGoal goal : this.availableGoals) {
++                ctxGoals[i] = goal;
++                i += 1;
++            }
++            for (; i < ctxGoals.length; i++) {
++                ctxGoals[i] = NO_GOAL;
++            }
++        }
++        if (ctxGoals.length > ctxRunning.length) {
++            ctxRunning = new int[ctxGoals.length];
++        }
++        if (ctxGoals.length > ctxNonRunning.length) {
++            ctxNonRunning = new int[ctxGoals.length];
++        }
++        ctxRunningLength = 0;
++        ctxNonRunningLength = 0;
++        for (int i = 0; i < ctxGoals.length; i++) {
++            final WrappedGoal goal = ctxGoals[i];
++            if (goal.isRunning()) {
++                ctxRunning[ctxRunningLength] = i;
++                ctxRunningLength += 1;
++            } else {
++                ctxNonRunning[ctxNonRunningLength] = i;
++                ctxNonRunningLength += 1;
++            }
++        }
++        it.unimi.dsi.fastutil.ints.IntArrays.quickSort(ctxRunning, 0, ctxRunningLength, (i, j) -> Integer.compare(ctxGoals[j].getPriority(), ctxGoals[i].getPriority()));
++        it.unimi.dsi.fastutil.ints.IntArrays.quickSort(ctxNonRunning, 0, ctxNonRunningLength, (i, j) -> Integer.compare(ctxGoals[j].getPriority(), ctxGoals[i].getPriority()));
++
++        if (ctxLockedFlags.length == 0) {
++            ctxLockedFlags = new int[GOAL_FLAG_VALUES.length];
++        }
++        for (int i = 0; i < GOAL_FLAG_VALUES.length; i++) {
++            final WrappedGoal goal = lockedFlags.get(GOAL_FLAG_VALUES[i]);
++            if (goal != null) {
++                if (goal.isInterruptable()) {
++                    ctxLockedFlags[i] = goal.getPriority();
++                } else {
++                    ctxLockedFlags[i] = -1;
 +                }
-+                ctxIndex++;
++            } else {
++                ctxLockedFlags[i] = Integer.MAX_VALUE;
++            }
++        }
++    }
++
++
++    private boolean stateCanContinueToUseStop() {
++        while (ctxIndex != 0) {
++            final WrappedGoal goal = ctxGoals[ctxRunning[ctxIndex - 1]];
++            final int flags = (int) goal.getFlags().backingSet;
++            boolean remove;
++            // entity TemptGoal
++            if ((((int) this.goalTypes.backingSet) & flags) != 0 || !goal.isRunning()) {
++                goal.stop();
++                remove = true;
++            } else if (!goal.canContinueToUse()) {
++                if (ctx.wake != null) {
++                    ctx.state = false;
++                    return true;
++                }
++                goal.stop();
++                remove = true;
++            } else {
++                remove = false;
 +            }
 +
-+            ctxState = -1;
-+            ctxIndex = 0;
++            if (remove) {
++                ctxNonRunning[ctxNonRunningLength] = ctxRunning[ctxIndex - 1];
++                ctxNonRunningLength++;
++                if (ctxIndex != ctxRunningLength) {
++                    ctxRunning[ctxIndex - 1] = ctxRunning[ctxRunningLength - 1];
++                }
++                ctxRunningLength--;
++            }
++            ctxIndex--;
++            ctx.state = true;
++        }
++
++        for (int i = 0; i < GOAL_FLAG_VALUES.length; i++) {
++            final WrappedGoal goal = lockedFlags.get(GOAL_FLAG_VALUES[i]);
++            if (goal != null && !goal.isRunning()) {
++                lockedFlags.remove(GOAL_FLAG_VALUES[i]);
++                ctxLockedFlags[i] = Integer.MAX_VALUE;
++            }
++        }
++        return false;
++    }
++
++    private boolean stateCanUseStart() {
++        while (ctxIndex != 0) {
++            boolean remove;
++            final WrappedGoal goal = ctxGoals[ctxNonRunning[ctxIndex - 1]];
++            final int flags = (int) goal.getFlags().backingSet;
++            if (goal.isRunning()) {
++                // entity alertOther
++                if (!ctx.state) {
++                    switch (goal.getGoal()) {
++                        case net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal t -> t.poll();
++                        case net.minecraft.world.entity.ai.goal.target.ResetUniversalAngerTargetGoal<?> t -> t.poll();
++                        default -> {
++                        }
++                    }
++                }
++                remove = true;
++            } else if ((((int) this.goalTypes.backingSet) & flags) == 0 && unrolledIter(flags, goal.getPriority(), ctxLockedFlags)) {
++                // entity and block
++                if (goal.canUse()) {
++                    unrolledIter2(flags, goal);
++                    goal.start();
++                }
++                if (ctx.wake != null) {
++                    ctx.state = false;
++                    return true;
++                }
++                remove = true;
++            } else {
++                remove = false;
++            }
++            if (remove) {
++                ctxRunning[ctxRunningLength] = ctxNonRunning[ctxIndex - 1];
++                ctxRunningLength++;
++                if (ctxIndex != ctxNonRunningLength) {
++                    ctxNonRunning[ctxIndex - 1] = ctxNonRunning[ctxNonRunningLength - 1];
++                }
++                ctxNonRunningLength--;
++            }
++            ctxIndex--;
 +            ctx.state = true;
 +        }
 +        return false;
++    }
++
++    private void stateTickRunningAll() {
++        while (ctxIndex != 0) {
++            final WrappedGoal goal = ctxGoals[ctxRunning[ctxIndex - 1]];
++            if (goal.isRunning()) {
++                goal.tick();
++            }
++            ctxIndex--;
++        }
++    }
++
++    private void stateTickRunningPartial() {
++        while (ctxIndex != 0) {
++            final WrappedGoal goal = ctxGoals[ctxRunning[ctxIndex - 1]];
++            if (goal.isRunning() && goal.requiresUpdateEveryTick()) {
++                goal.tick();
++            }
++            ctxIndex--;
++        }
++    }
++
++    private void unrolledIter2(int iter, WrappedGoal goal) {
++        if (iter == 0) {
++            return;
++        }
++        int priority = goal.isInterruptable() ? goal.getPriority() : -1;
++        if ((iter & 0b1) != 0) {
++            WrappedGoal wrappedGoal1 = lockedFlags.put(GOAL_FLAG_VALUES[0], goal);
++            if (wrappedGoal1 != null) {
++                wrappedGoal1.stop();
++            }
++            ctxLockedFlags[0] = priority;
++        }
++        if ((iter & 0b10) != 0) {
++            WrappedGoal wrappedGoal1 = lockedFlags.put(GOAL_FLAG_VALUES[1], goal);
++            if (wrappedGoal1 != null) {
++                wrappedGoal1.stop();
++            }
++            ctxLockedFlags[1] = priority;
++        }
++        if ((iter & 0b100) != 0) {
++            WrappedGoal wrappedGoal1 = lockedFlags.put(GOAL_FLAG_VALUES[2], goal);
++            if (wrappedGoal1 != null) {
++                wrappedGoal1.stop();
++            }
++            ctxLockedFlags[2] = priority;
++        }
++        if ((iter & 0b1000) != 0) {
++            WrappedGoal wrappedGoal1 = lockedFlags.put(GOAL_FLAG_VALUES[3], goal);
++            if (wrappedGoal1 != null) {
++                wrappedGoal1.stop();
++            }
++            ctxLockedFlags[3] = priority;
++        }
++        if ((iter & 0b10000) != 0) {
++            WrappedGoal wrappedGoal1 = lockedFlags.put(GOAL_FLAG_VALUES[4], goal);
++            if (wrappedGoal1 != null) {
++                wrappedGoal1.stop();
++            }
++            ctxLockedFlags[4] = priority;
++        }
++    }
++
++    private static boolean unrolledIter(int iter, int priority, int[] arr) {
++        return iter == 0 || (((iter & 0b1) == 0 || priority < arr[0])
++            && ((iter & 0b10) == 0 || priority < arr[1])
++            && ((iter & 0b100) == 0 || priority < arr[2])
++            && ((iter & 0b1000) == 0 || priority < arr[3])
++            && ((iter & 0b10000) == 0 || priority < arr[4]));
 +    }
 +    // Leaf end - Async target finding
 +
@@ -837,11 +1000,7 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..3c24382a3cced8dcea103ccc87cb5063
 +        // Leaf start - Async target finding
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
 +            if (ctxState == -1) {
-+                if (availableGoalsDirty || this.ctxGoals == null) {
-+                    this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);
-+                    availableGoalsDirty = false;
-+                }
-+                ctxState = 0;
++                ctxState = 65536;
 +            }
 +            return;
 +        }
@@ -850,18 +1009,14 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..3c24382a3cced8dcea103ccc87cb5063
          for (WrappedGoal wrappedGoal : this.availableGoals) {
              if (wrappedGoal.isRunning() && (goalContainsAnyFlags(wrappedGoal, this.goalTypes) || !wrappedGoal.canContinueToUse())) { // Paper - Perf: optimize goal types by removing streams
                  wrappedGoal.stop();
-@@ -116,6 +251,18 @@ public class GoalSelector {
+@@ -116,6 +388,14 @@ public class GoalSelector {
      }
  
      public void tickRunningGoals(boolean tickAllRunning) {
 +        // Leaf start - Async target finding
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
 +            if (ctxState == -1) {
-+                if (availableGoalsDirty || this.ctxGoals == null) {
-+                    this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);
-+                    availableGoalsDirty = false;
-+                }
-+                ctxState = tickAllRunning ? 2 : 3;
++                ctxState = tickAllRunning ? 2 + 65536 : 3 + 65536;
 +            }
 +            return;
 +        }
@@ -1419,6 +1574,18 @@ index f88f618d34fb343b31de3af1a875d6633703df71..754c379b42cf65c1d2278b474cdfbe50
              this.player = getServerLevel(this.mob)
                  .getNearestPlayer(this.targetingConditions.range(this.mob.getAttributeValue(Attributes.TEMPT_RANGE)), this.mob);
              // CraftBukkit start
+diff --git a/net/minecraft/world/entity/ai/goal/WrappedGoal.java b/net/minecraft/world/entity/ai/goal/WrappedGoal.java
+index 2c2ab6a1df9d3d23773e44ce4041cc1c21b55163..8a184ddedb9dd4e394d23732741ce219f0685669 100644
+--- a/net/minecraft/world/entity/ai/goal/WrappedGoal.java
++++ b/net/minecraft/world/entity/ai/goal/WrappedGoal.java
+@@ -14,6 +14,7 @@ public class WrappedGoal extends Goal {
+     }
+ 
+     public boolean canBeReplacedBy(WrappedGoal other) {
++        // Leaf - Async target finding - inline diff
+         return this.isInterruptable() && other.getPriority() < this.getPriority();
+     }
+ 
 diff --git a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java
 index 4644f3f7af89623ca6218c0dd24bb6cd67db553b..c9750ad322ddaa9c457f0e652d87c7abf8559358 100644
 --- a/net/minecraft/world/entity/ai/goal/target/DefendVillageTargetGoal.java

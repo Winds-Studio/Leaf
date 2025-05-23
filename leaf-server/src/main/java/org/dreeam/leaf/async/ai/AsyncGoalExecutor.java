@@ -8,6 +8,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
 import org.dreeam.leaf.util.queue.SpscIntQueue;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.OptionalInt;
 import java.util.concurrent.locks.LockSupport;
@@ -17,7 +18,7 @@ public class AsyncGoalExecutor {
     protected static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
     protected final SpscIntQueue queue;
     protected final SpscIntQueue wake;
-    protected final IntArrayList submit;
+    private final IntArrayList submit;
     private final AsyncGoalThread thread;
     private final ServerLevel world;
     private long midTickCount = 0L;
@@ -31,7 +32,7 @@ public class AsyncGoalExecutor {
     }
 
     boolean wake(int id) {
-        Entity entity = this.world.getEntities().get(id);
+        Entity entity = this.world.getEntity(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
@@ -40,8 +41,12 @@ public class AsyncGoalExecutor {
         return true;
     }
 
-    public final void submit(int entityId) {
-        this.submit.add(entityId);
+    public final void submit(@NotNull Mob mob) {
+        this.submit.add(mob.getId());
+    }
+
+    public final boolean hasTasks(@NotNull Mob mob) {
+        return mob.targetSelector.ctxState >= 65536 || mob.goalSelector.ctxState >= 65536;
     }
 
     public final void tick() {
@@ -87,7 +92,7 @@ public class AsyncGoalExecutor {
     }
 
     private boolean poll(int id) {
-        Entity entity = this.world.getEntities().get(id);
+        Entity entity = this.world.getEntity(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }

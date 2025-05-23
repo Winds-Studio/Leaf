@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Fri, 23 May 2025 12:01:42 +0900
+Subject: [PATCH] Cache block path type
+
+
+diff --git a/net/minecraft/server/Bootstrap.java b/net/minecraft/server/Bootstrap.java
+index 35b91f4daba4ac9751fa388d9da7d127db1356b0..60cc058db9227a61cc3186003efefc4888e06ddc 100644
+--- a/net/minecraft/server/Bootstrap.java
++++ b/net/minecraft/server/Bootstrap.java
+@@ -60,6 +60,7 @@ public class Bootstrap {
+                         io.papermc.paper.world.worldgen.OptionallyFlatBedrockConditionSource.bootstrap(); // Paper - Flat bedrock generator settings
+                     });
+                     // Paper end
++                    net.minecraft.world.level.block.Blocks.initPathType(); // Leaf - Cache path type
+                     CreativeModeTabs.validate();
+                     wrapStreams();
+                     bootstrapDuration.set(Duration.between(instant, Instant.now()).toMillis());
+diff --git a/net/minecraft/world/level/block/Blocks.java b/net/minecraft/world/level/block/Blocks.java
+index 07a8fbfa7eb6e684ea699f009ce2d19311994e39..c5840aad8b6a719873b06a6c5e30cba35555656f 100644
+--- a/net/minecraft/world/level/block/Blocks.java
++++ b/net/minecraft/world/level/block/Blocks.java
+@@ -6954,4 +6954,14 @@ public class Blocks {
+             }
+         }
+     }
++
++    // Leaf start - Cache path type
++    public static void initPathType() {
++        for (Block block : BuiltInRegistries.BLOCK) {
++            for (BlockState blockState : block.getStateDefinition().getPossibleStates()) {
++                blockState.initPathType();
++            }
++        }
++    }
++    // Leaf end - Cache path type
+ }
+diff --git a/net/minecraft/world/level/block/state/BlockBehaviour.java b/net/minecraft/world/level/block/state/BlockBehaviour.java
+index 3a49690672bc49259e863e5cde7f14d57c89fcd5..d498ee864362e378c430d0d2916d76cf8e69f069 100644
+--- a/net/minecraft/world/level/block/state/BlockBehaviour.java
++++ b/net/minecraft/world/level/block/state/BlockBehaviour.java
+@@ -476,6 +476,7 @@ public abstract class BlockBehaviour implements FeatureElement {
+         private boolean emptyCollisionShape;
+         private boolean emptyConstantCollisionShape;
+         private VoxelShape constantCollisionShape;
++        public net.minecraft.world.level.pathfinder.PathType pathType; // Leaf - Cache path type
+ 
+         private static void initCaches(final VoxelShape shape, final boolean neighbours) {
+             ((ca.spottedleaf.moonrise.patches.collisions.shape.CollisionVoxelShape)shape).moonrise$isFullBlock();
+@@ -645,6 +646,12 @@ public abstract class BlockBehaviour implements FeatureElement {
+             // Paper end - optimise collisions
+         }
+ 
++        // Leaf start - Cache path type
++        public void initPathType() {
++            pathType = net.minecraft.world.level.pathfinder.WalkNodeEvaluator.getPathTypeFromState(this.asState());
++        }
++        // Leaf end - Cache path type
++
+         public Block getBlock() {
+             return this.owner;
+         }
+diff --git a/net/minecraft/world/level/pathfinder/PathTypeCache.java b/net/minecraft/world/level/pathfinder/PathTypeCache.java
+index 3b190ba2a719cc45045d9be893884b50b9364b58..b44f6562a7f7651b2728ba49699031000b54b818 100644
+--- a/net/minecraft/world/level/pathfinder/PathTypeCache.java
++++ b/net/minecraft/world/level/pathfinder/PathTypeCache.java
+@@ -24,7 +24,7 @@ public class PathTypeCache {
+     }
+ 
+     private PathType compute(BlockGetter level, BlockPos pos, int index, long packedPos) {
+-        PathType pathTypeFromState = WalkNodeEvaluator.getPathTypeFromState(level, pos);
++        PathType pathTypeFromState = WalkNodeEvaluator.leafPathType(level, pos); // Leaf - Cache path type
+         this.positions[index] = packedPos;
+         this.pathTypes[index] = pathTypeFromState;
+         return pathTypeFromState;
+diff --git a/net/minecraft/world/level/pathfinder/PathfindingContext.java b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+index 4eca1dd0819c7ee7a77e45fc5fa03f4ee5cdceaf..ff68b19b5fe4c80872d483363611b843146de989 100644
+--- a/net/minecraft/world/level/pathfinder/PathfindingContext.java
++++ b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+@@ -27,7 +27,7 @@ public class PathfindingContext {
+ 
+     public PathType getPathTypeFromState(int x, int y, int z) {
+         BlockPos blockPos = this.mutablePos.set(x, y, z);
+-        return this.cache == null ? WalkNodeEvaluator.getPathTypeFromState(this.level, blockPos) : this.cache.getOrCompute(this.level, blockPos);
++        return this.cache == null ? WalkNodeEvaluator.leafPathType(this.level, blockPos) : this.cache.getOrCompute(this.level, blockPos); // Leaf - Cache path type
+     }
+ 
+     public BlockState getBlockState(BlockPos pos) {
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+index db6baaa698fe93aba3fbd595158b568badd6cb8a..5bd1300ef82a1d431c098d9cf75a7fa9d5a43502 100644
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -479,6 +479,16 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+         return pathType;
+     }
+ 
++    // Leaf start - Cache path type
++    public static PathType leafPathType(BlockGetter level, BlockPos blockPos) {
++        BlockState blockState = level.getBlockStateIfLoaded(blockPos);
++        if (blockState == null) {
++            return PathType.BLOCKED;
++        }
++        return blockState.pathType;
++    }
++    // Leaf end - Cache path type
++
+     protected static PathType getPathTypeFromState(BlockGetter level, BlockPos pos) {
+         // Paper start - Do not load chunks during pathfinding
+         BlockState blockState = level.getBlockStateIfLoaded(pos);
+@@ -486,6 +496,12 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+             return PathType.BLOCKED;
+         }
+         // Paper end
++        // Leaf start - Cache path type
++        return getPathTypeFromState(blockState);
++    }
++
++    public static PathType getPathTypeFromState(BlockState blockState) {
++        // Leaf end - Cache path type
+         Block block = blockState.getBlock();
+         if (blockState.isAir()) {
+             return PathType.OPEN;
