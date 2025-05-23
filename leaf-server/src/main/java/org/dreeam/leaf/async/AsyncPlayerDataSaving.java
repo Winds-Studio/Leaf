@@ -131,10 +131,6 @@ public class AsyncPlayerDataSaving {
             return;
         }
 
-        if (!TickThread.isTickThread() || TickThread.isServerLevelTickThread()) {
-            LOGGER.warn("load player data off-main {} {} {}", type, uuid, playerName, new Throwable());
-        }
-
         Future<?> fut = switch (type) {
             case ENTITY -> entityFut.get(uuid);
             case ADVANCEMENTS -> advancementsFut.get(uuid);
