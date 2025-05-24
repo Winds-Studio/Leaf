@@ -32,6 +32,15 @@ public class MultithreadedTracker {
     private static long lastWarnMillis = System.currentTimeMillis();
     private static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
+    private record SendChanges(Object[] entities, int size) implements Runnable {
+        @Override
+        public void run() {
+            for (int i = 0; i < size; i++) {
+                ((ServerEntity) entities[i]).sendDirtyEntityData();
+            }
+        }
+    }
+
     private MultithreadedTracker() {
     }
 
@@ -90,7 +99,7 @@ public class MultithreadedTracker {
                 }
             }
             if (!sendDirty.isEmpty()) {
-                level.getServer().execute(() -> sendDirty.forEach(ServerEntity::sendDirtyEntityData));
+                level.getServer().execute(new SendChanges(sendDirty.elements(), sendDirty.size()));
             }
         });
     }
@@ -131,6 +140,7 @@ public class MultithreadedTracker {
 
                 sendChanges.run();
             }
+
             ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
@@ -144,7 +154,7 @@ public class MultithreadedTracker {
                 }
             }
             if (!sendDirty.isEmpty()) {
-                level.getServer().execute(() -> sendDirty.forEach(ServerEntity::sendDirtyEntityData));
+                level.getServer().execute(new SendChanges(sendDirty.elements(), sendDirty.size()));
             }
         });
     }
