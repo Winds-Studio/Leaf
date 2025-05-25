@@ -3,8 +3,8 @@ package org.dreeam.leaf.async.ai;
 import net.minecraft.Util;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import org.jetbrains.annotations.NotNull;
 
-import java.util.OptionalInt;
 import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalThread extends Thread {
@@ -17,34 +17,11 @@ public class AsyncGoalThread extends Thread {
         this.start();
     }
 
-    private static void run(MinecraftServer server) {
+    private static void run(@NotNull MinecraftServer server) {
         while (server.isRunning()) {
             boolean retry = false;
             for (ServerLevel level : server.getAllLevels()) {
-                var exec = level.asyncGoalExecutor;
-                while (true) {
-                    OptionalInt result = exec.queue.recv();
-                    if (result.isEmpty()) {
-                        break;
-                    }
-                    int id = result.getAsInt();
-                    retry = true;
-                    if (exec.wake(id)) {
-                        while (!exec.wake.send(id)) {
-                            Thread.onSpinWait();
-                        }
-                    }
-                }
-                while (true) {
-                    OptionalInt result = exec.pathFindQueue.recv();
-                    if (result.isEmpty()) {
-                        break;
-                    }
-                    int id = result.getAsInt();
-                    retry = true;
-                    exec.wakePathFind(id);
-                }
-
+                retry |= level.asyncGoalExecutor.runAll();
                 Thread.yield();
             }
 

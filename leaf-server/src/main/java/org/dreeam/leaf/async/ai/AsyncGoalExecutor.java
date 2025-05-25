@@ -41,30 +41,6 @@ public class AsyncGoalExecutor {
         this.thread = thread;
     }
 
-    boolean wake(int id) {
-        Entity entity = this.world.getEntities().get(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return false;
-        }
-        mob.goalSelector.ctx.wake();
-        mob.targetSelector.ctx.wake();
-        return true;
-    }
-
-    void wakePathFind(int id) {
-        Entity entity = this.world.getEntities().get(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return;
-        }
-        if (mob.getNavigationUnchecked().getPath() instanceof AsyncPath asyncPath) {
-            if (asyncPath.wake() instanceof List<?> list) {
-                for (Object o : list) {
-                    this.pathFindPostProcess.add((Runnable) o);
-                }
-            }
-        }
-    }
-
     public final void submitFindPath(int id) {
         if (!pathFindQueue.send(id)) {
             wakePathFind(id);
@@ -99,15 +75,6 @@ public class AsyncGoalExecutor {
         this.submit.clear();
     }
 
-    private void runPathFindPostProcess() {
-        synchronized (pathFindPostProcess) {
-            for (final Runnable findPostProcess : this.pathFindPostProcess) {
-                findPostProcess.run();
-            }
-            pathFindPostProcess.clear();
-        }
-    }
-
     public final void midTick() {
         runPathFindPostProcess();
         while (true) {
@@ -129,6 +96,15 @@ public class AsyncGoalExecutor {
         midTickCount += 1;
     }
 
+    private void runPathFindPostProcess() {
+        synchronized (pathFindPostProcess) {
+            for (final Runnable findPostProcess : this.pathFindPostProcess) {
+                findPostProcess.run();
+            }
+            pathFindPostProcess.clear();
+        }
+    }
+
     private boolean poll(int id) {
         Entity entity = this.world.getEntities().get(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
@@ -145,6 +121,57 @@ public class AsyncGoalExecutor {
             LOGGER.error("Exception while polling", e);
             // retry
             return true;
+        }
+    }
+
+    boolean runAll() {
+        boolean success = false;
+        while (true) {
+            OptionalInt result = queue.recv();
+            if (result.isEmpty()) {
+                break;
+            }
+            int id = result.getAsInt();
+            success = true;
+            if (wake(id)) {
+                while (!wake.send(id)) {
+                    Thread.onSpinWait();
+                }
+            }
+        }
+        while (true) {
+            OptionalInt result = pathFindQueue.recv();
+            if (result.isEmpty()) {
+                break;
+            }
+            int id = result.getAsInt();
+            success = true;
+            wakePathFind(id);
+        }
+        return success;
+    }
+
+    private boolean wake(int id) {
+        Entity entity = this.world.getEntities().get(id);
+        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
+            return false;
+        }
+        mob.goalSelector.ctx.wake();
+        mob.targetSelector.ctx.wake();
+        return true;
+    }
+
+    private void wakePathFind(int id) {
+        Entity entity = this.world.getEntities().get(id);
+        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
+            return;
+        }
+        if (mob.getNavigationUnchecked().getPath() instanceof AsyncPath asyncPath) {
+            if (asyncPath.wake() instanceof List<?> list) {
+                for (Object o : list) {
+                    this.pathFindPostProcess.add((Runnable) o);
+                }
+            }
         }
     }
 }
