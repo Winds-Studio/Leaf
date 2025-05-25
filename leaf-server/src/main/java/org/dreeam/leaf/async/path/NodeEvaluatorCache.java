@@ -1,21 +1,22 @@
 package org.dreeam.leaf.async.path;
 
 import ca.spottedleaf.concurrentutil.collection.MultiThreadedQueue;
+import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
+import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.minecraft.world.level.pathfinder.NodeEvaluator;
 import org.apache.commons.lang.Validate;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class NodeEvaluatorCache {
 
-    private static final Map<NodeEvaluatorFeatures, MultiThreadedQueue<NodeEvaluator>> threadLocalNodeEvaluators = new ConcurrentHashMap<>();
-    private static final Map<NodeEvaluator, NodeEvaluatorGenerator> nodeEvaluatorToGenerator = new ConcurrentHashMap<>();
+    private static final Object2ObjectMap<NodeEvaluatorFeatures, MultiThreadedQueue<NodeEvaluator>> evaluators = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
+    private static final Object2ObjectMap<NodeEvaluator, NodeEvaluatorGenerator> nodeEvaluatorToGenerator = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
 
     private static @NotNull Queue<NodeEvaluator> getQueueForFeatures(@NotNull NodeEvaluatorFeatures nodeEvaluatorFeatures) {
-        return threadLocalNodeEvaluators.computeIfAbsent(nodeEvaluatorFeatures, key -> new MultiThreadedQueue<>());
+        return evaluators.computeIfAbsent(nodeEvaluatorFeatures, key -> new MultiThreadedQueue<>());
     }
 
     public static @NotNull NodeEvaluator takeNodeEvaluator(@NotNull NodeEvaluatorGenerator generator, @NotNull NodeEvaluator localNodeEvaluator) {

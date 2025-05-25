@@ -35,6 +35,15 @@ public class AsyncGoalThread extends Thread {
                         }
                     }
                 }
+                while (true) {
+                    OptionalInt result = exec.pathFindQueue.recv();
+                    if (result.isEmpty()) {
+                        break;
+                    }
+                    int id = result.getAsInt();
+                    retry = true;
+                    exec.wakePathFind(id);
+                }
 
                 Thread.yield();
             }

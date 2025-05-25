@@ -1,32 +1,43 @@
 package org.dreeam.leaf.async.ai;
 
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
+import it.unimi.dsi.fastutil.objects.ReferenceList;
+import it.unimi.dsi.fastutil.objects.ReferenceLists;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.async.path.AsyncPath;
 import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
 import org.dreeam.leaf.util.queue.SpscIntQueue;
 
+import java.util.List;
 import java.util.OptionalInt;
 import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalExecutor {
 
-    protected static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
-    protected final SpscIntQueue queue;
-    protected final SpscIntQueue wake;
-    protected final IntArrayList submit;
+    protected static final Logger LOGGER = LogManager.getLogger("Leaf Async AI");
     private final AsyncGoalThread thread;
     private final ServerLevel world;
     private long midTickCount = 0L;
+
+    protected final SpscIntQueue queue;
+    protected final SpscIntQueue wake;
+    protected final IntArrayList submit;
+
+    private final ReferenceList<Runnable> pathFindPostProcess;
+    protected final SpscIntQueue pathFindQueue;
 
     public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
         this.world = world;
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.submit = new IntArrayList();
+        this.pathFindQueue = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.pathFindPostProcess = ReferenceLists.synchronize(new ReferenceArrayList<>());
         this.thread = thread;
     }
 
@@ -40,12 +51,34 @@ public class AsyncGoalExecutor {
         return true;
     }
 
+    void wakePathFind(int id) {
+        Entity entity = this.world.getEntities().get(id);
+        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
+            return;
+        }
+        if (mob.getNavigationUnchecked().getPath() instanceof AsyncPath asyncPath) {
+            if (asyncPath.wake() instanceof List<?> list) {
+                for (Object o : list) {
+                    this.pathFindPostProcess.add((Runnable) o);
+                }
+            }
+        }
+    }
+
+    public final void submitFindPath(int id) {
+        if (!pathFindQueue.send(id)) {
+            wakePathFind(id);
+            runPathFindPostProcess();
+        }
+    }
+
     public final void submit(int entityId) {
         this.submit.add(entityId);
     }
 
     public final void tick() {
         batchSubmit();
+        runPathFindPostProcess();
         LockSupport.unpark(thread);
     }
 
@@ -66,7 +99,17 @@ public class AsyncGoalExecutor {
         this.submit.clear();
     }
 
+    private void runPathFindPostProcess() {
+        synchronized (pathFindPostProcess) {
+            for (final Runnable findPostProcess : this.pathFindPostProcess) {
+                findPostProcess.run();
+            }
+            pathFindPostProcess.clear();
+        }
+    }
+
     public final void midTick() {
+        runPathFindPostProcess();
         while (true) {
             OptionalInt result = this.wake.recv();
             if (result.isEmpty()) {

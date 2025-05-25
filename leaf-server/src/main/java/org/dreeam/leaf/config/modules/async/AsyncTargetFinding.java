@@ -14,6 +14,8 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean alertOther = true;
     public static boolean searchBlock = true;
     public static boolean searchEntity = true;
+    public static boolean randomStroll = true;
+    public static boolean pathfinding = true;
     public static int queueSize = 4096;
     public static long threshold = 10L;
     private static boolean asyncTargetFindingInitialized;
@@ -36,6 +38,8 @@ public class AsyncTargetFinding extends ConfigModules {
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
+        randomStroll = config.getBoolean(getBasePath() + ".async-random-stroll-around", true);
+        pathfinding = config.getBoolean(getBasePath() + ".async-pathfinding", true);
         queueSize = config.getInt(getBasePath() + ".queue-size", 0);
         threshold = config.getLong(getBasePath() + ".threshold", 0);
 
@@ -49,6 +53,8 @@ public class AsyncTargetFinding extends ConfigModules {
             alertOther = false;
             searchEntity = false;
             searchBlock = false;
+            randomStroll = false;
+            pathfinding = false;
         }
     }
 }

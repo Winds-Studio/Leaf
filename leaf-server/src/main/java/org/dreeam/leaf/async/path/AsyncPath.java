@@ -1,22 +1,26 @@
 package org.dreeam.leaf.async.path;
 
+import ca.spottedleaf.moonrise.common.util.TickThread;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.pathfinder.Node;
-import net.minecraft.world.level.pathfinder.Path;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.pathfinder.*;
 import net.minecraft.world.phys.Vec3;
+import org.dreeam.leaf.async.ai.VWaker;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
 
 /**
  * i'll be using this to represent a path that not be processed yet!
  */
-public class AsyncPath extends Path {
+public class AsyncPath extends Path implements VWaker {
 
     /**
      * marks whether this async path has been processed
@@ -31,12 +35,7 @@ public class AsyncPath extends Path {
     /**
      * a list of positions that this path could path towards
      */
-    private final Set<BlockPos> positions;
-
-    /**
-     * the supplier of the real processed path
-     */
-    private final Supplier<Path> pathSupplier;
+    private final Set<BlockPos> targetPositions;
 
     /*
      * Processed values
@@ -65,15 +64,28 @@ public class AsyncPath extends Path {
      */
     private boolean canReach = true;
 
-    public AsyncPath(@NotNull List<Node> emptyNodeList, @NotNull Set<BlockPos> positions, @NotNull Supplier<Path> pathSupplier) {
+    private final PathFinder pathFinder;
+    private final NodeEvaluator nodeEvaluator;
+    private final Node node;
+    private final List<Map.Entry<Target, BlockPos>> positions;
+    private final float maxRange;
+    private final int accuracy;
+    private final float searchDepthMultiplier;
+
+    public AsyncPath(Mob mob, PathFinder pathFinder, NodeEvaluator nodeEvaluator, Node node, List<Map.Entry<Target, BlockPos>> positions, float maxRange, int accuracy, float searchDepthMultiplier, @NotNull List<Node> emptyNodeList, @NotNull Set<BlockPos> targetPositions) {
         //noinspection ConstantConditions
         super(emptyNodeList, null, false);
 
         this.nodes = emptyNodeList;
+        this.targetPositions = targetPositions;
+        this.pathFinder = pathFinder;
+        this.nodeEvaluator = nodeEvaluator;
+        this.node = node;
         this.positions = positions;
-        this.pathSupplier = pathSupplier;
-
-        AsyncPathProcessor.queue(this);
+        this.maxRange = maxRange;
+        this.accuracy = accuracy;
+        this.searchDepthMultiplier = searchDepthMultiplier;
+        ((ServerLevel) mob.level()).asyncGoalExecutor.submitFindPath(mob.getId());
     }
 
     @Override
@@ -86,7 +98,11 @@ public class AsyncPath extends Path {
      */
     public synchronized void postProcessing(@NotNull Runnable runnable) {
         if (isProcessed()) {
-            runnable.run();
+            if (TickThread.isTickThread()) {
+                runnable.run();
+            } else {
+                MinecraftServer.getServer().execute(runnable);
+            }
         } else {
             this.postProcessing.add(runnable);
         }
@@ -99,36 +115,43 @@ public class AsyncPath extends Path {
      * @return true if we are processing the same positions
      */
     public boolean hasSameProcessingPositions(final Set<BlockPos> positions) {
-        if (this.positions.size() != positions.size()) {
+        if (this.targetPositions.size() != positions.size()) {
             return false;
         }
 
-        return this.positions.containsAll(positions);
+        return this.targetPositions.containsAll(positions);
     }
 
     /**
      * starts processing this path
      */
-    public synchronized void process() {
+    @Override
+    public synchronized Object wake() {
         if (this.processState == PathProcessState.COMPLETED ||
             this.processState == PathProcessState.PROCESSING) {
-            return;
+            return null;
         }
 
         processState = PathProcessState.PROCESSING;
 
-        final Path bestPath = this.pathSupplier.get();
-
-        this.nodes.addAll(bestPath.nodes); // we mutate this list to reuse the logic in Path
-        this.target = bestPath.getTarget();
-        this.distToTarget = bestPath.getDistToTarget();
-        this.canReach = bestPath.canReach();
-
-        processState = PathProcessState.COMPLETED;
-
-        for (Runnable runnable : this.postProcessing) {
-            runnable.run();
-        } // Run tasks after processing
+        Path bestPath;
+        try {
+            bestPath = pathFinder.processPath(nodeEvaluator, node, positions, maxRange, accuracy, searchDepthMultiplier);
+            this.nodes.addAll(bestPath.nodes); // we mutate this list to reuse the logic in Path
+            this.target = bestPath.getTarget();
+            this.distToTarget = bestPath.getDistToTarget();
+            this.canReach = bestPath.canReach();
+            var postProcessing = this.postProcessing;
+            this.postProcessing.clear();
+            return postProcessing;
+        } catch (Exception e) {
+            AsyncPathProcessor.LOGGER.error(e);
+            return null;
+        } finally {
+            processState = PathProcessState.COMPLETED;
+            nodeEvaluator.done();
+            NodeEvaluatorCache.returnNodeEvaluator(nodeEvaluator);
+        }
     }
 
     /**
@@ -137,7 +160,17 @@ public class AsyncPath extends Path {
     private void checkProcessed() {
         if (this.processState == PathProcessState.WAITING ||
             this.processState == PathProcessState.PROCESSING) { // Block if we are on processing
-            this.process();
+            if (this.wake() instanceof List<?> list) {
+                try {
+                    for (Object o : list) {
+                        if (o instanceof Runnable r) {
+                            r.run();
+                        }
+                    }
+                } catch (Exception e) {
+                    AsyncPathProcessor.LOGGER.error(e);
+                }
+            }
         }
     }
 
