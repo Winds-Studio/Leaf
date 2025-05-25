@@ -106,26 +106,36 @@ index b6af8da084c83ee38bb3ecea6a98feb0c1c74d2a..561723eeb1dd80f7fdd9aff33f6e1c4c
          final EntityCollectionBySection byType = this.entitiesByType.get(entity.getType());
          byType.removeEntity(entity, sectionIndex);
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 24926aa7ed5c78b235659daf18b224b14beb744c..98af1ad020a003db66d7319f33d43deec315aec5 100644
+index 24926aa7ed5c78b235659daf18b224b14beb744c..69f722daa45cea42eaebda33fe7320f43a80b718 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -292,6 +292,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -160,6 +160,7 @@ import net.minecraft.world.level.storage.ServerLevelData;
+ import net.minecraft.world.level.storage.WorldData;
+ import net.minecraft.world.phys.Vec2;
+ import net.minecraft.world.phys.Vec3;
++import org.dreeam.leaf.async.ai.AsyncGoalThread;
+ import org.slf4j.Logger;
+ 
+ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTask> implements ServerInfo, ChunkIOErrorReporter, CommandSource, ca.spottedleaf.moonrise.patches.chunk_system.server.ChunkSystemMinecraftServer { // Paper - rewrite chunk system
+@@ -292,6 +293,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
      public gg.pufferfish.pufferfish.util.AsyncExecutor mobSpawnExecutor = new gg.pufferfish.pufferfish.util.AsyncExecutor("Leaf Async Mob Spawn Thread"); // Pufferfish - optimize mob spawning // Leaf - Fix Pufferfish and Purpur patches - Unify thread name
      public final Set<net.minecraft.world.entity.Entity> entitiesWithScheduledTasks = java.util.concurrent.ConcurrentHashMap.newKeySet(); // SparklyPaper - skip EntityScheduler's executeTick checks if there isn't any tasks to be run (concurrent because plugins may schedule tasks async)
      public java.util.concurrent.Semaphore serverLevelTickingSemaphore = null; // SparklyPaper - parallel world ticking
-+    @Nullable public org.dreeam.leaf.async.ai.AsyncGoalThread asyncGoalThread; // Leaf - Async target finding
++    @Nullable public List<org.dreeam.leaf.async.ai.AsyncGoalThread> asyncGoalThread; // Leaf - Async target finding
  
      public static <S extends MinecraftServer> S spin(Function<Thread, S> threadFunction) {
          ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry.init(); // Paper - rewrite data converter system
-@@ -1088,6 +1089,14 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1088,6 +1090,16 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              org.dreeam.leaf.async.AsyncPlayerDataSaving.IO_POOL.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
          } catch (java.lang.InterruptedException ignored) {}
          // Leaf end - Async playerdata saving
 +        // Leaf start - Async target finding
 +        if (this.asyncGoalThread != null) {
-+            try {
-+                this.asyncGoalThread.join();
-+            } catch (java.lang.InterruptedException ignored) {
++            for (AsyncGoalThread goalThread : this.asyncGoalThread) {
++                try {
++                    goalThread.join();
++                } catch (java.lang.InterruptedException ignored) {
++                }
 +            }
 +        }
 +        // Leaf end - Async target finding
@@ -133,23 +143,26 @@ index 24926aa7ed5c78b235659daf18b224b14beb744c..98af1ad020a003db66d7319f33d43dee
  
      public String getLocalIp() {
 diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
-index 33dd16a26edd2974f04d9a868d3e58e8e3060032..eb0589b203bcf72cd24bb37f2c448c23cb8d6f2b 100644
+index 33dd16a26edd2974f04d9a868d3e58e8e3060032..7b395332fc049985a99204f561bd69302bc3b606 100644
 --- a/net/minecraft/server/dedicated/DedicatedServer.java
 +++ b/net/minecraft/server/dedicated/DedicatedServer.java
-@@ -255,6 +255,11 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+@@ -255,6 +255,14 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
              DedicatedServer.LOGGER.info("Using " + serverLevelTickingSemaphore.availablePermits() + " permits for parallel world ticking"); // SparklyPaper - parallel world ticking
          }
          // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
 +        // Leaf start - Async target finding
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            asyncGoalThread = new org.dreeam.leaf.async.ai.AsyncGoalThread(this);
++            asyncGoalThread = new java.util.ArrayList<>(org.dreeam.leaf.config.modules.async.AsyncTargetFinding.threadCount);
++            for (int i = org.dreeam.leaf.config.modules.async.AsyncTargetFinding.threadCount; i > 0; i--) {
++                asyncGoalThread.add(new org.dreeam.leaf.async.ai.AsyncGoalThread(this));
++            }
 +        }
 +        // Leaf end - Async target finding
          com.destroystokyo.paper.VersionHistoryManager.INSTANCE.getClass(); // Paper - load version history now
  
          // Gale start - Pufferfish - SIMD support
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 9af7dafe03812d96aa477584d4147a68c240ab21..e6fd46b8148e050c4807abf6c8a03e4747bc0da2 100644
+index 9af7dafe03812d96aa477584d4147a68c240ab21..8f0e29e33262099debb5e31959a6fabb0fb86528 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -177,7 +177,16 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -197,7 +210,7 @@ index 9af7dafe03812d96aa477584d4147a68c240ab21..e6fd46b8148e050c4807abf6c8a03e47
          this.tickExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(new org.dreeam.leaf.async.world.SparklyPaperServerLevelTickExecutorThreadFactory(getWorld().getName())); // SparklyPaper - parallel world ticking
 +        // Leaf start - Async target finding
 +        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
-+            this.asyncGoalExecutor = new org.dreeam.leaf.async.ai.AsyncGoalExecutor(server.asyncGoalThread, this);
++            this.asyncGoalExecutor = new org.dreeam.leaf.async.ai.AsyncGoalExecutor(this);
 +        } else {
 +            this.asyncGoalExecutor = null;
 +        }
@@ -669,7 +682,7 @@ index 3093f03d4f298bf39fec8bad2b6c22518774aea8..0a41797fd7beddce0b93d42bac6e0270
              } else {
                  this.parent = animal;
 diff --git a/net/minecraft/world/entity/ai/goal/GoalSelector.java b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-index e82e32407cec6109b9c3b0106295217f4a3f4aa2..84668aaea88114b22a4f18cd03d02323a35841e1 100644
+index e82e32407cec6109b9c3b0106295217f4a3f4aa2..6d43f2f526cf1aa28bf6747fbf67c2944aa95604 100644
 --- a/net/minecraft/world/entity/ai/goal/GoalSelector.java
 +++ b/net/minecraft/world/entity/ai/goal/GoalSelector.java
 @@ -26,13 +26,24 @@ public class GoalSelector {
@@ -858,7 +871,7 @@ index e82e32407cec6109b9c3b0106295217f4a3f4aa2..84668aaea88114b22a4f18cd03d02323
 +
      public void tick() {
 +        // Leaf start - Async target finding
-+        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.enabled) {
++        if (org.dreeam.leaf.config.modules.async.AsyncTargetFinding.goalEnabled) {
 +            if (ctxState == -1) {
 +                if (ctxGoalsDirty) {
 +                    this.ctxGoals = this.availableGoals.toArray(new WrappedGoal[0]);

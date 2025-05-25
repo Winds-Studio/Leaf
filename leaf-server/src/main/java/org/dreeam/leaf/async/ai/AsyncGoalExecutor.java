@@ -15,35 +15,32 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.async.path.AsyncPath;
 import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
-import org.dreeam.leaf.util.queue.SpscIntQueue;
+import org.dreeam.leaf.util.queue.MpmcIntQueue;
 
 import java.util.List;
 import java.util.OptionalInt;
-import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalExecutor {
 
     protected static final Logger LOGGER = LogManager.getLogger("Leaf Async AI");
-    private final AsyncGoalThread thread;
     private final ServerLevel world;
     private long midTickCount = 0L;
 
-    protected final SpscIntQueue queue;
-    protected final SpscIntQueue wake;
+    protected final MpmcIntQueue queue;
+    protected final MpmcIntQueue wake;
     protected final IntArrayList submit;
 
     private final ReferenceList<Runnable> pathFindPostProcess;
-    protected final SpscIntQueue pathFindQueue;
+    protected final MpmcIntQueue pathFindQueue;
     private final PriorityQueue<Path> brainPath = PriorityQueues.synchronize(new ObjectArrayFIFOQueue<>());
 
-    public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
+    public AsyncGoalExecutor(ServerLevel world) {
         this.world = world;
-        this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.queue = new MpmcIntQueue(AsyncTargetFinding.queueSize);
+        this.wake = new MpmcIntQueue(AsyncTargetFinding.queueSize);
         this.submit = new IntArrayList();
-        this.pathFindQueue = new SpscIntQueue(AsyncTargetFinding.queueSize);
+        this.pathFindQueue = new MpmcIntQueue(AsyncTargetFinding.queueSize);
         this.pathFindPostProcess = ReferenceLists.synchronize(new ReferenceArrayList<>());
-        this.thread = thread;
     }
 
     public final void submitBrainPath(Path path) {
@@ -64,7 +61,6 @@ public class AsyncGoalExecutor {
     public final void tick() {
         batchSubmit();
         runPathFindPostProcess();
-        LockSupport.unpark(thread);
     }
 
     private void batchSubmit() {
@@ -167,6 +163,7 @@ public class AsyncGoalExecutor {
                 }
             }
             wakeBrain(path);
+            success = true;
         }
         return success;
     }
@@ -196,11 +193,9 @@ public class AsyncGoalExecutor {
     }
 
     private void wakeBrain(Path path) {
-        if (path instanceof AsyncPath asyncPath) {
-            if (asyncPath.wake() instanceof List<?> list) {
-                for (Object o : list) {
-                    this.pathFindPostProcess.add((Runnable) o);
-                }
+        if (path instanceof AsyncPath asyncPath && asyncPath.wake() instanceof List<?> list) {
+            for (Object o : list) {
+                this.pathFindPostProcess.add((Runnable) o);
             }
         }
     }
