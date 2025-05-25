@@ -1,64 +1,85 @@
 package org.dreeam.leaf.util.queue;
 
 import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class MpmcIntQueue {
+    static final class Slot {
+        public volatile long sequence;
+        public volatile int value;
 
-    private final int[] data;
-    private final PaddedAtomicInteger producerIdx = new PaddedAtomicInteger();
-    private final PaddedAtomicInteger consumerIdx = new PaddedAtomicInteger();
-
-    public MpmcIntQueue(int size) {
-        this.data = new int[size + 1];
+        Slot(long sequence) {
+            this.sequence = sequence;
+        }
     }
 
-    public final boolean send(int e) {
-        while (true) {
-            int currentProducer = producerIdx.get();
-            int nextProducer = currentProducer + 1;
-            if (nextProducer == data.length) {
-                nextProducer = 0;
-            }
+    private final int capacity;
+    private final Padded padded1 = new Padded();
+    private final AtomicReferenceArray<Slot> buffer;
+    private final Padded padded2 = new Padded();
+    private final AtomicLong head = new AtomicLong();
+    private final Padded padded3 = new Padded();
+    private final AtomicLong tail = new AtomicLong();
 
-            int currentConsumer = consumerIdx.get();
-            if (nextProducer == currentConsumer) {
+    public MpmcIntQueue(int capacity) {
+        this.capacity = capacity;
+        buffer = new AtomicReferenceArray<>(capacity);
+        for (int i = 0; i < capacity; i++) {
+            buffer.set(i, new Slot(i));
+        }
+    }
+
+    public boolean send(int value) {
+        while (true) {
+            long currentTail = tail.get();
+            int index = (int) (currentTail % capacity);
+            Slot slot = buffer.get(index);
+            long seq = slot.sequence;
+
+            long dif = seq - currentTail;
+
+            if (dif == 0) {
+                if (tail.compareAndSet(currentTail, currentTail + 1)) {
+                    slot.value = value;
+                    slot.sequence = currentTail + 1;
+                    return true;
+                }
+            } else if (dif < 0) {
                 return false;
-            }
-
-            if (producerIdx.compareAndSet(currentProducer, nextProducer)) {
-                data[currentProducer] = e;
-                return true;
+            } else {
+                Thread.onSpinWait();
             }
         }
     }
 
-
-    public final OptionalInt recv() {
+    public OptionalInt recv() {
         while (true) {
-            int currentConsumer = consumerIdx.get();
-            int currentProducer = producerIdx.get();
+            long currentHead = head.get();
+            int index = (int) (currentHead % capacity);
+            Slot slot = buffer.get(index);
+            long seq = slot.sequence;
+            long dif = seq - (currentHead + 1);
 
-            if (currentConsumer == currentProducer) {
-                return OptionalInt.empty();
-            }
-
-            int nextConsumer = currentConsumer + 1;
-            if (nextConsumer == data.length) {
-                nextConsumer = 0;
-            }
-
-            int e = data[currentConsumer];
-            if (consumerIdx.compareAndSet(currentConsumer, nextConsumer)) {
-                return OptionalInt.of(e);
+            if (dif == 0) {
+                if (head.compareAndSet(currentHead, currentHead + 1)) {
+                    int value = slot.value;
+                    slot.sequence = currentHead + capacity;
+                    return java.util.OptionalInt.of(value);
+                }
+            } else if (dif < 0) {
+                return java.util.OptionalInt.empty();
+            } else {
+                Thread.onSpinWait();
             }
         }
     }
 
-    public final int size() {
-        return this.data.length;
+    public int size() {
+        return (int) (tail.get() - head.get());
     }
 
-    static class PaddedAtomicInteger extends java.util.concurrent.atomic.AtomicInteger {
+    static class Padded {
         // @formatter:off
         @SuppressWarnings("unused")
         private byte
