@@ -11,6 +11,8 @@ public enum NodeEvaluatorType {
     AMPHIBIOUS,
     FLY;
 
+    public static final NodeEvaluatorType[] ALL = NodeEvaluatorType.values();
+
     public static NodeEvaluatorType fromNodeEvaluator(NodeEvaluator nodeEvaluator) {
         if (nodeEvaluator instanceof SwimNodeEvaluator) return SWIM;
         if (nodeEvaluator instanceof FlyNodeEvaluator) return FLY;

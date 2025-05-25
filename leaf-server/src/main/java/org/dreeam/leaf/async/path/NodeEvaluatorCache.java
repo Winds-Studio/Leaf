@@ -1,30 +1,38 @@
 package org.dreeam.leaf.async.path;
 
-import ca.spottedleaf.concurrentutil.collection.MultiThreadedQueue;
+import it.unimi.dsi.fastutil.PriorityQueue;
+import it.unimi.dsi.fastutil.PriorityQueues;
+import it.unimi.dsi.fastutil.bytes.Byte2ObjectMap;
+import it.unimi.dsi.fastutil.bytes.Byte2ObjectMaps;
+import it.unimi.dsi.fastutil.bytes.Byte2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue;
 import net.minecraft.world.level.pathfinder.NodeEvaluator;
 import org.apache.commons.lang.Validate;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Queue;
-
 public class NodeEvaluatorCache {
 
-    private static final Object2ObjectMap<NodeEvaluatorFeatures, MultiThreadedQueue<NodeEvaluator>> evaluators = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
+    private static final Byte2ObjectMap<PriorityQueue<NodeEvaluator>> evaluators = Byte2ObjectMaps.synchronize(new Byte2ObjectOpenHashMap<>());
     private static final Object2ObjectMap<NodeEvaluator, NodeEvaluatorGenerator> nodeEvaluatorToGenerator = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
 
-    private static @NotNull Queue<NodeEvaluator> getQueueForFeatures(@NotNull NodeEvaluatorFeatures nodeEvaluatorFeatures) {
-        return evaluators.computeIfAbsent(nodeEvaluatorFeatures, key -> new MultiThreadedQueue<>());
+    private static @NotNull PriorityQueue<NodeEvaluator> getQueueForFeatures(@NotNull NodeEvaluatorFeatures nodeEvaluatorFeatures) {
+        return evaluators.computeIfAbsent(nodeEvaluatorFeatures.pack(), key -> PriorityQueues.synchronize(new ObjectArrayFIFOQueue<>()));
     }
 
     public static @NotNull NodeEvaluator takeNodeEvaluator(@NotNull NodeEvaluatorGenerator generator, @NotNull NodeEvaluator localNodeEvaluator) {
         final NodeEvaluatorFeatures nodeEvaluatorFeatures = NodeEvaluatorFeatures.fromNodeEvaluator(localNodeEvaluator);
-        NodeEvaluator nodeEvaluator = getQueueForFeatures(nodeEvaluatorFeatures).poll();
+        PriorityQueue<NodeEvaluator> nodeEvaluatorQueue = getQueueForFeatures(nodeEvaluatorFeatures);
 
-        if (nodeEvaluator == null) {
-            nodeEvaluator = generator.generate(nodeEvaluatorFeatures);
+        NodeEvaluator nodeEvaluator;
+        synchronized (nodeEvaluatorQueue) {
+            if (nodeEvaluatorQueue.isEmpty()) {
+                nodeEvaluator = generator.generate(nodeEvaluatorFeatures);
+            } else {
+                nodeEvaluator = nodeEvaluatorQueue.dequeue();
+            }
         }
 
         nodeEvaluatorToGenerator.put(nodeEvaluator, generator);
@@ -37,7 +45,7 @@ public class NodeEvaluatorCache {
         Validate.notNull(generator, "NodeEvaluator already returned");
 
         final NodeEvaluatorFeatures nodeEvaluatorFeatures = NodeEvaluatorFeatures.fromNodeEvaluator(nodeEvaluator);
-        getQueueForFeatures(nodeEvaluatorFeatures).offer(nodeEvaluator);
+        getQueueForFeatures(nodeEvaluatorFeatures).enqueue(nodeEvaluator);
     }
 
     public static void removeNodeEvaluator(@NotNull NodeEvaluator nodeEvaluator) {
