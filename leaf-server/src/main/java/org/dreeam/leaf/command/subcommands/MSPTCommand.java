@@ -2,10 +2,12 @@ package org.dreeam.leaf.command.subcommands;
 
 import net.kyori.adventure.text.Component;
 import net.minecraft.server.MinecraftServer;
+import org.bukkit.craftbukkit.CraftServer;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.framework.qual.DefaultQualifier;
 import org.dreeam.leaf.command.LeafCommand;
 import org.dreeam.leaf.command.PermissionedLeafSubcommand;
+import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
 import org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking;
 import org.bukkit.command.CommandSender;
 import org.bukkit.permissions.PermissionDefault;
@@ -34,7 +36,11 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
     @Override
     public boolean execute(final CommandSender sender, final String subCommand, final String[] args) {
         // Check if parallel world ticking is enabled
-        if (!SparklyPaperParallelWorldTicking.enabled) {
+        if (!AsyncTargetFinding.enabled && !SparklyPaperParallelWorldTicking.enabled) {
+            sender.sendMessage(Component.text()
+                .content("Async target MSPT is only available when async target finding is enabled.")
+                .color(RED)
+                .build());
             sender.sendMessage(Component.text()
                 .content("Per-world MSPT tracking is only available when parallel world ticking is enabled.")
                 .color(RED)
@@ -49,7 +55,7 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
         // Check if compact mode is requested
         boolean compactMode = args.length > 0 && args[0].equalsIgnoreCase("compact");
 
-        MinecraftServer server = MinecraftServer.getServer();
+        MinecraftServer server = ((CraftServer) sender.getServer()).getServer();
 
         if (compactMode) {
             displayCompactStats(sender, server);
@@ -62,20 +68,39 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
                 .append(Component.text(" ━━━━━━━━━━━━━").color(GOLD))
                 .build());
 
-            // Overall server MSPT
-            displayServerMSPT(sender, server);
+            if (server.asyncGoalThread != null) {
+                displayAIMSPT(sender, server);
+                sender.sendMessage(Component.text(""));
+            }
 
-            // Add separator
-            sender.sendMessage(Component.text(""));
+            if (SparklyPaperParallelWorldTicking.enabled) {
+                // Overall server MSPT
+                displayServerMSPT(sender, server);
 
-            // World-specific MSPT
-            displayWorldMSPT(sender, server);
+                // Add separator
+                sender.sendMessage(Component.text(""));
+
+                // World-specific MSPT
+                displayWorldMSPT(sender, server);
+            }
         }
 
         return true;
     }
 
     private void displayCompactStats(CommandSender sender, MinecraftServer server) {
+        if (server.asyncGoalThread != null) {
+            List<Component> serverTimes = eval(server.asyncGoalThread.tickTimes.getTimes());
+            sender.sendMessage(Component.text()
+                .content("AI: ")
+                .color(GOLD)
+                .append(serverTimes.get(0)).append(SLASH).append(serverTimes.get(1)).append(SLASH).append(serverTimes.get(2))
+                .build());
+        }
+        if (!SparklyPaperParallelWorldTicking.enabled) {
+            return;
+        }
+
         // Get server stats (only 5s data with avg/min/max)
         List<Component> serverTimes = eval(server.tickTimes5s.getTimes());
 
@@ -96,6 +121,25 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
                 .append(worldTimes.get(0)).append(SLASH).append(worldTimes.get(1)).append(SLASH).append(worldTimes.get(2))
                 .build());
         }
+    }
+
+    private void displayAIMSPT(CommandSender sender, MinecraftServer server) {
+        List<Component> times = eval(server.asyncGoalThread.tickTimes.getTimes());
+
+        sender.sendMessage(Component.text()
+            .content("Async AI tick times ")
+            .color(GOLD)
+            .append(Component.text()
+                .content("(avg/min/max)")
+                .color(YELLOW)
+            )
+            .build());
+
+        sender.sendMessage(Component.text()
+            .content("  recent: ")
+            .color(GOLD)
+            .append(times.get(0)).append(SLASH).append(times.get(1)).append(SLASH).append(times.get(2))
+            .build());
     }
 
     private void displayServerMSPT(CommandSender sender, MinecraftServer server) {
