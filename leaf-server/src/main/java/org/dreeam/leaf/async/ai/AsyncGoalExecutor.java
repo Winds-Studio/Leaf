@@ -106,7 +106,7 @@ public class AsyncGoalExecutor {
     }
 
     private boolean poll(int id) {
-        Entity entity = this.world.getEntities().get(id);
+        Entity entity = this.world.getEntity(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
@@ -152,7 +152,7 @@ public class AsyncGoalExecutor {
     }
 
     private boolean wake(int id) {
-        Entity entity = this.world.getEntities().get(id);
+        Entity entity = this.world.getEntity(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return false;
         }
@@ -162,7 +162,7 @@ public class AsyncGoalExecutor {
     }
 
     private void wakePathFind(int id) {
-        Entity entity = this.world.getEntities().get(id);
+        Entity entity = this.world.getEntity(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return;
         }
