@@ -1,12 +1,16 @@
 package org.dreeam.leaf.async.ai;
 
+import it.unimi.dsi.fastutil.PriorityQueue;
+import it.unimi.dsi.fastutil.PriorityQueues;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceList;
 import it.unimi.dsi.fastutil.objects.ReferenceLists;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.pathfinder.Path;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.async.path.AsyncPath;
@@ -30,6 +34,7 @@ public class AsyncGoalExecutor {
 
     private final ReferenceList<Runnable> pathFindPostProcess;
     protected final SpscIntQueue pathFindQueue;
+    private final PriorityQueue<Path> brainPath = PriorityQueues.synchronize(new ObjectArrayFIFOQueue<>());
 
     public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
         this.world = world;
@@ -39,6 +44,10 @@ public class AsyncGoalExecutor {
         this.pathFindQueue = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.pathFindPostProcess = ReferenceLists.synchronize(new ReferenceArrayList<>());
         this.thread = thread;
+    }
+
+    public final void submitBrainPath(Path path) {
+        brainPath.enqueue(path);
     }
 
     public final void submitFindPath(int id) {
@@ -148,6 +157,17 @@ public class AsyncGoalExecutor {
             success = true;
             wakePathFind(id);
         }
+        while (true) {
+            Path path;
+            synchronized (brainPath) {
+                if (brainPath.isEmpty()) {
+                    break;
+                } else {
+                    path = brainPath.dequeue();
+                }
+            }
+            wakeBrain(path);
+        }
         return success;
     }
 
@@ -173,7 +193,10 @@ public class AsyncGoalExecutor {
                 }
             }
         }
-        if (mob.getNavigationUnchecked().brainPath instanceof AsyncPath asyncPath) {
+    }
+
+    private void wakeBrain(Path path) {
+        if (path instanceof AsyncPath asyncPath) {
             if (asyncPath.wake() instanceof List<?> list) {
                 for (Object o : list) {
                     this.pathFindPostProcess.add((Runnable) o);
