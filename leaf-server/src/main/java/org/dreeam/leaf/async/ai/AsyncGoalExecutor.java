@@ -173,5 +173,12 @@ public class AsyncGoalExecutor {
                 }
             }
         }
+        if (mob.getNavigationUnchecked().brainPath instanceof AsyncPath asyncPath) {
+            if (asyncPath.wake() instanceof List<?> list) {
+                for (Object o : list) {
+                    this.pathFindPostProcess.add((Runnable) o);
+                }
+            }
+        }
     }
 }
