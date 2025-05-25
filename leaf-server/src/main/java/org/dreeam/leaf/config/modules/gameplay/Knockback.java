@@ -21,18 +21,26 @@ public class Knockback extends ConfigModules {
         snowballCanKnockback = config.getBoolean(getBasePath() + ".snowball-knockback-players", snowballCanKnockback,
             config.pickStringRegionBased(
                 "Make snowball can knockback players.",
-                "使雪球可以击退玩家."
+                "使雪球可以击退玩家。"
             ));
         eggCanKnockback = config.getBoolean(getBasePath() + ".egg-knockback-players", eggCanKnockback,
             config.pickStringRegionBased(
                 "Make egg can knockback players.",
-                "使鸡蛋可以击退玩家."
+                "使鸡蛋可以击退玩家。"
             ));
         canPlayerKnockbackZombie = config.getBoolean(getBasePath() + ".can-player-knockback-zombie", canPlayerKnockbackZombie,
             config.pickStringRegionBased(
                 "Make players can knockback zombie.",
-                "使玩家可以击退僵尸."
+                "使玩家可以击退僵尸。"
             ));
-        flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback);
+        flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback, config.pickStringRegionBased("""
+                **Experimental feature**
+                Refresh player position while being knocked back.
+                Makes knockback smoother during PvP.
+                """,
+            """
+                **实验性功能**
+                玩家被击退时刷新其位置，
+                在 PVP 中使击退效果更加平滑。"""));
     }
 }

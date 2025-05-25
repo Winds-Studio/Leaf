@@ -13,6 +13,6 @@ public class SkipAIForNonAwareMob extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".skip-ai-for-non-aware-mob", enabled);
+        enabled = config.getBoolean(getBasePath() + ".skip-ai-for-non-aware-mob", enabled, config.pickStringRegionBased( "Skip AI for mobs without awareness or valid AI to improve performance.", "跳过无感知或无效 AI 的生物以提升性能。"));
     }
 }

@@ -13,6 +13,7 @@ public class Including5sIngetTPS extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".including-5s-in-get-tps", enabled);
+        enabled = config.getBoolean(getBasePath() + ".including-5s-in-get-tps", enabled, config.pickStringRegionBased("If enabled, includes 5s average TPS in the result: [5s, 1m, 5m, 15m]; otherwise returns [1m, 5m, 15m].",
+            "启用后返回 [5s, 1m, 5m, 15m] 的 TPS 值；否则仅返回 [1m, 5m, 15m]。"));
     }
 }

@@ -13,6 +13,12 @@ public class OptimiseBlockEntities extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".optimise-block-entities", enabled);
+        enabled = config.getBoolean(getBasePath() + ".optimise-block-entities", enabled, config.pickStringRegionBased(
+            """
+                Use fastutil's Object2ObjectOpenHashMap for ticking BlockEntities
+                instead of the standard HashMap.""",
+            """
+                使用 fastutil 的 Object2ObjectOpenHashMap
+                替代标准 HashMap 优化 BlockEntities"""));
     }
 }

@@ -13,6 +13,11 @@ public class UseSpigotItemMergingMech extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath(), enabled);
+        enabled = config.getBoolean(getBasePath(), enabled, config.pickStringRegionBased("""
+                If enabled, always merge items into the current stack (Spigot logic)
+                otherwise, prefer the smaller stack.""",
+            """
+                启用后总是将物品合并到当前堆叠（Spigot 逻辑）
+                否则优先合并到数量较小的堆叠。"""));
     }
 }

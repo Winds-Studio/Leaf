@@ -13,6 +13,6 @@ public class SkipMapItemDataUpdates extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".skip-map-item-data-updates-if-map-does-not-have-craftmaprenderer", enabled);
+        enabled = config.getBoolean(getBasePath() + ".skip-map-item-data-updates-if-map-does-not-have-craftmaprenderer", enabled, config.pickStringRegionBased( "Skip certain MapItemData updates to reduce performance overhead.", "跳过部分地图数据更新以减少性能开销。"));
     }
 }

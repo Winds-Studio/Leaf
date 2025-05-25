@@ -13,6 +13,11 @@ public class TileEntitySnapshotCreation extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".create-snapshot-on-retrieving-blockstate", enabled);
+        enabled = config.getBoolean(getBasePath() + ".create-snapshot-on-retrieving-blockstate", enabled, config.pickStringRegionBased("""
+                Enables snapshot creation when retrieving block state.
+                This can improve performance by reducing redundant calculations.""",
+            """
+                是否在获取方块状态时创建快照.
+                通过减少重复计算提升性能。"""));
     }
 }

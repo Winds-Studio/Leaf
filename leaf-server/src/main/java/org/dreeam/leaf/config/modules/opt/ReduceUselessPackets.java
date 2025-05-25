@@ -13,6 +13,11 @@ public class ReduceUselessPackets extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        reduceUselessEntityMovePackets = config.getBoolean(getBasePath() + ".reduce-entity-move-packets", reduceUselessEntityMovePackets);
+        reduceUselessEntityMovePackets = config.getBoolean(getBasePath() + ".reduce-entity-move-packets", reduceUselessEntityMovePackets, config.pickStringRegionBased( """
+            Reduces bandwidth by skipping unnecessary entity movement packets.
+            Helpful for improving network and client performance.""",
+            """
+                减少不必要的实体移动数据包发送，
+                降低带宽占用，提升性能"""));
     }
 }

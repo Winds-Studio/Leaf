@@ -13,6 +13,7 @@ public class ConfigurableTripWireDupe extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".allow-tripwire-dupe", enabled);
+        enabled = config.getBoolean(getBasePath() + ".allow-tripwire-dupe", enabled, config.pickStringRegionBased("Enables or disables the configurable trip wire dupe feature.",
+            "启用或禁用绊线复制功能。"));
     }
 }
