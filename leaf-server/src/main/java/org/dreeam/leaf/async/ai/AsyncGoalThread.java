@@ -10,7 +10,7 @@ import java.util.concurrent.locks.LockSupport;
 public class AsyncGoalThread extends Thread {
 
     public AsyncGoalThread(final MinecraftServer server) {
-        super(() -> run(server), "Leaf Async Goal Thread");
+        super(() -> run(server), "Leaf Async AI Thread");
         this.setDaemon(false);
         this.setUncaughtExceptionHandler(Util::onThreadException);
         this.setPriority(Thread.NORM_PRIORITY - 1);
