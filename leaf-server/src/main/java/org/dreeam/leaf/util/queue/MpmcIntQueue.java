@@ -6,9 +6,7 @@ public class MpmcIntQueue {
 
     private final int[] data;
     private final PaddedAtomicInteger producerIdx = new PaddedAtomicInteger();
-    private final PaddedAtomicInteger producerCachedIdx = new PaddedAtomicInteger();
     private final PaddedAtomicInteger consumerIdx = new PaddedAtomicInteger();
-    private final PaddedAtomicInteger consumerCachedIdx = new PaddedAtomicInteger();
 
     public MpmcIntQueue(int size) {
         this.data = new int[size + 1];
