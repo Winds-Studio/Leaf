@@ -11,11 +11,11 @@ public class AsyncTargetFinding extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    public static boolean alertOther = true;
-    public static boolean searchBlock = true;
-    public static boolean searchEntity = true;
-    public static boolean randomStroll = true;
-    public static boolean pathfinding = true;
+    public static boolean alertOther = false;
+    public static boolean searchBlock = false;
+    public static boolean searchEntity = false;
+    public static boolean randomStroll = false;
+    public static boolean pathfinding = false;
     public static int queueSize = 4096;
     public static long threshold = 10L;
     private static boolean asyncTargetFindingInitialized;
@@ -35,11 +35,11 @@ public class AsyncTargetFinding extends ConfigModules {
         asyncTargetFindingInitialized = true;
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
-        searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
-        searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
-        randomStroll = config.getBoolean(getBasePath() + ".async-random-stroll-around", true);
-        pathfinding = config.getBoolean(getBasePath() + ".async-pathfinding", true);
+        alertOther = config.getBoolean(getBasePath() + ".async-alert-other", alertOther);
+        searchBlock = config.getBoolean(getBasePath() + ".async-search-block", searchBlock);
+        searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", searchEntity);
+        randomStroll = config.getBoolean(getBasePath() + ".async-random-stroll-around", randomStroll);
+        pathfinding = config.getBoolean(getBasePath() + ".async-pathfinding", pathfinding);
         queueSize = config.getInt(getBasePath() + ".queue-size", 0);
         threshold = config.getLong(getBasePath() + ".threshold", 0);
 
