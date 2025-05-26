@@ -37,20 +37,20 @@ public class AsyncTargetFinding extends ConfigModules {
         }
         asyncTargetFindingInitialized = true;
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        goal = config.getBoolean(getBasePath() + ".enabled", enabled);
         threadCount = config.getInt(getBasePath() + ".thread-count", 0);
-        pathfinding = config.getBoolean(getPathfindingPath(), pathfinding);
         queueSize = config.getInt(getBasePath() + ".queue-size", 0);
+
+        pathfinding = config.getBoolean(getPathfindingPath() + ".enabled", pathfinding);
+
         if (queueSize <= 0) {
             queueSize = 4096;
         }
         if (threadCount == 0) {
             threadCount = Runtime.getRuntime().availableProcessors();
         }
-        if (!enabled) {
-            goal = false;
-            pathfinding = false;
-        } else {
+        enabled = goal || pathfinding;
+        if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Target Finding", threadCount);
         }
     }
