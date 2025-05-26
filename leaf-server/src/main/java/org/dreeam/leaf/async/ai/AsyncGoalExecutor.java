@@ -38,14 +38,6 @@ public class AsyncGoalExecutor {
         this.pathFindQueue = new MpmcIntQueue(AsyncTargetFinding.queueSize);
     }
 
-    public final void tickGoal(Goal goal) {
-        if (goal instanceof AsyncGoal asyncGoal && asyncGoal.tickAsync()) {
-            goal.tick();
-        } else {
-            tickGoal.add(goal);
-        }
-    }
-
     public final void submitBrainPath(Path path) {
         brainPath.enqueue(path);
     }
@@ -62,9 +54,7 @@ public class AsyncGoalExecutor {
             if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
                 return;
             }
-            do {
-                wake(mob);
-            } while (poll(mob));
+            wake(mob);
         }
     }
 
@@ -76,16 +66,13 @@ public class AsyncGoalExecutor {
         midTick();
     }
 
-    private void execPathFindPostProcess() {
+    public final void midTick() {
         synchronized (postProcess) {
             for (final Runnable findPostProcess : postProcess) {
                 findPostProcess.run();
             }
             postProcess.clear();
         }
-    }
-    public final void midTick() {
-        execPathFindPostProcess();
         synchronized (tickGoal) {
             for (final Goal goal : tickGoal) {
                 goal.tick();
@@ -94,17 +81,12 @@ public class AsyncGoalExecutor {
         }
     }
 
-    private boolean poll(Mob mob) {
+    private void wake(Mob mob) {
         try {
-            mob.tickingTarget = true;
-            boolean a = mob.targetSelector.poll(this);
-            mob.tickingTarget = false;
-            boolean b = mob.goalSelector.poll(this);
-            return a || b;
+            tickGoal.addAll(mob.targetSelector.wake());
+            tickGoal.addAll(mob.goalSelector.wake());
         } catch (Exception e) {
-            LOGGER.error("Exception while polling", e);
-            // retry
-            return true;
+            LOGGER.error("Exception while ticking {}", mob, e);
         }
     }
 
@@ -121,8 +103,7 @@ public class AsyncGoalExecutor {
             if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
                 continue;
             }
-            while (poll(mob) && wake(mob)) {
-            }
+            wake(mob);
         }
         while (true) {
             OptionalInt result = pathFindQueue.recv();
@@ -148,31 +129,21 @@ public class AsyncGoalExecutor {
         return success;
     }
 
-    private boolean wake(Mob mob) {
-        mob.goalSelector.ctx.wake();
-        mob.targetSelector.ctx.wake();
-        return true;
-    }
-
     private void wakePathFind(int id) {
         Entity entity = this.world.getEntity(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
             return;
         }
         if (mob.getNavigationUnchecked().getPath() instanceof AsyncPath asyncPath) {
-            if (asyncPath.wake() instanceof List<?> list) {
-                for (Object o : list) {
-                    this.postProcess.add((Runnable) o);
-                }
+            if (asyncPath.wake() instanceof List<Runnable> list) {
+                this.postProcess.addAll(list);
             }
         }
     }
 
     private void wakeBrain(Path path) {
-        if (path instanceof AsyncPath asyncPath && asyncPath.wake() instanceof List<?> list) {
-            for (Object o : list) {
-                this.postProcess.add((Runnable) o);
-            }
+        if (path instanceof AsyncPath asyncPath && asyncPath.wake() instanceof List<Runnable> list) {
+            this.postProcess.addAll(list);
         }
     }
 }

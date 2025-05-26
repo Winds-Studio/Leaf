@@ -126,7 +126,7 @@ public class AsyncPath extends Path implements VWaker {
      * starts processing this path
      */
     @Override
-    public synchronized Object wake() {
+    public synchronized List<Runnable> wake() {
         if (this.processState == PathProcessState.COMPLETED ||
             this.processState == PathProcessState.PROCESSING) {
             return null;
@@ -160,12 +160,10 @@ public class AsyncPath extends Path implements VWaker {
     private void checkProcessed() {
         if (this.processState == PathProcessState.WAITING ||
             this.processState == PathProcessState.PROCESSING) { // Block if we are on processing
-            if (this.wake() instanceof List<?> list) {
+            if (this.wake() instanceof List<Runnable> list) {
                 try {
-                    for (Object o : list) {
-                        if (o instanceof Runnable r) {
-                            r.run();
-                        }
+                    for (Runnable o : list) {
+                        o.run();
                     }
                 } catch (Exception e) {
                     AsyncPathProcessor.LOGGER.error(e);

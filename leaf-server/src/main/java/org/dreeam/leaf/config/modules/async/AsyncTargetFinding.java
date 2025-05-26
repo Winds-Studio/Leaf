@@ -11,15 +11,15 @@ public class AsyncTargetFinding extends ConfigModules {
         return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-target-finding";
     }
 
+    public String getPathfindingPath() {
+        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-pathfinding";
+    }
+
     public static boolean enabled = false;
-    public static boolean goalEnabled = false;
-    public static boolean alertOther = false;
-    public static boolean searchBlock = false;
-    public static boolean searchEntity = false;
-    public static boolean randomStroll = false;
     public static boolean pathfinding = false;
+    public static boolean goal = false;
+
     public static int queueSize = 4096;
-    public static long threshold = 10L;
     public static int threadCount = 0;
     private static boolean asyncTargetFindingInitialized;
 
@@ -39,31 +39,19 @@ public class AsyncTargetFinding extends ConfigModules {
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         threadCount = config.getInt(getBasePath() + ".thread-count", 0);
-        alertOther = config.getBoolean(getBasePath() + ".async-alert-other", alertOther);
-        searchBlock = config.getBoolean(getBasePath() + ".async-search-block", searchBlock);
-        searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", searchEntity);
-        randomStroll = config.getBoolean(getBasePath() + ".async-random-stroll-around", randomStroll);
-        pathfinding = config.getBoolean(getBasePath() + ".async-pathfinding", pathfinding);
+        pathfinding = config.getBoolean(getPathfindingPath(), pathfinding);
         queueSize = config.getInt(getBasePath() + ".queue-size", 0);
-        threshold = config.getLong(getBasePath() + ".threshold", 0);
         if (queueSize <= 0) {
             queueSize = 4096;
-        }
-        if (threshold == 0L) {
-            threshold = 10L;
         }
         if (threadCount == 0) {
             threadCount = Runtime.getRuntime().availableProcessors();
         }
         if (!enabled) {
-            alertOther = false;
-            searchEntity = false;
-            searchBlock = false;
-            randomStroll = false;
+            goal = false;
             pathfinding = false;
         } else {
             LeafConfig.LOGGER.info("Using {} threads for Async Target Finding", threadCount);
         }
-        goalEnabled = searchEntity || searchBlock || randomStroll || alertOther;
     }
 }
