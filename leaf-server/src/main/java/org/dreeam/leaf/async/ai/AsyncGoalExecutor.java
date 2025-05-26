@@ -2,7 +2,6 @@ package org.dreeam.leaf.async.ai;
 
 import it.unimi.dsi.fastutil.PriorityQueue;
 import it.unimi.dsi.fastutil.PriorityQueues;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceList;
@@ -10,6 +9,7 @@ import it.unimi.dsi.fastutil.objects.ReferenceLists;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.level.pathfinder.Path;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -24,23 +24,26 @@ public class AsyncGoalExecutor {
 
     protected static final Logger LOGGER = LogManager.getLogger("Leaf Async AI");
     private final ServerLevel world;
-    private long midTickCount = 0L;
 
     protected final MpmcIntQueue queue;
-    protected final MpmcIntQueue wake;
-    protected final IntArrayList submit;
-
-    private final ReferenceList<Runnable> pathFindPostProcess;
+    private final ReferenceList<Runnable> postProcess = ReferenceLists.synchronize(new ReferenceArrayList<>());
     protected final MpmcIntQueue pathFindQueue;
     private final PriorityQueue<Path> brainPath = PriorityQueues.synchronize(new ObjectArrayFIFOQueue<>());
+    public final ReferenceList<Goal> tickGoal = ReferenceLists.synchronize(new ReferenceArrayList<>());
+    public final PriorityQueue<Goal> createPath = PriorityQueues.synchronize(new ObjectArrayFIFOQueue<>());
 
     public AsyncGoalExecutor(ServerLevel world) {
         this.world = world;
         this.queue = new MpmcIntQueue(AsyncTargetFinding.queueSize);
-        this.wake = new MpmcIntQueue(AsyncTargetFinding.queueSize);
-        this.submit = new IntArrayList();
         this.pathFindQueue = new MpmcIntQueue(AsyncTargetFinding.queueSize);
-        this.pathFindPostProcess = ReferenceLists.synchronize(new ReferenceArrayList<>());
+    }
+
+    public final void tickGoal(Goal goal) {
+        if (goal instanceof AsyncGoal asyncGoal && asyncGoal.tickAsync()) {
+            goal.tick();
+        } else {
+            tickGoal.add(goal);
+        }
     }
 
     public final void submitBrainPath(Path path) {
@@ -50,77 +53,53 @@ public class AsyncGoalExecutor {
     public final void submitFindPath(int id) {
         if (!pathFindQueue.send(id)) {
             wakePathFind(id);
-            runPathFindPostProcess();
         }
     }
 
     public final void submit(int entityId) {
-        this.submit.add(entityId);
+        if (!this.queue.send(entityId)) {
+            Entity entity = this.world.getEntity(entityId);
+            if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
+                return;
+            }
+            do {
+                wake(mob);
+            } while (poll(mob));
+        }
+    }
+
+    public final void post(Runnable r) {
+        this.postProcess.add(r);
     }
 
     public final void tick() {
-        batchSubmit();
-        runPathFindPostProcess();
+        midTick();
     }
 
-    private void batchSubmit() {
-        if (submit.isEmpty()) {
-            return;
-        }
-        int[] raw = submit.elements();
-        int size = submit.size();
-        for (int i = 0; i < size; i++) {
-            int id = raw[i];
-            if (poll(id) && !this.queue.send(id)) {
-                do {
-                    wake(id);
-                } while (poll(id));
-            }
-        }
-        this.submit.clear();
-    }
-
-    public final void midTick() {
-        runPathFindPostProcess();
-        while (true) {
-            OptionalInt result = this.wake.recv();
-            if (result.isEmpty()) {
-                break;
-            }
-            int id = result.getAsInt();
-            if (poll(id) && !this.queue.send(id)) {
-                do {
-                    wake(id);
-                } while (poll(id));
-            }
-        }
-        if (AsyncTargetFinding.threshold <= 0L || (midTickCount % AsyncTargetFinding.threshold) == 0L) {
-            batchSubmit();
-        }
-
-        midTickCount += 1;
-    }
-
-    private void runPathFindPostProcess() {
-        synchronized (pathFindPostProcess) {
-            for (final Runnable findPostProcess : this.pathFindPostProcess) {
+    private void execPathFindPostProcess() {
+        synchronized (postProcess) {
+            for (final Runnable findPostProcess : postProcess) {
                 findPostProcess.run();
             }
-            pathFindPostProcess.clear();
+            postProcess.clear();
+        }
+    }
+    public final void midTick() {
+        execPathFindPostProcess();
+        synchronized (tickGoal) {
+            for (final Goal goal : tickGoal) {
+                goal.tick();
+            }
+            tickGoal.clear();
         }
     }
 
-    private boolean poll(int id) {
-        Entity entity = this.world.getEntity(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return false;
-        }
-
+    private boolean poll(Mob mob) {
         try {
             mob.tickingTarget = true;
-            boolean a = mob.targetSelector.poll();
+            boolean a = mob.targetSelector.poll(this);
             mob.tickingTarget = false;
-            boolean b = mob.goalSelector.poll();
+            boolean b = mob.goalSelector.poll(this);
             return a || b;
         } catch (Exception e) {
             LOGGER.error("Exception while polling", e);
@@ -138,10 +117,11 @@ public class AsyncGoalExecutor {
             }
             int id = result.getAsInt();
             success = true;
-            if (wake(id)) {
-                while (!wake.send(id)) {
-                    Thread.onSpinWait();
-                }
+            Entity entity = this.world.getEntity(id);
+            if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
+                continue;
+            }
+            while (poll(mob) && wake(mob)) {
             }
         }
         while (true) {
@@ -168,11 +148,7 @@ public class AsyncGoalExecutor {
         return success;
     }
 
-    private boolean wake(int id) {
-        Entity entity = this.world.getEntity(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return false;
-        }
+    private boolean wake(Mob mob) {
         mob.goalSelector.ctx.wake();
         mob.targetSelector.ctx.wake();
         return true;
@@ -186,7 +162,7 @@ public class AsyncGoalExecutor {
         if (mob.getNavigationUnchecked().getPath() instanceof AsyncPath asyncPath) {
             if (asyncPath.wake() instanceof List<?> list) {
                 for (Object o : list) {
-                    this.pathFindPostProcess.add((Runnable) o);
+                    this.postProcess.add((Runnable) o);
                 }
             }
         }
@@ -195,7 +171,7 @@ public class AsyncGoalExecutor {
     private void wakeBrain(Path path) {
         if (path instanceof AsyncPath asyncPath && asyncPath.wake() instanceof List<?> list) {
             for (Object o : list) {
-                this.pathFindPostProcess.add((Runnable) o);
+                this.postProcess.add((Runnable) o);
             }
         }
     }

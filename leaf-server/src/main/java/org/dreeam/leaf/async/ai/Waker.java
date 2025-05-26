@@ -19,7 +19,7 @@ public class Waker {
         return result;
     }
 
-    final void wake() {
+    public final void wake() {
         final var wake = this.wake;
         if (wake != null) {
             try {
