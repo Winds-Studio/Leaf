@@ -32,11 +32,11 @@ public class MultithreadedTracker {
     private static long lastWarnMillis = System.currentTimeMillis();
     private static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
-    private record SendChanges(Object[] entities, int size) implements Runnable {
+    private record SendChanges(ServerEntity[] entities, int size) implements Runnable {
         @Override
         public void run() {
             for (int i = 0; i < size; i++) {
-                ((ServerEntity) entities[i]).sendDirtyEntityData();
+                entities[i].sendDirtyEntityData();
             }
         }
     }
@@ -80,7 +80,7 @@ public class MultithreadedTracker {
 
         // Move tracking to off-main
         TRACKER_EXECUTOR.execute(() -> {
-            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
+            ReferenceArrayList<ServerEntity> sendDirty = ReferenceArrayList.wrap(new ServerEntity[0]);
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -141,7 +141,7 @@ public class MultithreadedTracker {
                 sendChanges.run();
             }
 
-            ReferenceArrayList<ServerEntity> sendDirty = new ReferenceArrayList<>();
+            ReferenceArrayList<ServerEntity> sendDirty = ReferenceArrayList.wrap(new ServerEntity[0]);;
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
