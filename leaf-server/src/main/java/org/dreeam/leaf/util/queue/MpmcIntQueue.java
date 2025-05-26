@@ -65,10 +65,10 @@ public class MpmcIntQueue {
                 if (head.compareAndSet(currentHead, currentHead + 1)) {
                     int value = slot.value;
                     slot.sequence = currentHead + capacity;
-                    return java.util.OptionalInt.of(value);
+                    return OptionalInt.of(value);
                 }
             } else if (dif < 0) {
-                return java.util.OptionalInt.empty();
+                return OptionalInt.empty();
             } else {
                 Thread.onSpinWait();
             }
