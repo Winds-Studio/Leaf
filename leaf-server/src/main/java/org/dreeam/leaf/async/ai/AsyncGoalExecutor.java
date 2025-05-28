@@ -18,7 +18,6 @@ public class AsyncGoalExecutor {
     protected final SpscIntQueue queue;
     protected final SpscIntQueue wake;
     protected final IntArrayList submit;
-    private final AsyncGoalThread thread;
     private final ServerLevel world;
     private long midTickCount = 0L;
 
@@ -27,7 +26,6 @@ public class AsyncGoalExecutor {
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
         this.submit = new IntArrayList();
-        this.thread = thread;
     }
 
     boolean wake(int id) {
@@ -46,7 +44,18 @@ public class AsyncGoalExecutor {
 
     public final void tick() {
         batchSubmit();
-        LockSupport.unpark(thread);
+        while (true) {
+            OptionalInt result = this.wake.recv();
+            if (result.isEmpty()) {
+                break;
+            }
+            int id = result.getAsInt();
+            if (poll(id) && !this.queue.send(id)) {
+                do {
+                    wake(id);
+                } while (poll(id));
+            }
+        }
     }
 
     private void batchSubmit() {
@@ -67,18 +76,6 @@ public class AsyncGoalExecutor {
     }
 
     public final void midTick() {
-        while (true) {
-            OptionalInt result = this.wake.recv();
-            if (result.isEmpty()) {
-                break;
-            }
-            int id = result.getAsInt();
-            if (poll(id) && !this.queue.send(id)) {
-                do {
-                    wake(id);
-                } while (poll(id));
-            }
-        }
         if (AsyncTargetFinding.threshold <= 0L || (midTickCount % AsyncTargetFinding.threshold) == 0L) {
             batchSubmit();
         }
