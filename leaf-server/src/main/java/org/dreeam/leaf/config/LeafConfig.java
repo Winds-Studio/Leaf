@@ -216,22 +216,23 @@ public class LeafConfig {
     /* Register Spark profiler extra server configurations */
 
     private static List<String> buildSparkExtraConfigs() {
-        List<String> extraConfigs = new ArrayList<>(Arrays.asList(
+        // 使用 LinkedHashSet 来自动去除重复项，同时保持插入顺序
+        Set<String> extraConfigsSet = new LinkedHashSet<>(Arrays.asList(
             "config/leaf-global.yml",
             "config/gale-global.yml",
             "config/gale-world-defaults.yml"
         ));
-
+    
         @Nullable String existing = System.getProperty("spark.serverconfigs.extra");
         if (existing != null) {
-            extraConfigs.addAll(Arrays.asList(existing.split(",")));
+            extraConfigsSet.addAll(Arrays.asList(existing.split(",")));
         }
-
+    
         for (World world : Bukkit.getWorlds()) {
-            extraConfigs.add(world.getWorldFolder().getName() + "/gale-world.yml"); // Gale world config
+            extraConfigsSet.add(world.getWorldFolder().getName() + "/gale-world.yml"); // Gale world config
         }
-
-        return extraConfigs;
+    
+        return new ArrayList<>(extraConfigsSet);
     }
 
     private static List<String> buildSparkHiddenPaths() {
