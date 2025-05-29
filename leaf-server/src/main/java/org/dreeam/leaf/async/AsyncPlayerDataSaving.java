@@ -10,19 +10,21 @@ import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.IOException;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.SignStyle;
 import java.time.temporal.ChronoField;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.*;
 
 public class AsyncPlayerDataSaving {
     public final static AsyncPlayerDataSaving INSTANCE = new AsyncPlayerDataSaving();
-    private final static Logger LOGGER = LogManager.getLogger("Async Player IO");
+    private final static Logger LOGGER = LogManager.getLogger("Leaf Async Player IO");
     public static final ExecutorService IO_POOL = new ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS,
         new LinkedBlockingQueue<>(),
@@ -166,17 +168,98 @@ public class AsyncPlayerDataSaving {
     private static final StandardCopyOption[] ATOMIC_MOVE = new StandardCopyOption[]{StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING};
     private static final StandardCopyOption[] NO_ATOMIC_MOVE = new StandardCopyOption[]{StandardCopyOption.REPLACE_EXISTING};
 
-    public static void safeReplace(final Path origin, final Path temp) throws IOException {
-        try {
-            Files.move(temp, origin, ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(temp, origin, NO_ATOMIC_MOVE);
+    public static void safeReplace(Path current, String content) {
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        safeReplace(current, bytes, 0, bytes.length);
+    }
+
+    public static void safeReplaceBackup(Path current, Path old, String content) {
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        safeReplaceBackup(current, old, bytes, 0, bytes.length);
+    }
+
+    public static void safeReplace(Path current, byte[] bytes, int offset, int length) {
+        File latest = writeTempFile(current, bytes, offset, length);
+        Objects.requireNonNull(latest);
+        for (int i = 1; i <= 10; i++) {
+            try {
+                try {
+                    Files.move(latest.toPath(), current, ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(latest.toPath(), current, NO_ATOMIC_MOVE);
+                }
+                break;
+            } catch (IOException e) {
+                LOGGER.error("Failed move {} to {} retries ({} / 10)", latest, current, i, e);
+            }
         }
     }
 
-    public static Path safeReplacePath(Path origin) {
-        LocalDateTime now = LocalDateTime.now();
-        String newFileName = origin.getFileName() + ".temp" + now.format(FORMATTER);
-        return origin.resolveSibling(newFileName);
+    public static void safeReplaceBackup(Path current, Path old, byte[] bytes, int offset, int length) {
+        File latest = writeTempFile(current, bytes, offset, length);
+        Objects.requireNonNull(latest);
+        for (int i = 1; i <= 10; i++) {
+            try {
+                try {
+                    Files.move(current, old, ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(current, old, NO_ATOMIC_MOVE);
+                }
+                break;
+            } catch (IOException e) {
+                LOGGER.error("Failed move {} to {} retries ({} / 10)", current, old, i, e);
+            }
+        }
+        for (int i = 1; i <= 10; i++) {
+            try {
+                try {
+                    Files.move(latest.toPath(), current, ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(latest.toPath(), current, NO_ATOMIC_MOVE);
+                }
+                break;
+            } catch (IOException e) {
+                LOGGER.error("Failed move {} to {} retries ({} / 10)", latest, current, i, e);
+            }
+        }
+    }
+
+    private static File writeTempFile(Path current, byte[] bytes, int offset, int length) {
+        Path dir = current.getParent();
+        for (int i = 1; i <= 10; i++) {
+            File temp = null;
+            try {
+                if (!dir.toFile().isDirectory()) {
+                    Files.createDirectories(dir);
+                }
+                temp = tempFileDateTime(current).toFile();
+                if (temp.exists()) {
+                    throw new FileAlreadyExistsException(temp.getPath());
+                }
+                // sync content and metadata to device
+                try (RandomAccessFile stream = new RandomAccessFile(temp, "rws")) {
+                    stream.write(bytes, offset, length);
+                }
+                return temp;
+            } catch (IOException e) {
+                LOGGER.error("Failed write {} retries ({} / 10)", temp == null ? current : temp, i, e);
+            }
+        }
+        return null;
+    }
+
+    private static Path tempFileDateTime(Path path) {
+        String now = LocalDateTime.now().format(FORMATTER);
+        String last = path.getFileName().toString();
+        int dot = last.lastIndexOf('.');
+
+        String base = (dot == -1) ? last : last.substring(0, dot);
+        String ext = (dot == -1) ? "" : last.substring(dot);
+
+        String newExt = switch (ext) {
+            case ".json", ".dat" -> ext;
+            default -> ".temp";
+        };
+        return path.resolveSibling(base + "-" + now + newExt);
     }
 }
