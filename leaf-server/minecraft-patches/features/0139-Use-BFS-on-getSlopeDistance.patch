@@ -8,11 +8,26 @@ Paper: ~75ms
 Leaf: ~48ms (-36%)
 This should help drastically on the farms that use actively changing fluids.
 
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index d21ae1a6ce307c186bc7e218b947dd1879d93b00..7f823e7f282e52b7cf918b117a5059ab3f62aef9 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1314,6 +1314,10 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         this.emptyTime = 0;
+     }
+ 
++    // Leaf start - Use BFS on getSlopeDistance
++    public it.unimi.dsi.fastutil.longs.LongSet slopeDistanceCacheVisited = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(512);
++    public net.minecraft.world.level.material.FlowingFluid.SlopeDistanceNodeDeque slopeDistanceCacheQueue = new net.minecraft.world.level.material.FlowingFluid.SlopeDistanceNodeDeque();
++    // Leaf end - Use BFS on getSlopeDistance
+     private void tickFluid(BlockPos pos, Fluid fluid) {
+         BlockState blockState = this.getBlockState(pos);
+         FluidState fluidState = blockState.getFluidState();
 diff --git a/net/minecraft/world/level/material/FlowingFluid.java b/net/minecraft/world/level/material/FlowingFluid.java
-index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..f6bc70685e846e9114f477dfd8aceca3b910a09f 100644
+index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..cf8fd5df3472c3212fd3cf9536761c998aff26d4 100644
 --- a/net/minecraft/world/level/material/FlowingFluid.java
 +++ b/net/minecraft/world/level/material/FlowingFluid.java
-@@ -341,32 +341,81 @@ public abstract class FlowingFluid extends Fluid {
+@@ -341,32 +341,117 @@ public abstract class FlowingFluid extends Fluid {
      protected void beforeDestroyingBlock(LevelAccessor level, BlockPos pos, BlockState state, BlockPos source) { beforeDestroyingBlock(level, pos, state); } // Paper - Add BlockBreakBlockEvent
      protected abstract void beforeDestroyingBlock(LevelAccessor level, BlockPos pos, BlockState state);
  
@@ -20,13 +35,14 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..f6bc70685e846e9114f477dfd8aceca3
 -        int i = 1000;
 +    // Leaf start - Use BFS on getSlopeDistance
 +    protected int getSlopeDistance(LevelReader level, BlockPos startPos, int initialDepth, Direction excludedDirection, BlockState startState, FlowingFluid.SpreadContext spreadContext) {
-+        it.unimi.dsi.fastutil.longs.LongSet visited = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(512);
-+        java.util.Queue<FlowingFluid.SlopeDistanceNode> queue = new java.util.ArrayDeque<>(256);
++        it.unimi.dsi.fastutil.longs.LongSet visited = ((ServerLevel) level).slopeDistanceCacheVisited;
++        SlopeDistanceNodeDeque queue = ((ServerLevel) level).slopeDistanceCacheQueue;
++        visited.clear();
 +
 +        for (Direction dir : Direction.Plane.HORIZONTAL) {
 +            if (dir == excludedDirection) continue;
 +
-+            BlockPos neighborPos = startPos.relative(dir);
++            BlockPos neighborPos = startPos.relative(dir); // immutable
 +            BlockState neighborState = spreadContext.getBlockStateIfLoaded(neighborPos);
 +            if (neighborState == null) continue;
 +
@@ -72,7 +88,7 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..f6bc70685e846e9114f477dfd8aceca3
 +            for (Direction dir : Direction.Plane.HORIZONTAL) {
 +                if (dir == current.excludedDir) continue;
 +
-+                BlockPos nextPos = current.pos.relative(dir);
++                BlockPos nextPos = current.pos.relative(dir); // immutable
 +                BlockState nextState = spreadContext.getBlockStateIfLoaded(nextPos);
 +                if (nextState == null) continue;
 +
@@ -96,18 +112,53 @@ index 4c2c2efd5380ff1fa5ad7553b51babae20f516ae..f6bc70685e846e9114f477dfd8aceca3
 +        return ((long) pos.getX() & 0xFFFFFFFFL) << 32 | ((long) pos.getZ() & 0xFFFFFFFFL) << 4 | (excludedDir.ordinal() & 0x0F);
 +    }
 +
-+    private static class SlopeDistanceNode {
-+        final BlockPos pos;
-+        final int depth;
-+        final Direction excludedDir;
-+        final BlockState state;
++    public static class SlopeDistanceNodeDeque {
++        private SlopeDistanceNode[] array;
++        private int length;
++        private int start;
++        private int end;
 +
-+        SlopeDistanceNode(BlockPos pos, int depth, Direction excludedDir, BlockState state) {
-+            this.pos = pos.immutable();
-+            this.depth = depth;
-+            this.excludedDir = excludedDir;
-+            this.state = state;
++        public SlopeDistanceNodeDeque() {
++            array = new SlopeDistanceNode[256];
++            length = array.length;
 +        }
++
++        /*
++        private int size() {
++            int apparent = end - start;
++            return apparent >= 0 ? apparent : length + apparent;
++        }
++        */
++
++        private boolean isEmpty() {
++            return end == start || (end <= start && length == start - end);
++        }
++
++        private SlopeDistanceNode poll() {
++            final SlopeDistanceNode t = array[start];
++            if (++start == length) start = 0;
++            return t;
++        }
++
++        private void add(final SlopeDistanceNode node) {
++            array[end++] = node;
++            if (end == length) end = 0;
++            if (end == start) resize(length, 2 * length);
++        }
++
++        private void resize(final int size, final int newLength) {
++            final SlopeDistanceNode[] newArray = new SlopeDistanceNode[newLength];
++            if (size != 0) {
++                System.arraycopy(array, start, newArray, 0, length - start);
++                System.arraycopy(array, 0, newArray, length - start, end);
++            }
++            start = 0;
++            end = size;
++            array = newArray;
++            length = newLength;
++        }
++    }
++    private record SlopeDistanceNode(BlockPos pos, int depth, Direction excludedDir, BlockState state) {
      }
 +    // Leaf end - Use BFS on getSlopeDistance
  

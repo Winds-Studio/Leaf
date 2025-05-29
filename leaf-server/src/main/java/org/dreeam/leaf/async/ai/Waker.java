@@ -11,9 +11,6 @@ public class Waker {
     public boolean state = true;
 
     public final @Nullable Object result() {
-        if (state) {
-            return null;
-        }
         Object result = this.result;
         this.result = null;
         return result;

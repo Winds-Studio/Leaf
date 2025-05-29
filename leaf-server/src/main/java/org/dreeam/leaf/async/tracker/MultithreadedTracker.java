@@ -32,15 +32,6 @@ public class MultithreadedTracker {
     private static long lastWarnMillis = System.currentTimeMillis();
     private static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
-    private record SendChanges(ServerEntity[] entities, int size) implements Runnable {
-        @Override
-        public void run() {
-            for (int i = 0; i < size; i++) {
-                entities[i].sendDirtyEntityData();
-            }
-        }
-    }
-
     private MultithreadedTracker() {
     }
 
@@ -80,7 +71,6 @@ public class MultithreadedTracker {
 
         // Move tracking to off-main
         TRACKER_EXECUTOR.execute(() -> {
-            ReferenceArrayList<ServerEntity> sendDirty = ReferenceArrayList.wrap(new ServerEntity[0]);
             for (final Entity entity : trackerEntitiesRaw) {
                 if (entity == null) continue;
 
@@ -88,18 +78,11 @@ public class MultithreadedTracker {
 
                 if (tracker == null) continue;
 
-                // Don't Parallel Tick Tracker of Entity
-                synchronized (tracker.sync) {
-                    tracker.moonrise$tick(nearbyPlayers.getChunk(entity.chunkPosition()));
+                synchronized (tracker) {
+                    var trackedChunk = nearbyPlayers.getChunk(entity.chunkPosition());
+                    tracker.moonrise$tick(trackedChunk);
                     tracker.serverEntity.sendChanges();
-                    if (tracker.serverEntity.wantSendDirtyEntityData) {
-                        tracker.serverEntity.wantSendDirtyEntityData = false;
-                        sendDirty.add(tracker.serverEntity);
-                    }
                 }
-            }
-            if (!sendDirty.isEmpty()) {
-                level.getServer().execute(new SendChanges(sendDirty.elements(), sendDirty.size()));
             }
         });
     }
@@ -121,7 +104,7 @@ public class MultithreadedTracker {
 
             if (tracker == null) continue;
 
-            synchronized (tracker.sync) {
+            synchronized (tracker) {
                 tickTask[index] = tracker.leafTickCompact(nearbyPlayers.getChunk(entity.chunkPosition()));
                 sendChangesTasks[index] = () -> tracker.serverEntity.sendChanges(); // Collect send changes to task array
             }
@@ -139,22 +122,6 @@ public class MultithreadedTracker {
                 if (sendChanges == null) continue;
 
                 sendChanges.run();
-            }
-
-            ReferenceArrayList<ServerEntity> sendDirty = ReferenceArrayList.wrap(new ServerEntity[0]);;
-            for (final Entity entity : trackerEntitiesRaw) {
-                if (entity == null) continue;
-
-                final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
-
-                if (tracker == null) continue;
-                if (tracker.serverEntity.wantSendDirtyEntityData) {
-                    tracker.serverEntity.wantSendDirtyEntityData = false;
-                    sendDirty.add(tracker.serverEntity);
-                }
-            }
-            if (!sendDirty.isEmpty()) {
-                level.getServer().execute(new SendChanges(sendDirty.elements(), sendDirty.size()));
             }
         });
     }
