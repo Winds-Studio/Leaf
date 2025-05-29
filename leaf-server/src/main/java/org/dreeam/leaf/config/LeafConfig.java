@@ -216,7 +216,7 @@ public class LeafConfig {
     /* Register Spark profiler extra server configurations */
 
     private static List<String> buildSparkExtraConfigs() {
-        // 使用 LinkedHashSet 来自动去除重复项，同时保持插入顺序
+        // Use LinkedHashSet to automatically remove duplicates
         Set<String> extraConfigsSet = new LinkedHashSet<>(Arrays.asList(
             "config/leaf-global.yml",
             "config/gale-global.yml",
