@@ -1,4 +1,4 @@
-package org.dreeam.leaf.async;
+package org.dreeam.leaf.async.storage;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
@@ -23,18 +23,9 @@ import java.util.UUID;
 import java.util.concurrent.*;
 
 public class AsyncPlayerDataSaving {
-    public final static AsyncPlayerDataSaving INSTANCE = new AsyncPlayerDataSaving();
-    private final static Logger LOGGER = LogManager.getLogger("Leaf Async Player IO");
-    public static final ExecutorService IO_POOL = new ThreadPoolExecutor(
-        1, 1, 0L, TimeUnit.MILLISECONDS,
-        new LinkedBlockingQueue<>(),
-        new ThreadFactoryBuilder()
-            .setPriority(Thread.NORM_PRIORITY - 2)
-            .setNameFormat("Leaf IO Thread")
-            .setUncaughtExceptionHandler(Util::onThreadException)
-            .build(),
-        new ThreadPoolExecutor.DiscardPolicy()
-    );
+    public static final AsyncPlayerDataSaving INSTANCE = new AsyncPlayerDataSaving();
+    private static final Logger LOGGER = LogManager.getLogger("Leaf Async Player IO");
+    public static ExecutorService IO_POOL = null;
     private static final DateTimeFormatter FORMATTER = new DateTimeFormatterBuilder()
         .appendValue(ChronoField.YEAR, 4, 10, SignStyle.EXCEEDS_PAD)
         .appendValue(ChronoField.MONTH_OF_YEAR, 2)
@@ -44,11 +35,6 @@ public class AsyncPlayerDataSaving {
         .appendValue(ChronoField.SECOND_OF_MINUTE, 2)
         .appendValue(ChronoField.NANO_OF_SECOND, 9)
         .toFormatter();
-
-    private final Object2ObjectMap<UUID, Future<?>> entityFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
-    private final Object2ObjectMap<UUID, Future<?>> statsFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
-    private final Object2ObjectMap<UUID, Future<?>> advancementsFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
-    private final Object2ObjectMap<Path, Future<?>> levelDatFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
 
     private record SaveTask(Ty ty, Callable<Void> callable, String name, UUID uuid) implements Runnable {
         @Override
@@ -67,71 +53,126 @@ public class AsyncPlayerDataSaving {
         }
     }
 
-    public enum Ty {
+    private enum Ty {
         ENTITY,
         STATS,
         ADVANCEMENTS,
     }
 
+    // use same lock
+    private final Object2ObjectMap<UUID, Future<?>> entityFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
+    private final Object2ObjectMap<UUID, Future<?>> statsFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
+    private final Object2ObjectMap<UUID, Future<?>> advancementsFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
+
+    private final Object2ObjectMap<Path, Future<?>> levelDatFut = Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>(), this);
+
     private AsyncPlayerDataSaving() {
     }
 
-    public void submit(Ty type, UUID uuid, String playerName, Callable<Void> callable) {
-        if (!AsyncPlayerDataSave.enabled) {
-            try {
-                callable.call();
-            } catch (Exception e) {
-                LOGGER.error("Failed to save player {} data for {}", type, playerName, e);
-            }
-        } else {
-            block(type, uuid, playerName);
-            var fut = IO_POOL.submit(new SaveTask(type, callable, playerName, uuid));
-            switch (type) {
-                case ENTITY -> entityFut.put(uuid, fut);
-                case ADVANCEMENTS -> advancementsFut.put(uuid, fut);
-                case STATS -> statsFut.put(uuid, fut);
-            }
+    public static void init() {
+        if (AsyncPlayerDataSaving.IO_POOL != null) {
+            throw new IllegalStateException("Already initialized");
         }
+        AsyncPlayerDataSaving.IO_POOL = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>(),
+            new ThreadFactoryBuilder()
+                .setPriority(Thread.NORM_PRIORITY - 2)
+                .setNameFormat("Leaf Async Player IO Thread")
+                .setUncaughtExceptionHandler(Util::onThreadException)
+                .build(),
+            new ThreadPoolExecutor.DiscardPolicy()
+        );
     }
+
 
     public void saveLevelData(Path path, @Nullable Runnable runnable) {
         if (!AsyncPlayerDataSave.enabled) {
             if (runnable != null) {
                 runnable.run();
             }
-        } else {
-            var fut = levelDatFut.get(path);
-            if (fut != null) {
-                try {
-                    while (true) {
-                        try {
-                            fut.get();
-                            break;
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
+            return;
+        }
+        var fut = levelDatFut.get(path);
+        if (fut != null) {
+            try {
+                while (true) {
+                    try {
+                        fut.get();
+                        break;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                     }
-                } catch (ExecutionException e) {
-                    LOGGER.error("Failed to save level.dat for {}", path, e);
+                }
+            } catch (ExecutionException e) {
+                LOGGER.error("Failed to save level.dat for {}", path, e);
+            } finally {
+                levelDatFut.remove(path);
+            }
+        }
+        if (runnable != null) {
+            levelDatFut.put(path, IO_POOL.submit(() -> {
+                try {
+                    runnable.run();
+                } catch (Exception e) {
+                    LOGGER.error(e);
                 } finally {
                     levelDatFut.remove(path);
                 }
-            }
-            if (runnable != null) {
-                IO_POOL.submit(() -> {
-                    try {
-                        runnable.run();
-                    } catch (Exception e) {
-                        LOGGER.error(e);
-                    } finally {
-                        levelDatFut.remove(path);
-                    }
-                });
-            }
+            }));
         }
     }
 
-    public void block(Ty type, UUID uuid, String playerName) {
+    public boolean isSaving(UUID uuid) {
+        var entity = entityFut.get(uuid);
+        var advancements = advancementsFut.get(uuid);
+        var stats = statsFut.get(uuid);
+        return entity != null || advancements != null || stats != null;
+    }
+
+    public void submitStats(UUID uuid, String playerName, Callable<Void> callable) {
+        submit(Ty.STATS, uuid, playerName, callable);
+    }
+
+    public void submitEntity(UUID uuid, String playerName, Callable<Void> callable) {
+        submit(Ty.ENTITY, uuid, playerName, callable);
+    }
+
+    public void submitAdvancements(UUID uuid, String playerName, Callable<Void> callable) {
+        submit(Ty.ADVANCEMENTS, uuid, playerName, callable);
+    }
+
+    private void submit(Ty type, UUID uuid, String playerName, Callable<Void> callable) {
+        if (!AsyncPlayerDataSave.enabled) {
+            try {
+                callable.call();
+            } catch (Exception e) {
+                LOGGER.error("Failed to save player {} data for {}", type, playerName, e);
+            }
+            return;
+        }
+        block(type, uuid, playerName);
+        var fut = IO_POOL.submit(new SaveTask(type, callable, playerName, uuid));
+        switch (type) {
+            case ENTITY -> entityFut.put(uuid, fut);
+            case ADVANCEMENTS -> advancementsFut.put(uuid, fut);
+            case STATS -> statsFut.put(uuid, fut);
+        }
+    }
+
+    public void blockStats(UUID uuid, String playerName) {
+        block(Ty.STATS, uuid, playerName);
+    }
+
+    public void blockEntity(UUID uuid, String playerName) {
+        block(Ty.ENTITY, uuid, playerName);
+    }
+
+    public void blockAdvancements(UUID uuid, String playerName) {
+        block(Ty.ADVANCEMENTS, uuid, playerName);
+    }
+
+    private void block(Ty type, UUID uuid, String playerName) {
         if (!AsyncPlayerDataSave.enabled) {
             return;
         }
@@ -173,6 +214,7 @@ public class AsyncPlayerDataSaving {
         safeReplace(current, bytes, 0, bytes.length);
     }
 
+    @SuppressWarnings("unused")
     public static void safeReplaceBackup(Path current, Path old, String content) {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         safeReplaceBackup(current, old, bytes, 0, bytes.length);
@@ -195,19 +237,19 @@ public class AsyncPlayerDataSaving {
         }
     }
 
-    public static void safeReplaceBackup(Path current, Path old, byte[] bytes, int offset, int length) {
+    public static void safeReplaceBackup(Path current, Path backup, byte[] bytes, int offset, int length) {
         File latest = writeTempFile(current, bytes, offset, length);
         Objects.requireNonNull(latest);
         for (int i = 1; i <= 10; i++) {
             try {
                 try {
-                    Files.move(current, old, ATOMIC_MOVE);
+                    Files.move(current, backup, ATOMIC_MOVE);
                 } catch (AtomicMoveNotSupportedException e) {
-                    Files.move(current, old, NO_ATOMIC_MOVE);
+                    Files.move(current, backup, NO_ATOMIC_MOVE);
                 }
                 break;
             } catch (IOException e) {
-                LOGGER.error("Failed move {} to {} retries ({} / 10)", current, old, i, e);
+                LOGGER.error("Failed move {} to {} retries ({} / 10)", current, backup, i, e);
             }
         }
         for (int i = 1; i <= 10; i++) {

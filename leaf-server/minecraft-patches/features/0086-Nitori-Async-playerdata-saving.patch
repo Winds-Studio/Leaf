@@ -6,8 +6,21 @@ Subject: [PATCH] Nitori: Async playerdata saving
 Original license: GPL v3
 Original project: https://github.com/Gensokyo-Reimagined/Nitori
 
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 00a82873d226f113278632a53c0faca420dd67d4..2c4423eb2d465c2782a8dab851619ce539f69ae8 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -586,7 +586,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     // Paper end - Optimize network
+ 
+     private static final int MAX_PER_TICK = io.papermc.paper.configuration.GlobalConfiguration.get().misc.maxJoinsPerTick; // Paper - Buffer joins to world
+-    private static int joinAttemptsThisTick; // Paper - Buffer joins to world
++    public static int joinAttemptsThisTick; // Paper - Buffer joins to world // Leaf - Async player IO
+     private static int currTick; // Paper - Buffer joins to world
+     private static int tickSecond; // Purpur - Max joins per second
+     public void tick() {
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 5a0d30b8ff5e377224de67c9f464bd1c694a4397..813c7c891ab8ff360b8e4095c92ef6420de2e4c3 100644
+index 5a0d30b8ff5e377224de67c9f464bd1c694a4397..6132eb62470c613af822326e2b6cb1ecb725ea0f 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -1060,6 +1060,15 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
@@ -17,28 +30,28 @@ index 5a0d30b8ff5e377224de67c9f464bd1c694a4397..813c7c891ab8ff360b8e4095c92ef642
 +        // Leaf start - Async player IO
 +        if (org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.enabled) {
 +            LOGGER.info("Waiting for player I/O tasks to complete...");
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.IO_POOL.shutdown();
++            try {
++                org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.IO_POOL.awaitTermination(300L, java.util.concurrent.TimeUnit.SECONDS);
++            } catch (java.lang.InterruptedException ignored) {}
 +        }
-+        org.dreeam.leaf.async.AsyncPlayerDataSaving.IO_POOL.shutdown();
-+        try {
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.IO_POOL.awaitTermination(300L, java.util.concurrent.TimeUnit.SECONDS);
-+        } catch (java.lang.InterruptedException ignored) {}
 +        // Leaf end - Async player IO
          // Paper start - Improved watchdog support - move final shutdown items here
          Util.shutdownExecutors();
          try {
 diff --git a/net/minecraft/server/PlayerAdvancements.java b/net/minecraft/server/PlayerAdvancements.java
-index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..b0bb9f1a651bbb79a2341479cad9a0b10a05940a 100644
+index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..d5196b181a0a633cb04ce18b0471cda2dcaa8816 100644
 --- a/net/minecraft/server/PlayerAdvancements.java
 +++ b/net/minecraft/server/PlayerAdvancements.java
 @@ -111,6 +111,7 @@ public class PlayerAdvancements {
      }
  
      private void load(ServerAdvancementManager manager) {
-+        org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.block(org.dreeam.leaf.async.AsyncPlayerDataSaving.Ty.ADVANCEMENTS, player.getUUID(), player.getScoreboardName()); // Leaf - Async player IO
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.blockAdvancements(player.getUUID(), player.getScoreboardName()); // Leaf - Async player IO
          if (Files.isRegularFile(this.playerSavePath)) {
              try (JsonReader jsonReader = new JsonReader(Files.newBufferedReader(this.playerSavePath, StandardCharsets.UTF_8))) {
                  jsonReader.setLenient(false);
-@@ -133,12 +134,19 @@ public class PlayerAdvancements {
+@@ -133,12 +134,18 @@ public class PlayerAdvancements {
          JsonElement jsonElement = this.codec.encodeStart(JsonOps.INSTANCE, this.asData()).getOrThrow();
  
          try {
@@ -51,12 +64,11 @@ index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..b0bb9f1a651bbb79a2341479cad9a0b1
 +            // Leaf start - Async player IO
 +            String content = GSON.toJson(jsonElement);
 +            final Path path = this.playerSavePath;
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.submit(
-+                org.dreeam.leaf.async.AsyncPlayerDataSaving.Ty.ADVANCEMENTS,
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.submitAdvancements(
 +                this.player.getUUID(),
 +                this.player.getScoreboardName(),
 +                () -> {
-+                    org.dreeam.leaf.async.AsyncPlayerDataSaving.safeReplace(path, content);
++                    org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplace(path, content);
 +                    return null;
 +                });
 +        } catch (JsonIOException /*| IOException*/ var7) {
@@ -64,11 +76,79 @@ index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..b0bb9f1a651bbb79a2341479cad9a0b1
              LOGGER.error("Couldn't save player advancements to {}", this.playerSavePath, var7);
          }
      }
+diff --git a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+index 49f1743db193be1f10bfe6419231eb682e1068f7..ced957478b62fe0ca64bd781e0304b04eca019bb 100644
+--- a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+@@ -76,6 +76,7 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         .expireAfterWrite(org.dreeam.leaf.config.modules.misc.Cache.cachePlayerProfileResultTimeout, java.util.concurrent.TimeUnit.MINUTES)
+         .build();
+     // Leaf end - Cache player profileResult
++    @Nullable public java.util.UUID[] duplicateDisconnect = null; // Leaf - Async player IO
+ 
+     public ServerLoginPacketListenerImpl(MinecraftServer server, Connection connection, boolean transferred) {
+         this.server = server;
 diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
-index 75fb49f1596f475278d12c8c7aea9ad4952b6056..2ef1bcdfac9af3abed35b8b1176160b23716f64d 100644
+index 75fb49f1596f475278d12c8c7aea9ad4952b6056..52a0fa425a30caa2e592c0fdda44800da169c2a0 100644
 --- a/net/minecraft/server/players/PlayerList.java
 +++ b/net/minecraft/server/players/PlayerList.java
-@@ -1582,7 +1582,7 @@ public abstract class PlayerList {
+@@ -782,6 +782,31 @@ public abstract class PlayerList {
+         //     UserBanListEntry userBanListEntry = this.bans.get(gameProfile);
+         // Moved from processLogin
+         UUID uuid = gameProfile.getId();
++
++        // Leaf start - Async player IO
++        if (org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.enabled) {
++            if (org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.isSaving(uuid)) {
++                if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++                return null;
++            }
++            if (loginlistener.duplicateDisconnect != null
++                && loginlistener.duplicateDisconnect.length != 0) {
++                // check last one
++                var last = loginlistener.duplicateDisconnect[loginlistener.duplicateDisconnect.length - 1];
++                if (org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.isSaving(last)) {
++                    if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++                    return null;
++                }
++                for (UUID uuid1 : loginlistener.duplicateDisconnect) {
++                    if (org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.isSaving(uuid1)) {
++                        if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++                        return null;
++                    }
++                }
++                loginlistener.duplicateDisconnect = null;
++            }
++        }
++        // Leaf end - Async player IO
+         List<ServerPlayer> list = Lists.newArrayList();
+ 
+         ServerPlayer entityplayer;
+@@ -793,6 +818,23 @@ public abstract class PlayerList {
+             }
+         }
+ 
++        // Leaf start - Async player IO
++        if (org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.enabled && !list.isEmpty()) {
++            loginlistener.duplicateDisconnect = new UUID[list.size()];
++            java.util.Iterator<ServerPlayer> iterator = list.iterator();
++
++            int index = 0;
++            while (iterator.hasNext()) {
++                entityplayer = iterator.next();
++                // this.save(entityplayer); // CraftBukkit - Force the player's inventory to be saved
++                entityplayer.connection.disconnect(Component.translatable("multiplayer.disconnect.duplicate_login"), org.bukkit.event.player.PlayerKickEvent.Cause.DUPLICATE_LOGIN); // Paper - kick event cause
++                loginlistener.duplicateDisconnect[index] = entityplayer.getUUID();
++                index++;
++            }
++            if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++            return null;
++        }
++        // Leaf end - Async player IO
+         java.util.Iterator iterator = list.iterator();
+ 
+         while (iterator.hasNext()) {
+@@ -1582,7 +1624,7 @@ public abstract class PlayerList {
              */
              // Leaf end - Remove useless creating stats json bases on player name logic
  
@@ -78,7 +158,7 @@ index 75fb49f1596f475278d12c8c7aea9ad4952b6056..2ef1bcdfac9af3abed35b8b1176160b2
          }
  
 diff --git a/net/minecraft/stats/ServerStatsCounter.java b/net/minecraft/stats/ServerStatsCounter.java
-index b26dbe807e5cb0a42f6c06b933397902310e5616..a4769d3afdf7e389af163538c681e1fd3d3f6e40 100644
+index b26dbe807e5cb0a42f6c06b933397902310e5616..35ad7f249cfb6f5c779136d96f3698ea4de1eb7c 100644
 --- a/net/minecraft/stats/ServerStatsCounter.java
 +++ b/net/minecraft/stats/ServerStatsCounter.java
 @@ -39,12 +39,23 @@ public class ServerStatsCounter extends StatsCounter {
@@ -95,7 +175,7 @@ index b26dbe807e5cb0a42f6c06b933397902310e5616..a4769d3afdf7e389af163538c681e1fd
 +    public ServerStatsCounter(MinecraftServer server, File file, String name, java.util.UUID uuid) {
 +        this.name = name;
 +        this.uuid = uuid;
-+        org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.block(org.dreeam.leaf.async.AsyncPlayerDataSaving.Ty.STATS, uuid, name);
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.blockStats(uuid, name);
 +    // Leaf end - Async player IO
          this.server = server;
          this.file = file;
@@ -106,7 +186,7 @@ index b26dbe807e5cb0a42f6c06b933397902310e5616..a4769d3afdf7e389af163538c681e1fd
              } catch (IOException var4) {
                  LOGGER.error("Couldn't read statistics file {}", file, var4);
              } catch (JsonParseException var5) {
-@@ -66,11 +77,38 @@ public class ServerStatsCounter extends StatsCounter {
+@@ -66,11 +77,37 @@ public class ServerStatsCounter extends StatsCounter {
  
      public void save() {
          if (org.spigotmc.SpigotConfig.disableStatSaving) return; // Spigot
@@ -117,8 +197,7 @@ index b26dbe807e5cb0a42f6c06b933397902310e5616..a4769d3afdf7e389af163538c681e1fd
 +            map.computeIfAbsent(stat.getType(), type -> new JsonObject()).addProperty(getKey(stat).toString(), entry.getIntValue());
 +        }
 +        final File file = this.file;
-+        org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.submit(
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.Ty.STATS,
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.submitStats(
 +            uuid,
 +            name,
 +            () -> {
@@ -131,7 +210,7 @@ index b26dbe807e5cb0a42f6c06b933397902310e5616..a4769d3afdf7e389af163538c681e1fd
 +                JsonObject jsonObject1 = new JsonObject();
 +                jsonObject1.add("stats", jsonObject);
 +                jsonObject1.addProperty("DataVersion", SharedConstants.getCurrentVersion().getDataVersion().getVersion());
-+                org.dreeam.leaf.async.AsyncPlayerDataSaving.safeReplace(file.toPath(), jsonObject1.toString());
++                org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplace(file.toPath(), jsonObject1.toString());
 +                return null;
 +            });
 +        /*
@@ -146,7 +225,7 @@ index b26dbe807e5cb0a42f6c06b933397902310e5616..a4769d3afdf7e389af163538c681e1fd
  
      @Override
 diff --git a/net/minecraft/world/level/storage/LevelStorageSource.java b/net/minecraft/world/level/storage/LevelStorageSource.java
-index de43e54698125ce9f319d4889dd49f7029fe95e0..26b83f01918af96703b931ac182c7737649d358b 100644
+index de43e54698125ce9f319d4889dd49f7029fe95e0..360e54b87db68fad60cdec63af466765baae0a07 100644
 --- a/net/minecraft/world/level/storage/LevelStorageSource.java
 +++ b/net/minecraft/world/level/storage/LevelStorageSource.java
 @@ -520,15 +520,24 @@ public class LevelStorageSource {
@@ -167,11 +246,11 @@ index de43e54698125ce9f319d4889dd49f7029fe95e0..26b83f01918af96703b931ac182c7737
 -                LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
 +                LevelStorageSource.LOGGER.error("Failed to encode level {}", path, var6);
              }
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.saveLevelData(path, () -> {
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.saveLevelData(path, () -> {
 +                try {
 +                    Path old = this.levelDirectory.oldDataFile();
 +                    Path current = this.levelDirectory.dataFile();
-+                    org.dreeam.leaf.async.AsyncPlayerDataSaving.safeReplaceBackup(current, old, nbtBytes.array, 0, nbtBytes.length);
++                    org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplaceBackup(current, old, nbtBytes.array, 0, nbtBytes.length);
 +                } catch (Exception var6) {
 +                    LevelStorageSource.LOGGER.error("Failed to save level.dat {}", path, var6);
 +                }
@@ -184,15 +263,15 @@ index de43e54698125ce9f319d4889dd49f7029fe95e0..26b83f01918af96703b931ac182c7737
  
          @Override
          public void close() throws IOException {
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.saveLevelData(this.levelDirectory.path(), null); // Leaf - Async player IO
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.saveLevelData(this.levelDirectory.path(), null); // Leaf - Async player IO
              this.lock.close();
          }
  
 diff --git a/net/minecraft/world/level/storage/PlayerDataStorage.java b/net/minecraft/world/level/storage/PlayerDataStorage.java
-index c44110b123ba5912af18faf0065e9ded780da9b7..64b49b7cfd6df1bf6c45b2b2e35fc97dd411a030 100644
+index c44110b123ba5912af18faf0065e9ded780da9b7..2eae5ccb37b942b94964c28391b96989ae85b072 100644
 --- a/net/minecraft/world/level/storage/PlayerDataStorage.java
 +++ b/net/minecraft/world/level/storage/PlayerDataStorage.java
-@@ -34,19 +34,38 @@ public class PlayerDataStorage {
+@@ -34,19 +34,37 @@ public class PlayerDataStorage {
  
      public void save(Player player) {
          if (org.spigotmc.SpigotConfig.disablePlayerDataSaving) return; // Spigot
@@ -220,8 +299,7 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..64b49b7cfd6df1bf6c45b2b2e35fc97d
 +    // Leaf start - Async player IO
 +    public void save(String playerName, java.util.UUID uuid, String stringId, CompoundTag compoundTag) {
 +        final File playerDir = this.playerDir;
-+        org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.submit(
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.Ty.ENTITY,
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.submitEntity(
 +            uuid,
 +            playerName,
 +            () -> {
@@ -231,7 +309,7 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..64b49b7cfd6df1bf6c45b2b2e35fc97d
 +
 +                Path current = path.resolve(stringId + ".dat");
 +                Path old = path.resolve(stringId + ".dat_old");
-+                org.dreeam.leaf.async.AsyncPlayerDataSaving.safeReplaceBackup(current, old, nbtBytes.array, 0, nbtBytes.length);
++                org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplaceBackup(current, old, nbtBytes.array, 0, nbtBytes.length);
 +                return null;
 +            });
 +    }
@@ -240,7 +318,7 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..64b49b7cfd6df1bf6c45b2b2e35fc97d
      private void backup(String name, String stringUuid, String suffix) { // CraftBukkit
          Path path = this.playerDir.toPath();
          Path path1 = path.resolve(stringUuid + suffix); // CraftBukkit
-@@ -60,7 +79,13 @@ public class PlayerDataStorage {
+@@ -60,7 +78,13 @@ public class PlayerDataStorage {
          }
      }
  
@@ -250,12 +328,12 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..64b49b7cfd6df1bf6c45b2b2e35fc97d
 +        return load(name, stringUuid, suffix, java.util.UUID.fromString(stringUuid));
 +    }
 +    private Optional<CompoundTag> load(String name, String stringUuid, String suffix, java.util.UUID playerUuid) { // CraftBukkit
-+        org.dreeam.leaf.async.AsyncPlayerDataSaving.INSTANCE.block(org.dreeam.leaf.async.AsyncPlayerDataSaving.Ty.ENTITY, playerUuid, name);
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.blockEntity(playerUuid, name);
 +        // Leaf end - Async player IO
          File file = new File(this.playerDir, stringUuid + suffix); // CraftBukkit
          // Spigot start
          boolean usingWrongFile = false;
-@@ -91,7 +116,7 @@ public class PlayerDataStorage {
+@@ -91,7 +115,7 @@ public class PlayerDataStorage {
  
      public Optional<CompoundTag> load(Player player) {
          // CraftBukkit start
@@ -264,7 +342,7 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..64b49b7cfd6df1bf6c45b2b2e35fc97d
              if (player instanceof ServerPlayer serverPlayer) {
                  CraftPlayer craftPlayer = serverPlayer.getBukkitEntity();
                  // Only update first played if it is older than the one we have
-@@ -106,20 +131,25 @@ public class PlayerDataStorage {
+@@ -106,20 +130,25 @@ public class PlayerDataStorage {
          });
      }
  
