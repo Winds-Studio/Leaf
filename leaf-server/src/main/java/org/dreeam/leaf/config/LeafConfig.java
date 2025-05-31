@@ -227,8 +227,12 @@ public class LeafConfig {
             extraConfigs.addAll(Arrays.asList(existing.split(",")));
         }
 
+        // Use same way in spark's BukkitServerConfigProvider#getNestedFiles to get all world configs
+        // It may spam in the spark profiler, but it's ok, since spark uses YamlConfigParser.INSTANCE to
+        // get configs defined in extra config flag instead of using SplitYamlConfigParser.INSTANCE
         for (World world : Bukkit.getWorlds()) {
-            extraConfigs.add(world.getWorldFolder().getName() + "/gale-world.yml"); // Gale world config
+            Path galeWorldFolder = world.getWorldFolder().toPath().resolve("gale-world.yml");
+            extraConfigs.add(galeWorldFolder.toString().replace("\\", "/").replace("./", "")); // Gale world config
         }
 
         return extraConfigs;

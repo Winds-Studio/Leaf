@@ -1,4 +1,4 @@
-package org.dreeam.leaf.util.biome;
+package org.dreeam.leaf.world.biome;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
