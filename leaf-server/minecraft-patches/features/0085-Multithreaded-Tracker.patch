@@ -23,6 +23,28 @@ for the case of some NPC plugins which using real entity type, e.g. Citizens.
 But it is still recommending to use those packet based, virtual entity
 based NPC plugins, e.g. ZNPC Plus, Adyeshach, Fancy NPC, etc.
 
+diff --git a/ca/spottedleaf/moonrise/common/misc/NearbyPlayers.java b/ca/spottedleaf/moonrise/common/misc/NearbyPlayers.java
+index 1b8193587814225c2ef2c5d9e667436eb50ff6c5..4200d22606c6a3dbdf282792a4007a51df66963b 100644
+--- a/ca/spottedleaf/moonrise/common/misc/NearbyPlayers.java
++++ b/ca/spottedleaf/moonrise/common/misc/NearbyPlayers.java
+@@ -60,7 +60,16 @@ public final class NearbyPlayers {
+ 
+     private final ServerLevel world;
+     private final Reference2ReferenceOpenHashMap<ServerPlayer, TrackedPlayer[]> players = new Reference2ReferenceOpenHashMap<>();
+-    private final Long2ReferenceOpenHashMap<TrackedChunk> byChunk = new Long2ReferenceOpenHashMap<>();
++    // Leaf start - Multithreaded tracker
++    private final it.unimi.dsi.fastutil.longs.Long2ReferenceMap<TrackedChunk> byChunk;
++    {
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            byChunk = it.unimi.dsi.fastutil.longs.Long2ReferenceMaps.synchronize(new Long2ReferenceOpenHashMap<>());
++        } else {
++            byChunk = new Long2ReferenceOpenHashMap<>();
++        }
++    }
++    // Leaf end - Multithreaded tracker
+     private final Long2ReferenceOpenHashMap<ReferenceList<ServerPlayer>>[] directByChunk = new Long2ReferenceOpenHashMap[TOTAL_MAP_TYPES];
+     {
+         for (int i = 0; i < this.directByChunk.length; ++i) {
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
 index dd2509996bfd08e8c3f9f2be042229eac6d7692d..a35e9fae8f8da0c42f0616c4f78dc396492673aa 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
@@ -36,8 +58,20 @@ index dd2509996bfd08e8c3f9f2be042229eac6d7692d..a35e9fae8f8da0c42f0616c4f78dc396
  
          private static final byte CHUNK_TICKET_STAGE_NONE           = 0;
          private static final byte CHUNK_TICKET_STAGE_LOADING        = 1;
+diff --git a/net/minecraft/network/protocol/game/ClientboundUpdateAttributesPacket.java b/net/minecraft/network/protocol/game/ClientboundUpdateAttributesPacket.java
+index 9c0c99b936b4a82ebfe924866e53ec71f7bbe9ad..2ccff968cb2065d34fad4d27573f9e3081edb2f2 100644
+--- a/net/minecraft/network/protocol/game/ClientboundUpdateAttributesPacket.java
++++ b/net/minecraft/network/protocol/game/ClientboundUpdateAttributesPacket.java
+@@ -32,6 +32,7 @@ public class ClientboundUpdateAttributesPacket implements Packet<ClientGamePacke
+         this.attributes = Lists.newArrayList();
+ 
+         for (AttributeInstance attributeInstance : attributes) {
++            if (attributeInstance == null) continue; // Leaf - Multithreaded tracker
+             this.attributes
+                 .add(
+                     new ClientboundUpdateAttributesPacket.AttributeSnapshot(
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eafc8b48d1b 100644
+index 5d9d233e3a568aa6297ed9c703fa450f98158602..47a7bf7c38600a2ad547bbd2b7fe632e96e9a139 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
 @@ -248,6 +248,15 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -70,14 +104,13 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
          // Paper start - optimise entity tracker
          if (true) {
              this.newTrackerTick();
-@@ -1073,7 +1089,18 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1073,7 +1089,17 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          final Entity entity;
          private final int range;
          SectionPos lastSectionPos;
 -        public final Set<ServerPlayerConnection> seenBy = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(); // Paper - Perf: optimise map impl
 +        // Leaf start - Multithreaded tracker
 +        public static final ServerPlayerConnection[] EMPTY_OBJECT_ARRAY = new ServerPlayerConnection[0];
-+        public final Object sync = new Object();
 +        public final Set<ServerPlayerConnection> seenBy = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled ? it.unimi.dsi.fastutil.objects.ReferenceSets.synchronize(new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>()) : new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(); // Paper - Perf: optimise map impl
 +        private volatile ServerPlayerConnection[] seenByArray = EMPTY_OBJECT_ARRAY;
 +        public ServerPlayerConnection[] seenBy() {
@@ -90,7 +123,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
  
          // Paper start - optimise entity tracker
          private long lastChunkUpdate = -1L;
-@@ -1100,27 +1127,95 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1100,27 +1126,95 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              this.lastTrackedChunk = chunk;
  
              final ServerPlayer[] playersRaw = players.getRawDataUnchecked();
@@ -191,7 +224,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
                  if (!ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(conn.getPlayer())) {
                      foundToRemove = true;
                      break;
-@@ -1131,12 +1226,13 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1131,12 +1225,13 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                  return;
              }
  
@@ -207,7 +240,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
          }
  
          @Override
-@@ -1146,10 +1242,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1146,10 +1241,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              if (this.seenBy.isEmpty()) {
                  return;
              }
@@ -221,7 +254,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
          }
  
          @Override
-@@ -1176,7 +1273,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1176,7 +1272,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcast(Packet<?> packet) {
@@ -230,7 +263,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
                  serverPlayerConnection.send(packet);
              }
          }
-@@ -1189,21 +1286,34 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1189,21 +1285,34 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcastRemoved() {
@@ -268,7 +301,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
                  // Paper start - remove allocation of Vec3D here
                  // Vec3 vec3 = player.position().subtract(this.entity.position());
                  double vec3_dx = player.getX() - this.entity.getX();
-@@ -1231,6 +1341,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1231,6 +1340,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                  // CraftBukkit end
                  if (flag) {
                      if (this.seenBy.add(player.connection)) {
@@ -276,7 +309,7 @@ index 5d9d233e3a568aa6297ed9c703fa450f98158602..24765ca23899b2eec049bf539c1f9eaf
                          // Paper start - entity tracking events
                          if (io.papermc.paper.event.player.PlayerTrackEntityEvent.getHandlerList().getRegisteredListeners().length == 0 || new io.papermc.paper.event.player.PlayerTrackEntityEvent(player.getBukkitEntity(), this.entity.getBukkitEntity()).callEvent()) {
                          this.serverEntity.addPairing(player);
-@@ -1239,6 +1350,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1239,6 +1349,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                          this.serverEntity.onPlayerAdd(); // Paper - fix desync when a player is added to the tracker
                      }
                  } else if (this.seenBy.remove(player.connection)) {
@@ -298,18 +331,10 @@ index f106373ef3ac4a8685c2939c9e8361688a285913..51ae390c68e7a3aa193329cc3bc47ca6
      public boolean visible = true;
  
 diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
-index 1dee20436fc29537319ee456756a8e8f7b6fe66a..1f3e030cea42a0c9e27425cb18c232f482ef8608 100644
+index 1dee20436fc29537319ee456756a8e8f7b6fe66a..5351d373aa0f4450386a6b50f88052c031949f5b 100644
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
-@@ -70,6 +70,7 @@ public class ServerEntity {
-     private boolean wasOnGround;
-     @Nullable
-     private List<SynchedEntityData.DataValue<?>> trackedDataValues;
-+    public boolean wantSendDirtyEntityData = false; // Leaf - Multithreaded tracker
- 
-     // CraftBukkit start
-     private final Set<net.minecraft.server.network.ServerPlayerConnection> trackedPlayers;
-@@ -110,8 +111,16 @@ public class ServerEntity {
+@@ -110,8 +110,16 @@ public class ServerEntity {
                  .forEach(
                      removedPassenger -> {
                          if (removedPassenger instanceof ServerPlayer serverPlayer1) {
@@ -328,7 +353,7 @@ index 1dee20436fc29537319ee456756a8e8f7b6fe66a..1f3e030cea42a0c9e27425cb18c232f4
                          }
                      }
                  );
-@@ -124,7 +133,7 @@ public class ServerEntity {
+@@ -124,7 +132,7 @@ public class ServerEntity {
                  MapId mapId = itemFrame.cachedMapId; // Paper - Perf: Cache map ids on item frames
                  MapItemSavedData savedData = MapItem.getSavedData(mapId, this.level);
                  if (savedData != null) {
@@ -337,19 +362,15 @@ index 1dee20436fc29537319ee456756a8e8f7b6fe66a..1f3e030cea42a0c9e27425cb18c232f4
                          final ServerPlayer serverPlayer = connection.getPlayer(); // Paper
                          savedData.tickCarriedBy(serverPlayer, item);
                          Packet<?> updatePacket = savedData.getUpdatePacket(mapId, serverPlayer);
-@@ -425,6 +434,12 @@ public class ServerEntity {
+@@ -443,7 +451,7 @@ public class ServerEntity {
+                 this.broadcastAndSend(new ClientboundUpdateAttributesPacket(this.entity.getId(), attributesToSync));
+             }
+ 
+-            attributesToSync.clear();
++            // attributesToSync.clear(); // Leaf - Multithreaded tracker
+         }
      }
  
-     public void sendDirtyEntityData() {
-+        // Leaf start - Multithreaded tracker
-+        if (Thread.currentThread() instanceof org.dreeam.leaf.async.tracker.MultithreadedTracker.MultithreadedTrackerThread) {
-+            wantSendDirtyEntityData = true;
-+            return;
-+        }
-+        // Leaf end - Multithreaded tracker
-         SynchedEntityData entityData = this.entity.getEntityData();
-         List<SynchedEntityData.DataValue<?>> list = entityData.packDirty();
-         if (list != null) {
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
 index 275b640f4536366152f59acf071dd4eba15696c8..a669a59a42f814480879a52d2da5e04c636720de 100644
 --- a/net/minecraft/server/level/ServerLevel.java
@@ -385,6 +406,238 @@ index 327b3bc89920c4ab02c1126dc63bca05ce3abefe..1415043bee5fbbfcf9dab9184a9418d5
          // Paper start - Prevent teleporting dead entities
          if (this.player.isRemoved()) {
              LOGGER.info("Attempt to teleport removed player {} restricted", player.getScoreboardName());
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index d502325d693539842fd6f5485365e0e9b786b7aa..a99527409e9aae6c8b321a5ed100b2645151087e 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -1311,13 +1311,13 @@ public abstract class LivingEntity extends Entity implements Attackable {
+     }
+ 
+     private void refreshDirtyAttributes() {
+-        Set<AttributeInstance> attributesToUpdate = this.getAttributes().getAttributesToUpdate();
++        // Leaf start - Multithreaded tracker
++        int[] attributesToUpdate = this.getAttributes().getAttributesToUpdateIds();
+ 
+-        for (AttributeInstance attributeInstance : attributesToUpdate) {
+-            this.onAttributeUpdated(attributeInstance.getAttribute());
++        for (int attribute : attributesToUpdate) {
++            this.onAttributeUpdated(net.minecraft.core.registries.BuiltInRegistries.ATTRIBUTE.get(attribute).orElseThrow());
+         }
+-
+-        attributesToUpdate.clear();
++        // Leaf end - Multithreaded tracker
+     }
+ 
+     protected void onAttributeUpdated(Holder<Attribute> attribute) {
+diff --git a/net/minecraft/world/entity/ai/attributes/Attribute.java b/net/minecraft/world/entity/ai/attributes/Attribute.java
+index f8419dde44ebc7324e783f8bee42132d5ec973c3..406767c60ec1a324faaf5d3658b161647497f99b 100644
+--- a/net/minecraft/world/entity/ai/attributes/Attribute.java
++++ b/net/minecraft/world/entity/ai/attributes/Attribute.java
+@@ -16,10 +16,15 @@ public class Attribute {
+     private boolean syncable;
+     private final String descriptionId;
+     private Attribute.Sentiment sentiment = Attribute.Sentiment.POSITIVE;
++    // Leaf start - Optimize AttributeMap
++    public final int uid;
++    private static final java.util.concurrent.atomic.AtomicInteger SIZE = new java.util.concurrent.atomic.AtomicInteger();
++    // Leaf end - Optimize AttributeMap
+ 
+     protected Attribute(String descriptionId, double defaultValue) {
+         this.defaultValue = defaultValue;
+         this.descriptionId = descriptionId;
++        this.uid = SIZE.getAndAdd(1); // Leaf - Optimize AttributeMap
+     }
+ 
+     public double getDefaultValue() {
+diff --git a/net/minecraft/world/entity/ai/attributes/AttributeInstance.java b/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
+index 8013594bb4844e7a8abf28123958e7f632d39341..b502c4a0f3695cc5bee8954f937f64584df1584d 100644
+--- a/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
++++ b/net/minecraft/world/entity/ai/attributes/AttributeInstance.java
+@@ -24,8 +24,24 @@ public class AttributeInstance {
+     private final Map<AttributeModifier.Operation, Map<ResourceLocation, AttributeModifier>> modifiersByOperation = Maps.newEnumMap(
+         AttributeModifier.Operation.class
+     );
+-    private final Map<ResourceLocation, AttributeModifier> modifierById = new Object2ObjectArrayMap<>();
+-    private final Map<ResourceLocation, AttributeModifier> permanentModifiers = new Object2ObjectArrayMap<>();
++    // Leaf start - Multithreaded tracker
++    private final Map<ResourceLocation, AttributeModifier> modifierById;
++    {
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            modifierById = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectArrayMap<>(), this);
++        } else {
++            modifierById = new Object2ObjectArrayMap<>();
++        }
++    }
++    private final Map<ResourceLocation, AttributeModifier> permanentModifiers;
++    {
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            permanentModifiers = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectArrayMap<>(), this);
++        } else {
++            permanentModifiers = new Object2ObjectArrayMap<>();
++        }
++    }
++    // Leaf end - Multithreaded tracker
+     private double baseValue;
+     private boolean dirty = true;
+     private double cachedValue;
+@@ -54,7 +70,13 @@ public class AttributeInstance {
+ 
+     @VisibleForTesting
+     Map<ResourceLocation, AttributeModifier> getModifiers(AttributeModifier.Operation operation) {
+-        return this.modifiersByOperation.computeIfAbsent(operation, operation1 -> new Object2ObjectOpenHashMap<>());
++        // Leaf start - Multithreaded tracker
++        return this.modifiersByOperation.computeIfAbsent(operation, operation1 -> {
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled)
++                return it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectArrayMap<>(), this);
++            else return new Object2ObjectArrayMap<>();
++        });
++        // Leaf end - Multithreaded tracker
+     }
+ 
+     public Set<AttributeModifier> getModifiers() {
+@@ -142,8 +164,12 @@ public class AttributeInstance {
+ 
+     public double getValue() {
+         if (this.dirty) {
+-            this.cachedValue = this.calculateValue();
++            // Leaf start - Multithreaded tracker
++            double value = this.calculateValue();
++            this.cachedValue = value;
+             this.dirty = false;
++            return value;
++            // Leaf end - Multithreaded tracker
+         }
+ 
+         return this.cachedValue;
+@@ -195,9 +221,19 @@ public class AttributeInstance {
+         if (!this.permanentModifiers.isEmpty()) {
+             ListTag listTag = new ListTag();
+ 
+-            for (AttributeModifier attributeModifier : this.permanentModifiers.values()) {
+-                listTag.add(attributeModifier.save());
++            // Leaf start - Multithreaded tracker
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                synchronized (this) {
++                    for (AttributeModifier attributeModifier : this.permanentModifiers.values()) {
++                        listTag.add(attributeModifier.save());
++                    }
++                }
++            } else {
++                for (AttributeModifier attributeModifier : this.permanentModifiers.values()) {
++                    listTag.add(attributeModifier.save());
++                }
+             }
++            // Leaf end - Multithreaded tracker
+ 
+             compoundTag.put("modifiers", listTag);
+         }
+diff --git a/net/minecraft/world/entity/ai/attributes/AttributeMap.java b/net/minecraft/world/entity/ai/attributes/AttributeMap.java
+index 89f4c5b2d61e27acd48063f9f24ce9ea91898b8b..0bc846721b1af44904a705f5c4aef897a03824e0 100644
+--- a/net/minecraft/world/entity/ai/attributes/AttributeMap.java
++++ b/net/minecraft/world/entity/ai/attributes/AttributeMap.java
+@@ -20,12 +20,14 @@ import org.slf4j.Logger;
+ public class AttributeMap {
+     private static final Logger LOGGER = LogUtils.getLogger();
+     // Gale start - Lithium - replace AI attributes with optimized collections
+-    private final Map<Holder<Attribute>, AttributeInstance> attributes = new it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap<>(0);
+-    private final Set<AttributeInstance> attributesToSync = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(0);
+-    private final Set<AttributeInstance> attributesToUpdate = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(0);
++    // Leaf start - Multithreaded tracker
++    private final Map<Holder<Attribute>, AttributeInstance> attributes = new org.dreeam.leaf.util.map.AttributeInstanceArrayMap();
++    private final org.dreeam.leaf.util.map.AttributeInstanceSet attributesToSync = new org.dreeam.leaf.util.map.AttributeInstanceSet((org.dreeam.leaf.util.map.AttributeInstanceArrayMap) attributes);
++    private final org.dreeam.leaf.util.map.AttributeInstanceSet attributesToUpdate = new org.dreeam.leaf.util.map.AttributeInstanceSet((org.dreeam.leaf.util.map.AttributeInstanceArrayMap) attributes);
++    // Leaf end - Multithreaded tracker
+     // Gale end - Lithium - replace AI attributes with optimized collections
+     private final AttributeSupplier supplier;
+-    private final java.util.function.Function<Holder<Attribute>, AttributeInstance> createInstance; // Gale - Airplane - reduce entity allocations
++    //private final java.util.function.Function<Holder<Attribute>, AttributeInstance> createInstance; // Gale - Airplane - reduce entity allocations // Leaf - Optimize AttributeMap
+     private final net.minecraft.world.entity.LivingEntity entity; // Purpur - Ridables
+ 
+     public AttributeMap(AttributeSupplier supplier) {
+@@ -36,31 +38,54 @@ public class AttributeMap {
+         this.entity = entity;
+         // Purpur end - Ridables
+         this.supplier = defaultAttributes;
+-        this.createInstance = holder -> this.supplier.createInstance(this::onAttributeModified, holder); // Gale - Airplane - reduce entity allocations
++        //this.createInstance = holder -> this.supplier.createInstance(this::onAttributeModified, holder); // Gale - Airplane - reduce entity allocations // Leaf - Optimize AttributeMap
+     }
+ 
+-    private void onAttributeModified(AttributeInstance instance) {
++    // Leaf start - Multithreaded tracker
++    private synchronized void onAttributeModified(AttributeInstance instance) {
+         this.attributesToUpdate.add(instance);
+         if (instance.getAttribute().value().isClientSyncable() && (entity == null || entity.shouldSendAttribute(instance.getAttribute().value()))) { // Purpur - Ridables
+             this.attributesToSync.add(instance);
+         }
+     }
+ 
+-    public Set<AttributeInstance> getAttributesToSync() {
+-        return this.attributesToSync;
++    private static final AttributeInstance[] EMPTY_ATTRIBUTE_INSTANCE = new AttributeInstance[0];
++    public synchronized Set<AttributeInstance> getAttributesToSync() {
++        var clone = it.unimi.dsi.fastutil.objects.ReferenceArraySet.ofUnchecked(attributesToSync.toArray(EMPTY_ATTRIBUTE_INSTANCE));
++        this.attributesToSync.clear();
++        return clone;
+     }
+ 
+-    public Set<AttributeInstance> getAttributesToUpdate() {
+-        return this.attributesToUpdate;
++    public synchronized Set<AttributeInstance> getAttributesToUpdate() {
++        var clone = it.unimi.dsi.fastutil.objects.ReferenceArraySet.ofUnchecked(attributesToUpdate.toArray(EMPTY_ATTRIBUTE_INSTANCE));
++        this.attributesToUpdate.clear();
++        return clone;
+     }
+ 
++    public synchronized int[] getAttributesToUpdateIds() {
++        int[] clone = attributesToUpdate.inner.toIntArray();
++        this.attributesToUpdate.clear();
++        return clone;
++    }
++    // Leaf end - Multithreaded tracker
++
+     public Collection<AttributeInstance> getSyncableAttributes() {
+         return this.attributes.values().stream().filter(instance -> instance.getAttribute().value().isClientSyncable() && (entity == null || entity.shouldSendAttribute(instance.getAttribute().value()))).collect(Collectors.toList()); // Purpur - Ridables
+     }
+ 
+     @Nullable
+     public AttributeInstance getInstance(Holder<Attribute> attribute) {
+-        return this.attributes.computeIfAbsent(attribute, this.createInstance); // Gale - Airplane - reduce entity allocations - cache lambda, as for some reason java allocates it anyways
++        // Leaf start - Multithreaded tracker
++        AttributeInstance v;
++        if ((v = this.attributes.get(attribute)) == null) {
++            AttributeInstance newValue;
++            if ((newValue = this.supplier.createInstance(this::onAttributeModified, attribute)) != null) {
++                attributes.put(attribute, newValue);
++                return newValue;
++            }
++        }
++        return v;
++        // Leaf end - Multithreaded tracker
+     }
+ 
+     public boolean hasAttribute(Holder<Attribute> attribute) {
+diff --git a/net/minecraft/world/entity/ai/attributes/AttributeSupplier.java b/net/minecraft/world/entity/ai/attributes/AttributeSupplier.java
+index 24710041ccbc70e5506d8d89ae34f0141977f209..05de8a77b389691dd6986f36b4cb8cc0935e21e4 100644
+--- a/net/minecraft/world/entity/ai/attributes/AttributeSupplier.java
++++ b/net/minecraft/world/entity/ai/attributes/AttributeSupplier.java
+@@ -11,7 +11,7 @@ public class AttributeSupplier {
+     private final Map<Holder<Attribute>, AttributeInstance> instances;
+ 
+     AttributeSupplier(Map<Holder<Attribute>, AttributeInstance> instances) {
+-        this.instances = instances;
++        this.instances = new org.dreeam.leaf.util.map.AttributeInstanceArrayMap(instances); // Leaf - Optimize AttributeMap
+     }
+ 
+     public AttributeInstance getAttributeInstance(Holder<Attribute> attribute) {
+@@ -41,7 +41,7 @@ public class AttributeSupplier {
+     }
+ 
+     @Nullable
+-    public AttributeInstance createInstance(Consumer<AttributeInstance> onDirty, Holder<Attribute> attribute) {
++    public AttributeInstance createInstance(Consumer<AttributeInstance> onDirty, Holder<Attribute> attribute) { // Leaf - Multithreaded tracker
+         AttributeInstance attributeInstance = this.instances.get(attribute);
+         if (attributeInstance == null) {
+             return null;
 diff --git a/net/minecraft/world/entity/item/PrimedTnt.java b/net/minecraft/world/entity/item/PrimedTnt.java
 index c96f458994818392857642282ec3d492124885da..d345afd14ef6fe2f0a584df5dfa080fd7ab3f47e 100644
 --- a/net/minecraft/world/entity/item/PrimedTnt.java
