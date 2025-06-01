@@ -29,7 +29,7 @@ public final class BlockPosIterator extends AbstractIterator<BlockPos> {
         Vec3 movement = vec.scale(toTravel);
         AABB fromBB = boundingBox.move(-vec.x, -vec.y, -vec.z);
         AABB searchArea = fromBB.expandTowards(movement);
-        return org.dreeam.leaf.util.map.BlockPosIterator.iterable(searchArea);
+        return iterable(searchArea);
     }
 
     public BlockPosIterator(AABB bb) {
