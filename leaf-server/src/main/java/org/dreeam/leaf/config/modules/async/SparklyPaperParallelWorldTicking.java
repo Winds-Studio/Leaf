@@ -8,15 +8,18 @@ import org.dreeam.leaf.config.annotations.Experimental;
 public class SparklyPaperParallelWorldTicking extends ConfigModules {
 
     public String getBasePath() {
-        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".parallel-world-tracking";
-    } // TODO: Correct config key when stable
+        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".parallel-world-ticking";
+    }
 
     @Experimental
     public static boolean enabled = false;
     public static int threads = 8;
     public static boolean logContainerCreationStacktraces = false;
     public static boolean disableHardThrow = false;
+    @Deprecated
     public static boolean runAsyncTasksSync = false;
+    // STRICT, BUFFERED, DISABLED
+    public static String asyncUnsafeReadHandling = "BUFFERED";
 
     @Override
     public void onLoaded() {
@@ -34,15 +37,30 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
         } else {
             threads = 0;
         }
+
         logContainerCreationStacktraces = config.getBoolean(getBasePath() + ".log-container-creation-stacktraces", logContainerCreationStacktraces);
         logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
         disableHardThrow = config.getBoolean(getBasePath() + ".disable-hard-throw", disableHardThrow);
         disableHardThrow = enabled && disableHardThrow;
-        runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync", runAsyncTasksSync);
-        runAsyncTasksSync = enabled && runAsyncTasksSync;
+        asyncUnsafeReadHandling = config.getString(getBasePath() + ".async-unsafe-read-handling", asyncUnsafeReadHandling).toUpperCase();
+
+        if (!asyncUnsafeReadHandling.equals("STRICT") && !asyncUnsafeReadHandling.equals("BUFFERED") && !asyncUnsafeReadHandling.equals("DISABLED")) {
+            LeafConfig.LOGGER.warn("Invalid value for {}.async-unsafe-read-handling: {}, fallback to STRICT.", getBasePath(), asyncUnsafeReadHandling);
+            asyncUnsafeReadHandling = "STRICT";
+        }
+        if (!enabled) {
+            asyncUnsafeReadHandling = "DISABLED";
+        }
+
+        runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync", false); // Default to false now
+        if (runAsyncTasksSync) {
+            LeafConfig.LOGGER.warn("The setting '{}.run-async-tasks-sync' is deprecated. Use 'async-unsafe-read-handling: STRICT' for similar safety checks or 'BUFFERED' for buffered reads.", getBasePath());
+        }
 
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", threads);
         }
+
+        runAsyncTasksSync = enabled && runAsyncTasksSync; // Auto-disable if main feature is off
     }
 }

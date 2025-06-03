@@ -265,7 +265,7 @@ index 5ab2c8333178335515e619b87ae420f948c83bd1..be3b2f023897a8823560ee059cb16ec9
              }
  
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 8d5210d4d5128237b64a8857ae8e39112ee206e2..a4c8dd24798a19ac023fb3132b0106548acfc75d 100644
+index 8d5210d4d5128237b64a8857ae8e39112ee206e2..2263c4e3c55d23e5fe3d27cbd771fc4b45128eb0 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -291,6 +291,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
@@ -326,7 +326,20 @@ index 8d5210d4d5128237b64a8857ae8e39112ee206e2..a4c8dd24798a19ac023fb3132b010654
      }
  
      @Override
-@@ -1680,6 +1693,18 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -923,6 +936,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             }
+ 
+             serverLevel.save(null, flush, serverLevel.noSave && !forced, close); // Paper - add close param
++            // Leaf start - SparklyPaper - parallel world ticking - Shutdown handling for async reads
++            // Only prepare shutdown if 'close' is true, indicating this save is part of server shutdown
++            if (close && org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                serverLevel.prepareShutdown();
++            }
++            // Leaf end - SparklyPaper - parallel world ticking - Shutdown handling for async reads
+             flag = true;
+         }
+ 
+@@ -1680,6 +1699,18 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          }
      }
  
@@ -345,7 +358,7 @@ index 8d5210d4d5128237b64a8857ae8e39112ee206e2..a4c8dd24798a19ac023fb3132b010654
      protected void tickChildren(BooleanSupplier hasTimeLeft) {
          this.getPlayerList().getPlayers().forEach(serverPlayer1 -> serverPlayer1.connection.suspendFlushing());
          this.server.getScheduler().mainThreadHeartbeat(); // CraftBukkit
-@@ -1746,28 +1771,50 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1746,28 +1777,50 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          }
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
@@ -414,7 +427,7 @@ index 8d5210d4d5128237b64a8857ae8e39112ee206e2..a4c8dd24798a19ac023fb3132b010654
          this.isIteratingOverLevels = false; // Paper - Throw exception on world create while being ticked
  
          this.tickConnection();
-@@ -1847,6 +1894,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1847,6 +1900,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          Map<ResourceKey<Level>, ServerLevel> oldLevels = this.levels;
          Map<ResourceKey<Level>, ServerLevel> newLevels = Maps.newLinkedHashMap(oldLevels);
          newLevels.remove(level.dimension());
@@ -568,7 +581,7 @@ index d4048661575ebfaf128ba25da365843774364e0e..33dd16a26edd2974f04d9a868d3e58e8
  
          // Gale start - Pufferfish - SIMD support
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index a66e5f6652d9633c856490de36d8d8fdf8a5298a..60e0296312030d25f917c568c17ce86d08e18122 100644
+index a66e5f6652d9633c856490de36d8d8fdf8a5298a..d6524d5c442555eaeb4d90f6a101262ee669f0d9 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -182,7 +182,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -580,23 +593,173 @@ index a66e5f6652d9633c856490de36d8d8fdf8a5298a..60e0296312030d25f917c568c17ce86d
      // Paper - rewrite chunk system
      private final GameEventDispatcher gameEventDispatcher;
      public boolean noSave;
-@@ -208,6 +208,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -208,7 +208,9 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      private double preciseTime; // Purpur - Configurable daylight cycle
      private boolean forceTime; // Purpur - Configurable daylight cycle
      private final RandomSequences randomSequences;
+-
 +    public java.util.concurrent.ExecutorService tickExecutor; // SparklyPaper - parallel world ticking
- 
++    public final java.util.concurrent.ConcurrentLinkedQueue<org.dreeam.leaf.async.world.WorldReadRequest> asyncReadRequestQueue = new java.util.concurrent.ConcurrentLinkedQueue<>(); // Leaf - SparklyPaper - parallel world ticking
++    private volatile boolean isShuttingDown = false; // Leaf - SparklyPaper - parallel world ticking - Shutdown handling for async reads
      // CraftBukkit start
      public final LevelStorageSource.LevelStorageAccess levelStorageAccess;
-@@ -703,6 +704,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     public final UUID uuid;
+@@ -703,8 +705,26 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
          this.preciseTime = this.serverLevelData.getDayTime(); // Purpur - Configurable daylight cycle
          this.realPlayers = Lists.newArrayList(); // Leaves - skip
 +        this.tickExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(new org.dreeam.leaf.async.world.SparklyPaperServerLevelTickExecutorThreadFactory(getWorld().getName())); // SparklyPaper - parallel world ticking
++    }
++
++    // Leaf start - SparklyPaper - parallel world ticking - Shutdown handling for async reads
++    public boolean isShuttingDown() {
++        return this.isShuttingDown;
      }
  
++    public void prepareShutdown() {
++        this.isShuttingDown = true;
++        org.dreeam.leaf.async.world.WorldReadRequest req;
++        int clearedRequests = 0;
++        while ((req = this.asyncReadRequestQueue.poll()) != null) {
++            req.future().completeExceptionally(new IllegalStateException("World " + this.getWorld().getName() + " is shutting down. Cannot process buffered read: " + req.type()));
++            clearedRequests++;
++        }
++        if (clearedRequests > 0) MinecraftServer.LOGGER.info("PWT: Cleared " + clearedRequests + " pending async read requests for world " + this.getWorld().getName() + " during shutdown.");
++    }
++    // Leaf end - SparklyPaper - parallel world ticking - Shutdown handling for async reads
++
      // Paper start
-@@ -1313,9 +1315,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     @Override
+     public boolean hasChunk(int chunkX, int chunkZ) {
+@@ -737,8 +757,112 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+ 
+     public Player[] eligibleDespawnCheckingPlayerCache = new Player[0]; // Leaf - Cache eligible players for despawn checks
+ 
++    // Leaf start - SparklyPaper - parallel world ticking
++    private void processAsyncReadRequests() {
++        // Only process if parallel ticking is enabled and buffering is active
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ||
++            !org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.asyncUnsafeReadHandling.equals("BUFFERED")) {
++            // Clear queue if buffering gets disabled to prevent memory leaks
++            if (!this.asyncReadRequestQueue.isEmpty()) {
++                org.dreeam.leaf.async.world.WorldReadRequest req;
++                while ((req = this.asyncReadRequestQueue.poll()) != null) {
++                    req.future().completeExceptionally(new IllegalStateException("Async read buffering disabled while request was pending."));
++                }
++            }
++            return;
++        }
++
++        org.dreeam.leaf.async.world.WorldReadRequest request;
++        int processed = 0;
++        // Limit processing per tick to avoid stalling the tick loop
++        int maxToProcess = 16384; // Consider making this configurable
++
++        while (processed < maxToProcess && (request = this.asyncReadRequestQueue.poll()) != null) {
++            processed++;
++            // Ensure we are on the correct thread before executing
++            // This check might be redundant if called correctly from tick(), but good for safety
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Processing async read request off-thread");
++
++            try {
++                Object result = executeReadRequest(request);
++                request.future().complete(result);
++            } catch (Throwable t) {
++                // Log the error from the tick thread side
++                org.bukkit.Bukkit.getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type(), t);
++                request.future().completeExceptionally(t);
++            }
++        }
++    }
++
++    // Executes the actual read operation based on the request type
++    private Object executeReadRequest(org.dreeam.leaf.async.world.WorldReadRequest request) {
++        Object[] params = request.params();
++        BlockPos pos; // Declare pos outside the switch
++
++        switch (request.type()) {
++            case BLOCK_GET_NMS_STATE: { //
++                pos = (BlockPos) params[0];
++                return this.getBlockState(pos);
++            }
++            case BLOCK_GET_BIOME: {
++                pos = (BlockPos) params[0];
++                return this.getNoiseBiome(pos.getX() >> 2, pos.getY() >> 2, pos.getZ() >> 2);
++            }
++            case BLOCK_GET_COMPUTED_BIOME: {
++                pos = (BlockPos) params[0];
++                return this.getBiome(pos);
++            }
++            case BLOCK_IS_INDIRECTLY_POWERED: {
++                pos = (BlockPos) params[0];
++                return this.hasNeighborSignal(pos);
++            }
++            case BLOCK_GET_BLOCK_POWER: {
++                pos = (BlockPos) params[0];
++                org.bukkit.block.BlockFace face = (org.bukkit.block.BlockFace) params[1];
++                int power = 0;
++                Direction notchDir = org.bukkit.craftbukkit.block.CraftBlock.blockFaceToNotch(face);
++
++                if ((face == org.bukkit.block.BlockFace.DOWN || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.below(), Direction.DOWN)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.below()));
++                if ((face == org.bukkit.block.BlockFace.UP || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.above(), Direction.UP)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.above()));
++                if ((face == org.bukkit.block.BlockFace.EAST || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.east(), Direction.EAST)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.east()));
++                if ((face == org.bukkit.block.BlockFace.WEST || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.west(), Direction.WEST)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.west()));
++                if ((face == org.bukkit.block.BlockFace.NORTH || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.north(), Direction.NORTH)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.north()));
++                if ((face == org.bukkit.block.BlockFace.SOUTH || face == org.bukkit.block.BlockFace.SELF) && this.hasSignal(pos.south(), Direction.SOUTH)) power = org.bukkit.craftbukkit.block.CraftBlock.getPower(power, this.getBlockState(pos.south()));
++
++                boolean indirectlyPowered = (face == org.bukkit.block.BlockFace.SELF) ? this.hasNeighborSignal(pos) : (this.getSignal(pos, notchDir) > 0); // Simplified indirect check for faces
++                return power > 0 ? power : (indirectlyPowered ? 15 : 0);
++            }
++            case BLOCK_RAY_TRACE: {
++                pos = (BlockPos) params[0];
++                org.bukkit.Location start = (org.bukkit.Location) params[1];
++                org.bukkit.util.Vector direction = (org.bukkit.util.Vector) params[2];
++                double maxDistance = (double) params[3];
++                org.bukkit.FluidCollisionMode fluidCollisionMode = (org.bukkit.FluidCollisionMode) params[4];
++
++                org.bukkit.util.Vector dir = direction.clone().normalize().multiply(maxDistance);
++                Vec3 startPos = org.bukkit.craftbukkit.util.CraftLocation.toVec3D(start);
++                Vec3 endPos = startPos.add(dir.getX(), dir.getY(), dir.getZ());
++
++                return this.clip(new net.minecraft.world.level.ClipContext(startPos, endPos, net.minecraft.world.level.ClipContext.Block.OUTLINE, org.bukkit.craftbukkit.CraftFluidCollisionMode.toNMS(fluidCollisionMode), net.minecraft.world.phys.shapes.CollisionContext.empty()), pos); // Pass block pos
++            }
++            case BLOCK_CAN_PLACE: {
++                pos = (BlockPos) params[0];
++                org.bukkit.block.data.BlockData data = (org.bukkit.block.data.BlockData) params[1];
++                net.minecraft.world.level.block.state.BlockState nmsData = ((org.bukkit.craftbukkit.block.data.CraftBlockData) data).getState();
++                return nmsData.canSurvive(this, pos);
++            }
++            // Add cases for other ReadOperationType values here...
++            // case GET_ENTITIES_IN_BOX: ... (complex, needs careful list handling)
++
++            default:
++                throw new UnsupportedOperationException("Unsupported buffered read type: " + request.type());
++        }
++    }
++    // Leaf end - SparklyPaper - parallel world ticking
++
+     public void tick(BooleanSupplier hasTimeLeft) {
+         this.handlingTick = true;
++        this.processAsyncReadRequests(); // Leaf - SparklyPaper - parallel world ticking
+         TickRateManager tickRateManager = this.tickRateManager();
+         boolean runsNormally = tickRateManager.runsNormally();
+         if (runsNormally) {
+@@ -746,6 +870,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+             this.advanceWeatherCycle();
+         }
+ 
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            this.moonrise$midTickTasks();
++        } else if ((++this.tickedBlocksOrFluids & 7L) != 0L) { // Keep original mid-tick logic for PWT enabled
++            this.server.moonrise$executeMidTickTasks();
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
++
+         int _int = this.getGameRules().getInt(GameRules.RULE_PLAYERS_SLEEPING_PERCENTAGE);
+         if (this.purpurConfig.playersSkipNight && this.sleepStatus.areEnoughSleeping(_int) && this.sleepStatus.areEnoughDeepSleeping(_int, this.players)) { // Purpur - Config for skipping night
+             // Paper start - create time skip event - move up calculations
+@@ -1313,9 +1445,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              fluidState.tick(this, pos, blockState);
          }
          // Paper start - rewrite chunk system
@@ -611,7 +774,7 @@ index a66e5f6652d9633c856490de36d8d8fdf8a5298a..60e0296312030d25f917c568c17ce86d
          // Paper end - rewrite chunk system
  
      }
-@@ -1326,9 +1331,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1326,9 +1461,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              blockState.tick(this, pos, this.random);
          }
          // Paper start - rewrite chunk system
@@ -626,7 +789,7 @@ index a66e5f6652d9633c856490de36d8d8fdf8a5298a..60e0296312030d25f917c568c17ce86d
          // Paper end - rewrite chunk system
  
      }
-@@ -1579,6 +1587,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1579,6 +1717,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      }
  
      private void addPlayer(ServerPlayer player) {
@@ -635,7 +798,7 @@ index a66e5f6652d9633c856490de36d8d8fdf8a5298a..60e0296312030d25f917c568c17ce86d
          Entity entity = this.getEntities().get(player.getUUID());
          if (entity != null) {
              LOGGER.warn("Force-added player with duplicate UUID {}", player.getUUID());
-@@ -1591,7 +1601,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1591,7 +1731,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
  
      // CraftBukkit start
      private boolean addEntity(Entity entity, org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason spawnReason) {

@@ -29,7 +29,6 @@ public class ProtocolSupport extends ConfigModules {
     public static boolean doABarrelRollForceEnabled = false;
     public static boolean doABarrelRollForceInstalled = false;
     public static int doABarrelRollInstalledTimeout = 40;
-    public static DoABarrelRollPackets.KineticDamage doABarrelRollKineticDamage = DoABarrelRollPackets.KineticDamage.VANILLA;
 
     @Override
     public void onLoaded() {
@@ -53,7 +52,6 @@ public class ProtocolSupport extends ConfigModules {
         doABarrelRollForceEnabled = config.getBoolean(getBasePath() + ".do-a-barrel-roll-force-enabled", doABarrelRollForceEnabled);
         doABarrelRollForceInstalled = config.getBoolean(getBasePath() + ".do-a-barrel-roll-force-installed", doABarrelRollForceInstalled);
         doABarrelRollInstalledTimeout = config.getInt(getBasePath() + ".do-a-barrel-roll-installed-timeout", 0);
-        doABarrelRollKineticDamage = DoABarrelRollPackets.KineticDamage.valueOf(config.getString(getBasePath() + ".do-a-barrel-roll-kinetic-damage", doABarrelRollKineticDamage.name()));
         if (doABarrelRollInstalledTimeout <= 0) {
             doABarrelRollInstalledTimeout = 40;
         }
@@ -63,7 +61,7 @@ public class ProtocolSupport extends ConfigModules {
                 doABarrelRollForceEnabled,
                 doABarrelRollForceInstalled,
                 doABarrelRollInstalledTimeout,
-                doABarrelRollKineticDamage
+                DoABarrelRollPackets.KineticDamage.VANILLA
             );
         } else {
             DoABarrelRollProtocol.deinit();
