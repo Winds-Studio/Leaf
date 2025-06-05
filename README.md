@@ -17,11 +17,11 @@
  - **Async** pathfinding, mob spawning and entity tracker
  - **Various optimizations** blending from [other forks](https://github.com/Winds-Studio/Leaf#-credits)
  - **Fully compatible** with Bukkit, Spigot and Paper plugins 
- - **Latest dependencies**, keeping everything fully up-to-date
+ - **Latest dependencies**, keeping all dependencies up-to-date
  - **Allows all characters in usernames**, including Chinese and other characters
  - **Fixes** some Minecraft bugs
  - **Configurable UseItem distance** for anarchy servers
- - Support for multiple **mod protocols**
+ - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
  - Support for **Linear region file format**
  - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easily track all errors coming from your server in extreme detail
@@ -127,7 +127,7 @@ If these excellent projects hadn't existed, Leaf wouldn't have become great.
 <a href="https://cloud.swordsman.com.cn/"><img src="public/image/JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
 cloud of swordsman | 剑客云
 
-If you want to find a cheaper, high performance, stable, lower latency server, then cloud of swordsman is a good choice! Registers and purchases in [here](https://cloud.swordsman.com.cn/?i8ab42c).
+If you want to find a cheaper, high performance, stable, lower latency host, then cloud of swordsman is a good choice! Registers and purchases in [here](https://cloud.swordsman.com.cn/?i8ab42c).
 
 如果你想找一个低价高性能, 低延迟的云服务商，剑客云是个不错的选择! 你可以在[这里](https://cloud.swordsman.com.cn/?i8ab42c)注册.
 
