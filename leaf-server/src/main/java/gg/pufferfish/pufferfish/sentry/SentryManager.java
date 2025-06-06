@@ -4,13 +4,13 @@ import io.sentry.Sentry;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.config.modules.misc.SentryDSN;
 
 public class SentryManager {
 
     private static final Logger LOGGER = LogManager.getLogger(SentryManager.class);
 
     private SentryManager() {
-
     }
 
     private static boolean initialized = false;
@@ -27,7 +27,7 @@ public class SentryManager {
             initialized = true;
 
             Sentry.init(options -> {
-                options.setDsn(org.dreeam.leaf.config.modules.misc.SentryDSN.sentryDsn);
+                options.setDsn(SentryDSN.sentryDsn);
                 options.setMaxBreadcrumbs(100);
             });
 

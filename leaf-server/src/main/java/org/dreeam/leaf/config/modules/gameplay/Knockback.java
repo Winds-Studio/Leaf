@@ -15,6 +15,7 @@ public class Knockback extends ConfigModules {
     public static boolean canPlayerKnockbackZombie = true;
     @Experimental
     public static boolean flushKnockback = false;
+    public static boolean oldBlastProtectionKnockbackBehavior = false;
 
     @Override
     public void onLoaded() {
@@ -34,5 +35,6 @@ public class Knockback extends ConfigModules {
                 "使玩家可以击退僵尸."
             ));
         flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback);
+        oldBlastProtectionKnockbackBehavior = config.getBoolean(getBasePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
     }
 }

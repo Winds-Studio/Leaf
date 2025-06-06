@@ -3,7 +3,6 @@ package org.dreeam.leaf.protocol;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
 
@@ -19,9 +18,7 @@ interface Protocol {
 
     void tickPlayer(ServerPlayer player);
 
-    void tickTracker(ServerPlayer player);
-
     void disconnected(ServerPlayer conn);
 
-    void handle(ServerPlayer player, @NotNull LeafCustomPayload payload);
+    void handle(ServerPlayer player, LeafCustomPayload payload);
 }

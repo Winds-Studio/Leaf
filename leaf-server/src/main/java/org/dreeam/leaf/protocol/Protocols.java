@@ -61,12 +61,6 @@ public class Protocols {
         }
     }
 
-    public static void tickTracker(ServerPlayer player) {
-        for (Protocol protocol : PROTOCOLS) {
-            protocol.tickTracker(player);
-        }
-    }
-
     public static void disconnected(ServerPlayer conn) {
         for (Protocol protocol : PROTOCOLS) {
             protocol.disconnected(conn);

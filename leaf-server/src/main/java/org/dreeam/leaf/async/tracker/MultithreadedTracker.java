@@ -30,7 +30,7 @@ public class MultithreadedTracker {
     private static final String THREAD_PREFIX = "Leaf Async Tracker";
     private static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
     private static long lastWarnMillis = System.currentTimeMillis();
-    private static ThreadPoolExecutor TRACKER_EXECUTOR = null;
+    public static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
     private MultithreadedTracker() {
     }
