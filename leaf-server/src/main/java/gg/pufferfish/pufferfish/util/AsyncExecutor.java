@@ -27,15 +27,22 @@ public class AsyncExecutor implements Runnable {
     }
 
     public void kill() {
-        killswitch = true;
-        cond.signalAll();
+        mutex.lock();
+        try {
+            killswitch = true;
+            cond.signalAll();
+        } finally {
+            mutex.unlock();
+        }
     }
 
     public void submit(Runnable runnable) {
         mutex.lock();
         try {
             jobs.offer(runnable);
-            cond.signalAll();
+            // Use signal() instead of signalAll() for better performance
+            // since only one waiting thread needs to be woken up
+            cond.signal();
         } finally {
             mutex.unlock();
         }

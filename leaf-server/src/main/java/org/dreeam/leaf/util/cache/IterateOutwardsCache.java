@@ -3,8 +3,8 @@ package org.dreeam.leaf.util.cache;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongList;
 import java.util.Iterator;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.core.BlockPos;
 
 /**
@@ -18,12 +18,12 @@ public class IterateOutwardsCache {
 
     private final ConcurrentHashMap<Long, LongArrayList> table;
     private final int capacity;
-    private final Random random;
 
     public IterateOutwardsCache(int capacity) {
         this.capacity = capacity;
-        this.table = new ConcurrentHashMap<>(31);
-        this.random = new Random();
+        // Pre-size the map based on expected load to reduce rehashing
+        int initialCapacity = Math.max(31, capacity / 4);
+        this.table = new ConcurrentHashMap<>(initialCapacity);
     }
 
     private void fillPositionsWithIterateOutwards(LongList entry, int xRange, int yRange, int zRange) {
@@ -59,7 +59,8 @@ public class IterateOutwardsCache {
             for (int i = -this.capacity; iterator.hasNext() && i < 5; i++) {
                 Long currentKey = iterator.next();
                 // Random removal: quality of randomness isn't critical here.
-                if (this.random.nextInt(8) == 0 && currentKey != key) {
+                // Using ThreadLocalRandom for better performance in multi-threaded environment
+                if (ThreadLocalRandom.current().nextInt(8) == 0 && currentKey != key) {
                     iterator.remove();
                 }
             }

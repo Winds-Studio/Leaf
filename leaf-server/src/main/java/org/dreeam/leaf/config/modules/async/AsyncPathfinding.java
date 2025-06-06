@@ -15,6 +15,7 @@ public class AsyncPathfinding extends ConfigModules {
     public static int asyncPathfindingMaxThreads = 0;
     public static int asyncPathfindingKeepalive = 60;
     public static int asyncPathfindingQueueSize = 0;
+    public static long asyncPathfindingTimeoutSeconds = 60L;
     public static PathfindTaskRejectPolicy asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.FLUSH_ALL;
 
     @Override
@@ -24,6 +25,7 @@ public class AsyncPathfinding extends ConfigModules {
         asyncPathfindingMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncPathfindingMaxThreads);
         asyncPathfindingKeepalive = config.getInt(getBasePath() + ".keepalive", asyncPathfindingKeepalive);
         asyncPathfindingQueueSize = config.getInt(getBasePath() + ".queue-size", asyncPathfindingQueueSize);
+        asyncPathfindingTimeoutSeconds = config.getInt(getBasePath() + ".timeout-seconds", (int) asyncPathfindingTimeoutSeconds);
 
         if (asyncPathfindingMaxThreads < 0)
             asyncPathfindingMaxThreads = Math.max(availableProcessors + asyncPathfindingMaxThreads, 1);

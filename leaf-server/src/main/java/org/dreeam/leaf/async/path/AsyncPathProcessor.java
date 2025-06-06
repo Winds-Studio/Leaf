@@ -44,13 +44,23 @@ public class AsyncPathProcessor {
                     case FLUSH_ALL -> {
                         if (!workQueue.isEmpty()) {
                             List<Runnable> pendingTasks = new ArrayList<>(workQueue.size());
-
                             workQueue.drainTo(pendingTasks);
 
-                            for (Runnable pendingTask : pendingTasks) {
-                                pendingTask.run();
-                            }
+                            // Execute pending tasks asynchronously to avoid blocking main thread
+                            CompletableFuture.runAsync(() -> {
+                                for (Runnable pendingTask : pendingTasks) {
+                                    try {
+                                        pendingTask.run();
+                                    } catch (Exception e) {
+                                        LOGGER.warn("Error executing flushed pathfinding task", e);
+                                    }
+                                }
+                            }).exceptionally(throwable -> {
+                                LOGGER.error("Failed to execute flushed pathfinding tasks", throwable);
+                                return null;
+                            });
                         }
+                        // Execute rejected task on caller thread as fallback
                         rejectedTask.run();
                     }
                     case CALLER_RUNS -> rejectedTask.run();
@@ -65,11 +75,13 @@ public class AsyncPathProcessor {
     }
 
     protected static CompletableFuture<Void> queue(@NotNull AsyncPath path) {
+        // Use configurable timeout instead of hardcoded 60 seconds
+        long timeoutSeconds = org.dreeam.leaf.config.modules.async.AsyncPathfinding.asyncPathfindingTimeoutSeconds;
         return CompletableFuture.runAsync(path::process, pathProcessingExecutor)
-            .orTimeout(60L, TimeUnit.SECONDS)
+            .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .exceptionally(throwable -> {
                 if (throwable instanceof TimeoutException e) {
-                    LOGGER.warn("Async Pathfinding process timed out", e);
+                    LOGGER.warn("Async Pathfinding process timed out after {}s", timeoutSeconds, e);
                 } else LOGGER.warn("Error occurred while processing async path", throwable);
                 return null;
             });
