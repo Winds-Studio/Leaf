@@ -1,14 +1,7 @@
 package org.dreeam.leaf.protocol;
 
 import com.google.common.collect.ImmutableList;
-import it.unimi.dsi.fastutil.objects.Reference2BooleanMap;
-import it.unimi.dsi.fastutil.objects.Reference2BooleanMaps;
-import it.unimi.dsi.fastutil.objects.Reference2BooleanOpenHashMap;
-import it.unimi.dsi.fastutil.objects.Reference2FloatMap;
-import it.unimi.dsi.fastutil.objects.Reference2FloatMaps;
-import it.unimi.dsi.fastutil.objects.Reference2FloatOpenHashMap;
-import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
-import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
+import it.unimi.dsi.fastutil.objects.*;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -25,7 +18,6 @@ import org.dreeam.leaf.protocol.DoABarrelRollPackets.KineticDamage;
 import org.dreeam.leaf.protocol.DoABarrelRollPackets.ModConfigServer;
 import org.dreeam.leaf.protocol.DoABarrelRollPackets.RollSyncC2SPacket;
 import org.dreeam.leaf.protocol.DoABarrelRollPackets.RollSyncS2CPacket;
-import org.jetbrains.annotations.NotNull;
 import org.bukkit.event.player.PlayerKickEvent;
 
 import java.util.List;
@@ -54,8 +46,8 @@ public class DoABarrelRollProtocol implements Protocol {
     private ModConfigServer config = DEFAULT;
     private boolean configUpdated = false;
 
-    private final Reference2ReferenceMap<ServerGamePacketListenerImpl, ClientInfo> syncStates = new Reference2ReferenceOpenHashMap<>();
-    private final Reference2ReferenceMap<ServerGamePacketListenerImpl, DelayedRunnable> scheduledKicks = new Reference2ReferenceOpenHashMap<>();
+    private final Reference2ReferenceMap<ServerGamePacketListenerImpl, ClientInfo> syncStates = Reference2ReferenceMaps.synchronize(new Reference2ReferenceOpenHashMap<>());
+    private final Reference2ReferenceMap<ServerGamePacketListenerImpl, DelayedRunnable> scheduledKicks = Reference2ReferenceMaps.synchronize(new Reference2ReferenceOpenHashMap<>());
     public final Reference2BooleanMap<ServerGamePacketListenerImpl> isRollingMap = Reference2BooleanMaps.synchronize(new Reference2BooleanOpenHashMap<>());
     public final Reference2FloatMap<ServerGamePacketListenerImpl> rollMap = Reference2FloatMaps.synchronize(new Reference2FloatOpenHashMap<>());
     public final Reference2BooleanMap<ServerGamePacketListenerImpl> lastIsRollingMap = Reference2BooleanMaps.synchronize(new Reference2BooleanOpenHashMap<>());
@@ -99,14 +91,14 @@ public class DoABarrelRollProtocol implements Protocol {
     }
 
     @Override
-    public void handle(ServerPlayer player, @NotNull LeafCustomPayload payload) {
+    public void handle(ServerPlayer player, LeafCustomPayload payload) {
         switch (payload) {
             case ConfigUpdateC2SPacket ignored ->
                 player.connection.send(Protocols.createPacket(new ConfigUpdateAckS2CPacket(PROTOCOL_VERSION, false)));
             case ConfigResponseC2SPacket configResponseC2SPacket -> {
                 var reply = clientReplied(player.connection, configResponseC2SPacket);
                 if (reply == HandshakeState.RESEND) {
-                    sendHandshake(player);
+                    sendHandshake(player.connection);
                 }
             }
             case RollSyncC2SPacket rollSyncC2SPacket -> {
@@ -138,41 +130,39 @@ public class DoABarrelRollProtocol implements Protocol {
     }
 
     @Override
-    public void tickTracker(ServerPlayer player) {
-        if (!isRollingMap.containsKey(player.connection)) {
+    public void tickPlayer(ServerPlayer player) {
+        ServerGamePacketListenerImpl connection = player.connection;
+        if (getHandshakeState(connection).state == HandshakeState.NOT_SENT) {
+            sendHandshake(connection);
+        }
+        if (!isRollingMap.containsKey(connection)) {
             return;
         }
+        if (!isRollingMap.getBoolean(connection)) {
+            rollMap.put(connection, 0.0F);
+        }
 
-        var isRolling = isRollingMap.getBoolean(player.connection);
-        var roll = rollMap.getFloat(player.connection);
-        var lastIsRolling = lastIsRollingMap.getBoolean(player.connection);
-        var lastRoll = lastRollMap.getFloat(player.connection);
+        boolean isRolling = isRollingMap.getBoolean(connection);
+        float roll = rollMap.getFloat(connection);
+        boolean lastIsRolling = lastIsRollingMap.getBoolean(connection);
+        float lastRoll = lastRollMap.getFloat(connection);
         if (isRolling == lastIsRolling && roll == lastRoll) {
             return;
         }
         var payload = new RollSyncS2CPacket(player.getId(), isRolling, roll);
         var packet = Protocols.createPacket(payload);
-        for (ServerPlayerConnection seenBy : player.moonrise$getTrackedEntity().seenBy()) {
+        var tracked = player.moonrise$getTrackedEntity();
+        if (tracked == null) {
+            return;
+        }
+        for (ServerPlayerConnection seenBy : tracked.seenBy()) {
             if (seenBy instanceof ServerGamePacketListenerImpl conn
                 && getHandshakeState(conn).state == HandshakeState.ACCEPTED) {
                 seenBy.send(packet);
             }
         }
-        lastIsRollingMap.put(player.connection, isRolling);
-        lastRollMap.put(player.connection, roll);
-    }
-
-    @Override
-    public void tickPlayer(ServerPlayer player) {
-        if (getHandshakeState(player.connection).state == HandshakeState.NOT_SENT) {
-            sendHandshake(player);
-        }
-        if (!isRollingMap.containsKey(player.connection)) {
-            return;
-        }
-        if (!isRollingMap.getBoolean(player.connection)) {
-            rollMap.put(player.connection, 0.0F);
-        }
+        lastIsRollingMap.put(connection, isRolling);
+        lastRollMap.put(connection, roll);
     }
 
     @Override
@@ -190,7 +180,7 @@ public class DoABarrelRollProtocol implements Protocol {
         if (configUpdated) {
             configUpdated = false;
             for (ServerPlayer player : server.getPlayerList().players) {
-                sendHandshake(player);
+                sendHandshake(player.connection);
             }
         }
     }
@@ -199,9 +189,9 @@ public class DoABarrelRollProtocol implements Protocol {
         return config.forceInstalled() ? OptionalInt.of(config.installedTimeout()) : OptionalInt.empty();
     }
 
-    private void sendHandshake(ServerPlayer player) {
-        player.connection.send(Protocols.createPacket(initiateConfigSync(player.connection)));
-        configSentToClient(player.connection);
+    private void sendHandshake(ServerGamePacketListenerImpl connection) {
+        connection.send(Protocols.createPacket(initiateConfigSync(connection)));
+        configSentToClient(connection);
     }
 
     private void configSentToClient(ServerGamePacketListenerImpl handler) {
@@ -255,7 +245,7 @@ public class DoABarrelRollProtocol implements Protocol {
         return info.state;
     }
 
-    private boolean isLimited(ServerGamePacketListenerImpl net) {
+    private boolean isLimited(ServerGamePacketListenerImpl ignore) {
         return true;
         // return net.getPlayer().getBukkitEntity().hasPermission(DoABarrelRoll.MODID + ".configure");
     }
@@ -266,19 +256,19 @@ public class DoABarrelRollProtocol implements Protocol {
 
     private ConfigSyncS2CPacket initiateConfigSync(ServerGamePacketListenerImpl handler) {
         var isLimited = isLimited(handler);
-        getHandshakeState(handler).isLimited = isLimited;
+        // getHandshakeState(handler).isLimited = isLimited;
         return new ConfigSyncS2CPacket(PROTOCOL_VERSION, config, isLimited, isLimited ? DEFAULT : config);
     }
 
     private static class ClientInfo {
         private HandshakeState state;
         private int protocolVersion;
-        private boolean isLimited;
+        // private boolean isLimited;
 
-        private ClientInfo(HandshakeState state, int protocolVersion, boolean isLimited) {
+        private ClientInfo(HandshakeState state, int protocolVersion, boolean ignore) {
             this.state = state;
             this.protocolVersion = protocolVersion;
-            this.isLimited = isLimited;
+            // this.isLimited = isLimited;
         }
     }
 

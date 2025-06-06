@@ -17,7 +17,7 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
     public static boolean logContainerCreationStacktraces = false;
     public static boolean disableHardThrow = false;
     @Deprecated
-    public static boolean runAsyncTasksSync = false;
+    public static Boolean runAsyncTasksSync;
     // STRICT, BUFFERED, DISABLED
     public static String asyncUnsafeReadHandling = "BUFFERED";
 
@@ -52,15 +52,14 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
             asyncUnsafeReadHandling = "DISABLED";
         }
 
-        runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync", false); // Default to false now
-        if (runAsyncTasksSync) {
-            LeafConfig.LOGGER.warn("The setting '{}.run-async-tasks-sync' is deprecated. Use 'async-unsafe-read-handling: STRICT' for similar safety checks or 'BUFFERED' for buffered reads.", getBasePath());
+        // Transfer old config
+        runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync");
+        if (runAsyncTasksSync != null && runAsyncTasksSync) {
+            LeafConfig.LOGGER.warn("The setting '{}.run-async-tasks-sync' is deprecated, removed automatically. Use 'async-unsafe-read-handling: BUFFERED' for buffered reads instead.", getBasePath());
         }
 
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", threads);
         }
-
-        runAsyncTasksSync = enabled && runAsyncTasksSync; // Auto-disable if main feature is off
     }
 }

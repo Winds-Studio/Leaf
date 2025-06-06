@@ -6,7 +6,7 @@
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 [![Docs](https://img.shields.io/badge/Docs-leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs/)
 
-**Leaf** is a [Paper](https://papermc.io/) fork designed to customized and high-performance, built on top of [Gale](https://github.com/Dreeam-qwq/Gale) with optimizations and fixes from other forks.
+**Leaf** is a [Paper](https://papermc.io/) fork designed to be customizable and high-performance, built on top of [Gale](https://github.com/Dreeam-qwq/Gale) with optimizations and fixes from other forks.
 </div>
 
 > [!WARNING]  
@@ -17,14 +17,14 @@
  - **Async** pathfinding, mob spawning and entity tracker
  - **Various optimizations** blending from [other forks](https://github.com/Winds-Studio/Leaf#-credits)
  - **Fully compatible** with Bukkit, Spigot and Paper plugins 
- - **Latest dependencies**, keeping all dependencies in the newest version
+ - **Latest dependencies**, keeping all dependencies up-to-date
  - **Allows all characters in usernames**, including Chinese and other characters
  - **Fixes** some Minecraft bugs
  - **Configurable UseItem distance** for anarchy servers
  - **Mod Protocols** support
  - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
  - Support for **Linear region file format**
- - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail
+ - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easily track all errors coming from your server in extreme detail
  - And more...
 
 ## 📈 bStats
@@ -90,11 +90,11 @@ Paperweight files are licensed under [MIT](licenses/MIT.txt).
 Patches are licensed under [MIT](licenses/MIT.txt), unless indicated differently in their header.
 Binaries are licensed under [GPL-3.0](licenses/GPL-3.0.txt).
 
-Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of some material used by this project.
+Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the licenses of some materials used by this project.
 
 ## 📜 Credits
 Thanks to these projects below. Leaf includes some patches taken from them.<br>
-If these excellent projects hadn't appeared, Leaf wouldn't have become great.
+If these excellent projects hadn't existed, Leaf wouldn't have become great.
 
 - [Gale](https://github.com/Dreeam-qwq/Gale) ([Original Repo](https://github.com/GaleMC/Gale))
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
@@ -127,7 +127,7 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 <a href="https://cloud.swordsman.com.cn/"><img src="public/image/JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
 cloud of swordsman | 剑客云
 
-If you want to find a cheaper, high performance, stable with lower latency, then cloud of swordsman is a good choice! Registers and purchases in [here](https://cloud.swordsman.com.cn/?i8ab42c).
+If you want to find a cheaper, high performance, stable, lower latency host, then cloud of swordsman is a good choice! Registers and purchases in [here](https://cloud.swordsman.com.cn/?i8ab42c).
 
 如果你想找一个低价高性能, 低延迟的云服务商，剑客云是个不错的选择! 你可以在[这里](https://cloud.swordsman.com.cn/?i8ab42c)注册.
 

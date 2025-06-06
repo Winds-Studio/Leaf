@@ -13,21 +13,21 @@ import java.util.Map;
 
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Marker;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.LogEvent;
-import org.apache.logging.log4j.core.Logger;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.apache.logging.log4j.core.filter.AbstractFilter;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 
 public class PufferfishSentryAppender extends AbstractAppender {
 
-    private static final org.apache.logging.log4j.Logger LOGGER = LogManager.getLogger(PufferfishSentryAppender.class.getSimpleName());
+    private static final Logger LOGGER = LogManager.getLogger(PufferfishSentryAppender.class.getSimpleName());
     private static final Gson GSON = new Gson();
     private final Level logLevel;
 
     public PufferfishSentryAppender(Level logLevel) {
-        super("PufferfishSentryAdapter", new SentryFilter(), null);
+        super("PufferfishSentryAdapter", new SentryFilter(), null, true, Property.EMPTY_ARRAY);
         this.logLevel = logLevel;
     }
 
@@ -108,26 +108,5 @@ public class PufferfishSentryAppender extends AbstractAppender {
     }
 
     private static class SentryFilter extends AbstractFilter {
-
-        @Override
-        public Result filter(Logger logger, org.apache.logging.log4j.Level level, Marker marker, String msg,
-                             Object... params) {
-            return this.filter(logger.getName());
-        }
-
-        @Override
-        public Result filter(Logger logger, org.apache.logging.log4j.Level level, Marker marker, Object msg, Throwable t) {
-            return this.filter(logger.getName());
-        }
-
-        @Override
-        public Result filter(LogEvent event) {
-            return this.filter(event == null ? null : event.getLoggerName());
-        }
-
-        private Result filter(String loggerName) {
-            return loggerName != null && loggerName.startsWith("gg.castaway.pufferfish.sentry") ? Result.DENY
-                : Result.NEUTRAL;
-        }
     }
 }
