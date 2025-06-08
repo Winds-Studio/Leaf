@@ -24,20 +24,6 @@ public final class RandomTickSystem {
     private long cache = rand.next();
     private int cacheIdx = 0;
 
-    public interface Chunk {
-        long leaf$randomTickChance();
-
-        void leaf$setRandomTickChance(long chance);
-
-        long leaf$countTickingBlocks();
-
-        long leaf$countTickingSections();
-
-        void leaf$recompute();
-
-        OptionalLong leaf$tickingPos(int mid);
-    }
-
     public void tick(ServerLevel world) {
         var simpleRandom = world.simpleRandom;
         for (int i = 0; i < tickPos.size(); i++) {
@@ -66,7 +52,7 @@ public final class RandomTickSystem {
         }
     }
 
-    private long recompute(Chunk chunk, long tickSpeed) {
+    private long recompute(LevelChunk chunk, long tickSpeed) {
         chunk.leaf$recompute();
         long tickingCount = chunk.leaf$countTickingBlocks();
         long numSections = chunk.leaf$countTickingSections();
@@ -132,7 +118,7 @@ public final class RandomTickSystem {
     }
 
     public void randomTickChunk(
-        Chunk chunk,
+        LevelChunk chunk,
         long tickSpeed
     ) {
         long a;
