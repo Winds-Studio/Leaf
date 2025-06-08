@@ -4,10 +4,8 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.RandomSupport;
@@ -26,7 +24,8 @@ public final class RandomTickSystem {
 
     public void tick(ServerLevel world) {
         var simpleRandom = world.simpleRandom;
-        for (int i = 0; i < tickPos.size(); i++) {
+        int j = tickPos.size();
+        for (int i = 0; i < j; i++) {
             tickBlock(world, tickPos.getLong(i), simpleRandom);
         }
         tickPos.clear();
@@ -65,7 +64,7 @@ public final class RandomTickSystem {
         chunk.leaf$setRandomTickChance(chance);
         return chance;
     }
-
+/*
     public void randomTickChunkOrigin(
         ServerLevel level,
         LevelChunk chunk,
@@ -116,6 +115,7 @@ public final class RandomTickSystem {
             }
         }
     }
+*/
 
     public void randomTickChunk(
         LevelChunk chunk,

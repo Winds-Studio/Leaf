@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.opt;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.annotations.Experimental;
 
 public class OptimizeRandomTick extends ConfigModules {
 
@@ -9,6 +10,7 @@ public class OptimizeRandomTick extends ConfigModules {
         return EnumConfigCategory.PERF.getBaseKeyName() + ".optimise-random-tick";
     }
 
+    @Experimental
     public static boolean enabled = true;
 
     @Override
