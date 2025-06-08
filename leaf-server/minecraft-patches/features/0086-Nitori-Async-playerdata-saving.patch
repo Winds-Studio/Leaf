@@ -6,15 +6,213 @@ Subject: [PATCH] Nitori: Async playerdata saving
 Original license: GPL v3
 Original project: https://github.com/Gensokyo-Reimagined/Nitori
 
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 00a82873d226f113278632a53c0faca420dd67d4..2c4423eb2d465c2782a8dab851619ce539f69ae8 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -586,7 +586,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     // Paper end - Optimize network
+ 
+     private static final int MAX_PER_TICK = io.papermc.paper.configuration.GlobalConfiguration.get().misc.maxJoinsPerTick; // Paper - Buffer joins to world
+-    private static int joinAttemptsThisTick; // Paper - Buffer joins to world
++    public static int joinAttemptsThisTick; // Paper - Buffer joins to world // Leaf - Async player IO
+     private static int currTick; // Paper - Buffer joins to world
+     private static int tickSecond; // Purpur - Max joins per second
+     public void tick() {
+diff --git a/net/minecraft/server/PlayerAdvancements.java b/net/minecraft/server/PlayerAdvancements.java
+index d2159a747fe42aa95cfc6bca0e55e3f4485847bb..d5196b181a0a633cb04ce18b0471cda2dcaa8816 100644
+--- a/net/minecraft/server/PlayerAdvancements.java
++++ b/net/minecraft/server/PlayerAdvancements.java
+@@ -111,6 +111,7 @@ public class PlayerAdvancements {
+     }
+ 
+     private void load(ServerAdvancementManager manager) {
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.blockAdvancements(player.getUUID(), player.getScoreboardName()); // Leaf - Async player IO
+         if (Files.isRegularFile(this.playerSavePath)) {
+             try (JsonReader jsonReader = new JsonReader(Files.newBufferedReader(this.playerSavePath, StandardCharsets.UTF_8))) {
+                 jsonReader.setLenient(false);
+@@ -133,12 +134,18 @@ public class PlayerAdvancements {
+         JsonElement jsonElement = this.codec.encodeStart(JsonOps.INSTANCE, this.asData()).getOrThrow();
+ 
+         try {
+-            FileUtil.createDirectoriesSafe(this.playerSavePath.getParent());
+-
+-            try (Writer bufferedWriter = Files.newBufferedWriter(this.playerSavePath, StandardCharsets.UTF_8)) {
+-                GSON.toJson(jsonElement, GSON.newJsonWriter(bufferedWriter));
+-            }
+-        } catch (JsonIOException | IOException var7) {
++            // Leaf start - Async player IO
++            String content = GSON.toJson(jsonElement);
++            final Path path = this.playerSavePath;
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.submitAdvancements(
++                this.player.getUUID(),
++                this.player.getScoreboardName(),
++                () -> {
++                    org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplace(path, content);
++                    return null;
++                });
++        } catch (JsonIOException /*| IOException*/ var7) {
++            // Leaf end - Async player IO
+             LOGGER.error("Couldn't save player advancements to {}", this.playerSavePath, var7);
+         }
+     }
+diff --git a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+index 114b25f933c6a1b011523581a5a02a5a2c1e827e..3da6dad3dd0f4c5750609b382f47a6cd14f18e7a 100644
+--- a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+@@ -79,6 +79,7 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         .expireAfterWrite(org.dreeam.leaf.config.modules.misc.Cache.cachePlayerProfileResultTimeout, java.util.concurrent.TimeUnit.MINUTES)
+         .build();
+     // Leaf end - Cache player profileResult
++    @Nullable public java.util.UUID[] duplicateDisconnect = null; // Leaf - Async player IO
+ 
+     public ServerLoginPacketListenerImpl(MinecraftServer server, Connection connection, boolean transferred) {
+         this.server = server;
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index 75fb49f1596f475278d12c8c7aea9ad4952b6056..52a0fa425a30caa2e592c0fdda44800da169c2a0 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -782,6 +782,31 @@ public abstract class PlayerList {
+         //     UserBanListEntry userBanListEntry = this.bans.get(gameProfile);
+         // Moved from processLogin
+         UUID uuid = gameProfile.getId();
++
++        // Leaf start - Async player IO
++        if (org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.enabled) {
++            if (org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.isSaving(uuid)) {
++                if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++                return null;
++            }
++            if (loginlistener.duplicateDisconnect != null
++                && loginlistener.duplicateDisconnect.length != 0) {
++                // check last one
++                var last = loginlistener.duplicateDisconnect[loginlistener.duplicateDisconnect.length - 1];
++                if (org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.isSaving(last)) {
++                    if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++                    return null;
++                }
++                for (UUID uuid1 : loginlistener.duplicateDisconnect) {
++                    if (org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.isSaving(uuid1)) {
++                        if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++                        return null;
++                    }
++                }
++                loginlistener.duplicateDisconnect = null;
++            }
++        }
++        // Leaf end - Async player IO
+         List<ServerPlayer> list = Lists.newArrayList();
+ 
+         ServerPlayer entityplayer;
+@@ -793,6 +818,23 @@ public abstract class PlayerList {
+             }
+         }
+ 
++        // Leaf start - Async player IO
++        if (org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.enabled && !list.isEmpty()) {
++            loginlistener.duplicateDisconnect = new UUID[list.size()];
++            java.util.Iterator<ServerPlayer> iterator = list.iterator();
++
++            int index = 0;
++            while (iterator.hasNext()) {
++                entityplayer = iterator.next();
++                // this.save(entityplayer); // CraftBukkit - Force the player's inventory to be saved
++                entityplayer.connection.disconnect(Component.translatable("multiplayer.disconnect.duplicate_login"), org.bukkit.event.player.PlayerKickEvent.Cause.DUPLICATE_LOGIN); // Paper - kick event cause
++                loginlistener.duplicateDisconnect[index] = entityplayer.getUUID();
++                index++;
++            }
++            if (Connection.joinAttemptsThisTick != 0) Connection.joinAttemptsThisTick -= 1;
++            return null;
++        }
++        // Leaf end - Async player IO
+         java.util.Iterator iterator = list.iterator();
+ 
+         while (iterator.hasNext()) {
+@@ -1582,7 +1624,7 @@ public abstract class PlayerList {
+             */
+             // Leaf end - Remove useless creating stats json bases on player name logic
+ 
+-            serverStatsCounter = new ServerStatsCounter(this.server, file1);
++            serverStatsCounter = new ServerStatsCounter(this.server, file1, displayName, uuid);
+             // this.stats.put(uuid, serverStatsCounter); // CraftBukkit
+         }
+ 
+diff --git a/net/minecraft/stats/ServerStatsCounter.java b/net/minecraft/stats/ServerStatsCounter.java
+index b26dbe807e5cb0a42f6c06b933397902310e5616..35ad7f249cfb6f5c779136d96f3698ea4de1eb7c 100644
+--- a/net/minecraft/stats/ServerStatsCounter.java
++++ b/net/minecraft/stats/ServerStatsCounter.java
+@@ -39,12 +39,23 @@ public class ServerStatsCounter extends StatsCounter {
+     private final File file;
+     private final Set<Stat<?>> dirty = Sets.newHashSet();
+ 
++    // Leaf start - Async player IO
++    private final String name;
++    private final java.util.UUID uuid;
++    @Deprecated(forRemoval = true)
+     public ServerStatsCounter(MinecraftServer server, File file) {
++        throw new UnsupportedOperationException();
++    }
++    public ServerStatsCounter(MinecraftServer server, File file, String name, java.util.UUID uuid) {
++        this.name = name;
++        this.uuid = uuid;
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.blockStats(uuid, name);
++    // Leaf end - Async player IO
+         this.server = server;
+         this.file = file;
+         if (file.isFile()) {
+             try {
+-                this.parseLocal(server.getFixerUpper(), FileUtils.readFileToString(file));
++                this.parseLocal(server.getFixerUpper(), FileUtils.readFileToString(file, java.nio.charset.StandardCharsets.UTF_8)); // Leaf - UTF-8
+             } catch (IOException var4) {
+                 LOGGER.error("Couldn't read statistics file {}", file, var4);
+             } catch (JsonParseException var5) {
+@@ -66,11 +77,37 @@ public class ServerStatsCounter extends StatsCounter {
+ 
+     public void save() {
+         if (org.spigotmc.SpigotConfig.disableStatSaving) return; // Spigot
++        // Leaf start - Async player IO
++        Map<StatType<?>, JsonObject> map = Maps.newHashMap();
++        for (it.unimi.dsi.fastutil.objects.Object2IntMap.Entry<Stat<?>> entry : this.stats.object2IntEntrySet()) {
++            Stat<?> stat = entry.getKey();
++            map.computeIfAbsent(stat.getType(), type -> new JsonObject()).addProperty(getKey(stat).toString(), entry.getIntValue());
++        }
++        final File file = this.file;
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.submitStats(
++            uuid,
++            name,
++            () -> {
++                JsonObject jsonObject = new JsonObject();
++
++                for (Entry<StatType<?>, JsonObject> entry1 : map.entrySet()) {
++                    jsonObject.add(BuiltInRegistries.STAT_TYPE.getKey(entry1.getKey()).toString(), entry1.getValue());
++                }
++
++                JsonObject jsonObject1 = new JsonObject();
++                jsonObject1.add("stats", jsonObject);
++                jsonObject1.addProperty("DataVersion", SharedConstants.getCurrentVersion().getDataVersion().getVersion());
++                org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplace(file.toPath(), jsonObject1.toString());
++                return null;
++            });
++        /*
+         try {
+             FileUtils.writeStringToFile(this.file, this.toJson());
+         } catch (IOException var2) {
+             LOGGER.error("Couldn't save stats", (Throwable)var2);
+         }
++        */
++        // Leaf end - Async player IO
+     }
+ 
+     @Override
 diff --git a/net/minecraft/world/level/storage/LevelStorageSource.java b/net/minecraft/world/level/storage/LevelStorageSource.java
-index de43e54698125ce9f319d4889dd49f7029fe95e0..742bd4b60321adc9e63c3de910ea95f4990b618d 100644
+index de43e54698125ce9f319d4889dd49f7029fe95e0..360e54b87db68fad60cdec63af466765baae0a07 100644
 --- a/net/minecraft/world/level/storage/LevelStorageSource.java
 +++ b/net/minecraft/world/level/storage/LevelStorageSource.java
-@@ -520,15 +520,26 @@ public class LevelStorageSource {
+@@ -520,15 +520,24 @@ public class LevelStorageSource {
          private void saveLevelData(CompoundTag tag) {
              Path path = this.levelDirectory.path();
  
-+            // Leaf start - Async playerdata saving
++            // Leaf start - Async player IO
 +            // Save level.dat asynchronously
 +            var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
              try {
@@ -28,38 +226,36 @@ index de43e54698125ce9f319d4889dd49f7029fe95e0..742bd4b60321adc9e63c3de910ea95f4
 -                LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
 +                LevelStorageSource.LOGGER.error("Failed to encode level {}", path, var6);
              }
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.saveLevelData(path, () -> {
 +                try {
-+                    Path path1 = Files.createTempFile(path, "level", ".dat");
-+                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
-+                    Path path2 = this.levelDirectory.oldDataFile();
-+                    Path path3 = this.levelDirectory.dataFile();
-+                    Util.safeReplaceFile(path3, path1, path2);
++                    Path old = this.levelDirectory.oldDataFile();
++                    Path current = this.levelDirectory.dataFile();
++                    org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplaceBackup(current, old, nbtBytes.array, 0, nbtBytes.length);
 +                } catch (Exception var6) {
-+                    LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
++                    LevelStorageSource.LOGGER.error("Failed to save level.dat {}", path, var6);
 +                }
 +            });
-+            // Leaf end - Async playerdata saving
++            // Leaf end - Async player IO
          }
  
          public Optional<Path> getIconFile() {
+@@ -645,6 +654,7 @@ public class LevelStorageSource {
+ 
+         @Override
+         public void close() throws IOException {
++            org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.saveLevelData(this.levelDirectory.path(), null); // Leaf - Async player IO
+             this.lock.close();
+         }
+ 
 diff --git a/net/minecraft/world/level/storage/PlayerDataStorage.java b/net/minecraft/world/level/storage/PlayerDataStorage.java
-index c44110b123ba5912af18faf0065e9ded780da9b7..fd8b4832c8b4a52bd8f9b3ea59111af85127b573 100644
+index c44110b123ba5912af18faf0065e9ded780da9b7..2eae5ccb37b942b94964c28391b96989ae85b072 100644
 --- a/net/minecraft/world/level/storage/PlayerDataStorage.java
 +++ b/net/minecraft/world/level/storage/PlayerDataStorage.java
-@@ -25,6 +25,7 @@ public class PlayerDataStorage {
-     private final File playerDir;
-     protected final DataFixer fixerUpper;
-     private static final DateTimeFormatter FORMATTER = FileNameDateFormatter.create();
-+    private final java.util.Map<java.util.UUID, java.util.concurrent.Future<?>> savingLocks = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // Leaf - Async playerdata saving
- 
-     public PlayerDataStorage(LevelStorageSource.LevelStorageAccess levelStorageAccess, DataFixer fixerUpper) {
-         this.fixerUpper = fixerUpper;
-@@ -34,19 +35,82 @@ public class PlayerDataStorage {
+@@ -34,19 +34,37 @@ public class PlayerDataStorage {
  
      public void save(Player player) {
          if (org.spigotmc.SpigotConfig.disablePlayerDataSaving) return; // Spigot
-+        // Leaf start - Async playerdata saving
++        // Leaf start - Async player IO
 +        CompoundTag compoundTag;
          try {
 -            CompoundTag compoundTag = player.saveWithoutId(new CompoundTag());
@@ -77,105 +273,60 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..fd8b4832c8b4a52bd8f9b3ea59111af8
 +            return;
          }
 +        save(player.getScoreboardName(), player.getUUID(), player.getStringUUID(), compoundTag);
-+        // Leaf end - Async playerdata saving
++        // Leaf end - Async player IO
      }
  
-+    // Leaf start - Async playerdata saving
-+    public void save(String playerName, java.util.UUID uniqueId, String stringId, CompoundTag compoundTag) {
-+        var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
-+        try {
-+            NbtIo.writeCompressed(compoundTag, nbtBytes);
-+        } catch (Exception exception) {
-+            LOGGER.warn("Failed to encode player data for {}", stringId, exception);
-+        }
-+        lockFor(uniqueId, playerName);
-+        synchronized (PlayerDataStorage.this) {
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
-+                try {
-+                    Path path = this.playerDir.toPath();
-+                    Path path1 = Files.createTempFile(path, stringId + "-", ".dat");
-+                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
-+                    Path path2 = path.resolve(stringId + ".dat");
-+                    Path path3 = path.resolve(stringId + ".dat_old");
-+                    Util.safeReplaceFile(path2, path1, path3);
-+                } catch (Exception var7) {
-+                    LOGGER.warn("Failed to save player data for {}", playerName, var7);
-+                } finally {
-+                    synchronized (PlayerDataStorage.this) {
-+                        savingLocks.remove(uniqueId);
-+                    }
-+                }
-+            }).ifPresent(future -> savingLocks.put(uniqueId, future));
-+        }
-+    }
++    // Leaf start - Async player IO
++    public void save(String playerName, java.util.UUID uuid, String stringId, CompoundTag compoundTag) {
++        final File playerDir = this.playerDir;
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.submitEntity(
++            uuid,
++            playerName,
++            () -> {
++                var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
++                NbtIo.writeCompressed(compoundTag, nbtBytes);
++                Path path = playerDir.toPath();
 +
-+    private void lockFor(java.util.UUID uniqueId, String playerName) {
-+        java.util.concurrent.Future<?> fut;
-+        synchronized (this) {
-+            fut = savingLocks.get(uniqueId);
-+        }
-+        if (fut == null) {
-+            return;
-+        }
-+        while (true) {
-+            try {
-+                fut.get(10_000L, java.util.concurrent.TimeUnit.MILLISECONDS);
-+                break;
-+            } catch (InterruptedException ignored) {
-+            } catch (java.util.concurrent.ExecutionException
-+                     | java.util.concurrent.TimeoutException exception) {
-+                LOGGER.warn("Failed to save player data for {}", playerName, exception);
-+
-+                String threadDump = "";
-+                var threadMXBean = java.lang.management.ManagementFactory.getThreadMXBean();
-+                for (var threadInfo : threadMXBean.dumpAllThreads(true, true)) {
-+                    if (threadInfo.getThreadName().equals("Leaf IO Thread")) {
-+                        threadDump = threadInfo.toString();
-+                        break;
-+                    }
-+                }
-+                LOGGER.warn(threadDump);
-+                fut.cancel(true);
-+                break;
-+            } finally {
-+                savingLocks.remove(uniqueId);
-+            }
-+        }
++                Path current = path.resolve(stringId + ".dat");
++                Path old = path.resolve(stringId + ".dat_old");
++                org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.safeReplaceBackup(current, old, nbtBytes.array, 0, nbtBytes.length);
++                return null;
++            });
 +    }
-+    // Leaf end - Async playerdata saving
++    // Leaf end - Async player IO
 +
      private void backup(String name, String stringUuid, String suffix) { // CraftBukkit
          Path path = this.playerDir.toPath();
          Path path1 = path.resolve(stringUuid + suffix); // CraftBukkit
-@@ -60,7 +124,13 @@ public class PlayerDataStorage {
+@@ -60,7 +78,13 @@ public class PlayerDataStorage {
          }
      }
  
 -    private Optional<CompoundTag> load(String name, String stringUuid, String suffix) { // CraftBukkit
-+    // Leaf start - Async playerdata saving
++    // Leaf start - Async player IO
 +    private Optional<CompoundTag> load(String name, String stringUuid, String suffix) {
 +        return load(name, stringUuid, suffix, java.util.UUID.fromString(stringUuid));
 +    }
 +    private Optional<CompoundTag> load(String name, String stringUuid, String suffix, java.util.UUID playerUuid) { // CraftBukkit
-+        lockFor(playerUuid, name);
-+        // Leaf end - Async playerdata saving
++        org.dreeam.leaf.async.storage.AsyncPlayerDataSaving.INSTANCE.blockEntity(playerUuid, name);
++        // Leaf end - Async player IO
          File file = new File(this.playerDir, stringUuid + suffix); // CraftBukkit
          // Spigot start
          boolean usingWrongFile = false;
-@@ -91,7 +161,7 @@ public class PlayerDataStorage {
+@@ -91,7 +115,7 @@ public class PlayerDataStorage {
  
      public Optional<CompoundTag> load(Player player) {
          // CraftBukkit start
 -        return this.load(player.getName().getString(), player.getStringUUID()).map((tag) -> {
-+        return this.load(player.getName().getString(), player.getStringUUID(), player.getUUID()).map((tag) -> { // Leaf - Async playerdata saving
++        return this.load(player.getName().getString(), player.getStringUUID(), player.getUUID()).map((tag) -> { // Leaf - Async player IO
              if (player instanceof ServerPlayer serverPlayer) {
                  CraftPlayer craftPlayer = serverPlayer.getBukkitEntity();
                  // Only update first played if it is older than the one we have
-@@ -106,20 +176,25 @@ public class PlayerDataStorage {
+@@ -106,20 +130,25 @@ public class PlayerDataStorage {
          });
      }
  
-+    // Leaf start - Async playerdata saving
++    // Leaf start - Async player IO
      public Optional<CompoundTag> load(String name, String uuid) {
 +        return this.load(name, uuid, java.util.UUID.fromString(uuid));
 +    }
@@ -195,7 +346,7 @@ index c44110b123ba5912af18faf0065e9ded780da9b7..fd8b4832c8b4a52bd8f9b3ea59111af8
              return compoundTag;
          });
      }
-+    // Leaf end - Async playerdata saving
++    // Leaf end - Async player IO
  
      // CraftBukkit start
      public File getPlayerDir() {

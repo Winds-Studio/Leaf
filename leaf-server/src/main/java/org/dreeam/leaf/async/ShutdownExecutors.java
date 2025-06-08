@@ -1,6 +1,7 @@
 package org.dreeam.leaf.async;
 
 import net.minecraft.server.MinecraftServer;
+import org.dreeam.leaf.async.storage.AsyncPlayerDataSaving;
 import org.dreeam.leaf.async.tracker.MultithreadedTracker;
 
 public class ShutdownExecutors {
