@@ -69,10 +69,10 @@ public final class RandomTickSystem {
         tickSpeed = tickSpeed * 4;
 
         long chance = chunk.leaf$randomTickChance();
-        if (chance != 0L && chance <= (long) (a & MASK)) {
+        if (chance == 0L && (chance = recompute(chunk, tickSpeed)) == 0L) {
             return;
         }
-        if ((chance = recompute(chunk, tickSpeed)) == 0L) {
+        if (chance <= (long) (a & MASK) || (chance = recompute(chunk, tickSpeed)) == 0L) {
             return;
         }
         int tickingCount = chunk.leaf$countTickingBlocks();
