@@ -69,10 +69,10 @@ public final class RandomTickSystem {
         tickSpeed = tickSpeed * 4;
 
         long chance = chunk.leaf$randomTickChance();
-        if (chance == 0L && (chance = recompute(chunk, tickSpeed)) == 0L) {
+        if (chance != 0L && chance <= (long) (a & MASK)) {
             return;
         }
-        if (chance >= (long) (a & MASK) || (chance = recompute(chunk, tickSpeed)) == 0L) {
+        if ((chance = recompute(chunk, tickSpeed)) == 0L) {
             return;
         }
         int tickingCount = chunk.leaf$countTickingBlocks();
@@ -86,7 +86,7 @@ public final class RandomTickSystem {
         }
         chance -= SCALE;
         long last = randomSource.nextInt() & MASK;
-        while (last <= chance) {
+        while (chance > last) {
             pos = chunk.leaf$tickingPos(randomSource.nextInt(tickingCount));
             if (pos.isPresent()) {
                 tickPos.add(pos.getAsLong());
