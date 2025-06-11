@@ -6,7 +6,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.OptionalLong;
@@ -14,13 +13,12 @@ import java.util.OptionalLong;
 public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
     private static final long SCALE_HALF = 0x80000L;
-    private static final int BITS = 20;
     private static final long CHUNK_BLOCKS = 4096L;
 
     private final LongArrayList queue = new LongArrayList();
     private final LongArrayList samples = new LongArrayList();
     private final LongArrayList weights = new LongArrayList();
-    private long weightsSum = 0;
+    private long weightsSum = 0L;
 
     private int bits = 60;
     private long cacheRandom = 0L;
@@ -31,18 +29,23 @@ public final class RandomTickSystem {
         }
 
         var random = world.simpleRandom;
-        int spin = random.next(BITS);
-
-        int chosen = (weightsSum >= SCALE_HALF ? random.nextInt((int) (weightsSum / SCALE_HALF)) : 0)
-            + (((int) (weightsSum % SCALE_HALF) >= random.next(BITS - 1)) ? 1 : 0);
-        if (chosen == 0) {
+        long chosen = 0L;
+        if (weightsSum >= SCALE_HALF) {
+            chosen += boundedNextLong(random, (weightsSum / SCALE_HALF));
+        }
+        if (((weightsSum % SCALE_HALF) >= boundedNextLong(random, SCALE_HALF))) {
+            chosen += 1L;
+        }
+        if (chosen == 0L) {
             return;
         }
-        long spoke = weightsSum / chosen;
-        long[] weightsRaw = weights.elements();
-        long[] samplesRaw = samples.elements();
+
+        final long[] weightsRaw = weights.elements();
+        final long[] samplesRaw = samples.elements();
+        final long spoke = weightsSum / chosen;
+
         long accumulated = weightsRaw[0];
-        long current = spin;
+        long current = boundedNextLong(random, spoke);
         int i = 0;
         while (current < weightsSum) {
             while (accumulated < current) {
@@ -55,7 +58,7 @@ public final class RandomTickSystem {
         while (queue.size() < chosen) {
             queue.push(samplesRaw[i]);
         }
-        weightsSum = 0;
+        weightsSum = 0L;
         weights.clear();
         samples.clear();
 
@@ -63,7 +66,7 @@ public final class RandomTickSystem {
         int j = queue.size();
         long[] queueRaw = queue.elements();
         int k = j - 3;
-        // optimize getChunk for large ticking block or tick speed
+        // optimize getChunk for large tickable block chunk or high tick speed
         for (i = 0; i < k; i += 4) {
             long packed1 = queueRaw[i];
             long packed2 = queueRaw[i + 1];
@@ -146,7 +149,7 @@ public final class RandomTickSystem {
     }
 
     public void randomTickChunk(
-        BitRandomSource random,
+        RandomSource random,
         LevelChunk chunk,
         long tickSpeed
     ) {
@@ -162,5 +165,19 @@ public final class RandomTickSystem {
             weights.add(chance);
             weightsSum += chance;
         }
+    }
+
+    public static long boundedNextLong(RandomSource rng, long bound) {
+        final long m = bound - 1;
+        long r = rng.nextLong();
+        if ((bound & m) == 0L) {
+            r &= m;
+        } else {
+            for (long u = r >>> 1;
+                 u + m - (r = u % bound) < 0L;
+                 u = rng.nextLong() >>> 1)
+                ;
+        }
+        return r;
     }
 }
