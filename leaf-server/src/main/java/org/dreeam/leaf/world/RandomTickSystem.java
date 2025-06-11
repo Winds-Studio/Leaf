@@ -12,7 +12,6 @@ import java.util.OptionalLong;
 
 public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
-    private static final long SCALE_HALF = 0x80000L;
     private static final long CHUNK_BLOCKS = 4096L;
 
     private final LongArrayList queue = new LongArrayList();
@@ -29,11 +28,8 @@ public final class RandomTickSystem {
         }
 
         var random = world.simpleRandom;
-        long chosen = 0L;
-        if (weightsSum >= SCALE_HALF) {
-            chosen += boundedNextLong(random, (weightsSum / SCALE_HALF));
-        }
-        if (((weightsSum % SCALE_HALF) >= boundedNextLong(random, SCALE_HALF))) {
+        long chosen = weightsSum / SCALE;
+        if (((weightsSum % SCALE) >= boundedNextLong(random, SCALE))) {
             chosen += 1L;
         }
         if (chosen == 0L) {
