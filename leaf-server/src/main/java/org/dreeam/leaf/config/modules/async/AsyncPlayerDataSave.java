@@ -19,5 +19,9 @@ public class AsyncPlayerDataSave extends ConfigModules {
                 异步保存玩家数据.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+
+        if (enabled) {
+            org.dreeam.leaf.async.AsyncPlayerDataSaving.init();
+        }
     }
 }

@@ -57,6 +57,7 @@ public class MultithreadedTracker extends ConfigModules {
 
         if (asyncEntityTrackerQueueSize <= 0)
             asyncEntityTrackerQueueSize = asyncEntityTrackerMaxThreads * 384;
+
         if (enabled) {
             org.dreeam.leaf.async.tracker.MultithreadedTracker.init();
         }

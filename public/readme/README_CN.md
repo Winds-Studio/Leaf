@@ -17,7 +17,7 @@
 ## 🍃 特点
 - **基于 [Gale](https://github.com/Dreeam-qwq/Gale)**，以获得更好的性能
 - **异步**寻路、生物生成和实体追踪
-- **大量优化**融合自 [其他核心](https://github.com/Winds-Studio/Leaf#-致谢) 的补丁, 和我们自己的
+- **大量优化**融合自 [其他核心](#-致谢) 和我们自己的的补丁
 - **完全兼容** Spigot 和 Paper 插件
 - **最新依赖**，保持所有依赖项为最新版本
 - **允许用户名使用所有字符**，包括中文和其他字符
@@ -87,11 +87,9 @@ java {
 ```
 
 ## ⚖️ 许可证
-Paperweight 文件基于 [MIT](licenses/MIT.txt) 许可证。
-补丁基于 [MIT](licenses/MIT.txt) 许可证，除非在补丁顶部注释中另有说明。
-二进制文件基于 [GPL-3.0](licenses/GPL-3.0.txt) 许可证。
+Leaf 根据其上游项目及其他材料，采用多种开源许可证授权，
 
-另请参阅 [PaperMC/Paper](https://github.com/PaperMC/Paper) 和 [PaperMC/paperweight](https://github.com/PaperMC/paperweight) 了解本项目使用的一些材料的许可证。
+请参阅 [LICENSE.md](../../LICENSE.md) 获取完整的许可信息。
 
 ## 📜 致谢
 感谢以下项目。Leaf 包含了一些取自这些项目的补丁。<br>

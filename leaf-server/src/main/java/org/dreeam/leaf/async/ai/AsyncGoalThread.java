@@ -9,6 +9,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalThread extends Thread {
 
+    public static volatile boolean RUNNING = true;
     public AsyncGoalThread(final MinecraftServer server) {
         super(() -> run(server), "Leaf Async Goal Thread");
         this.setDaemon(false);
@@ -18,7 +19,7 @@ public class AsyncGoalThread extends Thread {
     }
 
     private static void run(MinecraftServer server) {
-        while (server.isRunning()) {
+        while (RUNNING) {
             boolean retry = false;
             for (ServerLevel level : server.getAllLevels()) {
                 var exec = level.asyncGoalExecutor;

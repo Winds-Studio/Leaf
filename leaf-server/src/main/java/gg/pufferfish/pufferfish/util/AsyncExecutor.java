@@ -13,7 +13,7 @@ public class AsyncExecutor implements Runnable {
 
     private final Logger LOGGER = LogManager.getLogger("Leaf");
     private final PriorityQueue<Runnable> jobs = PriorityQueues.synchronize(new ObjectArrayFIFOQueue<>());
-    private final Thread thread;
+    public final Thread thread;
     private volatile boolean killswitch = false;
 
     public AsyncExecutor(String threadName) {
@@ -28,10 +28,10 @@ public class AsyncExecutor implements Runnable {
         thread.start();
     }
 
-    public void kill() throws InterruptedException {
+    public void join(long millis) throws InterruptedException {
         killswitch = true;
         LockSupport.unpark(thread);
-        thread.join();
+        thread.join(millis);
     }
 
     public void submit(Runnable runnable) {

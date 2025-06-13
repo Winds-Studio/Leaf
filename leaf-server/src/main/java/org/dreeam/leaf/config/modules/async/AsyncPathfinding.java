@@ -60,5 +60,9 @@ public class AsyncPathfinding extends ConfigModules {
                 ? PathfindTaskRejectPolicy.FLUSH_ALL.toString()
                 : PathfindTaskRejectPolicy.CALLER_RUNS.toString())
         );
+
+        if (enabled) {
+            org.dreeam.leaf.async.path.AsyncPathProcessor.init();
+        }
     }
 }

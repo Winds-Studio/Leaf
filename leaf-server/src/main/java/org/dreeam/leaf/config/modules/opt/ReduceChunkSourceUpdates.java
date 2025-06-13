@@ -15,7 +15,7 @@ public class ReduceChunkSourceUpdates extends ConfigModules {
     public void onLoaded() {
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled,
             config.pickStringRegionBased(
-                "Reduces chunk source updates on inter-chunk player moves. (Recommended to enable)",
+                "Reduces chunk source updates on inter-chunk player moves.",
                 "减少玩家跨区块移动时的区块源更新。"
             )
         );

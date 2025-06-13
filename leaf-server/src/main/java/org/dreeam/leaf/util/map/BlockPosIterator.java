@@ -46,25 +46,25 @@ public final class BlockPosIterator extends AbstractIterator<BlockPos> {
         MutableBlockPos pos = this.pos;
         if (pos == null) {
             return this.pos = new MutableBlockPos(this.startX, this.startY, this.startZ);
-        } else {
-            int x = pos.getX();
-            int y = pos.getY();
-            int z = pos.getZ();
-
-            if (y < this.endY) {
-                y += 1;
-            } else if (x < this.endX) {
-                x += 1;
-                y = this.startY;
-            } else if (z < this.endZ) {
-                z += 1;
-                x = this.startX;
-            } else {
-                return this.endOfData();
-            }
-
-            pos.set(x, y, z);
-            return pos;
         }
+        int x = pos.getX();
+        int y = pos.getY();
+        int z = pos.getZ();
+
+        if (y < this.endY) {
+            y += 1;
+        } else if (x < this.endX) {
+            x += 1;
+            y = this.startY;
+        } else if (z < this.endZ) {
+            z += 1;
+            x = this.startX;
+            y = this.startY; // Reset y also!
+        } else {
+            return this.endOfData();
+        }
+
+        pos.set(x, y, z);
+        return pos;
     }
 }
