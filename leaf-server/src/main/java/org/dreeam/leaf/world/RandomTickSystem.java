@@ -14,7 +14,13 @@ public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
     private static final long CHUNK_BLOCKS = 4096L;
 
-    private final LongArrayList queue = new LongArrayList();
+    /// reduce unnecessary sampling and block counting
+    private static final long TICK_MASK = 0b11L;
+    private static final long TICK_MUL = 4L;
+    private static final int BITS_STEP = 2;
+    private static final int BITS_MAX = 60;
+
+    private final LongArrayList edges = new LongArrayList();
     private final LongArrayList samples = new LongArrayList();
     private final LongArrayList weights = new LongArrayList();
     private long weightsSum = 0L;
@@ -39,91 +45,117 @@ public final class RandomTickSystem {
         final long[] weightsRaw = weights.elements();
         final long[] samplesRaw = samples.elements();
         final long spoke = weightsSum / chosen;
+        if (spoke == 0L) {
+            return;
+        }
 
         long accumulated = weightsRaw[0];
         long current = boundedNextLong(random, spoke);
         int i = 0;
-        while (current < weightsSum) {
+
+        long packed1 = 0L, packed2 = 0L, packed3 = 0L, packed4;
+        int rest;
+        long count = 0L;
+        while (true) {
+            if (current >= weightsSum) {
+                rest = 0;
+                break;
+            }
             while (accumulated < current) {
                 i += 1;
                 accumulated += weightsRaw[i];
             }
-            queue.add(samplesRaw[i]);
+            packed1 = samplesRaw[i];
             current += spoke;
-        }
-        while (queue.size() < chosen) {
-            queue.push(samplesRaw[i]);
-        }
-        weightsSum = 0L;
-        weights.clear();
-        samples.clear();
 
-        var simpleRandom = world.simpleRandom;
-        int j = queue.size();
-        long[] queueRaw = queue.elements();
-        int k = j - 3;
-        // optimize getChunk for large tickable block chunk or high tick speed
-        for (i = 0; i < k; i += 4) {
-            long packed1 = queueRaw[i];
-            long packed2 = queueRaw[i + 1];
-            long packed3 = queueRaw[i + 2];
-            long packed4 = queueRaw[i + 3];
-            int x;
-            int z;
-            LevelChunk chunk1;
-            LevelChunk chunk2;
-            LevelChunk chunk3;
-            LevelChunk chunk4;
+            if (current >= weightsSum) {
+                rest = 1;
+                break;
+            }
+            while (accumulated < current) {
+                i += 1;
+                accumulated += weightsRaw[i];
+            }
+            packed2 = samplesRaw[i];
+            current += spoke;
 
-            x = (int) packed1;
-            z = (int) (packed1 >> 32);
-            chunk1 = world.chunkSource.getChunkAtIfLoadedImmediately(x, z);
+            if (current >= weightsSum) {
+                rest = 2;
+                break;
+            }
+            while (accumulated < current) {
+                i += 1;
+                accumulated += weightsRaw[i];
+            }
+            packed3 = samplesRaw[i];
+            current += spoke;
 
-            if (packed1 != packed2) {
-                x = (int) packed2;
-                z = (int) (packed2 >> 32);
-                chunk2 = world.chunkSource.getChunkAtIfLoadedImmediately(x, z);
-            } else {
-                chunk2 = chunk1;
+            if (current >= weightsSum) {
+                rest = 3;
+                break;
             }
-            if (packed2 != packed3) {
-                x = (int) packed3;
-                z = (int) (packed3 >> 32);
-                chunk3 = world.chunkSource.getChunkAtIfLoadedImmediately(x, z);
-            } else {
-                chunk3 = chunk2;
+            while (accumulated < current) {
+                i += 1;
+                accumulated += weightsRaw[i];
             }
-            if (packed3 != packed4) {
-                x = (int) packed4;
-                z = (int) (packed4 >> 32);
-                chunk4 = world.chunkSource.getChunkAtIfLoadedImmediately(x, z);
-            } else {
-                chunk4 = chunk3;
-            }
+            packed4 = samplesRaw[i];
+            current += spoke;
+
+            final LevelChunk chunk1;
+            final LevelChunk chunk2;
+            final LevelChunk chunk3;
+            final LevelChunk chunk4;
+            chunk1 = getChunk(world, packed1);
+            chunk2 = packed1 != packed2 ? getChunk(world, packed2) : chunk1;
+            chunk3 = packed2 != packed3 ? getChunk(world, packed3) : chunk2;
+            chunk4 = packed3 != packed4 ? getChunk(world, packed4) : chunk3;
             if (chunk1 != null) {
-                tickBlock(world, chunk1, simpleRandom);
+                tickBlock(world, chunk1, random);
             }
             if (chunk2 != null) {
-                tickBlock(world, chunk2, simpleRandom);
+                tickBlock(world, chunk2, random);
             }
             if (chunk3 != null) {
-                tickBlock(world, chunk3, simpleRandom);
+                tickBlock(world, chunk3, random);
             }
             if (chunk4 != null) {
-                tickBlock(world, chunk4, simpleRandom);
+                tickBlock(world, chunk4, random);
             }
+
+            count++;
         }
-        for (; i < j; i++) {
-            long packed = queueRaw[i];
-            int x = (int) packed;
-            int z = (int) (packed >> 32);
-            LevelChunk chunk = world.chunkSource.getChunkAtIfLoadedImmediately(x, z);
+
+        if (rest >= 1) {
+            edges.push(packed1);
+        }
+        if (rest >= 2) {
+            edges.push(packed2);
+        }
+        if (rest == 3) {
+            edges.push(packed3);
+        }
+        chosen -= rest;
+        chosen -= count * 4L;
+        while (edges.size() < chosen) {
+            edges.push(samplesRaw[i]);
+        }
+
+        long[] queueRaw = edges.elements();
+        for (int k = 0, j = edges.size(); k < j; k++) {
+            LevelChunk chunk = getChunk(world, queueRaw[k]);
             if (chunk != null) {
-                tickBlock(world, chunk, simpleRandom);
+                tickBlock(world, chunk, random);
             }
         }
 
-        queue.clear();
+        weightsSum = 0L;
+        edges.clear();
+        weights.clear();
+        samples.clear();
+    }
+
+    private static LevelChunk getChunk(ServerLevel world, long packed) {
+        return world.chunkSource.getChunkAtIfLoadedImmediately((int) packed, (int) (packed >> 32));
     }
 
     private static void tickBlock(ServerLevel world, LevelChunk chunk, RandomSource random) {
@@ -144,25 +176,34 @@ public final class RandomTickSystem {
         }
     }
 
-    public void randomTickChunk(
+    public void tickChunk(
         RandomSource random,
         LevelChunk chunk,
         long tickSpeed
     ) {
-        if (this.bits == 60) {
+        if (this.bits == BITS_MAX) {
             this.bits = 0;
             this.cacheRandom = random.nextLong();
         } else {
-            this.bits += 2;
+            this.bits += BITS_STEP;
         }
-        if ((this.cacheRandom & (0b11L << bits)) == 0L && chunk.leaf$tickingBlocksCount() != 0L) {
-            long chance = (4 * tickSpeed * chunk.leaf$lastTickingBlocksCount() * SCALE) / CHUNK_BLOCKS;
+        if ((this.cacheRandom & (TICK_MASK << bits)) == 0L && chunk.leaf$tickingBlocksCount() != 0L) {
+            long chance = (TICK_MUL * tickSpeed * chunk.leaf$lastTickingBlocksCount() * SCALE) / CHUNK_BLOCKS;
             samples.add(chunk.getPos().longKey);
             weights.add(chance);
             weightsSum += chance;
         }
     }
 
+    /**
+     * @param rng a random number generator to be used as a
+     *        source of pseudorandom {@code long} values
+     * @param bound the upper bound (exclusive); must be greater than zero
+     *
+     * @return a pseudorandomly chosen {@code long} value
+     *
+     * @see java.util.random.RandomGenerator#nextLong(long) nextLong(bound)
+     */
     public static long boundedNextLong(RandomSource rng, long bound) {
         final long m = bound - 1;
         long r = rng.nextLong();
