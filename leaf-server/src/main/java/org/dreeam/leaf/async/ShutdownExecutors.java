@@ -57,5 +57,14 @@ public class ShutdownExecutors {
             } catch (InterruptedException ignored) {
             }
         }
+
+        if (org.dreeam.leaf.async.container.AsyncContainerBroadcaster.CONTAINER_POOL != null) {
+            LOGGER.info("Waiting for container broadcast executor to shutdown...");
+            org.dreeam.leaf.async.container.AsyncContainerBroadcaster.CONTAINER_POOL.shutdown();
+            try {
+                org.dreeam.leaf.async.container.AsyncContainerBroadcaster.CONTAINER_POOL.awaitTermination(10L, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+            }
+        }
     }
 }

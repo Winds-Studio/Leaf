@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wling-art <wlingzhenyu@163.com>
+Date: Sat, 14 Jun 2025 19:52:42 +0800
+Subject: [PATCH] Async optimized broadcastChanges
+
+
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index 2a49a0bdeb61c4fadddc241c8ebca908959d7e9c..ae6486065e1301ae1851cc70436d6543846daad6 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -61,7 +61,7 @@ public abstract class AbstractContainerMenu {
+     public int quickcraftType = -1;
+     public int quickcraftStatus;
+     public final Set<Slot> quickcraftSlots = Sets.newHashSet();
+-    private final List<ContainerListener> containerListeners = Lists.newArrayList();
++    public final List<ContainerListener> containerListeners = Lists.newArrayList(); // Leaf - Async optimized broadcastChanges with minimal memory allocation
+     @Nullable
+     private ContainerSynchronizer synchronizer;
+     private boolean suppressRemoteUpdates;
+@@ -231,24 +231,69 @@ public abstract class AbstractContainerMenu {
+     }
+ 
+     public void broadcastChanges() {
++        // Leaf start - Async optimized broadcastChanges with minimal memory allocation
++        boolean useAsync = org.dreeam.leaf.config.modules.async.AsyncContainerBroadcast.enabled;
++        java.util.List<Runnable> asyncTasks = useAsync ? org.dreeam.leaf.async.container.AsyncContainerBroadcaster.getTasks() : null;
++
+         for (int i = 0; i < this.slots.size(); i++) {
+-            ItemStack item = this.slots.get(i).getItem();
+-            Supplier<ItemStack> supplier = Suppliers.memoize(item::copy);
+-            this.triggerSlotListeners(i, item, supplier);
+-            this.synchronizeSlotToRemote(i, item, supplier);
++            ItemStack currentItem = this.slots.get(i).getItem();
++            ItemStack lastListenerItem = this.lastSlots.get(i);
++            boolean needsListenerUpdate = !ItemStack.matches(lastListenerItem, currentItem);
++            boolean needsRemoteSync = false;
++
++            if (!this.suppressRemoteUpdates) {
++                if (!ItemStack.matches(this.remoteSlots.get(i), currentItem)) {
++                    needsRemoteSync = true;
++                }
++            }
++
++            if (needsListenerUpdate || needsRemoteSync) {
++                ItemStack newItemCopy = currentItem.copy();
++                if (needsListenerUpdate) {
++                    this.lastSlots.set(i, newItemCopy);
++                    for (ContainerListener containerListener : this.containerListeners) {
++                        containerListener.slotChanged(this, i, lastListenerItem, newItemCopy);
++                    }
++                }
++                if (needsRemoteSync) {
++                    this.remoteSlots.set(i, newItemCopy);
++                    if (useAsync) {
++                        org.dreeam.leaf.async.container.AsyncContainerBroadcaster.addSlotSyncTask(asyncTasks, this.synchronizer, this, i, newItemCopy);
++                    } else {
++                        this.synchronizeSlotToRemote(i, currentItem, currentItem::copy);
++                    }
++                }
++            }
+         }
+ 
+         this.synchronizeCarriedToRemote();
+ 
+         for (int i = 0; i < this.dataSlots.size(); i++) {
+             DataSlot dataSlot = this.dataSlots.get(i);
+-            int i1 = dataSlot.get();
++            int currentValue = dataSlot.get();
++
+             if (dataSlot.checkAndClearUpdateFlag()) {
+-                this.updateDataSlotListeners(i, i1);
++                for (ContainerListener containerListener : this.containerListeners) {
++                    containerListener.dataChanged(this, i, currentValue);
++                }
+             }
+ 
+-            this.synchronizeDataSlotToRemote(i, i1);
++            if (!this.suppressRemoteUpdates) {
++                if (this.remoteDataSlots.getInt(i) != currentValue) {
++                    this.remoteDataSlots.set(i, currentValue);
++                    if (useAsync) {
++                        org.dreeam.leaf.async.container.AsyncContainerBroadcaster.addDataSyncTask(asyncTasks, this.synchronizer, this, i, currentValue);
++                    } else {
++                        this.synchronizeDataSlotToRemote(i, currentValue);
++                    }
++                }
++            }
++        }
++
++        if (useAsync && asyncTasks != null) {
++            org.dreeam.leaf.async.container.AsyncContainerBroadcaster.executeAsync(asyncTasks);
+         }
++        // Leaf end - Async optimized broadcastChanges with minimal memory allocation
+     }
+ 
+     public void broadcastFullState() {
