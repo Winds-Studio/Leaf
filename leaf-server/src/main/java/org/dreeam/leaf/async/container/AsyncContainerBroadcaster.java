@@ -25,18 +25,12 @@ public class AsyncContainerBroadcaster {
     public static ExecutorService CONTAINER_POOL = null;
     public static final Logger LOGGER = LogManager.getLogger("Leaf Async Container Broadcast");
     private static final ThreadLocal<List<Runnable>> TASK_POOL = ThreadLocal.withInitial(() -> new ArrayList<>(16));
-    private static final ThreadLocal<List<Object>> PACKET_BATCH = ThreadLocal.withInitial(() -> new ArrayList<>(8));
-    private static final ThreadLocal<AbstractContainerMenu> CURRENT_MENU = new ThreadLocal<>();
-    
-    private static volatile long totalTasksProcessed = 0;
-    private static volatile long totalPacketsSent = 0;
-    private static volatile long backpressureSkips = 0;
 
     public static void init() {
         if (CONTAINER_POOL != null) {
             CONTAINER_POOL.shutdown();
         }
-        
+
         CONTAINER_POOL = new ThreadPoolExecutor(
             AsyncContainerBroadcast.minThreads,
             AsyncContainerBroadcast.maxThreads,
@@ -50,48 +44,18 @@ public class AsyncContainerBroadcaster {
                 .build(),
             new ThreadPoolExecutor.CallerRunsPolicy()
         );
-        
-        LOGGER.info("Initialized Async Container Broadcast with {}-{} threads", 
+
+        LOGGER.info("Initialized Async Container Broadcast with {}-{} threads",
             AsyncContainerBroadcast.minThreads, AsyncContainerBroadcast.maxThreads);
     }
 
     public static void executeAsync(List<Runnable> tasks) {
         if (CONTAINER_POOL != null && !tasks.isEmpty()) {
-            totalTasksProcessed += tasks.size();
-            
-            if (AsyncContainerBroadcast.enableBatchedSending) {
-                CONTAINER_POOL.execute(() -> {
-                    List<Object> packets = PACKET_BATCH.get();
-                    AbstractContainerMenu currentMenu = null;
-                    
-                    for (Runnable task : tasks) {
-                        if (task instanceof PacketTask packetTask) {
-                            if (currentMenu != packetTask.menu) {
-                                if (currentMenu != null && !packets.isEmpty()) {
-                                    sendBatchedPackets(currentMenu, packets);
-                                    packets.clear();
-                                }
-                                currentMenu = packetTask.menu;
-                            }
-                            packets.add(packetTask.packet);
-                        } else {
-                            task.run();
-                        }
-                    }
-                    
-                    if (currentMenu != null && !packets.isEmpty()) {
-                        sendBatchedPackets(currentMenu, packets);
-                    }
-                    
-                    packets.clear();
-                });
-            } else {
-                CONTAINER_POOL.execute(() -> {
-                    for (Runnable task : tasks) {
-                        task.run();
-                    }
-                });
-            }
+            CONTAINER_POOL.execute(() -> {
+                for (Runnable task : tasks) {
+                    task.run();
+                }
+            });
             tasks.clear();
         }
     }
@@ -104,121 +68,49 @@ public class AsyncContainerBroadcaster {
 
     public static void addSlotSyncTask(List<Runnable> tasks, ContainerSynchronizer synchronizer,
             AbstractContainerMenu menu, int slotIndex, ItemStack item) {
-        if (synchronizer != null) {
-            final ItemStack asyncItemCopy = item.copy();
-            final int containerId = menu.containerId;
-            final int stateId = menu.incrementStateId();
+        if (synchronizer == null) return;
 
+        final ItemStack asyncItemCopy = item.copy();
+        final int containerId = menu.containerId;
+        final int stateId = menu.incrementStateId();
+
+        tasks.add(() -> {
             ClientboundContainerSetSlotPacket packet = new ClientboundContainerSetSlotPacket(
                     containerId, stateId, slotIndex, asyncItemCopy);
-
-            tasks.add(new PacketTask(menu, packet, () -> {
-                try {
-                    menu.synchronizeSlotToRemote(slotIndex, asyncItemCopy, asyncItemCopy::copy);
-                } catch (Exception e) {
-                    LOGGER.error("Failed to send async slot change packet", e);
-                }
-            }));
-        }
+            sendPacket(menu, packet);
+        });
     }
 
     public static void addDataSyncTask(List<Runnable> tasks, ContainerSynchronizer synchronizer,
             AbstractContainerMenu menu, int dataIndex, int value) {
-        if (synchronizer != null) {
-            final int containerId = menu.containerId;
+        if (synchronizer == null) return;
 
+        final int containerId = menu.containerId;
+
+        tasks.add(() -> {
             ClientboundContainerSetDataPacket packet = new ClientboundContainerSetDataPacket(
                     containerId, dataIndex, value);
-
-            tasks.add(new PacketTask(menu, packet, () -> {
-                try {
-                    menu.synchronizeDataSlotToRemote(dataIndex, value);
-                } catch (Exception e) {
-                    LOGGER.error("Failed to send async data change packet", e);
-                }
-            }));
-        }
+            sendPacket(menu, packet);
+        });
     }
 
-    private static void sendPacketToContainerListeners(AbstractContainerMenu menu, Object packet) {
-        List<net.minecraft.world.inventory.ContainerListener> listeners = menu.containerListeners;
-        for (net.minecraft.world.inventory.ContainerListener listener : listeners) {
+    private static void sendPacket(AbstractContainerMenu menu, Object packet) {
+        for (var listener : menu.containerListeners) {
             if (listener instanceof ServerPlayer player) {
                 Connection connection = player.connection.connection;
-                if (connection.channel != null && connection.channel.isActive()) {
-                    if (AsyncContainerBroadcast.enableBackpressureHandling && !connection.channel.isWritable()) {
-                        backpressureSkips++;
-                        LOGGER.debug("Channel not writable for player {}, skipping container update", player.getName().getString());
-                        continue;
-                    }
-                    
-                    totalPacketsSent++;
+                if (connection.channel != null && connection.channel.isActive() &&
+                    (!AsyncContainerBroadcast.enableBackpressureHandling || connection.channel.isWritable())) {
+
                     connection.channel.eventLoop().execute(() -> {
                         try {
                             if (connection.channel.isActive()) {
                                 connection.send((net.minecraft.network.protocol.Packet<?>) packet);
                             }
                         } catch (Exception e) {
-                            LOGGER.warn("Failed to send packet to player {}: {}", player.getName().getString(), e.getMessage());
+                            LOGGER.warn("Failed to send packet to {}: {}", player.getName().getString(), e.getMessage());
                         }
                     });
                 }
-            }
-        }
-    }
-
-    private static void sendBatchedPackets(AbstractContainerMenu menu, List<Object> packets) {
-        List<net.minecraft.world.inventory.ContainerListener> listeners = menu.containerListeners;
-        for (net.minecraft.world.inventory.ContainerListener listener : listeners) {
-            if (listener instanceof ServerPlayer player) {
-                Connection connection = player.connection.connection;
-                if (connection.channel != null && connection.channel.isActive()) {
-                    if (AsyncContainerBroadcast.enableBackpressureHandling && !connection.channel.isWritable()) {
-                        backpressureSkips += packets.size();
-                        LOGGER.debug("Channel not writable for player {}, skipping {} container updates", 
-                            player.getName().getString(), packets.size());
-                        continue;
-                    }
-                    
-                    totalPacketsSent += packets.size();
-                    connection.channel.eventLoop().execute(() -> {
-                        try {
-                            if (connection.channel.isActive()) {
-                                for (Object packet : packets) {
-                                    connection.send((net.minecraft.network.protocol.Packet<?>) packet);
-                                }
-                            }
-                        } catch (Exception e) {
-                            LOGGER.warn("Failed to send batched packets to player {}: {}", 
-                                player.getName().getString(), e.getMessage());
-                        }
-                    });
-                }
-            }
-        }
-    }
-
-    public static void logStatistics() {
-        if (LOGGER.isInfoEnabled()) {
-            LOGGER.info("Async Container Broadcast Stats - Tasks: {}, Packets: {}, Backpressure Skips: {}",
-                totalTasksProcessed, totalPacketsSent, backpressureSkips);
-        }
-    }
-    
-    public static void resetStatistics() {
-        totalTasksProcessed = 0;
-        totalPacketsSent = 0;
-        backpressureSkips = 0;
-    }
-
-    private static record PacketTask(AbstractContainerMenu menu, Object packet, Runnable fallback) implements Runnable {
-        @Override
-        public void run() {
-            try {
-                sendPacketToContainerListeners(menu, packet);
-            } catch (Exception e) {
-                LOGGER.error("Failed to send packet, using fallback", e);
-                fallback.run();
             }
         }
     }
