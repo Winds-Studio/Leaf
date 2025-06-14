@@ -20,7 +20,7 @@ public final class RandomTickSystem {
     private static final int BITS_STEP = 2;
     private static final int BITS_MAX = 60;
 
-    private final LongArrayList edges = new LongArrayList();
+    private final LongArrayList queue = new LongArrayList();
     private final LongArrayList samples = new LongArrayList();
     private final LongArrayList weights = new LongArrayList();
     private long weightsSum = 0L;
@@ -33,123 +33,64 @@ public final class RandomTickSystem {
             return;
         }
 
-        var random = world.simpleRandom;
-        long chosen = weightsSum / SCALE;
+        final var random = world.simpleRandom;
+        final long chosen;
         if (((weightsSum % SCALE) >= boundedNextLong(random, SCALE))) {
-            chosen += 1L;
+            chosen = weightsSum / SCALE + 1L;
+        } else {
+            chosen = weightsSum / SCALE;
         }
         if (chosen == 0L) {
             return;
         }
 
-        final long[] weightsRaw = weights.elements();
-        final long[] samplesRaw = samples.elements();
         final long spoke = weightsSum / chosen;
         if (spoke == 0L) {
             return;
         }
 
+        final long[] weightsRaw = weights.elements();
+        final long[] samplesRaw = samples.elements();
+
         long accumulated = weightsRaw[0];
         long current = boundedNextLong(random, spoke);
         int i = 0;
-
-        long packed1 = 0L, packed2 = 0L, packed3 = 0L, packed4;
-        int rest;
-        long count = 0L;
-        while (true) {
-            if (current >= weightsSum) {
-                rest = 0;
-                break;
-            }
+        while (current < weightsSum) {
             while (accumulated < current) {
                 i += 1;
                 accumulated += weightsRaw[i];
             }
-            packed1 = samplesRaw[i];
+            queue.add(samplesRaw[i]);
             current += spoke;
-
-            if (current >= weightsSum) {
-                rest = 1;
-                break;
-            }
-            while (accumulated < current) {
-                i += 1;
-                accumulated += weightsRaw[i];
-            }
-            packed2 = samplesRaw[i];
-            current += spoke;
-
-            if (current >= weightsSum) {
-                rest = 2;
-                break;
-            }
-            while (accumulated < current) {
-                i += 1;
-                accumulated += weightsRaw[i];
-            }
-            packed3 = samplesRaw[i];
-            current += spoke;
-
-            if (current >= weightsSum) {
-                rest = 3;
-                break;
-            }
-            while (accumulated < current) {
-                i += 1;
-                accumulated += weightsRaw[i];
-            }
-            packed4 = samplesRaw[i];
-            current += spoke;
-
-            final LevelChunk chunk1;
-            final LevelChunk chunk2;
-            final LevelChunk chunk3;
-            final LevelChunk chunk4;
-            chunk1 = getChunk(world, packed1);
-            chunk2 = packed1 != packed2 ? getChunk(world, packed2) : chunk1;
-            chunk3 = packed2 != packed3 ? getChunk(world, packed3) : chunk2;
-            chunk4 = packed3 != packed4 ? getChunk(world, packed4) : chunk3;
-            if (chunk1 != null) {
-                tickBlock(world, chunk1, random);
-            }
-            if (chunk2 != null) {
-                tickBlock(world, chunk2, random);
-            }
-            if (chunk3 != null) {
-                tickBlock(world, chunk3, random);
-            }
-            if (chunk4 != null) {
-                tickBlock(world, chunk4, random);
-            }
-
-            count++;
+        }
+        while (queue.size() < chosen) {
+            queue.add(samplesRaw[i]);
         }
 
-        if (rest >= 1) {
-            edges.push(packed1);
+        long[] queueRaw = queue.elements();
+        int j = 0;
+        int k;
+        for (k = queue.size() - 3; j < k; j += 4) {
+            final long packed1 = queueRaw[j];
+            final long packed2 = queueRaw[j + 1];
+            final long packed3 = queueRaw[j + 2];
+            final long packed4 = queueRaw[j + 3];
+            final LevelChunk chunk1 = getChunk(world, packed1);
+            final LevelChunk chunk2 = packed1 != packed2 ? getChunk(world, packed2) : chunk1;
+            final LevelChunk chunk3 = packed2 != packed3 ? getChunk(world, packed3) : chunk2;
+            final LevelChunk chunk4 = packed3 != packed4 ? getChunk(world, packed4) : chunk3;
+            if (chunk1 != null) tickBlock(world, chunk1, random);
+            if (chunk2 != null) tickBlock(world, chunk2, random);
+            if (chunk3 != null) tickBlock(world, chunk3, random);
+            if (chunk4 != null) tickBlock(world, chunk4, random);
         }
-        if (rest >= 2) {
-            edges.push(packed2);
-        }
-        if (rest == 3) {
-            edges.push(packed3);
-        }
-        chosen -= rest;
-        chosen -= count * 4L;
-        while (edges.size() < chosen) {
-            edges.push(samplesRaw[i]);
-        }
-
-        long[] queueRaw = edges.elements();
-        for (int k = 0, j = edges.size(); k < j; k++) {
-            LevelChunk chunk = getChunk(world, queueRaw[k]);
-            if (chunk != null) {
-                tickBlock(world, chunk, random);
-            }
+        for (k = queue.size(); j < k; j++) {
+            LevelChunk chunk = getChunk(world, queueRaw[j]);
+            if (chunk != null) tickBlock(world, chunk, random);
         }
 
         weightsSum = 0L;
-        edges.clear();
+        queue.clear();
         weights.clear();
         samples.clear();
     }
@@ -159,7 +100,7 @@ public final class RandomTickSystem {
     }
 
     private static void tickBlock(ServerLevel world, LevelChunk chunk, RandomSource random) {
-        OptionalLong optionalPos = chunk.leaf$getTickingPos(random.nextInt(chunk.leaf$lastTickingBlocksCount()));
+        OptionalLong optionalPos = chunk.leaf$getTickingPos(random.nextInt(chunk.leaf$tickingBlocksCount()));
         if (optionalPos.isEmpty()) {
             return;
         }
@@ -187,11 +128,14 @@ public final class RandomTickSystem {
         } else {
             this.bits += BITS_STEP;
         }
-        if ((this.cacheRandom & (TICK_MASK << bits)) == 0L && chunk.leaf$tickingBlocksCount() != 0L) {
-            long chance = (TICK_MUL * tickSpeed * chunk.leaf$lastTickingBlocksCount() * SCALE) / CHUNK_BLOCKS;
-            samples.add(chunk.getPos().longKey);
-            weights.add(chance);
-            weightsSum += chance;
+        if ((this.cacheRandom & (TICK_MASK << bits)) == 0L) {
+            int count = chunk.leaf$tickingBlocksCount();
+            if (count != 0L) {
+                long weight = (TICK_MUL * tickSpeed * count * SCALE) / CHUNK_BLOCKS;
+                samples.add(chunk.getPos().longKey);
+                weights.add(weight);
+                weightsSum += weight;
+            }
         }
     }
 
