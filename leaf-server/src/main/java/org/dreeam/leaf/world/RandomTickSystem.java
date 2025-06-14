@@ -1,14 +1,16 @@
 package org.dreeam.leaf.world;
 
+import it.unimi.dsi.fastutil.HashCommon;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.material.FluidState;
 
-import java.util.OptionalLong;
+import java.util.Arrays;
 
 public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
@@ -99,12 +101,35 @@ public final class RandomTickSystem {
         return world.chunkSource.getChunkAtIfLoadedImmediately((int) packed, (int) (packed >> 32));
     }
 
-    private static void tickBlock(ServerLevel world, LevelChunk chunk, RandomSource random) {
-        OptionalLong optionalPos = chunk.leaf$getTickingPos(random.nextInt(chunk.leaf$tickingBlocksCount()));
-        if (optionalPos.isEmpty()) {
+    private static void tickBlock(ServerLevel world, LevelChunk chunk, BitRandomSource random) {
+        if (chunk.leaf$firstTickingSectionIndex == -1) {
             return;
         }
-        BlockPos pos = BlockPos.of(optionalPos.getAsLong());
+        int idx = random.nextInt(chunk.leaf$tickingBlocksCount);
+        LevelChunkSection[] sections = chunk.getSections();
+        int cx = chunk.locX;
+        int cz = chunk.locZ;
+        BlockPos pos = null;
+        for (int i = chunk.leaf$firstTickingSectionIndex; i < sections.length; i++) {
+            LevelChunkSection section = sections[i];
+            var l = section.tickingBlocks;
+            int size = l.size();
+            if (idx < size) {
+                short loc = l.get(random);
+                int x = (loc & 15) | (cx << 4);
+                int y = (loc >>> 8) | ((chunk.getMinSectionY() + i) << 4);
+                int z = ((loc >>> 4) & 15) | (cz << 4);
+                pos = new BlockPos(x, y, z);
+                break;
+            }
+            idx -= size;
+        }
+        if (pos == null) {
+            chunk.leaf$tickingBlocksDirty = true;
+            chunk.leaf$firstTickingSectionIndex = -1;
+            return;
+        }
+
         BlockState state = chunk.getBlockStateFinal(pos.getX(), pos.getY(), pos.getZ());
         state.randomTick(world, pos, random);
 
@@ -118,7 +143,7 @@ public final class RandomTickSystem {
     }
 
     public void tickChunk(
-        RandomSource random,
+        BitRandomSource random,
         LevelChunk chunk,
         long tickSpeed
     ) {
@@ -128,14 +153,30 @@ public final class RandomTickSystem {
         } else {
             this.bits += BITS_STEP;
         }
-        if ((this.cacheRandom & (TICK_MASK << bits)) == 0L) {
-            int count = chunk.leaf$tickingBlocksCount();
-            if (count != 0L) {
-                long weight = (TICK_MUL * tickSpeed * count * SCALE) / CHUNK_BLOCKS;
-                samples.add(chunk.getPos().longKey);
-                weights.add(weight);
-                weightsSum += weight;
+        if ((this.cacheRandom & (TICK_MASK << bits)) != 0L) {
+            return;
+        }
+        if (chunk.leaf$tickingBlocksDirty) {
+            chunk.leaf$tickingBlocksDirty = false;
+            int sum = 0;
+            chunk.leaf$firstTickingSectionIndex = -1;
+            LevelChunkSection[] sections = chunk.getSections();
+            for (int i = 0; i < sections.length; i++) {
+                LevelChunkSection section = sections[i];
+                int size = section.tickingBlocks.size();
+                if (size != 0 && chunk.leaf$firstTickingSectionIndex == -1) {
+                    chunk.leaf$firstTickingSectionIndex = i;
+                }
+                sum += size;
             }
+            chunk.leaf$tickingBlocksCount = sum;
+        }
+        int count = chunk.leaf$tickingBlocksCount;
+        if (count != 0L) {
+            long weight = (TICK_MUL * tickSpeed * count * SCALE) / CHUNK_BLOCKS;
+            samples.add(chunk.getPos().longKey);
+            weights.add(weight);
+            weightsSum += weight;
         }
     }
 
@@ -148,7 +189,7 @@ public final class RandomTickSystem {
      *
      * @see java.util.random.RandomGenerator#nextLong(long) nextLong(bound)
      */
-    public static long boundedNextLong(RandomSource rng, long bound) {
+    public static long boundedNextLong(BitRandomSource rng, long bound) {
         final long m = bound - 1;
         long r = rng.nextLong();
         if ((bound & m) == 0L) {
@@ -160,5 +201,107 @@ public final class RandomTickSystem {
                 ;
         }
         return r;
+    }
+
+    public static final class TickingBlockSet {
+        private static final short EMPTY = -1;
+        private static final short[] EMPTY_ARRAY = {};
+        private static final int DEFAULT_CAP = 8;
+
+        private short[] a = EMPTY_ARRAY;
+        private int size;
+        private int bits;
+
+        public void clear() {
+            a = EMPTY_ARRAY;
+            size = 0;
+            bits = 0;
+        }
+
+        /// @param n {@code n >= 0 && n <= 4096}
+        public boolean add(short n) {
+            if (a == EMPTY_ARRAY) {
+                a = new short[DEFAULT_CAP];
+                Arrays.fill(a, EMPTY);
+                bits = Integer.numberOfTrailingZeros(DEFAULT_CAP);
+            }
+            return addShort(n);
+        }
+
+        /// @param n {@code n >= 0 && n <= 4096}
+        private boolean addShort(short n) {
+            if (size >= a.length >>> 1) {
+                resize(a.length << 1);
+            }
+            int i = HashCommon.mix(n) & (a.length - 1);
+            int start = i;
+            do {
+                if (a[i] == n) {
+                    return false;
+                }
+                if (a[i] == EMPTY) {
+                    a[i] = n;
+                    size++;
+                    return true;
+                }
+                i = (i + 1) & (a.length - 1);
+            } while (i != start);
+            return false;
+        }
+
+        /// @param n {@code n >= 0 && n <= 4096}
+        public boolean remove(short n) {
+            if (size == 0) {
+                return false;
+            }
+            int i = HashCommon.mix(n) & (a.length - 1);
+            int start = i;
+            do {
+                if (a[i] == n) {
+                    a[i] = EMPTY;
+                    size--;
+                    i = (i + 1) & (a.length - 1);
+                    while (a[i] != EMPTY) {
+                        short rehash = a[i];
+                        a[i] = EMPTY;
+                        size--;
+                        addShort(rehash);
+                        i = (i + 1) & (a.length - 1);
+                    }
+                    return true;
+                }
+                if (a[i] == EMPTY) {
+                    return false;
+                }
+                i = (i + 1) & (a.length - 1);
+            } while (i != start);
+            return false;
+        }
+
+        public short get(BitRandomSource rand) {
+            if (size == 0) return EMPTY;
+            while (true) {
+                int i = rand.next(bits);
+                if (a[i] != EMPTY) return a[i];
+            }
+        }
+
+        public int size() {
+            return size;
+        }
+
+        private void resize(int cap) {
+            short[] o = a;
+            a = new short[cap];
+            Arrays.fill(a, EMPTY);
+            size = 0;
+            bits = Integer.numberOfTrailingZeros(cap);
+
+            for (short val : o) {
+                if (val != EMPTY) {
+                    addShort(val);
+                }
+            }
+        }
     }
 }
