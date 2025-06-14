@@ -32,7 +32,8 @@ public class AsyncPlayerDataSaving {
                 new ThreadPoolExecutor.DiscardPolicy()
             );
         } else {
-            throw new IllegalStateException();
+            // Temp no-op
+            //throw new IllegalStateException();
         }
     }
 

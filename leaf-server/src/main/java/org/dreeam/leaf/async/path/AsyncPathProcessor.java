@@ -43,7 +43,8 @@ public class AsyncPathProcessor {
                 getRejectedPolicy()
             );
         } else {
-            throw new IllegalStateException();
+            // Temp no-op
+            //throw new IllegalStateException();
         }
     }
 

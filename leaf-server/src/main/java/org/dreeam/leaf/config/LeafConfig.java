@@ -71,7 +71,7 @@ public class LeafConfig {
                 Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));
             } catch (Exception e) {
                 Command.broadcastCommandMessage(sender, Component.text("Failed to reload config. See error in console!", NamedTextColor.RED));
-                LOGGER.error(e);
+                LOGGER.error("Failed to reload config!", e);
             }
         }, Util.ioPool());
     }
@@ -87,7 +87,7 @@ public class LeafConfig {
 
             LOGGER.info("Successfully loaded config in {}ms.", (System.nanoTime() - begin) / 1_000_000);
         } catch (Exception e) {
-            LeafConfig.LOGGER.error("Failed to load config modules!", e);
+            LOGGER.error("Failed to load config modules!", e);
         }
     }
 
@@ -95,7 +95,7 @@ public class LeafConfig {
 
     private static void loadConfig(boolean init) throws Exception {
         // Create config folder
-        createDirectory(LeafConfig.I_CONFIG_FOLDER);
+        createDirectory(I_CONFIG_FOLDER);
 
         leafGlobalConfig = new LeafGlobalConfig(init);
 
