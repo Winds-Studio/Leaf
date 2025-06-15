@@ -129,7 +129,7 @@ public final class RandomTickSystem {
             this.bits += BITS_STEP;
         }
         if ((this.cacheRandom & (TICK_MASK << bits)) == 0L) {
-            int count = chunk.leaf$tickingBlocksCount();
+            long count = chunk.leaf$tickingBlocksCount();
             if (count != 0L) {
                 long weight = (TICK_MUL * tickSpeed * count * SCALE) / CHUNK_BLOCKS;
                 samples.add(chunk.getPos().longKey);
