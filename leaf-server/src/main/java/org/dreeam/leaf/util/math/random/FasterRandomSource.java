@@ -56,11 +56,7 @@ public class FasterRandomSource implements BitRandomSource {
 
     @Override
     public final int next(int bits) {
-        if (useDirectImpl) {
-            return (int) ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
-        }
-
-        return (int) ((seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
+        return (int) ((seed = seed * MULTIPLIER + INCREMENT & SEED_MASK) >>> (INT_BITS - bits));
     }
 
     public static class FasterRandomSourcePositionalRandomFactory implements PositionalRandomFactory {
