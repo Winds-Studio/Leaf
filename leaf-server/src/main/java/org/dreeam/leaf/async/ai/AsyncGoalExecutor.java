@@ -1,6 +1,5 @@
 package org.dreeam.leaf.async.ai;
 
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
@@ -10,85 +9,54 @@ import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
 import org.dreeam.leaf.util.queue.SpscIntQueue;
 
 import java.util.OptionalInt;
-import java.util.concurrent.locks.LockSupport;
 
 public class AsyncGoalExecutor {
 
     protected static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
     protected final SpscIntQueue queue;
-    protected final SpscIntQueue wake;
-    protected final IntArrayList submit;
     private final ServerLevel world;
-    private long midTickCount = 0L;
 
-    public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
+    public AsyncGoalExecutor(ServerLevel world) {
         this.world = world;
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        this.submit = new IntArrayList();
     }
 
-    boolean wake(int id) {
-        Entity entity = this.world.getEntities().get(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return false;
-        }
-        mob.goalSelector.ctx.wake();
-        mob.targetSelector.ctx.wake();
-        return true;
-    }
-
-    public final void submit(int entityId) {
-        this.submit.add(entityId);
-    }
-
-    public final void tick() {
-        batchSubmit();
+    boolean wakeAll() {
+        boolean success = false;
         while (true) {
-            OptionalInt result = this.wake.recv();
+            OptionalInt result = queue.recv();
             if (result.isEmpty()) {
                 break;
             }
             int id = result.getAsInt();
-            if (poll(id) && !this.queue.send(id)) {
-                do {
-                    wake(id);
-                } while (poll(id));
-            }
+            success = true;
+            wake(id);
         }
+        return success;
     }
 
-    private void batchSubmit() {
-        if (submit.isEmpty()) {
+    public void tickMob(Mob mob) {
+        if (!poll(mob)) {
             return;
         }
-        int[] raw = submit.elements();
-        int size = submit.size();
-        for (int i = 0; i < size; i++) {
-            int id = raw[i];
-            if (poll(id) && !this.queue.send(id)) {
-                do {
-                    wake(id);
-                } while (poll(id));
-            }
+        int entityId = mob.getId();
+        if (!this.queue.send(entityId)) {
+            do {
+                wake(entityId);
+            } while (poll(mob));
         }
-        this.submit.clear();
     }
 
-    public final void midTick() {
-        if (AsyncTargetFinding.threshold <= 0L || (midTickCount % AsyncTargetFinding.threshold) == 0L) {
-            batchSubmit();
-        }
-
-        midTickCount += 1;
-    }
-
-    private boolean poll(int id) {
+    private void wake(int id) {
         Entity entity = this.world.getEntities().get(id);
         if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return false;
+            return;
         }
+        mob.goalSelector.ctx.wake();
+        mob.targetSelector.ctx.wake();
+    }
 
+    private boolean poll(Mob mob) {
         try {
             mob.tickingTarget = true;
             boolean a = mob.targetSelector.poll();
@@ -97,8 +65,7 @@ public class AsyncGoalExecutor {
             return a || b;
         } catch (Exception e) {
             LOGGER.error("Exception while polling", e);
-            // retry
-            return true;
+            return false;
         }
     }
 }

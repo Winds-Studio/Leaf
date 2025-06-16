@@ -15,7 +15,6 @@ public class AsyncTargetFinding extends ConfigModules {
     public static boolean searchBlock = true;
     public static boolean searchEntity = true;
     public static int queueSize = 4096;
-    public static long threshold = 10L;
     private static boolean asyncTargetFindingInitialized;
 
     @Override
@@ -35,20 +34,16 @@ public class AsyncTargetFinding extends ConfigModules {
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         // Disable if parallel world ticking is enabled, as they are incompatible.
         if (enabled && SparklyPaperParallelWorldTicking.enabled) {
-            LeafConfig.LOGGER.warn("Async Target Finding is incompatible with Parallel World Ticking. Disabling Async Target Finding automatically.");
+            LeafConfig.LOGGER.warn("Async target finding is incompatible with Parallel World Ticking. Disabling Async target finding automatically.");
             enabled = false;
         }
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
         queueSize = config.getInt(getBasePath() + ".queue-size", 0);
-        threshold = config.getLong(getBasePath() + ".threshold", 0);
 
         if (queueSize <= 0) {
             queueSize = 4096;
-        }
-        if (threshold == 0L) {
-            threshold = 10L;
         }
         if (!enabled) {
             alertOther = false;
