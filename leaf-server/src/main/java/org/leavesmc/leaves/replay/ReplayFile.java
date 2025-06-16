@@ -111,7 +111,7 @@ public class ReplayFile {
     public void saveMetaData(@NotNull RecordMetaData data) throws IOException {
         data.fileFormat = "MCPR";
         data.fileFormatVersion = RecordMetaData.CURRENT_FILE_FORMAT_VERSION;
-        data.protocol = SharedConstants.getCurrentVersion().getProtocolVersion();
+        data.protocol = SharedConstants.getCurrentVersion().protocolVersion();
         data.generator = ProtocolUtils.buildProtocolVersion("replay");
 
         try (Writer writer = new OutputStreamWriter(new FileOutputStream(metaFile), StandardCharsets.UTF_8)) {

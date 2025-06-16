@@ -1,6 +1,7 @@
 package org.leavesmc.leaves.replay;
 
 import com.mojang.serialization.DynamicOps;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.local.LocalChannel;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.LayeredRegistryAccess;
@@ -9,7 +10,6 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.Connection;
 import net.minecraft.network.ConnectionProtocol;
-import net.minecraft.network.PacketSendListener;
 import net.minecraft.network.protocol.BundlePacket;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
@@ -87,7 +87,7 @@ public class Recorder extends Connection {
         metaData.singleplayer = false;
         metaData.serverName = recorderOption.serverName;
         metaData.date = startTime;
-        metaData.mcversion = SharedConstants.getCurrentVersion().getName();
+        metaData.mcversion = SharedConstants.getCurrentVersion().name();
 
         // TODO start event
         this.savePacket(new ClientboundLoginFinishedPacket(photographer.getGameProfile()), ConnectionProtocol.LOGIN);
@@ -169,7 +169,7 @@ public class Recorder extends Connection {
     }
 
     @Override
-    public void send(@NotNull Packet<?> packet, @Nullable PacketSendListener callbacks, boolean flush) {
+    public void send(@NotNull Packet<?> packet, @Nullable ChannelFutureListener callbacks, boolean flush) {
         if (!stopped) {
             if (packet instanceof BundlePacket<?> packet1) {
                 packet1.subPackets().forEach(subPacket -> send(subPacket, null));
