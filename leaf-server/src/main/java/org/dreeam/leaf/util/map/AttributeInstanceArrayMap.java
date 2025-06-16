@@ -13,14 +13,16 @@ import java.util.AbstractMap.SimpleEntry;
 // fast array backend map with O(1) get & put & remove
 public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, AttributeInstance>, Cloneable {
 
+    private static final int VANILLA_ATTRIBUTE_SIZE = 35; // 1.21.6 (Check this on every Minecraft version)
+
     private int size = 0;
-    private transient AttributeInstance[] a = new AttributeInstance[32];
+    private transient AttributeInstance[] a = new AttributeInstance[VANILLA_ATTRIBUTE_SIZE];
     private transient KeySet keys;
     private transient Values values;
     private transient EntrySet entries;
 
     public AttributeInstanceArrayMap() {
-        if (BuiltInRegistries.ATTRIBUTE.size() != 32) {
+        if (BuiltInRegistries.ATTRIBUTE.size() != VANILLA_ATTRIBUTE_SIZE) {
             throw new IllegalStateException("Registered custom attribute");
         }
     }
