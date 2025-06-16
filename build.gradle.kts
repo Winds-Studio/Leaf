@@ -35,7 +35,6 @@ subprojects {
         options.release = 21
         options.isFork = true
         options.compilerArgs.addAll(listOf("-Xlint:-deprecation", "-Xlint:-removal"))
-        options.forkOptions.memoryMaximumSize = "2g" // Prevent OOM during building
     }
     tasks.withType<Javadoc> {
         options.encoding = Charsets.UTF_8.name()
