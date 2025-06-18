@@ -7,48 +7,78 @@ Original license: MIT
 Original project: https://github.com/thebrightspark/AsyncLocator
 
 diff --git a/net/minecraft/server/commands/LocateCommand.java b/net/minecraft/server/commands/LocateCommand.java
-index 13bcd8653d766cd0b754a22e9aab261fbc62b0a5..e3e7c4e4da0bc95b015bb84e470477782bdb691c 100644
+index 13bcd8653d766cd0b754a22e9aab261fbc62b0a5..13542755864904b343b0aeea957e2a76e977a51f 100644
 --- a/net/minecraft/server/commands/LocateCommand.java
 +++ b/net/minecraft/server/commands/LocateCommand.java
-@@ -109,6 +109,38 @@ public class LocateCommand {
+@@ -109,6 +109,34 @@ public class LocateCommand {
          BlockPos blockPos = BlockPos.containing(source.getPosition());
          ServerLevel level = source.getLevel();
          Stopwatch stopwatch = Stopwatch.createStarted(Util.TICKER);
 +        // Leaf start - Asynchronous locator
 +        if (org.dreeam.leaf.config.modules.async.AsyncLocator.enabled) {
-+            net.minecraft.commands.CommandSource locatorSource = source.source;
-+            if (locatorSource instanceof net.minecraft.server.level.ServerPlayer || locatorSource instanceof net.minecraft.server.MinecraftServer) {
-+                BlockPos originPos = BlockPos.containing(source.getPosition());
++            BlockPos originPos = BlockPos.containing(source.getPosition());
++            org.dreeam.leaf.async.locate.AsyncLocator.locate(source.getLevel(), holderSet, originPos, 100, false)
++                .thenOnServerThread(pair -> {
++                    stopwatch.stop();
++                    if (pair != null) {
++                        showLocateResult(
++                            source,
++                            structure,
++                            originPos,
++                            pair,
++                            "commands.locate.structure.success",
++                            false,
++                            stopwatch.elapsed()
++                        );
++                    } else {
++                        source.sendFailure(
++                            Component.literal(
++                                ERROR_STRUCTURE_NOT_FOUND.create(structure.asPrintable()).getMessage()
++                            )
++                        );
++                    }
++                });
 +
-+                org.dreeam.leaf.async.locate.AsyncLocator.locate(source.getLevel(), holderSet, originPos, 100, false)
-+                    .thenOnServerThread(pair -> {
-+                        stopwatch.stop();
-+                        if (pair != null) {
-+                            showLocateResult(
-+                                source,
-+                                structure,
-+                                originPos,
-+                                pair,
-+                                "commands.locate.structure.success",
-+                                false,
-+                                stopwatch.elapsed()
-+                            );
-+                        } else {
-+                            source.sendFailure(
-+                                Component.literal(
-+                                    ERROR_STRUCTURE_NOT_FOUND.create(structure.asPrintable()).getMessage()
-+                                )
-+                            );
-+                        }
-+                    });
-+
-+                return 0;
-+            }
++            return 0;
 +        }
 +        // Leaf end - Asynchronous locator
          Pair<BlockPos, Holder<Structure>> pair = level.getChunkSource().getGenerator().findNearestMapStructure(level, holderSet, blockPos, 100, false);
          stopwatch.stop();
          if (pair == null) {
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index 0fd51020ca9480be2855eb58a7d4d43511829512..52a2b993bbd1ad4851b3273af6ecbc069beb5b84 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -878,14 +878,25 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+         @Override
+         public boolean pollTask() {
++            // Leaf start - Async Locator
+             // Paper start - rewrite chunk system
+-            final ServerChunkCache serverChunkCache = ServerChunkCache.this;
+-            if (serverChunkCache.runDistanceManagerUpdates()) {
+-                return true;
++            java.util.function.Supplier<Boolean> supplier = () -> {
++                final ServerChunkCache serverChunkCache = ServerChunkCache.this;
++                if (serverChunkCache.runDistanceManagerUpdates()) {
++                    return true;
++                } else {
++                    return super.pollTask() | ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel) serverChunkCache.level).moonrise$getChunkTaskScheduler().executeMainThreadTask();
++                }
++            };
++            if (org.dreeam.leaf.config.modules.async.AsyncLocator.enabled && Thread.currentThread() instanceof org.dreeam.leaf.async.locate.AsyncLocator.AsyncLocatorThread) {
++                return MinecraftServer.getServer().scheduleWithResult((java.util.concurrent.CompletableFuture<Boolean> future) -> {
++                    future.complete(supplier.get());
++                }).join();
+             } else {
+-                return super.pollTask() | ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel)serverChunkCache.level).moonrise$getChunkTaskScheduler().executeMainThreadTask();
++                return supplier.get();
+             }
+             // Paper end - rewrite chunk system
++            // Leaf end - Async Locator
+         }
+     }
+ }
 diff --git a/net/minecraft/world/entity/animal/Dolphin.java b/net/minecraft/world/entity/animal/Dolphin.java
 index 7003b532182737a745491e397a967b72e6b308aa..3ed9652510976770f5661dd7b317f27f046700d4 100644
 --- a/net/minecraft/world/entity/animal/Dolphin.java
