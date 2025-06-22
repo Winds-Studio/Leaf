@@ -20,8 +20,6 @@ public class OptimizedPoweredRails {
 
     private static final int UPDATE_FORCE_PLACE = UPDATE_MOVE_BY_PISTON | UPDATE_KNOWN_SHAPE | UPDATE_CLIENTS;
 
-    private static int RAIL_POWER_LIMIT = 8;
-
     private static final Object2BooleanOpenHashMap<BlockPos> CHECKED_POS_POOL = new Object2BooleanOpenHashMap<>();
 
     private static void giveShapeUpdate(Level level, BlockState state, BlockPos pos, BlockPos fromPos, Direction direction) {
@@ -34,14 +32,6 @@ public class OptimizedPoweredRails {
             UPDATE_CLIENTS & -34,
             0
         );
-    }
-
-    public static int getRailPowerLimit() {
-        return RAIL_POWER_LIMIT;
-    }
-
-    public static void setRailPowerLimit(int powerLimit) {
-        RAIL_POWER_LIMIT = powerLimit;
     }
 
     public static void updateState(PoweredRailBlock self, BlockState state, Level level, BlockPos pos) {
@@ -97,7 +87,7 @@ public class OptimizedPoweredRails {
     private static boolean findPoweredRailSignalFaster(PoweredRailBlock self, Level level,
                                                        BlockPos pos, BlockState state, boolean searchForward, int distance,
                                                        Object2BooleanOpenHashMap<BlockPos> checkedPos) {
-        if (distance >= RAIL_POWER_LIMIT - 1) return false;
+        if (distance >= level.purpurConfig.railActivationRange) return false;
         int x = pos.getX();
         int y = pos.getY();
         int z = pos.getZ();
@@ -203,7 +193,8 @@ public class OptimizedPoweredRails {
 
     private static void setRailPositionsPower(PoweredRailBlock self, Level level, BlockPos pos,
             Object2BooleanOpenHashMap<BlockPos> checkedPos, int[] count, int i, Direction dir) {
-        for (int z = 1; z < RAIL_POWER_LIMIT; z++) {
+        final int railPowerLimit = level.purpurConfig.railActivationRange;
+        for (int z = 1; z < railPowerLimit; z++) {
             BlockPos newPos = pos.relative(dir, z);
             BlockState state = level.getBlockState(newPos);
             if (checkedPos.containsKey(newPos)) {
@@ -229,7 +220,8 @@ public class OptimizedPoweredRails {
         int[] count, int i, Direction dir) {
         Object2BooleanOpenHashMap<BlockPos> checkedPos = CHECKED_POS_POOL;
         checkedPos.clear();
-        for (int z = 1; z < RAIL_POWER_LIMIT; z++) {
+        final int railPowerLimit = level.purpurConfig.railActivationRange;
+        for (int z = 1; z < railPowerLimit; z++) {
             BlockPos newPos = pos.relative(dir, z);
             BlockState state = level.getBlockState(newPos);
             if (!state.is(self) || !state.getValue(POWERED) || level.hasNeighborSignal(newPos) ||

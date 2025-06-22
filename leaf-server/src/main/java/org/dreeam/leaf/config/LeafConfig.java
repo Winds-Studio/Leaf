@@ -7,6 +7,7 @@ import net.minecraft.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
+import org.dreeam.leaf.config.modules.opt.FastBiomeManagerSeedObfuscation;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.bukkit.Bukkit;
@@ -243,6 +244,7 @@ public class LeafConfig {
 
         List<String> extraHidden = existing != null ? new ArrayList<>(Arrays.asList(existing.split(","))) : new ArrayList<>();
         extraHidden.add(SentryDSN.sentryDsnConfigPath); // Hide Sentry DSN key
+        extraHidden.add(FastBiomeManagerSeedObfuscation.seedObfKeyPath); // Hide FastBiomeManagerSeedObfuscation key
 
         return extraHidden;
     }

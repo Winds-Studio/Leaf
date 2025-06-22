@@ -22,26 +22,11 @@ public class AsyncGoalThread extends Thread {
         while (RUNNING) {
             boolean retry = false;
             for (ServerLevel level : server.getAllLevels()) {
-                var exec = level.asyncGoalExecutor;
-                while (true) {
-                    OptionalInt result = exec.queue.recv();
-                    if (result.isEmpty()) {
-                        break;
-                    }
-                    int id = result.getAsInt();
-                    retry = true;
-                    if (exec.wake(id)) {
-                        while (!exec.wake.send(id)) {
-                            Thread.onSpinWait();
-                        }
-                    }
-                }
-
-                Thread.yield();
+                retry |= level.asyncGoalExecutor.wakeAll();
             }
 
             if (!retry) {
-                LockSupport.parkNanos(10_000L);
+                LockSupport.parkNanos(1_000_000L);
             }
         }
     }
