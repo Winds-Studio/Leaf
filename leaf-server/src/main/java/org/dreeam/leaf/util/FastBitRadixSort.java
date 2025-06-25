@@ -1,147 +1,96 @@
 package org.dreeam.leaf.util;
 
-import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import net.minecraft.world.entity.Entity;
-import java.util.Arrays;
+
+import java.lang.reflect.Array; // Required for Array.newInstance
 import java.util.List;
 
 public class FastBitRadixSort {
 
-    private static final int THRESHOLD = 32;
-    private static final ThreadLocal<ReferenceArrayList<Entity>> ENTITY_BUFFER = ThreadLocal.withInitial(() -> ReferenceArrayList.wrap(new Entity[0]));
-    private static final ThreadLocal<long[]> BITS_BUFFER = ThreadLocal.withInitial(() -> new long[0]);
-    private static final ThreadLocal<long[]> TEMP_BITS_BUF = ThreadLocal.withInitial(() -> new long[0]);
-    private static final ThreadLocal<Entity[]> TEMP_ENTITY_BUF = ThreadLocal.withInitial(() -> new Entity[0]);
+    private static final int SMALL_ARRAY_THRESHOLD = 2;
+    private Entity[] entityBuffer = new Entity[0];
+    private long[] bitsBuffer = new long[0];
 
     @SuppressWarnings("unchecked")
-    public static <T extends Entity> List<T> unsafeBuffer() {
-        return (ReferenceArrayList<T>) ENTITY_BUFFER.get();
-    }
-
-    public static <T extends Entity> T[] unsafeSort(T[] n, Entity referenceEntity, Class<T> entityClass) {
-        var entities = ENTITY_BUFFER.get();
+    public <T extends Entity, T_REF extends Entity> T[] sort(List<T> entities, T_REF referenceEntity, Class<T> entityClass) {
         int size = entities.size();
         if (size <= 1) {
-            var result = entities.toArray(n);
-            entities.clear();
-            return result;
+            T[] resultArray = (T[]) Array.newInstance(entityClass, size);
+            return entities.toArray(resultArray);
         }
 
-        if (BITS_BUFFER.get().length < size) {
-            BITS_BUFFER.set(new long[size]);
+        if (this.entityBuffer.length < size) {
+            this.entityBuffer = new Entity[size];
+            this.bitsBuffer = new long[size];
         }
-        var bitsBuf = BITS_BUFFER.get();
-        double x = referenceEntity.getX();
-        double y = referenceEntity.getY();
-        double z = referenceEntity.getZ();
-        Entity[] ele = entities.elements();
         for (int i = 0; i < size; i++) {
-            bitsBuf[i] = Double.doubleToRawLongBits(ele[i].distanceToSqr(x, y, z));
+            this.entityBuffer[i] = entities.get(i);
+            this.bitsBuffer[i] = Double.doubleToRawLongBits(
+                referenceEntity.distanceToSqr(entities.get(i))
+            );
         }
 
-        if (size <= THRESHOLD) {
-            insertion(ele, bitsBuf, size - 1);
-        } else {
-            if (TEMP_ENTITY_BUF.get().length < size) {
-                TEMP_ENTITY_BUF.set(new Entity[size]);
-            }
-            if (TEMP_BITS_BUF.get().length < size) {
-                TEMP_BITS_BUF.set(new long[size]);
-            }
-            Entity[] tempEnt = TEMP_ENTITY_BUF.get();
-            long[] tempBits = TEMP_BITS_BUF.get();
-            lsdRadix(ele, bitsBuf, tempEnt, tempBits, size);
-        }
+        fastRadixSort(this.entityBuffer, this.bitsBuffer, 0, size - 1, 62);
 
-        var resultArray = entities.toArray(n);
-        entities.clear();
+        T[] resultArray = (T[]) Array.newInstance(entityClass, size);
+        for (int i = 0; i < size; i++) {
+            resultArray[i] = entityClass.cast(this.entityBuffer[i]);
+        }
         return resultArray;
     }
 
-    private static void lsdRadix(
-        Entity[] ent,
+    private void fastRadixSort(
+        Entity[] ents,
         long[] bits,
-        Entity[] tempEnt,
-        long[] tempBits,
-        int size
+        int low,
+        int high,
+        int bit
     ) {
-        Entity[] entSrc = ent;
-        long[] bitsSrc = bits;
-        Entity[] entDst = tempEnt;
-        long[] bitsDst = tempBits;
-        int[] count = new int[256];
-
-        for (int shift = 0; shift < 64; shift += 8) {
-            Arrays.fill(count, 0);
-
-            for (int i = 0; i < size; i++) {
-                final int b = (int)((bitsSrc[i] >>> shift) & 0xFF);
-                count[b]++;
-            }
-
-            int total = 0;
-            for (int i = 0; i < 256; i++) {
-                int c = count[i];
-                count[i] = total;
-                total += c;
-            }
-
-            int i = 0;
-            for (; i + 3 < size; i += 4) {
-                final long v0 = bitsSrc[i];
-                final int b0 = (int)((v0 >>> shift) & 0xFF);
-                entDst[count[b0]] = entSrc[i];
-                bitsDst[count[b0]++] = v0;
-
-                final long v1 = bitsSrc[i + 1];
-                final int b1 = (int)((v1 >>> shift) & 0xFF);
-                entDst[count[b1]] = entSrc[i + 1];
-                bitsDst[count[b1]++] = v1;
-
-                final long v2 = bitsSrc[i + 2];
-                final int b2 = (int)((v2 >>> shift) & 0xFF);
-                entDst[count[b2]] = entSrc[i + 2];
-                bitsDst[count[b2]++] = v2;
-
-                final long v3 = bitsSrc[i + 3];
-                final int b3 = (int)((v3 >>> shift) & 0xFF);
-                entDst[count[b3]] = entSrc[i + 3];
-                bitsDst[count[b3]++] = v3;
-            }
-
-            for (; i < size; i++) {
-                final long v = bitsSrc[i];
-                final int b = (int)((v >>> shift) & 0xFF);
-                entDst[count[b]] = entSrc[i];
-                bitsDst[count[b]++] = v;
-            }
-
-            final Entity[] tempE = entSrc;
-            entSrc = entDst;
-            entDst = tempE;
-
-            final long[] tempB = bitsSrc;
-            bitsSrc = bitsDst;
-            bitsDst = tempB;
+        if (bit < 0 || low >= high) {
+            return;
         }
 
-        if (entSrc != ent) {
-            System.arraycopy(entSrc, 0, ent, 0, size);
-            System.arraycopy(bitsSrc, 0, bits, 0, size);
+        if (high - low <= SMALL_ARRAY_THRESHOLD) {
+            insertionSort(ents, bits, low, high);
+            return;
+        }
+
+        int i = low;
+        int j = high;
+        final long mask = 1L << bit;
+
+        while (i <= j) {
+            while (i <= j && (bits[i] & mask) == 0) {
+                i++;
+            }
+            while (i <= j && (bits[j] & mask) != 0) {
+                j--;
+            }
+            if (i < j) {
+                swap(ents, bits, i++, j--);
+            }
+        }
+
+        if (low < j) {
+            fastRadixSort(ents, bits, low, j, bit - 1);
+        }
+        if (i < high) {
+            fastRadixSort(ents, bits, i, high, bit - 1);
         }
     }
 
-    private static void insertion(
+    private void insertionSort(
         Entity[] ents,
         long[] bits,
+        int low,
         int high
     ) {
-        for (int i = 1; i <= high; i++) {
+        for (int i = low + 1; i <= high; i++) {
             int j = i;
             Entity currentEntity = ents[j];
             long currentBits = bits[j];
 
-            while (j > 0 && bits[j - 1] > currentBits) {
+            while (j > low && bits[j - 1] > currentBits) {
                 ents[j] = ents[j - 1];
                 bits[j] = bits[j - 1];
                 j--;
@@ -149,5 +98,15 @@ public class FastBitRadixSort {
             ents[j] = currentEntity;
             bits[j] = currentBits;
         }
+    }
+
+    private void swap(Entity[] ents, long[] bits, int a, int b) {
+        Entity tempEntity = ents[a];
+        ents[a] = ents[b];
+        ents[b] = tempEntity;
+
+        long tempBits = bits[a];
+        bits[a] = bits[b];
+        bits[b] = tempBits;
     }
 }
