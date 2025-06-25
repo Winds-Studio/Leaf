@@ -5,19 +5,26 @@ Subject: [PATCH] optimize random tick
 
 
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index 46e171ca454253c32e22c0c18587e9a7ba19f331..6f4d6e588b24490f3f543ed90cfe5a0b8eb15386 100644
+index 46e171ca454253c32e22c0c18587e9a7ba19f331..b0f4ef60832d2e301a9a31716d888638d9250c14 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
 +++ b/net/minecraft/server/level/ServerChunkCache.java
-@@ -635,6 +635,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -634,7 +634,13 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+             list.clear();
          }
  
-         this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimisations
-+        this.level.randomTickSystem.tick(this.level); // Leaf - optimize random tick
+-        this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimisations
++        // Leaf start - optimize random tick
++        if (org.dreeam.leaf.config.modules.opt.OptimizeRandomTick.enabled) {
++            this.level.randomTickSystem.tick(this.level);
++        } else {
++            this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimisations
++        }
++        // Leaf end - optimize random tick
          if (_boolean) {
              this.level.tickCustomSpawners(this.spawnEnemies, this.spawnFriendlies);
          }
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 27da552e2542153a58d6177f592cf30d858c41a9..a180612fea46ec9f7dcfe1781e985dd2e98ed513 100644
+index 27da552e2542153a58d6177f592cf30d858c41a9..35fb0770eb385e3837cb29711905c41b899bac8f 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -1114,6 +1114,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -28,28 +35,19 @@ index 27da552e2542153a58d6177f592cf30d858c41a9..a180612fea46ec9f7dcfe1781e985dd2
      public void tickChunk(LevelChunk chunk, int randomTickSpeed) {
          final net.minecraft.world.level.levelgen.BitRandomSource simpleRandom = this.simpleRandom; // Paper - optimise random ticking // Leaf - Faster random generator - upcasting
          ChunkPos pos = chunk.getPos();
-@@ -1129,7 +1130,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
-         } // Paper - Option to disable ice and snow
- 
-         if (randomTickSpeed > 0) {
--            this.optimiseRandomTick(chunk, randomTickSpeed); // Paper - optimise random ticking
-+            if (org.dreeam.leaf.config.modules.opt.OptimizeRandomTick.enabled) randomTickSystem.tickChunk(this.simpleRandom, chunk, randomTickSpeed); // Leaf - optimize random tick
-+            else this.optimiseRandomTick(chunk, randomTickSpeed); // Paper - optimise random ticking // Leaf - optimize random tick
-         }
-     }
- 
 diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
-index a3674ddb883eecb255279375a5e2eece7e016c0f..634bf0c15eb63aeb5ff06dd9b43ecbab627b0128 100644
+index a3674ddb883eecb255279375a5e2eece7e016c0f..193009af4e477660ce36edda2658f09983941592 100644
 --- a/net/minecraft/world/level/chunk/LevelChunk.java
 +++ b/net/minecraft/world/level/chunk/LevelChunk.java
-@@ -152,6 +152,48 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+@@ -152,6 +152,61 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
      }
      // Gale end - Airplane - optimize random calls in chunk ticking - instead of using a random every time the chunk is ticked, define when lightning strikes preemptively
  
 +    // Leaf start - optimize random tick
 +    private boolean leaf$tickingBlocksDirty = true;
-+    private int leaf$tickingBlocksCount;
++    private int leaf$tickingBlocksCount = 0;
 +    private int leaf$firstTickingSectionIndex = -1;
++    private int leaf$mostTickingSectionIndex = -1;
 +    public final int leaf$tickingBlocksCount() {
 +        if (!leaf$tickingBlocksDirty) {
 +            return leaf$tickingBlocksCount;
@@ -57,11 +55,16 @@ index a3674ddb883eecb255279375a5e2eece7e016c0f..634bf0c15eb63aeb5ff06dd9b43ecbab
 +        leaf$tickingBlocksDirty = false;
 +        int sum = 0;
 +        leaf$firstTickingSectionIndex = -1;
++        leaf$mostTickingSectionIndex = -1;
++        int most = 0;
 +        for (int i = 0; i < sections.length; i++) {
-+            LevelChunkSection section = sections[i];
-+            int size = section.moonrise$getTickingBlockList().size();
++            var list = sections[i].moonrise$getTickingBlockList();
++            int size = list.size();
 +            if (size != 0 && leaf$firstTickingSectionIndex == -1) {
 +                leaf$firstTickingSectionIndex = i;
++            }
++            if (size > most) {
++                leaf$mostTickingSectionIndex = i;
 +            }
 +            sum += size;
 +        }
@@ -70,16 +73,23 @@ index a3674ddb883eecb255279375a5e2eece7e016c0f..634bf0c15eb63aeb5ff06dd9b43ecbab
 +    }
 +    public final java.util.OptionalLong leaf$getTickingPos(int idx) {
 +        if (leaf$firstTickingSectionIndex != -1) {
++            int most = leaf$mostTickingSectionIndex;
++            var mostList = sections[most].moonrise$getTickingBlockList();
++            int mostSectionSize = mostList.size();
++            if (idx < mostSectionSize) {
++                short loc = mostList.getRaw(idx);
++                return java.util.OptionalLong.of(BlockPos.asLong((loc & 15) | (locX << 4), (loc >>> 8) | ((getMinSectionY() + most) << 4), ((loc >>> 4) & 15) | (locZ << 4)));
++            }
++            idx -= mostSectionSize;
 +            for (int i = leaf$firstTickingSectionIndex; i < sections.length; i++) {
-+                LevelChunkSection section = sections[i];
-+                var l = section.moonrise$getTickingBlockList();
-+                int size = l.size();
++                if (i == most) {
++                    continue;
++                }
++                var list = sections[i].moonrise$getTickingBlockList();
++                int size = list.size();
 +                if (idx < size) {
-+                    short loc = l.getRaw(idx);
-+                    int x = (loc & 15) | (chunkPos.x << 4);
-+                    int y = (loc >>> 8) | ((getMinSectionY() + i) << 4);
-+                    int z = ((loc >>> 4) & 15) | (chunkPos.z << 4);
-+                    return java.util.OptionalLong.of(BlockPos.asLong(x, y, z));
++                    short loc = list.getRaw(idx);
++                    return java.util.OptionalLong.of(BlockPos.asLong((loc & 15) | (locX << 4), (loc >>> 8) | ((getMinSectionY() + i) << 4), ((loc >>> 4) & 15) | (locZ << 4)));
 +                }
 +                idx -= size;
 +            }
@@ -91,7 +101,7 @@ index a3674ddb883eecb255279375a5e2eece7e016c0f..634bf0c15eb63aeb5ff06dd9b43ecbab
      public LevelChunk(Level level, ChunkPos pos) {
          this(level, pos, UpgradeData.EMPTY, new LevelChunkTicks<>(), new LevelChunkTicks<>(), 0L, null, null, null);
      }
-@@ -416,6 +458,11 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+@@ -416,6 +471,11 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
              if (blockState == state) {
                  return null;
              } else {
