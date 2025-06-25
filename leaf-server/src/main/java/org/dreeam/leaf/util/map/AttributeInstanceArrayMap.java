@@ -23,7 +23,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     public AttributeInstanceArrayMap() {
         if (BuiltInRegistries.ATTRIBUTE.size() != VANILLA_ATTRIBUTE_SIZE) {
-            throw new IllegalStateException("Registered custom attribute");
+            throw new IllegalStateException("Unexpected registry minecraft:attribute size");
         }
     }
 
