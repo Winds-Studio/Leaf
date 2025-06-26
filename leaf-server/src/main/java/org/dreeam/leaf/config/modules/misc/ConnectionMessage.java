@@ -38,13 +38,28 @@ public class ConnectionMessage extends ConfigModules {
             "Quit message of player",
             "玩家退出服务器时的消息"));
 
-        // Legacy compatibility
-        // TODO: config migration
-        joinMessage = joinMessage
-            .replace("%player_name%", "<player_name>")
-            .replace("%player_displayname%", "<player_displayname>");
-        quitMessage = quitMessage
-            .replace("%player_name%", "<player_name>")
-            .replace("%player_displayname%", "<player_displayname>");
+        // Config migration
+        boolean needsSave = false;
+        if (joinMessage.contains("%")) {
+            joinMessage = joinMessage
+                .replace("%player_name%", "<player_name>")
+                .replace("%player_displayname%", "<player_displayname>");
+            config.set(getBasePath() + ".join.message", joinMessage);
+            needsSave = true;
+        }
+        if (quitMessage.contains("%")) {
+            quitMessage = quitMessage
+                .replace("%player_name%", "<player_name>")
+                .replace("%player_displayname%", "<player_displayname>");
+            config.set(getBasePath() + ".quit.message", quitMessage);
+            needsSave = true;
+        }
+        if (needsSave) {
+            try {
+                config.saveConfig();
+            } catch (Exception e) {
+                org.leavesmc.leaves.LeavesLogger.getLogger().warn("Failed to save config after connection message migration", e);
+            }
+        }
     }
 }
