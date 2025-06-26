@@ -1,5 +1,6 @@
 package org.dreeam.leaf.world;
 
+import ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable;
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
@@ -25,7 +26,7 @@ public final class RandomTickSystem {
     private final LongArrayList weights = new LongArrayList();
 
     public void tick(ServerLevel world) {
-        final var random = world.simpleRandom;
+        final BitRandomSource random = world.simpleRandom;
 
         final ReferenceList<LevelChunk> entityTickingChunks = world.moonrise$getEntityTickingChunks();
         final int randomTickSpeed = world.getGameRules().getInt(GameRules.RULE_RANDOMTICKING);
@@ -46,7 +47,7 @@ public final class RandomTickSystem {
         weights.clear();
         samples.clear();
 
-        final var fullChunks = world.chunkSource.fullChunks;
+        final ConcurrentLong2ReferenceChainedHashTable<LevelChunk> fullChunks = world.chunkSource.fullChunks;
         final long[] q = queue.elements();
         final int l = queue.size();
         LevelChunk a = null;
@@ -108,7 +109,7 @@ public final class RandomTickSystem {
             if ((cacheRandom & (TICK_FILTER_MASK << bits)) != 0L) {
                 continue;
             }
-            final var chunk = raw[i];
+            final LevelChunk chunk = raw[i];
             final long count = chunk.leaf$tickingBlocksCount();
             if (count != 0L) {
                 long weight = (randomTickSpeed * count * SCALE) / CHUNK_BLOCKS;
