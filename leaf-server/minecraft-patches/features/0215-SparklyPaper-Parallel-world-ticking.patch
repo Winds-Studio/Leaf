@@ -5,6 +5,8 @@ Subject: [PATCH] SparklyPaper: Parallel world ticking
 
 Original project: https://github.com/SparklyPower/SparklyPaper
 
+Commit: 589225495e566c60feb907a3571c1ccba855b6ed
+
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
 index 0f5966932c4211922eccac09ab164fcb69dad582..36ce2be30478d734d8326eeeb004ba7dc61e0642 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
@@ -409,7 +411,7 @@ index 8f41326fda8c5f9f6926038508be6c6529b051bc..46e171ca454253c32e22c0c18587e9a7
              }
          }
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 3a31f9132a7271ea476cc85c5a10ea7f327256bf..61ccb98e02f30b143226b110d5b5f7316606844d 100644
+index 3a31f9132a7271ea476cc85c5a10ea7f327256bf..58ec5cfb21d4834c3aaa74f76ca8a536eb86c30c 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -180,7 +180,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -431,6 +433,15 @@ index 3a31f9132a7271ea476cc85c5a10ea7f327256bf..61ccb98e02f30b143226b110d5b5f731
  
      // CraftBukkit start
      public final LevelStorageSource.LevelStorageAccess levelStorageAccess;
+@@ -679,7 +682,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         this.sleepStatus = new SleepStatus();
+         this.gameEventDispatcher = new GameEventDispatcher(this);
+         this.randomSequences = Objects.requireNonNullElseGet(randomSequences, () -> this.getDataStorage().computeIfAbsent(RandomSequences.TYPE));
+-        this.waypointManager = new ServerWaypointManager();
++        this.waypointManager = new ServerWaypointManager(this); // SparklyPaper - parallel world ticking
+         // Paper start - rewrite chunk system
+         this.moonrise$setEntityLookup(new ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup((ServerLevel)(Object)this, ((ServerLevel)(Object)this).new EntityCallbacks()));
+         this.chunkTaskScheduler = new ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkTaskScheduler((ServerLevel)(Object)this);
 @@ -697,8 +700,26 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
          this.preciseTime = this.serverLevelData.getDayTime(); // Purpur - Configurable daylight cycle
@@ -640,7 +651,7 @@ index 3a31f9132a7271ea476cc85c5a10ea7f327256bf..61ccb98e02f30b143226b110d5b5f731
          // Paper start - extra debug info
          if (entity.valid) {
 diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
-index 4c1786201a4044db61e99c148fca4714e2b172ad..b25b6105202bb76604fadeded15bdd877eaa66d3 100644
+index 4c1786201a4044db61e99c148fca4714e2b172ad..163ac7b4b6fefb0c4594548dfffc0ea6f24f0765 100644
 --- a/net/minecraft/server/level/ServerPlayer.java
 +++ b/net/minecraft/server/level/ServerPlayer.java
 @@ -467,6 +467,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
@@ -673,7 +684,7 @@ index 4c1786201a4044db61e99c148fca4714e2b172ad..b25b6105202bb76604fadeded15bdd87
                  return this;
              } else {
 +                if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
-+                    ca.spottedleaf.moonrise.common.util.TickThread.ensureOnlyTickThread("Cannot change dimension of a player off-main, from world " + level().getWorld().getName() + " to world " + level.getWorld().getName()); // SparklyPaper - parallel world ticking (additional concurrency issues logs)
++                    ca.spottedleaf.moonrise.common.util.TickThread.ensureOnlyTickThread("Cannot change dimension of a player off-main, from world " + serverLevel.getWorld().getName() + " to world " + level.getWorld().getName()); // SparklyPaper - parallel world ticking (additional concurrency issues logs)
                  // CraftBukkit start
                  /*
                  this.isChangingDimension = true;
@@ -739,6 +750,99 @@ index 3cd9b0df617715d0b3e70a6096e52bb5d22ab426..f1002643589f67adce26667b1750a129
          // CraftBukkit end
          serverPlayer.connection = player.connection;
          serverPlayer.restoreFrom(player, keepInventory);
+diff --git a/net/minecraft/server/waypoints/ServerWaypointManager.java b/net/minecraft/server/waypoints/ServerWaypointManager.java
+index f9e7532f86122a379692561a639a209a126e8bba..fab317d6c9a1c914f19bae11846cb5761bbee76e 100644
+--- a/net/minecraft/server/waypoints/ServerWaypointManager.java
++++ b/net/minecraft/server/waypoints/ServerWaypointManager.java
+@@ -20,8 +20,17 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     private final Set<ServerPlayer> players = new HashSet<>();
+     private final Table<ServerPlayer, WaypointTransmitter, WaypointTransmitter.Connection> connections = HashBasedTable.create();
+ 
++    // SparklyPaper start - parallel world ticking
++    private final net.minecraft.server.level.ServerLevel level;
++    public ServerWaypointManager(net.minecraft.server.level.ServerLevel level) {
++        this.level = level;
++    }
++    // SparklyPaper end - parallel world ticking
++
+     @Override
+     public void trackWaypoint(WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot track waypoints off-main"); // SparklyPaper - parallel world ticking
+         this.waypoints.add(waypoint);
+ 
+         for (ServerPlayer serverPlayer : this.players) {
+@@ -31,6 +40,8 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+ 
+     @Override
+     public void updateWaypoint(WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update waypoints off-main"); // SparklyPaper - parallel world ticking
+         if (this.waypoints.contains(waypoint)) {
+             Map<ServerPlayer, WaypointTransmitter.Connection> map = Tables.transpose(this.connections).row(waypoint);
+             SetView<ServerPlayer> set = Sets.difference(this.players, map.keySet());
+@@ -47,12 +58,16 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+ 
+     @Override
+     public void untrackWaypoint(WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot untrack waypoints off-main"); // SparklyPaper - parallel world ticking
+         this.connections.column(waypoint).forEach((serverPlayer, connection) -> connection.disconnect());
+         Tables.transpose(this.connections).row(waypoint).clear();
+         this.waypoints.remove(waypoint);
+     }
+ 
+     public void addPlayer(ServerPlayer player) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot add player to waypoints off-main"); // SparklyPaper - parallel world ticking
+         this.players.add(player);
+ 
+         for (WaypointTransmitter waypointTransmitter : this.waypoints) {
+@@ -65,6 +80,8 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void updatePlayer(ServerPlayer player) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update player for waypoints off-main"); // SparklyPaper - parallel world ticking
+         Map<WaypointTransmitter, WaypointTransmitter.Connection> map = this.connections.row(player);
+         SetView<WaypointTransmitter> set = Sets.difference(this.waypoints, map.keySet());
+ 
+@@ -78,6 +95,8 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void removePlayer(ServerPlayer player) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot remove player from waypoints off-main"); // SparklyPaper - parallel world ticking
+         this.connections.row(player).values().removeIf(connection -> {
+             connection.disconnect();
+             return true;
+@@ -87,6 +106,8 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void breakAllConnections() {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot break all waypoint connections off-main"); // SparklyPaper - parallel world ticking
+         this.connections.values().forEach(WaypointTransmitter.Connection::disconnect);
+         this.connections.clear();
+     }
+@@ -106,6 +127,8 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     private void createConnection(ServerPlayer player, WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot create waypoint connections off-main"); // SparklyPaper - parallel world ticking
+         if (player != waypoint) {
+             if (isLocatorBarEnabledFor(player)) {
+                 waypoint.makeWaypointConnectionWith(player).ifPresentOrElse(connection -> {
+@@ -122,6 +145,8 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     private void updateConnection(ServerPlayer player, WaypointTransmitter waypoint, WaypointTransmitter.Connection connection) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking mod (make configurable)
++        ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update waypoint connection off-main"); // SparklyPaper - parallel world ticking
+         if (player != waypoint) {
+             if (isLocatorBarEnabledFor(player)) {
+                 if (!connection.isBroken()) {
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
 index 745176aecb6052c815b8dd5fce60a9ae3efd0857..fb95bbc7f7330611ddeb4d676af63042ea036335 100644
 --- a/net/minecraft/world/entity/Entity.java
