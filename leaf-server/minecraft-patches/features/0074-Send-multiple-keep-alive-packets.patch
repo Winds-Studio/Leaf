@@ -37,15 +37,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
-index dd3841c06a386c0d6dc641fe2573d3fb0733504d..0ff225163b3d95b51b851c7e16bd994453cc2d0e 100644
+index ccbf60f546974692c2c840f4bce87e2c95d1866c..ddc89e8960f7dc2f75f0e03ccbe6eda96a0499e2 100644
 --- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
 +++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
-@@ -42,6 +42,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
-     private long keepAliveChallenge;
+@@ -38,10 +38,11 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     public final Connection connection; // Paper
+     private final boolean transferred;
+     //private long keepAliveTime; // Paper - improve keepalives
+-    //private boolean keepAlivePending; // Paper - improve keepalives
++    private boolean keepAlivePending; // Paper - improve keepalives // Purpur - Alternative Keepalive Handling
+     //private long keepAliveChallenge; // Paper - improve keepalives
      private long closedListenerTime;
      private boolean closed = false;
 +    private it.unimi.dsi.fastutil.longs.LongList keepAlives = new it.unimi.dsi.fastutil.longs.LongArrayList(); // Gale - Purpur - send multiple keep-alive packets
-     private int latency;
+     private volatile int latency; // Paper - improve keepalives - make volatile
      private volatile boolean suspendFlushingOnServerThread = false;
      // CraftBukkit start
 @@ -50,7 +51,10 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
@@ -60,55 +65,59 @@ index dd3841c06a386c0d6dc641fe2573d3fb0733504d..0ff225163b3d95b51b851c7e16bd9944
      protected static final net.minecraft.resources.ResourceLocation MINECRAFT_BRAND = net.minecraft.resources.ResourceLocation.withDefaultNamespace("brand"); // Paper - Brand support
  
      public ServerCommonPacketListenerImpl(MinecraftServer server, Connection connection, CommonListenerCookie cookie, net.minecraft.server.level.ServerPlayer player) { // CraftBukkit
-@@ -119,6 +123,16 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
- 
-     @Override
-     public void handleKeepAlive(ServerboundKeepAlivePacket packet) {
+@@ -122,6 +126,18 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+         // Paper start - improve keepalives
+         long now = System.nanoTime();
+         net.minecraft.server.level.ServerPlayer.PendingKeepAlive pending = this.player.pendingKeepAlives.peek();
 +        // Gale start - Purpur - send multiple keep-alive packets
 +        if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().misc.keepalive.sendMultiple) {
 +            if (this.keepAlivePending && !keepAlives.isEmpty() && keepAlives.contains(packet.getId())) {
 +                int ping = (int) (Util.getMillis() - packet.getId());
-+                this.latency = (this.latency * 3 + ping) / 4;
++                int updatedLatency = (this.latency * 3 + ping) / 4;
++                this.latency = updatedLatency;
 +                this.keepAlivePending = false;
 +                this.keepAlives.clear(); // We got a valid response, let's roll with it and forget the rest
 +            }
++            return;
 +        } else {
 +            // Gale end - Purpur - send multiple keep-alive packets
-         if (this.keepAlivePending && packet.getId() == this.keepAliveChallenge) {
-             int i = (int)(Util.getMillis() - this.keepAliveTime);
-             this.latency = (this.latency * 3 + i) / 4;
-@@ -126,6 +140,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
-         } else if (!this.isSingleplayerOwner()) {
-             this.disconnectAsync(TIMEOUT_DISCONNECTION_MESSAGE, org.bukkit.event.player.PlayerKickEvent.Cause.TIMEOUT); // Paper - add proper async disconnect
+         if (pending != null && pending.challengeId() == packet.getId()) {
+             this.player.pendingKeepAlives.remove(pending);
+ 
+@@ -133,6 +149,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+             this.latency = this.player.pingCalculator5s.getAvgLatencyMS();
+             return;
          }
 +        } // Gale - Purpur - send multiple keep-alive packets
-     }
  
-     @Override
-@@ -248,6 +263,21 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
-         // Paper start - give clients a longer time to respond to pings as per pre 1.12.2 timings
-         // This should effectively place the keepalive handling back to "as it was" before 1.12.2
-         final long elapsedTime = millis - this.keepAliveTime;
+         for (java.util.Iterator<net.minecraft.server.level.ServerPlayer.PendingKeepAlive> itr = this.player.pendingKeepAlives.iterator(); itr.hasNext();) {
+             net.minecraft.server.level.ServerPlayer.PendingKeepAlive ka = itr.next();
+@@ -274,6 +291,23 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     protected void keepConnectionAlive() {
+         long millis = Util.getMillis();
+         // Paper start - improve keepalives
 +        // Gale start - Purpur - send multiple keep-alive packets
 +        if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().misc.keepalive.sendMultiple) {
-+            if (elapsedTime >= 1000L) { // 1 second
-+                if (this.keepAlivePending && !this.processedDisconnect && this.keepAlives.size() >= KEEPALIVE_LIMIT_IN_SECONDS) {
-+                    LOGGER.warn("{} was kicked due to keepalive timeout!", this.player.getScoreboardName());
-+                    this.disconnect(TIMEOUT_DISCONNECTION_MESSAGE, org.bukkit.event.player.PlayerKickEvent.Cause.TIMEOUT);
-+                } else if (this.checkIfClosed(millis)) {
-+                    this.keepAlivePending = true;
-+                    this.keepAliveTime = millis; // hijack this field for 1 second intervals
-+                    this.keepAlives.add(millis); // millis is ID
-+                    this.send(new ClientboundKeepAlivePacket(millis));
++            if (this.checkIfClosed(millis) && !this.processedDisconnect) {
++                long currTime = System.nanoTime();
++                if ((currTime - this.player.lastKeepAliveTx) >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1L)) { // 1 second
++                    this.player.lastKeepAliveTx = currTime;
++                    if (this.keepAlivePending && !this.processedDisconnect && keepAlives.size() * 1000L >= KEEPALIVE_LIMIT) {
++                        this.disconnect(ServerCommonPacketListenerImpl.TIMEOUT_DISCONNECTION_MESSAGE, org.bukkit.event.player.PlayerKickEvent.Cause.TIMEOUT);
++                    } else if (this.checkIfClosed(millis)) {
++                        this.keepAlivePending = true;
++                        this.keepAlives.add(millis); // currentTime is ID
++                        this.send(new ClientboundKeepAlivePacket(millis));
++                    }
 +                }
 +            }
 +        } else {
 +            // Gale end - Purpur - send multiple keep-alive packets
-         if (!this.isSingleplayerOwner() && elapsedTime >= 15000L) { // use vanilla's 15000L between keep alive packets
-             if (this.keepAlivePending) {
-                 if (!this.processedDisconnect && elapsedTime >= KEEPALIVE_LIMIT) { // check keepalive limit, don't fire if already disconnected
-@@ -261,6 +291,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
-                 this.send(new ClientboundKeepAlivePacket(this.keepAliveChallenge));
+         if (this.checkIfClosed(millis) && !this.processedDisconnect) {
+             long currTime = System.nanoTime();
+ 
+@@ -292,6 +326,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+                 // Paper end - improve keepalives
              }
          }
 +        } // Gale - Purpur - send multiple keep-alive packets

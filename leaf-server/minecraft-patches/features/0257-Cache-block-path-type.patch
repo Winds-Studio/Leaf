@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Fri, 23 May 2025 12:01:42 +0900
+Subject: [PATCH] Cache block path type
+
+
+diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
+index 168fc4fea371dfe9ea1ffca3c9f290ba3547f0b9..463a9d9b15301e7139bd36435214662aa3ccf63d 100644
+--- a/net/minecraft/server/dedicated/DedicatedServer.java
++++ b/net/minecraft/server/dedicated/DedicatedServer.java
+@@ -366,6 +366,7 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+             }
+ 
+             if (org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled) mobSpawnExecutor.start(); // Pufferfish
++            net.minecraft.world.level.block.Blocks.initPathType(); // Leaf - Cache path type
+             org.purpurmc.purpur.task.BossBarTask.startAll(); // Purpur - Implement TPSBar
+             if (org.purpurmc.purpur.PurpurConfig.beeCountPayload) org.purpurmc.purpur.task.BeehiveTask.instance().register(); // Purpur - Give bee counts in beehives to Purpur clients
+ 
+diff --git a/net/minecraft/world/level/block/Blocks.java b/net/minecraft/world/level/block/Blocks.java
+index 57aad048034005543a72556e990b53db8deebfee..6e6ee6f25f7cab0a6235d9e583ed5c01bca30edd 100644
+--- a/net/minecraft/world/level/block/Blocks.java
++++ b/net/minecraft/world/level/block/Blocks.java
+@@ -7066,4 +7066,14 @@ public class Blocks {
+             }
+         }
+     }
++
++    // Leaf start - Cache path type
++    public static void initPathType() {
++        for (Block block : BuiltInRegistries.BLOCK) {
++            for (BlockState blockState : block.getStateDefinition().getPossibleStates()) {
++                blockState.initPathType();
++            }
++        }
++    }
++    // Leaf end - Cache path type
+ }
+diff --git a/net/minecraft/world/level/block/state/BlockBehaviour.java b/net/minecraft/world/level/block/state/BlockBehaviour.java
+index 6d522e9485fadd6fc0f350cb30ba5224aa046d4f..611887f5f8f218f5ec1ad19580f3123a60b20d46 100644
+--- a/net/minecraft/world/level/block/state/BlockBehaviour.java
++++ b/net/minecraft/world/level/block/state/BlockBehaviour.java
+@@ -473,6 +473,7 @@ public abstract class BlockBehaviour implements FeatureElement {
+         private boolean emptyCollisionShape;
+         private boolean emptyConstantCollisionShape;
+         private VoxelShape constantCollisionShape;
++        public net.minecraft.world.level.pathfinder.PathType pathType; // Leaf - Cache path type
+ 
+         private static void initCaches(final VoxelShape shape, final boolean neighbours) {
+             ((ca.spottedleaf.moonrise.patches.collisions.shape.CollisionVoxelShape)shape).moonrise$isFullBlock();
+@@ -642,6 +643,12 @@ public abstract class BlockBehaviour implements FeatureElement {
+             // Paper end - optimise collisions
+         }
+ 
++        // Leaf start - Cache path type
++        public void initPathType() {
++            pathType = net.minecraft.world.level.pathfinder.WalkNodeEvaluator.getPathTypeFromState(this.asState());
++        }
++        // Leaf end - Cache path type
++
+         public Block getBlock() {
+             return this.owner;
+         }
+diff --git a/net/minecraft/world/level/pathfinder/PathTypeCache.java b/net/minecraft/world/level/pathfinder/PathTypeCache.java
+index 3b190ba2a719cc45045d9be893884b50b9364b58..b44f6562a7f7651b2728ba49699031000b54b818 100644
+--- a/net/minecraft/world/level/pathfinder/PathTypeCache.java
++++ b/net/minecraft/world/level/pathfinder/PathTypeCache.java
+@@ -24,7 +24,7 @@ public class PathTypeCache {
+     }
+ 
+     private PathType compute(BlockGetter level, BlockPos pos, int index, long packedPos) {
+-        PathType pathTypeFromState = WalkNodeEvaluator.getPathTypeFromState(level, pos);
++        PathType pathTypeFromState = WalkNodeEvaluator.leafPathType(level, pos); // Leaf - Cache path type
+         this.positions[index] = packedPos;
+         this.pathTypes[index] = pathTypeFromState;
+         return pathTypeFromState;
+diff --git a/net/minecraft/world/level/pathfinder/PathfindingContext.java b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+index 4eca1dd0819c7ee7a77e45fc5fa03f4ee5cdceaf..ff68b19b5fe4c80872d483363611b843146de989 100644
+--- a/net/minecraft/world/level/pathfinder/PathfindingContext.java
++++ b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+@@ -27,7 +27,7 @@ public class PathfindingContext {
+ 
+     public PathType getPathTypeFromState(int x, int y, int z) {
+         BlockPos blockPos = this.mutablePos.set(x, y, z);
+-        return this.cache == null ? WalkNodeEvaluator.getPathTypeFromState(this.level, blockPos) : this.cache.getOrCompute(this.level, blockPos);
++        return this.cache == null ? WalkNodeEvaluator.leafPathType(this.level, blockPos) : this.cache.getOrCompute(this.level, blockPos); // Leaf - Cache path type
+     }
+ 
+     public BlockState getBlockState(BlockPos pos) {
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+index db6baaa698fe93aba3fbd595158b568badd6cb8a..5bd1300ef82a1d431c098d9cf75a7fa9d5a43502 100644
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -479,6 +479,16 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+         return pathType;
+     }
+ 
++    // Leaf start - Cache path type
++    public static PathType leafPathType(BlockGetter level, BlockPos blockPos) {
++        BlockState blockState = level.getBlockStateIfLoaded(blockPos);
++        if (blockState == null) {
++            return PathType.BLOCKED;
++        }
++        return blockState.pathType;
++    }
++    // Leaf end - Cache path type
++
+     protected static PathType getPathTypeFromState(BlockGetter level, BlockPos pos) {
+         // Paper start - Do not load chunks during pathfinding
+         BlockState blockState = level.getBlockStateIfLoaded(pos);
+@@ -486,6 +496,12 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+             return PathType.BLOCKED;
+         }
+         // Paper end
++        // Leaf start - Cache path type
++        return getPathTypeFromState(blockState);
++    }
++
++    public static PathType getPathTypeFromState(BlockState blockState) {
++        // Leaf end - Cache path type
+         Block block = blockState.getBlock();
+         if (blockState.isAir()) {
+             return PathType.OPEN;

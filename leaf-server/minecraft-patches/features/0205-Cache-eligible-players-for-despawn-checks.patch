@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Fri, 14 Feb 2025 20:08:14 +0100
+Subject: [PATCH] Cache eligible players for despawn checks
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 0f311e603c8df175576a33d5d20369cbcda2be55..3a31f9132a7271ea476cc85c5a10ea7f327256bf 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -729,6 +729,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         return this.structureManager;
+     }
+ 
++    public Player[] eligibleDespawnCheckingPlayerCache = new Player[0]; // Leaf - Cache eligible players for despawn checks
++
+     public void tick(BooleanSupplier hasTimeLeft) {
+         this.handlingTick = true;
+         TickRateManager tickRateManager = this.tickRateManager();
+@@ -796,6 +798,19 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+             }
+ 
+             io.papermc.paper.entity.activation.ActivationRange.activateEntities(this); // Paper - EAR
++
++            // Leaf start - Cache eligible players for despawn checks
++            List<ServerPlayer> serverPlayers = new ArrayList<>(players().size());
++            for (int i = 0; i < players().size(); i++) {
++                ServerPlayer player = players().get(i);
++                if (net.minecraft.world.entity.EntitySelector.PLAYER_AFFECTS_SPAWNING.test(player)) {
++                    serverPlayers.add(player);
++                }
++            }
++
++            eligibleDespawnCheckingPlayerCache = serverPlayers.toArray(new Player[0]);
++            // Leaf end - Cache eligible players for despawn checks
++
+             this.entityTickList
+                 .forEach(
+                     entity -> {
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index fdce25cdfdd91938a97dc381e4ada1744e64c931..4c1786201a4044db61e99c148fca4714e2b172ad 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -1613,6 +1613,13 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+         this.containerMenu.broadcastChanges();
+     }
+ 
++    // Leaf start - Cache eligible players for despawn checks
++    @Override
++    public boolean isAlive() {
++        return !this.isRemoved() && this.entityData.get(DATA_HEALTH_ID) > 0.0f && !this.dead;
++    }
++    // Leaf end - Cache eligible players for despawn checks
++
+     // CraftBukkit start - moved bed result checks from below into separate method
+     private Either<Player.BedSleepingProblem, Unit> getBedResult(BlockPos at, Direction direction) {
+         if (this.isSleeping() || !this.isAlive()) {
+diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
+index 867353500482247bbec79f407246902c79a3d14a..4a1a336914eff8a178dcd992bd1bfea25a8be76b 100644
+--- a/net/minecraft/world/entity/Mob.java
++++ b/net/minecraft/world/entity/Mob.java
+@@ -722,7 +722,24 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
+         if (this.level().getDifficulty() == Difficulty.PEACEFUL && this.shouldDespawnInPeaceful()) {
+             this.discard(EntityRemoveEvent.Cause.DESPAWN); // CraftBukkit - add Bukkit remove cause
+         } else if (!this.isPersistenceRequired() && !this.requiresCustomPersistence()) {
+-            Entity nearestPlayer = this.level().findNearbyPlayer(this, -1.0, EntitySelector.PLAYER_AFFECTS_SPAWNING); // Paper - Affects Spawning API
++            // Leaf start - Cache eligible players for despawn checks
++            Entity nearestPlayer = null;
++
++            if (this.level() instanceof ServerLevel serverLevel) {
++                double minDist = Double.MAX_VALUE;
++                for (int i = 0; i < serverLevel.eligibleDespawnCheckingPlayerCache.length; i++) {
++                    Player cachedPlayer = serverLevel.eligibleDespawnCheckingPlayerCache[i];
++                    double d1 = cachedPlayer.distanceToSqr(this);
++                    if (d1 <= minDist) {
++                        minDist = d1;
++                        nearestPlayer = cachedPlayer;
++                    }
++                }
++            } else {
++                nearestPlayer = this.level().findNearbyPlayer(this, -1.0, EntitySelector.PLAYER_AFFECTS_SPAWNING); // Paper - Affects Spawning API
++            }
++            // Leaf end - Cache eligible players for despawn checks
++
+             if (nearestPlayer != null) {
+                 // Paper start - Configurable despawn distances
+                 final io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.DespawnRangePair despawnRangePair = this.level().paperConfig().entities.spawning.despawnRanges.get(this.getType().getCategory());
