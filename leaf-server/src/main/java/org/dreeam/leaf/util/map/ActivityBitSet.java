@@ -9,7 +9,7 @@ import java.util.*;
 public final class ActivityBitSet extends AbstractCollection<Activity> implements Set<Activity> {
     public static final int BITS = 25;
 
-    private int bitset = 0;
+    public int bitset = 0;
 
     public ActivityBitSet() {
         if (BuiltInRegistries.ACTIVITY.size() != BITS + 1) {
@@ -53,7 +53,8 @@ public final class ActivityBitSet extends AbstractCollection<Activity> implement
 
             private void advance() {
                 while (index < BITS && (bitset & (1 << index)) == 0) index++;
-            } {
+            }
+            {
                 advance();
             }
 
