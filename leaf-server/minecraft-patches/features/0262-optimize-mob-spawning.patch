@@ -3,21 +3,30 @@ From: hayanesuru <hayanesuru@outlook.jp>
 Date: Tue, 3 Jun 2025 15:20:59 +0900
 Subject: [PATCH] optimize mob spawning
 
+Avoid getChunk calls if its position is same as the chunk used for mob spawning
+
+Fix data race in async mob spawning
+by adding chunk position to the mob count map
+then apply result on server thread.
+
+Generally faster than the non-async approach
+
+iterate over all entities, get their chunk, and increment the count
 
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 79674f4bd7a12c42dec19a4175012d7a2dc88b84..9f4ba5b7e054bbe70a820068f22fe8a6b9d72554 100644
+index 79674f4bd7a12c42dec19a4175012d7a2dc88b84..0a97a491737807d59815b75635fa3d8c94901ba8 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
 @@ -287,6 +287,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
      }
      // Paper end - per player mob count backoff
      public int getMobCountNear(final ServerPlayer player, final net.minecraft.world.entity.MobCategory mobCategory) {
-+        // Leaf - diff - fixme: not available in /paper playermobcaps with async mob spawning
++        // Leaf - diff - async mob spawning - optimize mob spawning
          return player.mobCounts[mobCategory.ordinal()] + player.mobBackoffCounts[mobCategory.ordinal()]; // Paper - per player mob count backoff
       }
      // Paper end - Optional per player mob spawns
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index 46e171ca454253c32e22c0c18587e9a7ba19f331..1c23d82a2034bc4ae61ee9bc6c74b39940d4fc2b 100644
+index 46e171ca454253c32e22c0c18587e9a7ba19f331..d91d6988268174ea9f2c919b57a6ba7ea00d7066 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
 +++ b/net/minecraft/server/level/ServerChunkCache.java
 @@ -70,11 +70,11 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
@@ -34,7 +43,59 @@ index 46e171ca454253c32e22c0c18587e9a7ba19f331..1c23d82a2034bc4ae61ee9bc6c74b399
      // Paper start
      public final ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<net.minecraft.world.level.chunk.LevelChunk> fullChunks = new ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<>();
      public int getFullChunksCount() {
-@@ -542,10 +542,10 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -498,6 +498,23 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+     }
+ 
+     private void tickChunks() {
++        // Leaf start
++        if (org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled && this.level.tickRateManager().runsNormally()) {
++            for (ServerPlayer player : this.level.players) {
++                // Paper start - per player mob spawning backoff
++                for (int ii = 0; ii < ServerPlayer.MOBCATEGORY_TOTAL_ENUMS; ii++) {
++                    player.mobCounts[ii] = 0;
++
++                    int newBackoff = player.mobBackoffCounts[ii] - 1; // TODO make configurable bleed // TODO use nonlinear algorithm?
++                    if (newBackoff < 0) {
++                        newBackoff = 0;
++                    }
++                    player.mobBackoffCounts[ii] = newBackoff;
++                }
++                // Paper end - per player mob spawning backoff
++            }
++        }
++        // Leaf end
+         long gameTime = this.level.getGameTime();
+         long l = gameTime - this.lastInhabitedUpdate;
+         this.lastInhabitedUpdate = gameTime;
+@@ -511,8 +528,8 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+         }
+ 
+         // Pufferfish start - optimize mob spawning
+-        if (org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled) {
+-            for (ServerPlayer player : this.level.players) {
++        if (org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled && this.level.tickRateManager().runsNormally()) {
++            /*for (ServerPlayer player : this.level.players) {
+                 // Paper start - per player mob spawning backoff
+                 for (int ii = 0; ii < ServerPlayer.MOBCATEGORY_TOTAL_ENUMS; ii++) {
+                     player.mobCounts[ii] = 0;
+@@ -524,14 +541,14 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+                     player.mobBackoffCounts[ii] = newBackoff;
+                 }
+                 // Paper end - per player mob spawning backoff
+-            }
++            }*/
+             if (firstRunSpawnCounts) {
+                 firstRunSpawnCounts = false;
+                 _pufferfish_spawnCountsReady.set(true);
+             }
+             if (_pufferfish_spawnCountsReady.getAndSet(false)) {
++                int mapped = distanceManager.getNaturalSpawnChunkCount();
+                 net.minecraft.server.MinecraftServer.getServer().mobSpawnExecutor.submit(() -> {
+-                    int mapped = distanceManager.getNaturalSpawnChunkCount();
+                     ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet.Iterator<Entity> objectiterator =
+                         level.entityTickList.entities.iterator(ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet.ITERATOR_FLAG_SEE_ADDITIONS);
+                     try {
+@@ -542,10 +559,10 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
                              new LocalMobCapCalculator(chunkMap) : null;
  
                          // This ensures the caps are properly enforced by using the correct calculator
@@ -47,7 +108,7 @@ index 46e171ca454253c32e22c0c18587e9a7ba19f331..1c23d82a2034bc4ae61ee9bc6c74b399
                              mobCapCalculator,  // This is the key fix - was previously null
                              level.paperConfig().entities.spawning.perPlayerMobSpawns
                          );
-@@ -627,9 +627,23 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -627,9 +644,23 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
              if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) Util.shuffle(list, this.shuffleRandom); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
              // Paper end - chunk tick iteration optimisation
  
@@ -74,7 +135,7 @@ index 46e171ca454253c32e22c0c18587e9a7ba19f331..1c23d82a2034bc4ae61ee9bc6c74b399
              list.clear();
          }
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e775a7db1a 100644
+index 81e176d17fb072f9ee531639abfe42134ae833a9..ab6fa7ed111ef16a0b6774c21988589ee2110c66 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
 @@ -68,6 +68,7 @@ public final class NaturalSpawner {
@@ -305,7 +366,7 @@ index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e7
 +    private static Optional<MobSpawnSettings.SpawnerData> getRandomSpawnMobAtWithChunk(
 +        ServerLevel level, StructureManager structureManager, ChunkGenerator generator, MobCategory category, RandomSource random, BlockPos pos, LevelChunk chunk
 +    ) {
-+        Holder<Biome> biome = org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(pos) : level.getBiome(pos); // Leaf - cache getBiome
++        Holder<Biome> biome = org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(chunk, pos) : level.getBiome(pos); // Leaf - cache getBiome
 +        return category == MobCategory.WATER_AMBIENT && biome.is(BiomeTags.REDUCED_WATER_AMBIENT_SPAWNS) && random.nextFloat() < 0.98F
 +            ? Optional.empty()
 +            : mobsAtWithChunk(level, structureManager, generator, category, pos, biome, chunk).getRandom(random);
@@ -316,7 +377,7 @@ index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e7
          ServerLevel level, StructureManager structureManager, ChunkGenerator generator, MobCategory category, MobSpawnSettings.SpawnerData data, BlockPos pos
      ) {
 @@ -463,6 +612,16 @@ public final class NaturalSpawner {
-             : generator.getMobsAt(biome != null ? biome : (org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(pos) : level.getBiome(pos)), structureManager, cetagory, pos); // Leaf - cache getBiome
+             : generator.getMobsAt(biome != null ? biome : (org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(null, pos) : level.getBiome(pos)), structureManager, cetagory, pos); // Leaf - cache getBiome
      }
  
 +    // Leaf start - optimize mob spawning
@@ -325,14 +386,14 @@ index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e7
 +    ) {
 +        return isInNetherFortressBoundsChunk(pos, level, cetagory, structureManager, chunk)
 +            ? NetherFortressStructure.FORTRESS_ENEMIES
-+            : generator.getMobsAtChunk(biome != null ? biome : (org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(pos) : level.getBiome(pos)), structureManager, cetagory, pos, chunk); // Leaf - cache getBiome
++            : generator.getMobsAtChunk(biome != null ? biome : (org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(chunk, pos) : level.getBiome(pos)), structureManager, cetagory, pos, chunk); // Leaf - cache getBiome
 +    }
 +    // Leaf end - optimize mob spawning
 +
      public static boolean isInNetherFortressBounds(BlockPos pos, ServerLevel level, MobCategory category, StructureManager structureManager) {
          if (category == MobCategory.MONSTER && level.getBlockState(pos.below()).is(Blocks.NETHER_BRICKS)) {
              Structure structure = structureManager.registryAccess().lookupOrThrow(Registries.STRUCTURE).getValue(BuiltinStructures.FORTRESS);
-@@ -472,6 +631,28 @@ public final class NaturalSpawner {
+@@ -472,6 +631,17 @@ public final class NaturalSpawner {
          }
      }
  
@@ -347,21 +408,10 @@ index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e7
 +    }
 +    // Leaf end - optimize mob spawning
 +
-+    // Leaf start - optimize mob spawning
-+    private static void mutableRandomPosWithin(BlockPos.MutableBlockPos pos1, Level level, LevelChunk chunk) {
-+        ChunkPos pos = chunk.getPos();
-+        int randomX = pos.getMinBlockX() + level.random.nextInt(16);
-+        int randomZ = pos.getMinBlockZ() + level.random.nextInt(16);
-+        int surfaceY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, randomX, randomZ) + 1;
-+        int randomY = Mth.randomBetweenInclusive(level.random, level.getMinY(), surfaceY);
-+        pos1.set(randomX, randomY, randomZ);
-+    }
-+    // Leaf end - optimize mob spawning
-+
      private static BlockPos getRandomPosWithin(Level level, LevelChunk chunk) {
          ChunkPos pos = chunk.getPos();
          int i = pos.getMinBlockX() + level.random.nextInt(16);
-@@ -612,18 +793,21 @@ public final class NaturalSpawner {
+@@ -612,18 +782,21 @@ public final class NaturalSpawner {
          @Nullable
          private EntityType<?> lastCheckedType;
          private double lastCharge;
@@ -384,7 +434,7 @@ index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e7
          }
  
          private boolean canSpawn(EntityType<?> entityType, BlockPos pos, ChunkAccess chunk) {
-@@ -680,5 +864,32 @@ public final class NaturalSpawner {
+@@ -680,5 +853,32 @@ public final class NaturalSpawner {
          boolean canSpawnForCategoryLocal(MobCategory category, ChunkPos chunkPos) {
              return this.localMobCapCalculator.canSpawn(category, chunkPos);
          }
@@ -418,10 +468,18 @@ index f242941ce06d356a025e306efe78c688e9b755c4..5e4cea207d5a5b12d45cf73d59d254e7
      }
  }
 diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
-index fbe93098ce0366054a6da857cd808af1431b6612..27a0d52f75f7356dfd9e680dd97c3a9ce87304c6 100644
+index fbe93098ce0366054a6da857cd808af1431b6612..57de70773d2766a8f3a41e61efc16ceb7a9f80c8 100644
 --- a/net/minecraft/world/level/StructureManager.java
 +++ b/net/minecraft/world/level/StructureManager.java
-@@ -181,6 +181,12 @@ public class StructureManager {
+@@ -90,6 +90,7 @@ public class StructureManager {
+ 
+     @Nullable
+     public StructureStart getStartForStructure(SectionPos sectionPos, Structure structure, StructureAccess structureAccess) {
++        // Leaf - optimize mob spawning - diff
+         return structureAccess.getStartForStructure(structure);
+     }
+ 
+@@ -181,6 +182,12 @@ public class StructureManager {
          //SectionPos sectionPos = SectionPos.of(pos); // Leaf - optimise ChunkGenerator#getMobsAt
          return this.level.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.STRUCTURE_REFERENCES).getAllReferences(); // Leaf - optimise ChunkGenerator#getMobsAt
      }
@@ -448,7 +506,7 @@ index db3b8a237d63255aa9ffd70c88a093002a6bd770..4a69f404eee00d8972e9501a76031d43
      }
  
 diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
-index 11c7c299d4affb9e78488590e7db939efe6e3dd9..94192345a732f0341886f44d90f9b979ca1fa780 100644
+index 11c7c299d4affb9e78488590e7db939efe6e3dd9..f1675db9942751235bb31634d5b99fdc30fb2950 100644
 --- a/net/minecraft/world/level/chunk/ChunkGenerator.java
 +++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
 @@ -516,6 +516,35 @@ public abstract class ChunkGenerator {
@@ -466,7 +524,7 @@ index 11c7c299d4affb9e78488590e7db939efe6e3dd9..94192345a732f0341886f44d90f9b979
 +                // Leaf start - optimise ChunkGenerator#getMobsAt
 +                for (long l : entry.getValue()) {
 +                    StructureStart startForStructure = structureManager.getStartForStructure(
-+                        null, structure, structureManager.level.getChunk(ChunkPos.getX(l), ChunkPos.getZ(l), ChunkStatus.STRUCTURE_STARTS)
++                        null, structure, chunk.getPos().longKey == l ? chunk : structureManager.level.getChunk(ChunkPos.getX(l), ChunkPos.getZ(l), ChunkStatus.STRUCTURE_STARTS)
 +                    );
 +                    if (startForStructure != null && startForStructure.isValid()) {
 +                        if (structureSpawnOverride.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
