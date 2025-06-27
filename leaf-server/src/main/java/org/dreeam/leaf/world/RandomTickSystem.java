@@ -2,9 +2,7 @@ package org.dreeam.leaf.world;
 
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import ca.spottedleaf.moonrise.common.list.ShortList;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.shorts.ShortArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
@@ -22,16 +20,14 @@ public final class RandomTickSystem {
     private static final int BITS_STEP = 2;
     private static final int BITS_MAX = 60;
 
-    private final IntArrayList queue = new IntArrayList();
-    private final ShortArrayList yList = new ShortArrayList();
-    private final IntArrayList xzList = new IntArrayList();
-    private final LongArrayList weightList = new LongArrayList();
+    private final LongArrayList queue = new LongArrayList();
+    private final LongArrayList samples = new LongArrayList();
+    private final LongArrayList weights = new LongArrayList();
 
     public void tick(ServerLevel world) {
         queue.clear();
-        yList.clear();
-        xzList.clear();
-        weightList.clear();
+        samples.clear();
+        weights.clear();
 
         final BitRandomSource random = world.simpleRandom;
         final ReferenceList<LevelChunk> entityTickingChunks = world.moonrise$getEntityTickingChunks();
@@ -46,48 +42,42 @@ public final class RandomTickSystem {
             iceSnow(world, size, randomTickSpeed, random, raw);
         }
         final long weightsSum = collectTickingChunks(size, random, raw, randomTickSpeed);
-        if (weightList.isEmpty() || yList.isEmpty() || weightsSum == 0L) {
+        if (samples.isEmpty() || weightsSum == 0L) {
             return;
         }
         sampling(random, weightsSum);
 
-        final int[] q = queue.elements();
-        final int qs = queue.size();
-        final short[] yl = yList.elements();
-        final int[] xzl = xzList.elements();
-        final int minSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(world);
-        for (int k = 0; k < qs; k++) {
-            final int index = q[k];
-            final LevelChunk a = raw[xzl[index]];
-            if (a != null) {
-                tickBlock(world, a, yl[index], random, minSection);
-            }
+        final long[] q = queue.elements();
+        final int minY = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(world) << 4;
+        for (int k = 0, len = queue.size(); k < len; ++k) {
+            final long packed = q[k];
+            final LevelChunk chunk = raw[(int) (packed >>> 16)];
+            tickBlock(world, chunk, (int) (packed & 0xFFFF), random, minY);
         }
     }
 
     private void sampling(BitRandomSource random, long weightsSum) {
-        final long chosen;
-        if (((weightsSum % SCALE) >= boundedNextLong(random, SCALE))) {
-            chosen = weightsSum / SCALE + 1L;
-        } else {
-            chosen = weightsSum / SCALE;
-        }
+        final long chosen = ((weightsSum % SCALE) >= boundedNextLong(random, SCALE))
+            ? (weightsSum / SCALE + 1L)
+            : (weightsSum / SCALE);
         if (chosen == 0L) {
             return;
         }
 
-        final long[] weightsRaw = weightList.elements();
-        long accumulated = weightsRaw[0];
+        final long[] w = weights.elements();
+        final long[] s = samples.elements();
+        long accumulated = w[0];
         final long spoke = weightsSum / chosen;
         if (spoke == 0L) return;
+
         long current = boundedNextLong(random, spoke);
         int i = 0;
         while (current < weightsSum) {
             while (accumulated < current) {
                 i++;
-                accumulated += weightsRaw[i];
+                accumulated += w[i];
             }
-            queue.add(i);
+            queue.add(s[i]);
             current += spoke;
         }
     }
@@ -111,13 +101,13 @@ public final class RandomTickSystem {
             if (chunk.leaf$tickingBlocksDirty) {
                 populateChunkTickingCount(chunk);
             }
-            short[] count = chunk.leaf$tickingBlocksCount;
-            short[] idx = chunk.leaf$tickingIdx;
-            for (int j = 0; j < count.length; j++) {
-                long weight = (randomTickSpeed * ((long) count[j]) * SCALE) / CHUNK_BLOCKS;
-                yList.add(idx[j]);
-                xzList.add(i);
-                weightList.add(weight);
+            int[] data = chunk.leaf$tickingCount;
+            for (int packed : data) {
+                int count = packed >>> 16;
+                int idx = packed & 0xFFFF;
+                samples.add((((long) i) << 16 | idx));
+                long weight = (randomTickSpeed * count * SCALE) / CHUNK_BLOCKS;
+                weights.add(weight);
                 weightsSum += weight;
             }
         }
@@ -130,20 +120,18 @@ public final class RandomTickSystem {
         for (LevelChunkSection section : chunk.getSections()) {
             sum += (section.moonrise$getTickingBlockList().size() == 0) ? 0 : 1;
         }
-        if (chunk.leaf$tickingBlocksCount.length != sum) {
-            chunk.leaf$tickingBlocksCount = new short[sum];
-            chunk.leaf$tickingIdx = new short[sum];
+
+        if (chunk.leaf$tickingCount.length != sum) {
+            chunk.leaf$tickingCount = new int[sum];
         }
-        short[] count = chunk.leaf$tickingBlocksCount;
-        short[] idx = chunk.leaf$tickingIdx;
+
         int k = 0;
-        for (int j = 0, sectionsLength = chunk.getSections().length; j < sectionsLength; j++) {
-            LevelChunkSection section = chunk.getSections()[j];
-            int n = (short) section.moonrise$getTickingBlockList().size();
+        LevelChunkSection[] sections = chunk.getSections();
+        for (int j = 0; j < sections.length; j++) {
+            ShortList list = sections[j].moonrise$getTickingBlockList();
+            int n = list.size();
             if (n != 0) {
-                count[k] = (short) n;
-                idx[k] = (short) j;
-                k++;
+                chunk.leaf$tickingCount[k++] = (n << 16) | (j & 0xFFFF);
             }
         }
     }
@@ -156,9 +144,7 @@ public final class RandomTickSystem {
                 currentIceAndSnowTick = random.nextInt(48 * 16);
                 LevelChunk chunk = raw[i];
                 ChunkPos pos = chunk.getPos();
-                int minBlockX = pos.getMinBlockX();
-                int minBlockZ = pos.getMinBlockZ();
-                world.tickPrecipitation(world.getBlockRandomPos(minBlockX, 0, minBlockZ, 15));
+                world.tickPrecipitation(world.getBlockRandomPos(pos.getMinBlockX(), 0, pos.getMinBlockZ(), 15));
             }
         }
     }
@@ -166,11 +152,11 @@ public final class RandomTickSystem {
     private static void tickBlock(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection) {
         LevelChunkSection section = chunk.getSection(sectionIdx);
         ShortList list = section.moonrise$getTickingBlockList();
-        int sz = list.size();
-        if (sz == 0) return;
-        short location = list.getRaw(boundedNextInt(random, sz));
+        int size = list.size();
+        if (size == 0) return;
+        short location = list.getRaw(boundedNextInt(random, size));
         BlockState state = section.states.get(location);
-        final BlockPos pos = new BlockPos((location & 15) | chunk.locX << 4, (location >>> (4 + 4)) | (sectionIdx + minSection) << 4, ((location >>> 4) & 15) | chunk.locZ << 4);
+        final BlockPos pos = new BlockPos((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
         state.randomTick(world, pos, random);
 
         final boolean doubleTickFluids = !ca.spottedleaf.moonrise.common.PlatformHooks.get().configFixMC224294();
