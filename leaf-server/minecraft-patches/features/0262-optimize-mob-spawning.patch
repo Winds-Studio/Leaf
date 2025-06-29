@@ -26,7 +26,7 @@ index 79674f4bd7a12c42dec19a4175012d7a2dc88b84..0a97a491737807d59815b75635fa3d8c
       }
      // Paper end - Optional per player mob spawns
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index 46e171ca454253c32e22c0c18587e9a7ba19f331..d91d6988268174ea9f2c919b57a6ba7ea00d7066 100644
+index 46e171ca454253c32e22c0c18587e9a7ba19f331..f3489fda7f144e13e23fdb4521c942489238fe75 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
 +++ b/net/minecraft/server/level/ServerChunkCache.java
 @@ -70,11 +70,11 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
@@ -108,32 +108,81 @@ index 46e171ca454253c32e22c0c18587e9a7ba19f331..d91d6988268174ea9f2c919b57a6ba7e
                              mobCapCalculator,  // This is the key fix - was previously null
                              level.paperConfig().entities.spawning.perPlayerMobSpawns
                          );
-@@ -627,9 +644,23 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
-             if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) Util.shuffle(list, this.shuffleRandom); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
+@@ -610,6 +627,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+                 chunkRange = Math.min(chunkRange, 8);
+                 entityPlayer.playerNaturallySpawnedEvent = new com.destroystokyo.paper.event.entity.PlayerNaturallySpawnCreaturesEvent(entityPlayer.getBukkitEntity(), (byte) chunkRange);
+                 entityPlayer.playerNaturallySpawnedEvent.callEvent();
++                this.level.natureSpawnChunkMap.addPlayer(entityPlayer); // Leaf - optimize collectSpawningChunks
+             }
+             // Paper end - PlayerNaturallySpawnCreaturesEvent
+             boolean flag = this.level.ticksPerSpawnCategory.getLong(org.bukkit.entity.SpawnCategory.ANIMAL) != 0L && this.level.getLevelData().getGameTime() % this.level.ticksPerSpawnCategory.getLong(org.bukkit.entity.SpawnCategory.ANIMAL) == 0L; // CraftBukkit
+@@ -621,16 +639,40 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+         List<LevelChunk> list = this.spawningChunks;
+ 
+         try {
+-            this.chunkMap.collectSpawningChunks(list);
++            // Leaf start - optimize mob spawning
++            // this.chunkMap.collectSpawningChunks(list);
++            this.level.natureSpawnChunkMap.build();
+             // Paper start - chunk tick iteration optimisation
+-            this.shuffleRandom.setSeed(this.level.random.nextLong());
+-            if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) Util.shuffle(list, this.shuffleRandom); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
++            if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) {
++                this.level.natureSpawnChunkMap.collectSpawningChunks(this.level.moonrise$getPlayerTickingChunks(), list);
++                this.shuffleRandom.setSeed(this.level.random.nextLong()); // Leaf - paw optimization - Only set seed if is really used
++                Util.shuffle(list, this.shuffleRandom); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
++            }
              // Paper end - chunk tick iteration optimisation
  
 -            for (LevelChunk levelChunk : list) {
 -                this.tickSpawningChunk(levelChunk, timeInhabited, filteredSpawningCategories, lastSpawnState); // Pufferfish
-+            // Leaf start - optimize mob spawning
-+            var lastSpawnState1 = lastSpawnState;
-+            if ((!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled || _pufferfish_spawnCountsReady.get()) && lastSpawnState1 != null) {
-+                lastSpawnState1.applyPerPlayerMobCount(level);
-+                if (list instanceof it.unimi.dsi.fastutil.objects.ReferenceArrayList<LevelChunk> arrayList) {
-+                    LevelChunk[] levelChunks = arrayList.elements();
-+                    int size = arrayList.size();
-+                    for (int i = 0; i < size; i++) {
-+                        this.tickSpawningChunk(levelChunks[i], timeInhabited, filteredSpawningCategories, lastSpawnState1); // Pufferfish
-+                    }
-+                } else {
-+                    for (LevelChunk levelChunk : list) {
-+                        this.tickSpawningChunk(levelChunk, timeInhabited, filteredSpawningCategories, lastSpawnState1); // Pufferfish
++            if (!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled || _pufferfish_spawnCountsReady.get()) {
++                NaturalSpawner.SpawnState currentState = lastSpawnState;
++                if (currentState != null) {
++                    currentState.applyPerPlayerMobCount(level);
++                    if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) {
++                        for (LevelChunk levelChunk : list) {
++                            this.tickSpawningChunk(levelChunk, timeInhabited, filteredSpawningCategories, currentState); // Pufferfish
++                        }
++                    } else {
++                        ca.spottedleaf.moonrise.common.list.ReferenceList<LevelChunk> chunks = this.level.moonrise$getPlayerTickingChunks();
++                        LevelChunk[] raw = chunks.getRawDataUnchecked();
++                        for (int i = 0, length = chunks.size(); i < length; i++) {
++                            LevelChunk levelChunk = raw[i];
++                            if (level.natureSpawnChunkMap.contains(levelChunk.locX, levelChunk.locZ)) {
++                                this.tickSpawningChunk(levelChunk, timeInhabited, filteredSpawningCategories, currentState); // Pufferfish
++                            }
++                        }
 +                    }
 +                }
              }
 +            // Leaf end - optimize mob spawning
          } finally {
++            this.level.natureSpawnChunkMap.clear(); // Leaf - optimize mob spawning
              list.clear();
          }
+ 
+@@ -648,7 +690,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+         }
+ 
+         if (!spawnCategories.isEmpty()) {
+-            if (this.level.getWorldBorder().isWithinBounds(pos) && (!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled || _pufferfish_spawnCountsReady.get())) { // Paper - rewrite chunk system // Pufferfish
++            if (this.level.getWorldBorder().isWithinBounds(pos)) { // Paper - rewrite chunk system
+                 NaturalSpawner.spawnForChunk(this.level, chunk, spawnState, spawnCategories);
+             }
+         }
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index fc61a7083232148397a0b330ce2a4d70ba38543d..d13ab16368d5fed5c81211b63c7670e534f6ed01 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1114,6 +1114,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+ 
+     private int currentIceAndSnowTick = 0; protected void resetIceAndSnowTick() { this.currentIceAndSnowTick = this.simpleRandom.nextInt(16); } // Gale - Airplane - optimize random calls in chunk ticking
+ 
++    public org.dreeam.leaf.world.NatureSpawnChunkMap natureSpawnChunkMap = new org.dreeam.leaf.world.NatureSpawnChunkMap(); // Leaf - optimize mob spawning
+     public void tickChunk(LevelChunk chunk, int randomTickSpeed) {
+         final net.minecraft.world.level.levelgen.BitRandomSource simpleRandom = this.simpleRandom; // Paper - optimise random ticking // Leaf - Faster random generator - upcasting
+         ChunkPos pos = chunk.getPos();
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
 index 81e176d17fb072f9ee531639abfe42134ae833a9..ab6fa7ed111ef16a0b6774c21988589ee2110c66 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
