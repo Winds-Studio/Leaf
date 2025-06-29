@@ -2,8 +2,8 @@ package org.dreeam.leaf.world;
 
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import com.destroystokyo.paper.event.entity.PlayerNaturallySpawnCreaturesEvent;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -11,22 +11,39 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import java.util.List;
 
 public class NatureSpawnChunkMap {
-    private final LongArrayList[] chunkPositionsByRadius;
-    private final LongOpenHashSet toCollect;
+    private static final long[][] TABLE = new long[][]{
+        {0L},
+        {0L, 4294967295L, -4294967296L, 4294967296L, 1L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, 4294967294L, -8589934592L, 8589934592L, 2L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, -4294967298L, -2L, 4294967294L, -4294967297L, -8589934592L, 8589934590L, 12884901886L, 12884901887L, 8589934592L, -8589934591L, 8589934593L, -8589934590L, -4294967294L, 2L, 4294967298L, 8589934594L, 4294967293L, -12884901888L, 12884901888L, 3L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, -4294967298L, -2L, 4294967294L, -4294967297L, -8589934592L, 8589934590L, 12884901886L, 12884901887L, 8589934592L, -8589934591L, 8589934593L, -8589934590L, -4294967294L, 2L, 4294967298L, 8589934594L, -4294967299L, -3L, -8589934594L, -8589934593L, 4294967293L, 8589934589L, -12884901888L, -12884901887L, 12884901885L, 17179869182L, 17179869183L, 12884901888L, 12884901889L, -12884901886L, 12884901890L, -8589934589L, -4294967293L, 3L, 4294967299L, 8589934595L, 4294967292L, -17179869184L, 17179869184L, 4L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, -4294967298L, -2L, 4294967294L, -4294967297L, -8589934592L, 8589934590L, 12884901886L, 12884901887L, 8589934592L, -8589934591L, 8589934593L, -8589934590L, -4294967294L, 2L, 4294967298L, 8589934594L, -8589934595L, -4294967299L, -3L, -8589934594L, -8589934593L, 4294967293L, 8589934589L, -12884901888L, -12884901887L, 12884901885L, 17179869181L, 17179869182L, 17179869183L, 12884901888L, 12884901889L, -12884901886L, 12884901890L, -12884901885L, -8589934589L, -4294967293L, 3L, 4294967299L, 8589934595L, 12884901891L, -8589934596L, -4294967300L, -12884901891L, -12884901890L, -4L, 4294967292L, -12884901889L, -17179869184L, 8589934588L, 12884901884L, -17179869183L, -17179869182L, 17179869180L, 21474836477L, 21474836478L, 21474836479L, 17179869184L, 17179869185L, 17179869186L, -17179869181L, 17179869187L, -12884901884L, -8589934588L, -4294967292L, 4L, 4294967300L, 8589934596L, 12884901892L, 4294967291L, -21474836480L, 21474836480L, 5L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, -4294967298L, -2L, 4294967294L, -4294967297L, -8589934592L, 8589934590L, 12884901886L, 12884901887L, 8589934592L, -8589934591L, 8589934593L, -8589934590L, -4294967294L, 2L, 4294967298L, 8589934594L, -8589934595L, -4294967299L, -3L, -8589934594L, -8589934593L, 4294967293L, 8589934589L, -12884901888L, -12884901887L, 12884901885L, 17179869181L, 17179869182L, 17179869183L, 12884901888L, 12884901889L, -12884901886L, 12884901890L, -12884901885L, -8589934589L, -4294967293L, 3L, 4294967299L, 8589934595L, 12884901891L, -12884901892L, -8589934596L, -4294967300L, -12884901891L, -12884901890L, -4L, 4294967292L, -12884901889L, -17179869184L, 8589934588L, 12884901884L, -17179869183L, -17179869182L, 17179869180L, 21474836476L, 21474836477L, 21474836478L, 21474836479L, 17179869184L, 17179869185L, 17179869186L, -17179869181L, 17179869187L, -17179869180L, -12884901884L, -8589934588L, -4294967292L, 4L, 4294967300L, 8589934596L, 12884901892L, 17179869188L, -8589934597L, -17179869187L, -4294967301L, -5L, -17179869186L, -17179869185L, 4294967291L, 8589934587L, -21474836480L, -21474836479L, 12884901883L, 17179869179L, -21474836478L, -21474836477L, 25769803773L, 25769803774L, 25769803775L, 21474836480L, 21474836481L, 21474836482L, 21474836483L, -12884901883L, -8589934587L, -4294967291L, 5L, 4294967301L, 8589934597L, 12884901893L, 4294967290L, -25769803776L, 25769803776L, 6L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, -4294967298L, -2L, 4294967294L, -4294967297L, -8589934592L, 8589934590L, 12884901886L, 12884901887L, 8589934592L, -8589934591L, 8589934593L, -8589934590L, -4294967294L, 2L, 4294967298L, 8589934594L, -8589934595L, -4294967299L, -3L, -8589934594L, -8589934593L, 4294967293L, 8589934589L, -12884901888L, -12884901887L, 12884901885L, 17179869181L, 17179869182L, 17179869183L, 12884901888L, 12884901889L, -12884901886L, 12884901890L, -12884901885L, -8589934589L, -4294967293L, 3L, 4294967299L, 8589934595L, 12884901891L, -12884901892L, -8589934596L, -4294967300L, -12884901891L, -12884901890L, -4L, 4294967292L, -12884901889L, -17179869184L, 8589934588L, 12884901884L, -17179869183L, -17179869182L, 17179869180L, 21474836476L, 21474836477L, 21474836478L, 21474836479L, 17179869184L, 17179869185L, 17179869186L, -17179869181L, 17179869187L, -17179869180L, -12884901884L, -8589934588L, -4294967292L, 4L, 4294967300L, 8589934596L, 12884901892L, 17179869188L, -12884901893L, -8589934597L, -17179869188L, -17179869187L, -4294967301L, -5L, -17179869186L, -17179869185L, 4294967291L, 8589934587L, -21474836480L, -21474836479L, 12884901883L, 17179869179L, -21474836478L, -21474836477L, 21474836475L, 25769803772L, 25769803773L, 25769803774L, 25769803775L, 21474836480L, 21474836481L, 21474836482L, 21474836483L, -21474836476L, 21474836484L, -17179869179L, -12884901883L, -8589934587L, -4294967291L, 5L, 4294967301L, 8589934597L, 12884901893L, 17179869189L, -8589934598L, -4294967302L, -21474836483L, -21474836482L, -6L, 4294967290L, -21474836481L, -25769803776L, 8589934586L, 12884901882L, -25769803775L, -25769803774L, 17179869178L, -25769803773L, 30064771069L, 30064771070L, 30064771071L, 25769803776L, 25769803777L, 25769803778L, 25769803779L, -12884901882L, -8589934586L, -4294967290L, 6L, 4294967302L, 8589934598L, 12884901894L, 4294967289L, -30064771072L, 30064771072L, 7L},
+        {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, -4294967298L, -2L, 4294967294L, -4294967297L, -8589934592L, 8589934590L, 12884901886L, 12884901887L, 8589934592L, -8589934591L, 8589934593L, -8589934590L, -4294967294L, 2L, 4294967298L, 8589934594L, -8589934595L, -4294967299L, -3L, -8589934594L, -8589934593L, 4294967293L, 8589934589L, -12884901888L, -12884901887L, 12884901885L, 17179869181L, 17179869182L, 17179869183L, 12884901888L, 12884901889L, -12884901886L, 12884901890L, -12884901885L, -8589934589L, -4294967293L, 3L, 4294967299L, 8589934595L, 12884901891L, -12884901892L, -8589934596L, -4294967300L, -12884901891L, -12884901890L, -4L, 4294967292L, -12884901889L, -17179869184L, 8589934588L, 12884901884L, -17179869183L, -17179869182L, 17179869180L, 21474836476L, 21474836477L, 21474836478L, 21474836479L, 17179869184L, 17179869185L, 17179869186L, -17179869181L, 17179869187L, -17179869180L, -12884901884L, -8589934588L, -4294967292L, 4L, 4294967300L, 8589934596L, 12884901892L, 17179869188L, -17179869189L, -12884901893L, -8589934597L, -17179869188L, -17179869187L, -4294967301L, -5L, -17179869186L, -17179869185L, 4294967291L, 8589934587L, -21474836480L, -21474836479L, 12884901883L, 17179869179L, -21474836478L, -21474836477L, 21474836475L, 25769803771L, 25769803772L, 25769803773L, 25769803774L, 25769803775L, 21474836480L, 21474836481L, 21474836482L, 21474836483L, -21474836476L, 21474836484L, -21474836475L, -17179869179L, -12884901883L, -8589934587L, -4294967291L, 5L, 4294967301L, 8589934597L, 12884901893L, 17179869189L, 21474836485L, -17179869190L, -12884901894L, -21474836485L, -21474836484L, -8589934598L, -4294967302L, -21474836483L, -21474836482L, -6L, 4294967290L, -21474836481L, -25769803776L, 8589934586L, 12884901882L, -25769803775L, -25769803774L, 17179869178L, 21474836474L, -25769803773L, -25769803772L, 25769803770L, 30064771067L, 30064771068L, 30064771069L, 30064771070L, 30064771071L, 25769803776L, 25769803777L, 25769803778L, 25769803779L, 25769803780L, -25769803771L, 25769803781L, -21474836474L, -17179869178L, -12884901882L, -8589934586L, -4294967290L, 6L, 4294967302L, 8589934598L, 12884901894L, 17179869190L, 21474836486L, -8589934599L, -25769803779L, -4294967303L, -7L, -25769803778L, -25769803777L, 4294967289L, 8589934585L, -30064771072L, -30064771071L, 12884901881L, 17179869177L, -30064771070L, -30064771069L, 34359738365L, 34359738366L, 34359738367L, 30064771072L, 30064771073L, 30064771074L, 30064771075L, -12884901881L, -8589934585L, -4294967289L, 7L, 4294967303L, 8589934599L, 12884901895L, 4294967288L, -34359738368L, 34359738368L, 8L}
+    };
     private static final int MAX_RADIUS = 8;
+    private static final int SIZE_RADIUS = 9;
+    private static final int REGION_MASK = 15;
+    private static final int REGION_SHIFT = 4;
+
+    private final LongArrayList[] chunkPositionsByRadius;
+    // 8 * 8 = 64
+    private final Long2LongOpenHashMap regionBitSet;
 
     public NatureSpawnChunkMap() {
-        this.chunkPositionsByRadius = new LongArrayList[MAX_RADIUS];
-        for (int i = 0; i < MAX_RADIUS; i++) {
+        this.chunkPositionsByRadius = new LongArrayList[SIZE_RADIUS];
+        for (int i = 0; i < SIZE_RADIUS; i++) {
             chunkPositionsByRadius[i] = new LongArrayList();
         }
-        this.toCollect = new LongOpenHashSet();
+        this.regionBitSet = new Long2LongOpenHashMap();
     }
 
     public void clear() {
         for (LongArrayList chunkPosition : chunkPositionsByRadius) {
             chunkPosition.clear();
         }
+        this.regionBitSet.clear();
     }
 
     public void addPlayer(ServerPlayer player) {
@@ -38,60 +55,102 @@ public class NatureSpawnChunkMap {
             return;
         }
         int range = event.getSpawnRadius();
-        if (range > MAX_RADIUS || range < 1) return;
-        this.chunkPositionsByRadius[range - 1].add(player.chunkPosition().longKey);
+        if (range > MAX_RADIUS || range < 0) return;
+        this.chunkPositionsByRadius[range].add(player.chunkPosition().longKey);
     }
 
     public void build() {
-        this.toCollect.clear();
-        for (int index = 0; index < MAX_RADIUS; index++) {
-            LongArrayList list = chunkPositionsByRadius[index];
-            int n = list.size();
-            if (n == 0) {
-                continue;
-            }
-            list.unstableSort(null);
-            long[] centersRaw = list.elements();
-            int size = 0;
-            for (int i = 1; i < n; i++) {
-                long current = centersRaw[i];
-                long last = centersRaw[size];
-                if (current != last) {
-                    size++;
-                    centersRaw[size] = current;
+        for (int index = 0; index < SIZE_RADIUS; index++) {
+            buildBy(index);
+        }
+    }
+
+    private void buildBy(int index) {
+        LongArrayList list = chunkPositionsByRadius[index];
+        int centersSize = deduplicate(list);
+        if (centersSize == 0) return;
+        long[] centersRaw = list.elements();
+        long cachedKey = ChunkPos.asLong(ChunkPos.getX(centersRaw[0]) >> REGION_SHIFT, ChunkPos.getZ(centersRaw[0]) >> REGION_SHIFT);
+        long cachedVal = regionBitSet.get(cachedKey);
+        long[] offsets = TABLE[index];
+        for (int i = 0; i < centersSize; i++) {
+            long center = centersRaw[i];
+            int cx = ChunkPos.getX(center);
+            int cz = ChunkPos.getZ(center);
+
+            for (long packedOffset : offsets) {
+                int dx = ChunkPos.getX(packedOffset);
+                int dz = ChunkPos.getZ(packedOffset);
+                int chunkX = cx + dx;
+                int chunkZ = cz + dz;
+
+                int regionX = chunkX >> REGION_SHIFT;
+                int regionZ = chunkZ >> REGION_SHIFT;
+                long regionKey = ChunkPos.asLong(regionX, regionZ);
+
+                int localX = chunkX & REGION_MASK;
+                int localZ = chunkZ & REGION_MASK;
+                int bitIndex = (localZ << REGION_SHIFT) | localX;
+                long bitMask = 1L << bitIndex;
+
+                if (regionKey != cachedKey) {
+                    regionBitSet.put(cachedKey, cachedVal);
+                    cachedKey = regionKey;
+                    cachedVal = regionBitSet.get(regionKey);
                 }
-            }
-            size++;
-            int radius = index + 1;
-            int rsqr = radius * radius;
-            for (int i = 0, j = size; i < j; i++) {
-                long center = centersRaw[i];
-                int cx = ChunkPos.getX(center);
-                int cz = ChunkPos.getZ(center);
-                int minX = cx - radius;
-                int maxX = cx + radius;
-                int minZ = cz - radius;
-                int maxZ = cz + radius;
-                for (int x = minX; x <= maxX; x++) {
-                    for (int z = minZ; z <= maxZ; z++) {
-                        int dx = x - cx;
-                        int dz = z - cz;
-                        if (dx * dx + dz * dz <= rsqr) {
-                            this.toCollect.add(ChunkPos.asLong(x, z));
-                        }
-                    }
-                }
+
+                cachedVal |= bitMask;
             }
         }
+
+        regionBitSet.put(cachedKey, cachedVal);
+    }
+
+    private int deduplicate(LongArrayList list) {
+        int n = list.size();
+        if (n == 0) {
+            return 0;
+        }
+        list.unstableSort(null);
+        long[] centersRaw = list.elements();
+        int size = 0;
+        for (int i = 1; i < n; i++) {
+            long current = centersRaw[i];
+            long last = centersRaw[size];
+            if (current != last) {
+                size++;
+                centersRaw[size] = current;
+            }
+        }
+        return size + 1;
     }
 
     public void collectSpawningChunks(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
         LevelChunk[] raw = chunks.getRawDataUnchecked();
-        for (int i = 0, l = chunks.size(); i < l; i++) {
+        int length = chunks.size();
+        if (length == 0) {
+            return;
+        }
+
+        long cachedKey = ChunkPos.asLong(raw[0].locX >> REGION_SHIFT, raw[0].locZ >> REGION_SHIFT);
+        long cachedVal = regionBitSet.get(cachedKey);
+
+        for (int i = 0; i < length; i++) {
             LevelChunk chunk = raw[i];
             int chunkX = chunk.locX;
             int chunkZ = chunk.locZ;
-            if (toCollect.contains(ChunkPos.asLong(chunkX, chunkZ))) {
+
+            int regionX = chunkX >> REGION_SHIFT;
+            int regionZ = chunkZ >> REGION_SHIFT;
+            long regionKey = ChunkPos.asLong(regionX, regionZ);
+
+            if (regionKey != cachedKey) {
+                cachedKey = regionKey;
+                cachedVal = regionBitSet.get(regionKey);
+            }
+
+            int bitIndex = ((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK);
+            if ((cachedVal & (1L << bitIndex)) != 0L) {
                 out.add(chunk);
             }
         }
