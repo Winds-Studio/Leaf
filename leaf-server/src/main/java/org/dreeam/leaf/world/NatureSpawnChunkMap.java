@@ -11,7 +11,8 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import java.util.List;
 
 public class NatureSpawnChunkMap {
-    private static final long[][] TABLE = new long[][]{
+    // 0 4 12 28 48 80 112 148 196
+    private static final long[][] TABLE_BFS = new long[][]{
         {0L},
         {0L, 4294967295L, -4294967296L, 4294967296L, 1L},
         {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, 4294967294L, -8589934592L, 8589934592L, 2L},
@@ -55,7 +56,11 @@ public class NatureSpawnChunkMap {
             return;
         }
         int range = event.getSpawnRadius();
-        if (range > MAX_RADIUS || range < 0) return;
+        if (range > MAX_RADIUS) {
+            range = MAX_RADIUS;
+        } else if (range < 0) {
+            return;
+        }
         this.chunkPositionsByRadius[range].add(player.chunkPosition().longKey);
     }
 
@@ -72,7 +77,7 @@ public class NatureSpawnChunkMap {
         long[] centersRaw = list.elements();
         long cachedKey = ChunkPos.asLong(ChunkPos.getX(centersRaw[0]) >> REGION_SHIFT, ChunkPos.getZ(centersRaw[0]) >> REGION_SHIFT);
         long cachedVal = regionBitSet.get(cachedKey);
-        long[] offsets = TABLE[index];
+        long[] offsets = TABLE_BFS[index];
         for (int i = 0; i < centersSize; i++) {
             long center = centersRaw[i];
             int cx = ChunkPos.getX(center);
