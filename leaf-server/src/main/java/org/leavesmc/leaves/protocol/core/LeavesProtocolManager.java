@@ -28,7 +28,6 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -322,9 +321,8 @@ public class LeavesProtocolManager {
         if (set.isEmpty()) return;
         // Leaf end - optimize leaves protocol manager
         ProtocolUtils.sendBytebufPacket(player, ResourceLocation.fromNamespaceAndPath("minecraft", "register"), buf -> {
-            ResourceLocation channel;
-            for (Iterator<String> var3 = set.iterator(); var3.hasNext(); buf.writeBytes(channel.toString().getBytes(StandardCharsets.US_ASCII))) {
-                channel = ResourceLocation.parse(var3.next());
+            for (String channel : set) {
+                buf.writeBytes(channel.getBytes(StandardCharsets.US_ASCII));
                 buf.writeByte(0);
             }
             buf.writerIndex(Math.max(buf.writerIndex() - 1, 0));

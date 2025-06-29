@@ -36,10 +36,12 @@ import net.minecraft.world.level.block.entity.HopperBlockEntity;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.entity.TrialSpawnerBlockEntity;
+import org.bukkit.Bukkit;
 import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.leavesmc.leaves.LeavesLogger;
+import org.leavesmc.leaves.plugin.MinecraftInternalPlugin;
 import org.leavesmc.leaves.protocol.core.LeavesProtocol;
 import org.leavesmc.leaves.protocol.core.ProtocolHandler;
 import org.leavesmc.leaves.protocol.core.ProtocolUtils;
@@ -181,7 +183,7 @@ public class JadeProtocol implements LeavesProtocol {
 
     @ProtocolHandler.PayloadReceiver(payload = RequestEntityPayload.class)
     public static void requestEntityData(ServerPlayer player, RequestEntityPayload payload) {
-        MinecraftServer.getServer().execute(() -> {
+        Bukkit.getGlobalRegionScheduler().run(MinecraftInternalPlugin.INSTANCE, (task) -> {
             EntityAccessor accessor = payload.data().unpack(player);
             if (accessor == null) {
                 return;
@@ -217,8 +219,7 @@ public class JadeProtocol implements LeavesProtocol {
 
     @ProtocolHandler.PayloadReceiver(payload = RequestBlockPayload.class)
     public static void requestBlockData(ServerPlayer player, RequestBlockPayload payload) {
-        MinecraftServer server = MinecraftServer.getServer();
-        server.execute(() -> {
+        Bukkit.getGlobalRegionScheduler().run(MinecraftInternalPlugin.INSTANCE, (task) -> {
             BlockAccessor accessor = payload.data().unpack(player);
             if (accessor == null) {
                 return;

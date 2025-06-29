@@ -59,6 +59,7 @@ public class DownloadExchange extends AbstractExchange {
                     MessageType.ERROR,
                     "syncmatica.error.cancelled_transmit_exceed_quota"
                 );
+                return;
             }
             try {
                 packetBuf.readBytes(outputStream, size);

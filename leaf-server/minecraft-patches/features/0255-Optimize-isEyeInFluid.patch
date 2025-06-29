@@ -1,0 +1,316 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wling-art <wlingzhenyu@163.com>
+Date: Sat, 17 May 2025 08:25:33 +0800
+Subject: [PATCH] Optimize isEyeInFluid
+
+
+diff --git a/net/minecraft/core/Holder.java b/net/minecraft/core/Holder.java
+index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32ca294673 100644
+--- a/net/minecraft/core/Holder.java
++++ b/net/minecraft/core/Holder.java
+@@ -29,6 +29,8 @@ public interface Holder<T> {
+ 
+     Stream<TagKey<T>> tags();
+ 
++    TagKey<T>[] tagArray(); // Leaf - Optimize isEyeInFluid
++
+     Either<ResourceKey<T>, T> unwrap();
+ 
+     Optional<ResourceKey<T>> unwrapKey();
+@@ -105,6 +107,13 @@ public interface Holder<T> {
+         public Stream<TagKey<T>> tags() {
+             return Stream.of();
+         }
++
++        // Leaf start - Optimize isEyeInFluid
++        @Override
++        public TagKey<T>[] tagArray() {
++            return me.titaniumtown.ArrayConstants.emptyTagKeyArray;
++        }
++        // Leaf end - Optimize isEyeInFluid
+     }
+ 
+     public static enum Kind {
+@@ -116,6 +125,7 @@ public interface Holder<T> {
+         private final HolderOwner<T> owner;
+         @Nullable
+         private Set<TagKey<T>> tags;
++        @Nullable private TagKey<T>[] tagArray; // Leaf - Optimize isEyeInFluid
+         private final Holder.Reference.Type type;
+         @Nullable
+         private ResourceKey<T> key;
+@@ -173,6 +183,16 @@ public interface Holder<T> {
+             }
+         }
+ 
++        // Leaf start - Optimize isEyeInFluid
++        private TagKey<T>[] boundTagArray() {
++            if (this.tags == null || this.tagArray == null) {
++                throw new IllegalStateException("Tags not bound");
++            } else {
++                return this.tagArray;
++            }
++        }
++        // Leaf end - Optimize isEyeInFluid
++
+         @Override
+         public boolean is(TagKey<T> tagKey) {
+             return this.boundTags().contains(tagKey);
+@@ -231,6 +251,7 @@ public interface Holder<T> {
+ 
+         void bindTags(Collection<TagKey<T>> tags) {
+             this.tags = it.unimi.dsi.fastutil.objects.ReferenceSets.unmodifiable(new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(tags)); // Paper - use reference set because TagKey are interned
++            this.tagArray = this.tags.toArray(new TagKey[0]); // Leaf - Optimize isEyeInFluid
+         }
+ 
+         @Override
+@@ -238,6 +259,13 @@ public interface Holder<T> {
+             return this.boundTags().stream();
+         }
+ 
++        // Leaf start - Optimize isEyeInFluid
++        @Override
++        public TagKey<T>[] tagArray() {
++            return this.boundTagArray();
++        }
++        // Leaf end - Optimize isEyeInFluid
++
+         @Override
+         public String toString() {
+             return "Reference{" + this.key + "=" + this.value + "}";
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index cc015575efcb0c3d56d33510a1f43f40996eab1a..672301fcfe89dda6fb20bc0cd18d18fc26cd2efa 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -1979,7 +1979,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+                     this.awardStat(Stats.SWIM_ONE_CM, rounded);
+                     this.causeFoodExhaustion(this.level().spigotConfig.swimMultiplier * (float) rounded * 0.01F, org.bukkit.event.entity.EntityExhaustionEvent.ExhaustionReason.SWIM); // CraftBukkit - EntityExhaustionEvent // Spigot
+                 }
+-            } else if (this.isEyeInFluid(FluidTags.WATER)) {
++            } else if (this.isEyeInWater()) { // Leaf - Optimize isEyeInFluid
+                 int rounded = Math.round((float)Math.sqrt(dx * dx + dy * dy + dz * dz) * 100.0F);
+                 if (rounded > 0) {
+                     this.awardStat(Stats.WALK_UNDER_WATER_ONE_CM, rounded);
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 5f82c902c9229e8bbba5dc74a89ff4a27e7649fc..eff20b8de6bddfeec4f25e6381bf914bca38e1c6 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -288,7 +288,14 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     public boolean wasTouchingWater;
+     protected Object2DoubleMap<TagKey<Fluid>> fluidHeight = new Object2DoubleArrayMap<>(2);
+     protected boolean wasEyeInWater;
+-    private final Set<TagKey<Fluid>> fluidOnEyes = new HashSet<>();
++    // Leaf start - Optimize isEyeInFluid
++    // Remove original field since plugin should not direct access to it, and able to
++    // expose potential incompatibility asap.
++    // In paper api, if plugins have custom conditions, then It's more reasonable to
++    // use isEyeInFluid and their own conditions.
++    //private final Set<TagKey<Fluid>> fluidOnEyes = null;
++    private int isInWaterOrLava;
++    // Leaf end - Optimize isEyeInFluid
+     public int invulnerableTime;
+     protected boolean firstTick = true;
+     protected final SynchedEntityData entityData;
+@@ -2070,8 +2077,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     private void updateFluidOnEyes() {
+-        this.wasEyeInWater = this.isEyeInFluid(FluidTags.WATER);
+-        this.fluidOnEyes.clear();
++        this.wasEyeInWater = this.isInWaterOrLava == 1; // Leaf - Optimize isEyeInFluid
++        this.isInWaterOrLava = 0; // Leaf - Optimize isEyeInFluid - reset cache
+         double eyeY = this.getEyeY();
+         if (!(
+             this.getVehicle() instanceof AbstractBoat abstractBoat
+@@ -2083,7 +2090,10 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+             FluidState fluidState = this.level().getFluidState(blockPos);
+             double d = blockPos.getY() + fluidState.getHeight(this.level(), blockPos);
+             if (d > eyeY) {
+-                fluidState.getTags().forEach(this.fluidOnEyes::add);
++                // Leaf start - Optimize isEyeInFluid
++                TagKey<Fluid>[] tags = fluidState.getTagArray();
++                this.isInWaterOrLava = tags.length == 0 ? 0 : tags[0] == FluidTags.WATER ? 1 : 2;
++                // Leaf end - Optimize isEyeInFluid
+             }
+         }
+     }
+@@ -2163,9 +2173,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         }
+     }
+ 
++    // Leaf start - Optimize isEyeInFluid
+     public boolean isEyeInFluid(TagKey<Fluid> fluidTag) {
+-        return this.fluidOnEyes.contains(fluidTag);
++        if (isInWaterOrLava == 0) {
++            return false;
++        }
++        if (fluidTag == FluidTags.WATER && isInWaterOrLava == 1) {
++            return true;
++        }
++        return fluidTag == FluidTags.LAVA && isInWaterOrLava == 2;
++    }
++
++    public boolean isEyeInWater() {
++        return isInWaterOrLava == 1;
++    }
++
++    public boolean isEyeInLava() {
++        return isInWaterOrLava == 2;
+     }
++    // Leaf end - Optimize isEyeInFluid
+ 
+     public boolean isInLava() {
+         return !this.firstTick && this.fluidHeight.getDouble(FluidTags.LAVA) > 0.0;
+diff --git a/net/minecraft/world/entity/ExperienceOrb.java b/net/minecraft/world/entity/ExperienceOrb.java
+index c8354d46ed909090f7c15f396863bf7d73afcefa..3ee788b172240ccf38cb31385dff13364ccc4142 100644
+--- a/net/minecraft/world/entity/ExperienceOrb.java
++++ b/net/minecraft/world/entity/ExperienceOrb.java
+@@ -153,7 +153,7 @@ public class ExperienceOrb extends Entity {
+         } else {
+             super.tick();
+             boolean flag = !this.level().noCollision(this.getBoundingBox());
+-            if (this.isEyeInFluid(FluidTags.WATER)) {
++            if (this.isEyeInWater()) { // Leaf - Optimize isEyeInFluid
+                 this.setUnderwaterMovement();
+             } else if (!flag) {
+                 this.applyGravity();
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index f95792b8642dc86a4d88e1d756de65d6cae2fa98..be8cc4aceafc183808a6d0f7278ef8378c4265e0 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -463,7 +463,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+                 }
+             }
+ 
+-            if (this.isEyeInFluid(FluidTags.WATER)
++            if (this.isEyeInWater() // Leaf - Optimize isEyeInFluid
+                 && !serverLevel1.getBlockState(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ())).is(Blocks.BUBBLE_COLUMN)) {
+                 boolean flag1 = !this.canBreatheUnderwater()
+                     && !MobEffectUtil.hasWaterBreathing(this)
+diff --git a/net/minecraft/world/entity/animal/AbstractFish.java b/net/minecraft/world/entity/animal/AbstractFish.java
+index 0002e39e2670ad92849ccc0aada163b174fe1ec2..36b787f5cf4f30589d8b78f86b58553895a1ae51 100644
+--- a/net/minecraft/world/entity/animal/AbstractFish.java
++++ b/net/minecraft/world/entity/animal/AbstractFish.java
+@@ -182,7 +182,7 @@ public abstract class AbstractFish extends WaterAnimal implements Bucketable {
+ 
+         @Override
+         public void vanillaTick() { // Purpur - Ridables
+-            if (this.fish.isEyeInFluid(FluidTags.WATER)) {
++            if (this.fish.isEyeInWater()) { // Leaf - Optimize isEyeInFluid
+                 this.fish.setDeltaMovement(this.fish.getDeltaMovement().add(0.0, 0.005, 0.0));
+             }
+ 
+diff --git a/net/minecraft/world/entity/animal/horse/SkeletonHorse.java b/net/minecraft/world/entity/animal/horse/SkeletonHorse.java
+index f6ab6ecc10486694d77905239a82bda4dec94936..8550a8758b1b26e0ddd9ed7f6ae0f167e23d96fe 100644
+--- a/net/minecraft/world/entity/animal/horse/SkeletonHorse.java
++++ b/net/minecraft/world/entity/animal/horse/SkeletonHorse.java
+@@ -111,7 +111,7 @@ public class SkeletonHorse extends AbstractHorse {
+ 
+     @Override
+     public SoundEvent getAmbientSound() {
+-        return this.isEyeInFluid(FluidTags.WATER) ? SoundEvents.SKELETON_HORSE_AMBIENT_WATER : SoundEvents.SKELETON_HORSE_AMBIENT;
++        return this.isEyeInWater() ? SoundEvents.SKELETON_HORSE_AMBIENT_WATER : SoundEvents.SKELETON_HORSE_AMBIENT; // Leaf - Optimize isEyeInFluid
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/entity/monster/Strider.java b/net/minecraft/world/entity/monster/Strider.java
+index 727effd31644432f9da04ee4e3aaa41ce45d6a2e..af9f07f7bcdd75dfa0dff975afcd30476ec5b206 100644
+--- a/net/minecraft/world/entity/monster/Strider.java
++++ b/net/minecraft/world/entity/monster/Strider.java
+@@ -391,7 +391,7 @@ public class Strider extends Animal implements ItemSteerable {
+ 
+     @Override
+     protected boolean canAddPassenger(Entity passenger) {
+-        return !this.isVehicle() && !this.isEyeInFluid(FluidTags.LAVA);
++        return !this.isVehicle() && !this.isEyeInLava(); // Leaf - Optimize isEyeInFluid
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/entity/monster/Witch.java b/net/minecraft/world/entity/monster/Witch.java
+index 4b253ae8149f5d9505c5140a00a96d8c8850b1c4..bfb0e3381abb93bea1079fb0d476cf856fca442e 100644
+--- a/net/minecraft/world/entity/monster/Witch.java
++++ b/net/minecraft/world/entity/monster/Witch.java
+@@ -178,7 +178,7 @@ public class Witch extends Raider implements RangedAttackMob {
+                 }
+             } else {
+                 Holder<Potion> holder = null;
+-                if (this.random.nextFloat() < 0.15F && this.isEyeInFluid(FluidTags.WATER) && !this.hasEffect(MobEffects.WATER_BREATHING)) {
++                if (this.random.nextFloat() < 0.15F && this.isEyeInWater() && !this.hasEffect(MobEffects.WATER_BREATHING)) { // Leaf - Optimize isEyeInFluid
+                     holder = Potions.WATER_BREATHING;
+                 } else if (this.random.nextFloat() < 0.15F
+                     && (this.isOnFire() || this.getLastDamageSource() != null && this.getLastDamageSource().is(DamageTypeTags.IS_FIRE))
+diff --git a/net/minecraft/world/entity/monster/Zombie.java b/net/minecraft/world/entity/monster/Zombie.java
+index 5563720a6d92cad974632bdc97bb35c15310483c..b65dfebab222d2fbc4b68367bbe722447d85d5fa 100644
+--- a/net/minecraft/world/entity/monster/Zombie.java
++++ b/net/minecraft/world/entity/monster/Zombie.java
+@@ -286,7 +286,7 @@ public class Zombie extends Monster {
+                     this.doUnderWaterConversion();
+                 }
+             } else if (this.convertsInWater()) {
+-                if (this.isEyeInFluid(FluidTags.WATER)) {
++                if (this.isEyeInWater()) { // Leaf - Optimize isEyeInFluid
+                     this.inWaterTime++;
+                     if (this.inWaterTime >= 600) {
+                         this.startUnderWaterConversion(300);
+diff --git a/net/minecraft/world/entity/player/Player.java b/net/minecraft/world/entity/player/Player.java
+index 34fefafa3d3ed9a336dd57c51d6549b470c22b3a..4dca1f9ac2ee2cd8ff4df64fe46fb8da047dbf80 100644
+--- a/net/minecraft/world/entity/player/Player.java
++++ b/net/minecraft/world/entity/player/Player.java
+@@ -398,7 +398,7 @@ public abstract class Player extends LivingEntity {
+             this.lastItemInMainHand = mainHandItem.copy();
+         }
+ 
+-        if (!this.isEyeInFluid(FluidTags.WATER) && this.isEquipped(Items.TURTLE_HELMET)) {
++        if (!this.isEyeInWater() && this.isEquipped(Items.TURTLE_HELMET)) { // Leaf - Optimize isEyeInFluid
+             this.turtleHelmetTick();
+         }
+ 
+@@ -438,8 +438,7 @@ public abstract class Player extends LivingEntity {
+     }
+ 
+     protected boolean updateIsUnderwater() {
+-        this.wasUnderwater = this.isEyeInFluid(FluidTags.WATER);
+-        return this.wasUnderwater;
++        return this.wasUnderwater = this.isEyeInWater(); // Leaf - Optimize isEyeInFluid
+     }
+ 
+     @Override
+@@ -845,7 +844,7 @@ public abstract class Player extends LivingEntity {
+         }
+ 
+         destroySpeed *= (float)this.getAttributeValue(Attributes.BLOCK_BREAK_SPEED);
+-        if (this.isEyeInFluid(FluidTags.WATER)) {
++        if (this.isEyeInWater()) { // Leaf - Optimize isEyeInFluid
+             destroySpeed *= (float)this.getAttribute(Attributes.SUBMERGED_MINING_SPEED).getValue();
+         }
+ 
+diff --git a/net/minecraft/world/entity/vehicle/AbstractBoat.java b/net/minecraft/world/entity/vehicle/AbstractBoat.java
+index d947801b616af5b5dcdcc8bb70b36f97d6a69fdd..678badf7622b81e94c973bed2082fbfafa596b24 100644
+--- a/net/minecraft/world/entity/vehicle/AbstractBoat.java
++++ b/net/minecraft/world/entity/vehicle/AbstractBoat.java
+@@ -793,7 +793,7 @@ public abstract class AbstractBoat extends VehicleEntity implements Leashable {
+ 
+     @Override
+     protected boolean canAddPassenger(Entity passenger) {
+-        return this.getPassengers().size() < this.getMaxPassengers() && !this.isEyeInFluid(FluidTags.WATER);
++        return this.getPassengers().size() < this.getMaxPassengers() && !this.isEyeInWater(); // Leaf - Optimize isEyeInFluid
+     }
+ 
+     protected int getMaxPassengers() {
+diff --git a/net/minecraft/world/level/material/FluidState.java b/net/minecraft/world/level/material/FluidState.java
+index 0a5ae623a636923f3bbd3c01974497f39b7c4b62..cc6f2f756c407630aa4e99be329f643c9994af29 100644
+--- a/net/minecraft/world/level/material/FluidState.java
++++ b/net/minecraft/world/level/material/FluidState.java
+@@ -167,6 +167,12 @@ public final class FluidState extends StateHolder<Fluid, FluidState> implements
+         return this.owner.builtInRegistryHolder().tags();
+     }
+ 
++    // Leaf start - Optimize isEyeInFluid
++    public TagKey<Fluid>[] getTagArray() {
++        return this.owner.builtInRegistryHolder().tagArray();
++    }
++    // Leaf end - Optimize isEyeInFluid
++
+     public void entityInside(Level level, BlockPos pos, Entity entity, InsideBlockEffectApplier effectApplier) {
+         this.getType().entityInside(level, pos, entity, effectApplier);
+     }

@@ -43,9 +43,7 @@ public class ProtocolSupport extends ConfigModules {
         syncmaticaQuota = config.getBoolean(getBasePath() + ".syncmatica-quota", syncmaticaQuota);
         syncmaticaQuotaLimit = config.getInt(getBasePath() + ".syncmatica-quota-limit", syncmaticaQuotaLimit);
 
-        if (syncmaticaProtocol) {
-            org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init();
-        }
+        org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol);
 
         doABarrelRollProtocol = config.getBoolean(getBasePath() + ".do-a-barrel-roll-protocol", doABarrelRollProtocol);
         doABarrelRollAllowThrusting = config.getBoolean(getBasePath() + ".do-a-barrel-roll-allow-thrusting", doABarrelRollAllowThrusting);

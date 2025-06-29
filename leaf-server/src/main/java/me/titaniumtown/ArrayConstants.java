@@ -16,4 +16,5 @@ public final class ArrayConstants {
     public static final org.bukkit.entity.Entity[] emptyBukkitEntityArray = new org.bukkit.entity.Entity[0];
     public static final net.minecraft.world.entity.Entity[] emptyEntityArray = new net.minecraft.world.entity.Entity[0];
     //public static final net.minecraft.server.level.ServerLevel[] emptyServerLevelArray = new net.minecraft.server.level.ServerLevel[0];
+    public static final net.minecraft.tags.TagKey[] emptyTagKeyArray = new net.minecraft.tags.TagKey[0]; // Leaf - Optimize isEyeInFluid
 }
