@@ -12,8 +12,6 @@ public class MultithreadedTracker extends ConfigModules {
 
     public static boolean enabled = false;
     public static boolean compatModeEnabled = false;
-    public static int asyncEntityTrackerMaxThreads = 0;
-    public static int asyncEntityTrackerKeepalive = 60;
     private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
@@ -40,21 +38,9 @@ public class MultithreadedTracker extends ConfigModules {
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         compatModeEnabled = config.getBoolean(getBasePath() + ".compat-mode", compatModeEnabled);
-        asyncEntityTrackerMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncEntityTrackerMaxThreads);
-        asyncEntityTrackerKeepalive = config.getInt(getBasePath() + ".keepalive", asyncEntityTrackerKeepalive);
-
-        if (asyncEntityTrackerMaxThreads < 0)
-            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncEntityTrackerMaxThreads, 1);
-        else if (asyncEntityTrackerMaxThreads == 0)
-            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() / 3, 1);
-
-        if (!enabled)
-            asyncEntityTrackerMaxThreads = 0;
-        else
-            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", asyncEntityTrackerMaxThreads);
 
         if (enabled) {
-            org.dreeam.leaf.async.tracker.MultithreadedTracker.init();
+            LeafConfig.LOGGER.info("Async Entity Tracker is enabled.");
         }
     }
 }

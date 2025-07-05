@@ -5,7 +5,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.async.ai.AsyncGoalThread;
 import org.dreeam.leaf.async.path.AsyncPathProcessor;
-import org.dreeam.leaf.async.tracker.MultithreadedTracker;
+// CHANGE: MultithreadedTracker import is no longer needed here.
 
 import java.util.concurrent.TimeUnit;
 
@@ -40,14 +40,6 @@ public class ShutdownExecutors {
             }
         }
 
-        if (MultithreadedTracker.TRACKER_EXECUTOR != null) {
-            LOGGER.info("Waiting for mob tracker executor to shutdown...");
-            MultithreadedTracker.TRACKER_EXECUTOR.shutdown();
-            try {
-                MultithreadedTracker.TRACKER_EXECUTOR.awaitTermination(10L, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-            }
-        }
 
         if (AsyncPathProcessor.PATH_PROCESSING_EXECUTOR != null) {
             LOGGER.info("Waiting for mob pathfinding executor to shutdown...");
