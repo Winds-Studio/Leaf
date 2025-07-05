@@ -17,7 +17,8 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+// CHANGE: No longer need LinkedBlockingQueue
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -95,12 +96,10 @@ public class MultithreadedTracker {
         final ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
         final int trackerEntitiesSize = trackerEntities.size();
-        final Runnable[] sendChangesTasks = new Runnable[trackerEntitiesSize];
-        final Runnable[] tickTask = new Runnable[trackerEntitiesSize];
-        int index = 0;
+        final List<TrackingData> trackingTasks = new ArrayList<>(trackerEntitiesSize);
 
         for (int i = 0; i < trackerEntitiesSize; i++) {
-            Entity entity = trackerEntitiesRaw[i];
+            final Entity entity = trackerEntitiesRaw[i];
             if (entity == null) continue;
 
             final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
@@ -108,23 +107,20 @@ public class MultithreadedTracker {
             if (tracker == null) continue;
 
             synchronized (tracker) {
-                tickTask[index] = tracker.leafTickCompact(nearbyPlayers.getChunk(entity.chunkPosition()));
-                sendChangesTasks[index] = tracker.serverEntity::sendChanges; // Collect send changes to task array
+                trackingTasks.add(new TrackingData(tracker, nearbyPlayers.getChunk(entity.chunkPosition())));
             }
-            index++;
         }
 
         // batch submit tasks
         TRACKER_EXECUTOR.execute(() -> {
-            for (final Runnable tick : tickTask) {
-                if (tick == null) continue;
-
-                tick.run();
+            for (final TrackingData task : trackingTasks) {
+                final Runnable tick = task.tracker.leafTickCompact(task.trackedChunk);
+                if (tick != null) {
+                    tick.run();
+                }
             }
-            for (final Runnable sendChanges : sendChangesTasks) {
-                if (sendChanges == null) continue;
-
-                sendChanges.run();
+            for (final TrackingData task : trackingTasks) {
+                task.tracker.serverEntity.sendChanges();
             }
         });
     }
@@ -163,9 +159,9 @@ public class MultithreadedTracker {
     }
 
     private static BlockingQueue<Runnable> getQueueImpl() {
-        final int queueCapacity = org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerQueueSize;
-
-        return new LinkedBlockingQueue<>(queueCapacity);
+        // A SynchronousQueue has no capacity and is used for direct hand-offs.
+        // This makes the CallerRunsPolicy trigger immediately when all threads are busy.
+        return new SynchronousQueue<>();
     }
 
     private static @NotNull ThreadFactory getThreadFactory() {
@@ -178,27 +174,14 @@ public class MultithreadedTracker {
     }
 
     private static @NotNull RejectedExecutionHandler getRejectedPolicy() {
+        final RejectedExecutionHandler callerRunsPolicy = new ThreadPoolExecutor.CallerRunsPolicy();
         return (rejectedTask, executor) -> {
-            BlockingQueue<Runnable> workQueue = executor.getQueue();
-
-            if (!executor.isShutdown()) {
-                if (!workQueue.isEmpty()) {
-                    List<Runnable> pendingTasks = new ArrayList<>(workQueue.size());
-
-                    workQueue.drainTo(pendingTasks);
-
-                    for (Runnable pendingTask : pendingTasks) {
-                        pendingTask.run();
-                    }
-                }
-
-                rejectedTask.run();
-            }
-
-            if (System.currentTimeMillis() - lastWarnMillis > 30000L) {
+            final long currentTime = System.currentTimeMillis();
+            if (currentTime - lastWarnMillis > 30000L) {
                 LOGGER.warn("Async entity tracker is busy! Tracking tasks will be done in the server thread. Increasing max-threads in Leaf config may help.");
-                lastWarnMillis = System.currentTimeMillis();
+                lastWarnMillis = currentTime;
             }
+            callerRunsPolicy.rejectedExecution(rejectedTask, executor);
         };
     }
 
@@ -206,6 +189,16 @@ public class MultithreadedTracker {
 
         public MultithreadedTrackerThread(Runnable runnable) {
             super(runnable);
+        }
+    }
+
+    private static class TrackingData {
+        final ChunkMap.TrackedEntity tracker;
+        final NearbyPlayers.TrackedChunk trackedChunk;
+
+        TrackingData(final ChunkMap.TrackedEntity tracker, final NearbyPlayers.TrackedChunk trackedChunk) {
+            this.tracker = tracker;
+            this.trackedChunk = trackedChunk;
         }
     }
 }
