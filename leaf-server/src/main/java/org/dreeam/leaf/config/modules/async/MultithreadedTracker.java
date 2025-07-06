@@ -49,7 +49,7 @@ public class MultithreadedTracker extends ConfigModules {
         if (asyncEntityTrackerMaxThreads < 0)
             asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncEntityTrackerMaxThreads, 1);
         else if (asyncEntityTrackerMaxThreads == 0)
-            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() / 4, 1);
+            asyncEntityTrackerMaxThreads = 1;
 
         if (!enabled)
             asyncEntityTrackerMaxThreads = 0;
