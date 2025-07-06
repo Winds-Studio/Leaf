@@ -15,6 +15,7 @@ public class MultithreadedTracker extends ConfigModules {
     public static int asyncEntityTrackerMaxThreads = 0;
     public static int asyncEntityTrackerKeepalive = 60;
     public static int asyncEntityTrackerQueueSize = 0;
+    public static boolean allowRescheduleEvent = true;
     private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
