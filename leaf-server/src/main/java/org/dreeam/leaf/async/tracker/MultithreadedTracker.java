@@ -67,6 +67,7 @@ public class MultithreadedTracker {
 
         final ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         final int trackerEntitiesSize = trackerEntities.size();
+        if (trackerEntitiesSize == 0) return;
         final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
 
         // Move tracking to off-main
@@ -95,6 +96,7 @@ public class MultithreadedTracker {
         final ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
         final int trackerEntitiesSize = trackerEntities.size();
+        if (trackerEntitiesSize == 0) return;
         final Runnable[] sendChangesTasks = new Runnable[trackerEntitiesSize];
         final Runnable[] tickTask = new Runnable[trackerEntitiesSize];
         int index = 0;
