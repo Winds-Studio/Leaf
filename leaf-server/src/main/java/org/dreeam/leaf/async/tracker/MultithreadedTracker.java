@@ -14,14 +14,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.RejectedExecutionHandler;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class MultithreadedTracker {
 
@@ -36,10 +29,11 @@ public class MultithreadedTracker {
     public static void init() {
         if (TRACKER_EXECUTOR == null) {
             TRACKER_EXECUTOR = new ThreadPoolExecutor(
-                getCorePoolSize(),
-                getMaxPoolSize(),
-                getKeepAliveTime(), TimeUnit.SECONDS,
-                getQueueImpl(),
+                org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerThreads,
+                org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerThreads,
+                0L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerQueueSize),
                 getThreadFactory(),
                 getRejectedPolicy()
             );
@@ -152,24 +146,6 @@ public class MultithreadedTracker {
         }
     }
 
-    private static int getCorePoolSize() {
-        return 1;
-    }
-
-    private static int getMaxPoolSize() {
-        return org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerMaxThreads;
-    }
-
-    private static long getKeepAliveTime() {
-        return org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerKeepalive;
-    }
-
-    private static BlockingQueue<Runnable> getQueueImpl() {
-        final int queueCapacity = org.dreeam.leaf.config.modules.async.MultithreadedTracker.asyncEntityTrackerQueueSize;
-
-        return new LinkedBlockingQueue<>(queueCapacity);
-    }
-
     private static @NotNull ThreadFactory getThreadFactory() {
         return new ThreadFactoryBuilder()
             .setThreadFactory(MultithreadedTrackerThread::new)
@@ -180,26 +156,14 @@ public class MultithreadedTracker {
     }
 
     private static @NotNull RejectedExecutionHandler getRejectedPolicy() {
-        return (rejectedTask, executor) -> {
-            BlockingQueue<Runnable> workQueue = executor.getQueue();
-
+        return (r, executor) -> {
             if (!executor.isShutdown()) {
-                if (!workQueue.isEmpty()) {
-                    List<Runnable> pendingTasks = new ArrayList<>(workQueue.size());
-
-                    workQueue.drainTo(pendingTasks);
-
-                    for (Runnable pendingTask : pendingTasks) {
-                        pendingTask.run();
-                    }
+                executor.getQueue().poll();
+                executor.execute(r);
+                if (System.currentTimeMillis() - lastWarnMillis > 30000L) {
+                    LOGGER.warn("Async entity tracker is busy! Oldest tasks will be discard. Increasing threads in Leaf config may help.");
+                    lastWarnMillis = System.currentTimeMillis();
                 }
-
-                rejectedTask.run();
-            }
-
-            if (System.currentTimeMillis() - lastWarnMillis > 30000L) {
-                LOGGER.warn("Async entity tracker is busy! Tracking tasks will be done in the server thread. Increasing max-threads in Leaf config may help.");
-                lastWarnMillis = System.currentTimeMillis();
             }
         };
     }
