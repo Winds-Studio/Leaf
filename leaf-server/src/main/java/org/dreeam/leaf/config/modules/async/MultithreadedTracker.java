@@ -12,7 +12,8 @@ public class MultithreadedTracker extends ConfigModules {
 
     public static boolean enabled = false;
     public static boolean compatModeEnabled = false;
-    public static int asyncEntityTrackerThreads = 0;
+    public static int asyncEntityTrackerMaxThreads = 0;
+    public static int asyncEntityTrackerKeepalive = 60;
     public static int asyncEntityTrackerQueueSize = 0;
     public static boolean allowRescheduleEvent = true;
     private static boolean asyncMultithreadedTrackerInitialized;
@@ -41,21 +42,22 @@ public class MultithreadedTracker extends ConfigModules {
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         compatModeEnabled = config.getBoolean(getBasePath() + ".compat-mode", compatModeEnabled);
-        asyncEntityTrackerThreads = config.getInt(getBasePath() + ".threads", asyncEntityTrackerThreads);
+        asyncEntityTrackerMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncEntityTrackerMaxThreads);
+        asyncEntityTrackerKeepalive = config.getInt(getBasePath() + ".keepalive", asyncEntityTrackerKeepalive);
         asyncEntityTrackerQueueSize = config.getInt(getBasePath() + ".queue-size", asyncEntityTrackerQueueSize);
 
-        if (asyncEntityTrackerThreads < 0)
-            asyncEntityTrackerThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncEntityTrackerThreads, 1);
-        else if (asyncEntityTrackerThreads == 0)
-            asyncEntityTrackerThreads = 1;
+        if (asyncEntityTrackerMaxThreads < 0)
+            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncEntityTrackerMaxThreads, 1);
+        else if (asyncEntityTrackerMaxThreads == 0)
+            asyncEntityTrackerMaxThreads = 1;
 
         if (!enabled)
-            asyncEntityTrackerThreads = 0;
+            asyncEntityTrackerMaxThreads = 0;
         else
-            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", asyncEntityTrackerThreads);
+            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", asyncEntityTrackerMaxThreads);
 
         if (asyncEntityTrackerQueueSize <= 0)
-            asyncEntityTrackerQueueSize = 256;
+            asyncEntityTrackerQueueSize = asyncEntityTrackerMaxThreads * 384;
 
         if (enabled) {
             org.dreeam.leaf.async.tracker.MultithreadedTracker.init();
