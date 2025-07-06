@@ -150,8 +150,9 @@ public class MultithreadedTracker {
         return new ThreadFactoryBuilder()
             .setThreadFactory(MultithreadedTrackerThread::new)
             .setNameFormat(THREAD_PREFIX + " Thread - %d")
-            .setPriority(Thread.NORM_PRIORITY - 2)
+            .setPriority(Thread.NORM_PRIORITY)
             .setUncaughtExceptionHandler(Util::onThreadException)
+            .setDaemon(false)
             .build();
     }
 
