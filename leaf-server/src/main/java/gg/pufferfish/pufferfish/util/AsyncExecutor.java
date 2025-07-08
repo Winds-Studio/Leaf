@@ -3,6 +3,7 @@ package gg.pufferfish.pufferfish.util;
 import it.unimi.dsi.fastutil.PriorityQueue;
 import it.unimi.dsi.fastutil.PriorityQueues;
 import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue;
+import net.minecraft.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -21,6 +22,7 @@ public class AsyncExecutor implements Runnable {
             .name(threadName)
             .priority(Thread.NORM_PRIORITY - 1)
             .daemon(false)
+            .uncaughtExceptionHandler(Util::onThreadException)
             .unstarted(this);
     }
 
