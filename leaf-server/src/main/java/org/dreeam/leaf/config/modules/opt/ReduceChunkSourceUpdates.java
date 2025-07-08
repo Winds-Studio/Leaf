@@ -17,13 +17,14 @@ public class ReduceChunkSourceUpdates extends ConfigModules {
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
                 *** Experimental Feature ***
-                Reduces chunk source updates on inter-chunk player moves.""", """
+                Reduces chunk source updates on inter-chunk player moves.""",
+            """
                 *** 实验性功能 ***
                 减少玩家跨区块移动时的区块源更新."""
         );
         enabled = config.getBoolean(getBasePath() + ".force-enabled", enabled);
-        if (config.getBoolean(getBasePath() + ".enabled", enabled)) {
-            LOGGER.warn("Disabled reduce-chunk-source-updates due to its experimental");
+        if (!enabled && config.getBoolean(getBasePath() + ".enabled", enabled)) {
+            LOGGER.warn("Disabled reduce-chunk-source-updates due to experimentation");
         }
     }
 }
