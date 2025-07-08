@@ -41,7 +41,7 @@ public class ShutdownExecutors {
         }
 
         if (MultithreadedTracker.TRACKER_EXECUTOR != null) {
-            LOGGER.info("Waiting for mob tracker executor to shutdown...");
+            LOGGER.info("Waiting for entity tracker executor to shutdown...");
             MultithreadedTracker.TRACKER_EXECUTOR.shutdown();
             try {
                 MultithreadedTracker.TRACKER_EXECUTOR.awaitTermination(10L, TimeUnit.SECONDS);

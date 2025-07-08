@@ -11,11 +11,7 @@ public class MultithreadedTracker extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    public static boolean compatModeEnabled = false;
-    public static int asyncEntityTrackerMaxThreads = 0;
-    public static int asyncEntityTrackerKeepalive = 60;
-    public static int asyncEntityTrackerQueueSize = 0;
-    public static boolean allowRescheduleEvent = true;
+    public static int threads = Integer.parseInt(System.getProperty("Leaf.tracker.threads", "1"));
     private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
@@ -41,24 +37,7 @@ public class MultithreadedTracker extends ConfigModules {
         asyncMultithreadedTrackerInitialized = true;
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        compatModeEnabled = config.getBoolean(getBasePath() + ".compat-mode", compatModeEnabled);
-        asyncEntityTrackerMaxThreads = config.getInt(getBasePath() + ".max-threads", asyncEntityTrackerMaxThreads);
-        asyncEntityTrackerKeepalive = config.getInt(getBasePath() + ".keepalive", asyncEntityTrackerKeepalive);
-        asyncEntityTrackerQueueSize = config.getInt(getBasePath() + ".queue-size", asyncEntityTrackerQueueSize);
-
-        if (asyncEntityTrackerMaxThreads < 0)
-            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() + asyncEntityTrackerMaxThreads, 1);
-        else if (asyncEntityTrackerMaxThreads == 0)
-            asyncEntityTrackerMaxThreads = Math.max(Runtime.getRuntime().availableProcessors() / 4, 1);
-
-        if (!enabled)
-            asyncEntityTrackerMaxThreads = 0;
-        else
-            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", asyncEntityTrackerMaxThreads);
-
-        if (asyncEntityTrackerQueueSize <= 0)
-            asyncEntityTrackerQueueSize = asyncEntityTrackerMaxThreads * 384;
-
+        LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
         if (enabled) {
             org.dreeam.leaf.async.tracker.MultithreadedTracker.init();
         }
