@@ -12,22 +12,22 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.concurrent.*;
 
-public class MultithreadedTracker {
+public class AsyncTracker {
     private static final String THREAD_PREFIX = "Leaf Async Tracker";
     public static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
     public static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
-    private MultithreadedTracker() {
+    private AsyncTracker() {
     }
 
-    public static void init() {
+    public static void init(int threads) {
         if (TRACKER_EXECUTOR != null) {
             // Temp no-op
             return;
         }
         TRACKER_EXECUTOR = new ThreadPoolExecutor(
-            org.dreeam.leaf.config.modules.async.MultithreadedTracker.threads,
-            org.dreeam.leaf.config.modules.async.MultithreadedTracker.threads,
+            threads,
+            threads,
             0L,
             TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>(),
@@ -103,6 +103,7 @@ public class MultithreadedTracker {
                 if (tracker.moonrise$hasPlayers()) {
                     flag = true;
                 } else {
+                    // may read old value
                     FullChunkStatus status = ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity) entity).moonrise$getChunkStatus();
                     // removed in world
                     if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {

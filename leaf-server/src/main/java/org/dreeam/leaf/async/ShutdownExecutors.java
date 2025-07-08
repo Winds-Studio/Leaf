@@ -5,7 +5,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.async.ai.AsyncGoalThread;
 import org.dreeam.leaf.async.path.AsyncPathProcessor;
-import org.dreeam.leaf.async.tracker.MultithreadedTracker;
+import org.dreeam.leaf.async.tracker.AsyncTracker;
 
 import java.util.concurrent.TimeUnit;
 
@@ -40,11 +40,11 @@ public class ShutdownExecutors {
             }
         }
 
-        if (MultithreadedTracker.TRACKER_EXECUTOR != null) {
+        if (AsyncTracker.TRACKER_EXECUTOR != null) {
             LOGGER.info("Waiting for entity tracker executor to shutdown...");
-            MultithreadedTracker.TRACKER_EXECUTOR.shutdown();
+            AsyncTracker.TRACKER_EXECUTOR.shutdown();
             try {
-                MultithreadedTracker.TRACKER_EXECUTOR.awaitTermination(10L, TimeUnit.SECONDS);
+                AsyncTracker.TRACKER_EXECUTOR.awaitTermination(10L, TimeUnit.SECONDS);
             } catch (InterruptedException ignored) {
             }
         }
