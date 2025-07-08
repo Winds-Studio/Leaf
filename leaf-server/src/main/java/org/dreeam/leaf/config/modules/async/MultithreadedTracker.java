@@ -35,7 +35,7 @@ public class MultithreadedTracker extends ConfigModules {
 
         enabled = config.getBoolean(getBasePath() + ".force-enabled", enabled);
         if (!enabled && config.getBoolean(getBasePath() + ".enabled", enabled)) {
-            LOGGER.warn("Disabled async-entity-tracker due to its experimental");
+            LOGGER.warn("Disabled async-entity-tracker due to experimentation");
         }
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
