@@ -1,10 +1,7 @@
 package org.dreeam.leaf.async.tracker;
 
-import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
 import net.minecraft.Util;
-import net.minecraft.server.level.ChunkMap;
-import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import org.apache.logging.log4j.LogManager;
@@ -43,6 +40,7 @@ public class AsyncTracker {
     }
 
     public static void tick(ServerLevel world) {
+        world.deferredTrackerTask = false;
         ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
         ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         int trackerEntitiesSize = trackerEntities.size();
@@ -51,12 +49,10 @@ public class AsyncTracker {
         }
         Future<TrackerCtx> prev = world.trackerTask;
         if (MultithreadedTracker.noBlocking && prev != null && !prev.isDone()) {
+            world.deferredTrackerTask = true;
             return;
         }
-        final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
-        Entity[] iter = new Entity[trackerEntitiesSize];
-        System.arraycopy(trackerEntitiesRaw, 0, iter, 0, trackerEntitiesSize);
-        world.trackerTask = TRACKER_EXECUTOR.submit(new TrackerTask(world, iter));
+        world.trackerTask = TRACKER_EXECUTOR.submit(new TrackerTask(world, trackerEntities));
         if (prev != null) {
             try {
                 prev.get().handle();
@@ -67,7 +63,7 @@ public class AsyncTracker {
         }
     }
 
-    public static void tryHandle(ServerLevel world) {
+    public static void onTickEnd(ServerLevel world) {
         Future<TrackerCtx> prev = world.trackerTask;
         if (prev == null) {
             return;
@@ -82,49 +78,16 @@ public class AsyncTracker {
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         }
-    }
 
-    public final static class TrackerTask implements Callable<TrackerCtx> {
-        public final ServerLevel world;
-        private final Entity[] entities;
-
-        public TrackerTask(ServerLevel world, Entity[] entities) {
-            this.world = world;
-            this.entities = entities;
+        if (!world.deferredTrackerTask) {
+            return;
         }
-
-        @Override
-        public TrackerCtx call() throws Exception {
-            NearbyPlayers nearbyPlayers = world.moonrise$getNearbyPlayers();
-            TrackerCtx ctx = new TrackerCtx(this.world);
-            for (final Entity entity : entities) {
-                final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity)entity).moonrise$getTrackedEntity();
-                if (tracker == null) {
-                    continue;
-                }
-                if (tracker.getClass() != ChunkMap.TrackedEntity.class) {
-                    ctx.citizensEntity(entity);
-                    continue;
-                }
-                NearbyPlayers.TrackedChunk trackedChunk = nearbyPlayers.getChunk(entity.chunkPosition());
-
-                tracker.leafTick(ctx, trackedChunk);
-                boolean flag = false;
-                if (tracker.moonrise$hasPlayers()) {
-                    flag = true;
-                } else {
-                    // may read old value
-                    FullChunkStatus status = ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity) entity).moonrise$getChunkStatus();
-                    // removed in world
-                    if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
-                        flag = true;
-                    }
-                }
-                if (flag) {
-                    tracker.serverEntity.leafSendChanges(ctx, tracker);
-                }
-            }
-            return ctx;
+        ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
+        ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
+        int trackerEntitiesSize = trackerEntities.size();
+        if (trackerEntitiesSize == 0) {
+            return;
         }
+        world.trackerTask = TRACKER_EXECUTOR.submit(new TrackerTask(world, trackerEntities));
     }
 }
