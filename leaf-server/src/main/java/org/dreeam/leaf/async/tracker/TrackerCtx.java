@@ -216,6 +216,9 @@ public final class TrackerCtx {
             paperStopSeen.clear();
         }
 
+        if (packets.isEmpty()) {
+            return;
+        }
         var iter = packets.reference2ReferenceEntrySet().fastIterator();
         while (iter.hasNext()) {
             var entry = iter.next();

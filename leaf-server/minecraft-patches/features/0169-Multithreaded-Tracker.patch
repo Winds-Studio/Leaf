@@ -12,6 +12,7 @@ Original project: https://github.com/TECHNOVE/Airplane-Experimental
 Co-authored-by: Paul Sauve <paul@technove.co>
 Co-authored-by: Kevin Raneri <kevin.raneri@gmail.com>
 Co-authored-by: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Co-authored-by: hayanesuru <hayanesuru@outlook.jp>
 
 This patch refactored from original multithreaded tracker (Petal version),
 and is derived from the Airplane fork by Paul Sauve, the tree is like:
@@ -135,7 +136,7 @@ index 07943aa3be4222ab7a63b09a6625f7a003da8725..da0a080bc2d14798a9f3c90caca2cbb0
      }
      // CraftBukkit end
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb16aa5b7e 100644
+index 74d11e8983f12f6f33fe2eb3016730507e1031d4..4dbedfdca7079df7f94f0a70915e6c5269f82e73 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
 @@ -1013,6 +1013,13 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
@@ -208,7 +209,7 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
  
          // Paper start - optimise entity tracker
          private long lastChunkUpdate = -1L;
-@@ -1162,27 +1216,141 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1162,27 +1216,117 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              this.lastTrackedChunk = chunk;
  
              final ServerPlayer[] playersRaw = players.getRawDataUnchecked();
@@ -235,17 +236,17 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
                      if (!players.contains(player)) {
 -                        this.removePlayer(player);
 +                        removed |= this.removePlayerMulti(player);
-                     }
-                 }
++                    }
++                }
 +                if (removed) this.seenByUpdated();
 +                // Leaf end - Multithreaded tracker
-             }
-         }
- 
++            }
++        }
++
 +        // Leaf start - Multithreaded tracker
 +        public final void leafTick(final org.dreeam.leaf.async.tracker.TrackerCtx ctx, final ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk) {
-+            if (chunk == null) {
-+                this.lastChunkUpdate = -1;
++            if (chunk == null || chunk.playersTracking.isEmpty()) {
++                this.lastChunkUpdate = -1L;
 +                this.lastTrackedChunk = null;
 +                if (!this.seenBy.isEmpty()) {
 +                    for (final ServerPlayerConnection conn : this.seenBy()) {
@@ -260,94 +261,70 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
 +            }
 +
 +            final it.unimi.dsi.fastutil.objects.ReferenceSet<ServerPlayer> players = chunk.playersTracking;
-+            if (players.isEmpty()) {
-+                this.lastChunkUpdate = -1;
-+                this.lastTrackedChunk = null;
-+                if (!this.seenBy.isEmpty()) {
-+                    for (final ServerPlayerConnection conn : this.seenBy()) {
-+                        if (this.seenBy.remove(conn)) {
-+                            ctx.stopSeenByPlayer(conn, this.entity);
-+                            ctx.send(conn, new net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket(this.entity.getId()));
-+                        }
-+                    }
-+                    this.seenByUpdated();
-+                }
++            final long currChunkUpdate = chunk.getAtomicUpdateCount();
++            final boolean chunkStateChanged = this.lastChunkUpdate != currChunkUpdate || this.lastTrackedChunk != chunk;
++            this.lastChunkUpdate = currChunkUpdate;
++            this.lastTrackedChunk = chunk;
++
++            if (!chunkStateChanged) {
 +                return;
 +            }
 +
-+            final long lastChunkUpdate = this.lastChunkUpdate;
-+            final long currChunkUpdate = chunk.getAtomicUpdateCount();
-+            final ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk lastTrackedChunk = this.lastTrackedChunk;
-+            this.lastChunkUpdate = currChunkUpdate;
-+            this.lastTrackedChunk = chunk;
-+            if ((lastChunkUpdate == currChunkUpdate && lastTrackedChunk == chunk)) {
-+                return;
-+            }
 +            boolean updated = false;
++            final double ex = this.entity.getX();
++            final double ey = this.entity.getY();
++            final double ez = this.entity.getZ();
++            final int eChunkX = this.entity.chunkPosition().x;
++            final int eChunkZ = this.entity.chunkPosition().z;
++            final double effectiveRange = this.getEffectiveRange();
++            final double rangeSqr = effectiveRange * effectiveRange;
++            final double rangeY = level.paperConfig().entities.trackingRangeY.enabled ? level.paperConfig().entities.trackingRangeY.get(this.entity, -1) : -1;
++            final double rangeYSqr = (rangeY > 0.0) ? (rangeY * rangeY) : 0.0;
 +            synchronized (players) {
-+                double ex = this.entity.getX();
-+                double ey = this.entity.getY();
-+                double ez = this.entity.getZ();
 +                for (ServerPlayer player : players) {
-+                    //org.spigotmc.AsyncCatcher.catchOp("player tracker update"); // Spigot // Leaf - petal - Multithreaded tracker - We can update async
-+                    if (player != this.entity) {
-+                        // Paper start - remove allocation of Vec3D here
-+                        // Vec3 vec3 = player.position().subtract(this.entity.position());
-+                        double vec3_dx = player.getX() - ex;
-+                        double vec3_dz = player.getZ() - ez;
-+                        // Paper end - remove allocation of Vec3D here
-+                        int playerViewDistance = ChunkMap.this.getPlayerViewDistance(player);
-+                        double d = Math.min(this.getEffectiveRange(), playerViewDistance * 16);
-+                        double d1 = vec3_dx * vec3_dx + vec3_dz * vec3_dz; // Paper
-+                        double d2 = d * d;
-+                        // Paper start - Configurable entity tracking range by Y
-+                        boolean flag = d1 <= d2;
-+                        if (flag && level.paperConfig().entities.trackingRangeY.enabled) {
-+                            double rangeY = level.paperConfig().entities.trackingRangeY.get(this.entity, -1);
-+                            if (rangeY != -1) {
-+                                double vec3_dy = player.getY() - ey;
-+                                flag = vec3_dy * vec3_dy <= rangeY * rangeY;
-+                            }
-+                        }
-+                        flag = flag && this.entity.broadcastToPlayer(player) && ChunkMap.this.isChunkTracked(player, this.entity.chunkPosition().x, this.entity.chunkPosition().z);
-+                        // Paper end - Configurable entity tracking range by Y
-+                        // CraftBukkit start - respect vanish API
-+                        if (flag && !player.getBukkitEntity().canSeeChunkMapUpdatePlayer(this.entity.getBukkitEntity())) { // Paper - only consider hits // SparklyPaper - optimize canSee checks
-+                            flag = false;
-+                        }
-+                        // CraftBukkit end
-+                        if (flag) {
-+                            if (this.seenBy.add(player.connection)) {
-+                                this.serverEntity.leafAddPairing(ctx, player);
-+                                this.serverEntity.onPlayerAdd(); // Paper - fix desync when a player is added to the tracker
-+                                updated = true;
-+                            }
-+                        } else if (this.seenBy.remove(player.connection)) {
-+                            ctx.stopSeenByPlayer(player.connection, this.entity);
-+                            ctx.send(player.connection, new net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket(this.entity.getId()));
++                    if (player == this.entity) {
++                        continue;
++                    }
++                    final double dx = player.getX() - ex;
++                    final double dz = player.getZ() - ez;
++                    final double dy = player.getY() - ey;
++                    final double playerViewDistance = ChunkMap.this.getPlayerViewDistance(player);
++                    final boolean flag = ((dx * dx + dz * dz) <= Math.min(rangeSqr, playerViewDistance * playerViewDistance * 256.0))
++                        && ((rangeYSqr == 0.0) || ((dy * dy) <= rangeYSqr))
++                        && this.entity.broadcastToPlayer(player)
++                        && ChunkMap.this.isChunkTracked(player, eChunkX, eChunkZ)
++                        && player.getBukkitEntity().canSeeChunkMapUpdatePlayer(this.entity.getBukkitEntity());
++                    if (flag) {
++                        if (this.seenBy.add(player.connection)) {
++                            this.serverEntity.leafAddPairing(ctx, player);
++                            this.serverEntity.onPlayerAdd();
 +                            updated = true;
 +                        }
-+                    }
-+                }
-+            }
++                    } else if (this.seenBy.remove(player.connection)) {
++                        ctx.stopSeenByPlayer(player.connection, this.entity);
++                        ctx.send(player.connection, new net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket(this.entity.getId()));
++                        updated = true;
+                     }
+                 }
+             }
 +            if (updated) {
-+                seenByUpdated();
++                this.seenByUpdated();
 +            }
-+            boolean removed = false;
++            updated = false;
 +            for (final ServerPlayerConnection conn : this.seenBy()) {
 +                final ServerPlayer player = conn.getPlayer();
 +                if (!players.contains(player) && this.seenBy.remove(conn)) {
 +                    ctx.stopSeenByPlayer(conn, this.entity);
 +                    ctx.send(conn, new net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket(this.entity.getId()));
-+                    removed = true;
++                    updated = true;
 +                }
 +            }
-+            if (removed) {
++            if (updated) {
 +                this.seenByUpdated();
 +            }
-+        }
+         }
 +        // Leaf end - Multithreaded tracker
-+
+ 
          @Override
          public final void moonrise$removeNonTickThreadPlayers() {
              boolean foundToRemove = false;
@@ -356,7 +333,7 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
                  if (!ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(conn.getPlayer())) {
                      foundToRemove = true;
                      break;
-@@ -1193,12 +1361,13 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1193,12 +1337,13 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                  return;
              }
  
@@ -372,7 +349,7 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
          }
  
          @Override
-@@ -1208,10 +1377,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1208,10 +1353,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              if (this.seenBy.isEmpty()) {
                  return;
              }
@@ -386,7 +363,7 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
          }
  
          @Override
-@@ -1238,19 +1408,42 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1238,19 +1384,42 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcast(Packet<?> packet) {
@@ -431,7 +408,7 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
          public void broadcastAndSend(Packet<?> packet) {
              this.broadcast(packet);
              if (this.entity instanceof ServerPlayer) {
-@@ -1259,21 +1452,34 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1259,21 +1428,34 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
          }
  
          public void broadcastRemoved() {
@@ -469,7 +446,7 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
                  // Paper start - remove allocation of Vec3D here
                  // Vec3 vec3 = player.position().subtract(this.entity.position());
                  double vec3_dx = player.getX() - this.entity.getX();
-@@ -1301,6 +1507,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1301,6 +1483,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
                  // CraftBukkit end
                  if (flag) {
                      if (this.seenBy.add(player.connection)) {
@@ -477,16 +454,17 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
                          // Paper start - entity tracking events
                          if (io.papermc.paper.event.player.PlayerTrackEntityEvent.getHandlerList().getRegisteredListeners().length == 0 || new io.papermc.paper.event.player.PlayerTrackEntityEvent(player.getBukkitEntity(), this.entity.getBukkitEntity()).callEvent()) {
                          this.serverEntity.addPairing(player);
-@@ -1309,11 +1516,60 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1308,11 +1491,60 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                         // Paper end - entity tracking events
                          this.serverEntity.onPlayerAdd(); // Paper - fix desync when a player is added to the tracker
                      }
-                 } else if (this.seenBy.remove(player.connection)) {
++                } else if (this.seenBy.remove(player.connection)) {
 +                    this.seenByUpdated(); // Leaf - Multithreaded tracker
-                     this.serverEntity.removePairing(player);
-                 }
-             }
-         }
- 
++                    this.serverEntity.removePairing(player);
++                }
++            }
++        }
++
 +        // Leaf start - Multithreaded tracker
 +        private boolean updatePlayerMulti(ServerPlayer player) {
 +            //org.spigotmc.AsyncCatcher.catchOp("player tracker update"); // Spigot // Leaf - petal - Multithreaded tracker - We can update async
@@ -526,19 +504,18 @@ index 74d11e8983f12f6f33fe2eb3016730507e1031d4..e23d5abcdfeed51440240210f23fa2cb
 +                        this.serverEntity.onPlayerAdd(); // Paper - fix desync when a player is added to the tracker
 +                        return true;
 +                    }
-+                } else if (this.seenBy.remove(player.connection)) {
-+                    this.serverEntity.removePairing(player);
+                 } else if (this.seenBy.remove(player.connection)) {
+                     this.serverEntity.removePairing(player);
 +                    return true;
-+                }
-+            }
+                 }
+             }
 +            return false;
-+        }
+         }
 +        // Leaf end - Multithreaded tracker
-+
+ 
          private int scaledRange(int trackingDistance) {
              return ChunkMap.this.level.getServer().getScaledTrackingDistance(trackingDistance);
-         }
-@@ -1339,10 +1595,14 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+@@ -1339,10 +1571,14 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
              // Paper end - optimise entity tracker
          }
  
@@ -867,7 +844,7 @@ index add696ec1835eb161d6fc94509a2a77febd23d69..1c59532a416522f7ca37cc33086ffa31
      private void broadcastAndSend(Packet<?> packet) {
          this.broadcast.accept(packet);
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 08d12a1acc3a672a77daa15f82392cd603c30283..21a1f50ee850f2fdc3199267a68ff70ef2a28da8 100644
+index 08d12a1acc3a672a77daa15f82392cd603c30283..1f7a054aeb6dc88c10e070b1d45d513bb2221a85 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -216,6 +216,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -875,7 +852,7 @@ index 08d12a1acc3a672a77daa15f82392cd603c30283..21a1f50ee850f2fdc3199267a68ff70e
      public boolean hasRidableMoveEvent = false; // Purpur - Ridables
      final List<ServerPlayer> realPlayers; // Leaves - skip
 +    public @Nullable java.util.concurrent.Future<org.dreeam.leaf.async.tracker.TrackerCtx> trackerTask; // Leaf - Multithreaded tracker
-+    public boolean deferredTrackerTask; // Leaf - Multithreaded tracker
++    public volatile boolean deferredTrackerTask; // Leaf - Multithreaded tracker
  
      @Override
      public @Nullable LevelChunk getChunkIfLoaded(int x, int z) {

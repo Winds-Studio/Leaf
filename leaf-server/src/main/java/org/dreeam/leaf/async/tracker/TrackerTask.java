@@ -53,6 +53,9 @@ public final class TrackerTask implements Callable<TrackerCtx> {
                 tracker.serverEntity.leafSendChanges(ctx, tracker);
             }
         }
+        if (world.getServer().isRunning() && world.deferredTrackerTask) {
+            world.getServer().execute(ctx::handle);
+        }
         return ctx;
     }
 }
