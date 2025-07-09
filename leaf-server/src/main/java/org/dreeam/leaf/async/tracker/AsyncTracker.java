@@ -9,6 +9,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
 
 import java.util.concurrent.*;
 
@@ -48,10 +49,13 @@ public class AsyncTracker {
         if (trackerEntitiesSize == 0) {
             return;
         }
+        Future<TrackerCtx> prev = world.trackerTask;
+        if (MultithreadedTracker.noBlocking && prev != null && !prev.isDone()) {
+            return;
+        }
         final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
         Entity[] iter = new Entity[trackerEntitiesSize];
         System.arraycopy(trackerEntitiesRaw, 0, iter, 0, trackerEntitiesSize);
-        Future<TrackerCtx> prev = world.trackerTask;
         world.trackerTask = TRACKER_EXECUTOR.submit(new TrackerTask(world, iter));
         if (prev != null) {
             try {
@@ -65,7 +69,10 @@ public class AsyncTracker {
 
     public static void tryHandle(ServerLevel world) {
         Future<TrackerCtx> prev = world.trackerTask;
-        if (prev == null || !prev.isDone()) {
+        if (prev == null) {
+            return;
+        }
+        if (!prev.isDone()) {
             return;
         }
         try {
