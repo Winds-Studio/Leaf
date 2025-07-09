@@ -52,17 +52,15 @@ public class AsyncTracker {
         Entity[] iter = new Entity[trackerEntitiesSize];
         System.arraycopy(trackerEntitiesRaw, 0, iter, 0, trackerEntitiesSize);
         Future<TrackerCtx> prev = world.trackerTask;
+        world.trackerTask = TRACKER_EXECUTOR.submit(new TrackerTask(world, iter));
         if (prev != null) {
             try {
                 prev.get().handle();
-                world.trackerTask = null;
             } catch (InterruptedException ignore) {
-                return;
             } catch (ExecutionException e) {
                 throw new RuntimeException(e);
             }
         }
-        world.trackerTask = TRACKER_EXECUTOR.submit(new TrackerTask(world, iter));
     }
 
     public static void tryHandle(ServerLevel world) {
