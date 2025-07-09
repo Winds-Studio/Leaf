@@ -1,5 +1,6 @@
 package org.dreeam.leaf.async.tracker;
 
+import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.minecraft.network.protocol.Packet;
@@ -7,6 +8,7 @@ import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -30,6 +32,7 @@ public final class TrackerCtx {
     private final ObjectArrayList<BossEvent> witherBosses = new ObjectArrayList<>();
     private final ObjectArrayList<PaperStopSeen> paperStopSeen = new ObjectArrayList<>();
     private final ObjectArrayList<PaperStartSeen> paperStartSeen = new ObjectArrayList<>();
+    private final ObjectArrayList<Entity> pluginEntity = new ObjectArrayList<>();
 
     private record BossEvent(WitherBoss witherBoss, ObjectArrayList<ServerPlayer> add, ObjectArrayList<ServerPlayer> remove) {}
     private record PaperStopSeen(Entity e, ObjectArrayList<ServerPlayerConnection> q) {}
@@ -95,11 +98,38 @@ public final class TrackerCtx {
         }
     }
 
+    public void citizensEntity(Entity entity) {
+        pluginEntity.add(entity);
+    }
+
     public void send(ServerPlayerConnection connection, Packet<? super ClientGamePacketListener> packet) {
         packets.computeIfAbsent(connection, x -> new ObjectArrayList<>()).add(packet);
     }
 
     void handle() {
+        if (!pluginEntity.isEmpty()) {
+            for (final Entity entity : pluginEntity) {
+                final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity)entity).moonrise$getTrackedEntity();
+                if (tracker == null) {
+                    continue;
+                }
+                NearbyPlayers.TrackedChunk trackedChunk = world.moonrise$getNearbyPlayers().getChunk(entity.chunkPosition());
+                tracker.leafTick(this, trackedChunk);
+                boolean flag = false;
+                if (tracker.moonrise$hasPlayers()) {
+                    flag = true;
+                } else {
+                    FullChunkStatus status = ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity) entity).moonrise$getChunkStatus();
+                    if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
+                        flag = true;
+                    }
+                }
+                if (flag) {
+                    tracker.serverEntity.leafSendChanges(this, tracker);
+                }
+            }
+            pluginEntity.clear();
+        }
         if (!bukkitVelocityEvent.isEmpty()) {
             for (ServerPlayer player : bukkitVelocityEvent) {
                 boolean cancelled = false;

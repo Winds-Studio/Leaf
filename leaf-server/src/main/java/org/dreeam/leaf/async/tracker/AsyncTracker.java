@@ -95,6 +95,10 @@ public class AsyncTracker {
                 if (tracker == null) {
                     continue;
                 }
+                if (tracker.getClass() != ChunkMap.TrackedEntity.class) {
+                    ctx.citizensEntity(entity);
+                    continue;
+                }
                 NearbyPlayers.TrackedChunk trackedChunk = nearbyPlayers.getChunk(entity.chunkPosition());
 
                 tracker.leafTick(ctx, trackedChunk);
