@@ -65,14 +65,15 @@ public class AsyncTracker {
 
     public static void tryHandle(ServerLevel world) {
         Future<TrackerCtx> prev = world.trackerTask;
-        if (prev != null) {
-            try {
-                prev.get(0L, TimeUnit.MILLISECONDS).handle();
-                world.trackerTask = null;
-            } catch (InterruptedException | TimeoutException ignore) {
-            } catch (ExecutionException e) {
-                throw new RuntimeException(e);
-            }
+        if (prev == null || !prev.isDone()) {
+            return;
+        }
+        try {
+            prev.get(0L, TimeUnit.MILLISECONDS).handle();
+            world.trackerTask = null;
+        } catch (InterruptedException | TimeoutException ignore) {
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
         }
     }
 
