@@ -14,7 +14,7 @@ public class MultithreadedTracker extends ConfigModules {
 
     @Experimental
     public static boolean enabled = false;
-    public static int threads = Integer.parseInt(System.getProperty("Leaf.tracker.threads", "1"));
+    public static int threads = 0;
     private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
@@ -33,9 +33,15 @@ public class MultithreadedTracker extends ConfigModules {
         }
         asyncMultithreadedTrackerInitialized = true;
 
-        enabled = config.getBoolean(getBasePath() + ".force-enabled", enabled);
-        if (!enabled && config.getBoolean(getBasePath() + ".enabled", enabled)) {
-            LOGGER.warn("Disabled async-entity-tracker due to experimentation");
+        enabled = config.getBoolean(getBasePath() + ".force-enabled", false);
+        boolean old = config.getBoolean(getBasePath() + ".enabled", false);
+        if (old && !enabled) {
+            LOGGER.warn("Disabled async-entity-tracker due to experimentation. Set force-enabled to true to enable.");
+        }
+
+        threads = config.getInt(getBasePath() + ".threads", 0);
+        if (threads <= 0) {
+            threads = 1;
         }
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
