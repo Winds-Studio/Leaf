@@ -25,6 +25,8 @@ import org.bukkit.event.player.PlayerVelocityEvent;
 import java.util.Arrays;
 
 public final class TrackerCtx {
+    private static final int SIZE_LIMIT_PER_BUNDLE = 4096;
+
     private final Reference2ReferenceOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<? super ClientGamePacketListener>>> packets;
     private final ServerLevel world;
     private final ObjectArrayList<ServerPlayer> bukkitVelocityEvent = new ObjectArrayList<>();
@@ -132,6 +134,9 @@ public final class TrackerCtx {
         }
         if (!bukkitVelocityEvent.isEmpty()) {
             for (ServerPlayer player : bukkitVelocityEvent) {
+                if (!world.equals(player.level())) {
+                    continue;
+                }
                 boolean cancelled = false;
 
                 org.bukkit.entity.Player player1 = player.getBukkitEntity();
@@ -174,11 +179,17 @@ public final class TrackerCtx {
         }
         if (!witherBosses.isEmpty()) {
             for (BossEvent witherBoss : witherBosses) {
-                for (ServerPlayer serverPlayer : witherBoss.add) {
-                    witherBoss.witherBoss.bossEvent.leafAddPlayer(this, serverPlayer);
+                for (ServerPlayer player : witherBoss.add) {
+                    if (!world.equals(player.level())) {
+                        continue;
+                    }
+                    witherBoss.witherBoss.bossEvent.leafAddPlayer(this, player);
                 }
-                for (ServerPlayer serverPlayer : witherBoss.remove) {
-                    witherBoss.witherBoss.bossEvent.leafRemovePlayer(this, serverPlayer);
+                for (ServerPlayer player : witherBoss.remove) {
+                    if (!world.equals(player.level())) {
+                        continue;
+                    }
+                    witherBoss.witherBoss.bossEvent.leafRemovePlayer(this, player);
                 }
             }
             witherBosses.clear();
@@ -211,25 +222,26 @@ public final class TrackerCtx {
         var iter = packets.reference2ReferenceEntrySet().fastIterator();
         while (iter.hasNext()) {
             var entry = iter.next();
-            ServerPlayerConnection k = entry.getKey();
-            ObjectArrayList<Packet<? super ClientGamePacketListener>> v = entry.getValue();
-            if (world.equals(k.getPlayer().level())) {
-                int size = v.size();
-                if (size > 4096) {
-                    int from = 0;
-                    while (from < size) {
-                        int chunkLen = Math.min(4096, size - from);
-                        Packet<? super ClientGamePacketListener>[] chunk = new Packet[chunkLen];
-                        v.getElements(from, chunk, 0, chunkLen);
-                        k.send(new ClientboundBundlePacket(Arrays.asList(chunk)));
-                        from += chunkLen;
-                    }
-                } else {
-                    k.send(new ClientboundBundlePacket(v));
+            ServerPlayerConnection connection = entry.getKey();
+            ObjectArrayList<Packet<? super ClientGamePacketListener>> packets = entry.getValue();
+            if (!world.equals(connection.getPlayer().level())) {
+                continue;
+            }
+            int size = packets.size();
+            if (size > SIZE_LIMIT_PER_BUNDLE) {
+                int from = 0;
+                while (from < size) {
+                    int chunkLen = Math.min(SIZE_LIMIT_PER_BUNDLE, size - from);
+                    Packet<? super ClientGamePacketListener>[] chunk = new Packet[chunkLen];
+                    packets.getElements(from, chunk, 0, chunkLen);
+                    connection.send(new ClientboundBundlePacket(Arrays.asList(chunk)));
+                    from += chunkLen;
                 }
-                if (k instanceof ServerGamePacketListenerImpl conn) {
-                    conn.connection.flushChannel();
-                }
+            } else {
+                connection.send(new ClientboundBundlePacket(packets));
+            }
+            if (connection instanceof ServerGamePacketListenerImpl conn) {
+                conn.connection.flushChannel();
             }
         }
     }
