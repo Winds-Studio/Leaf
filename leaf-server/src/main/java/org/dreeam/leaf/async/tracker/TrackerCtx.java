@@ -186,9 +186,6 @@ public final class TrackerCtx {
                     witherBoss.witherBoss.bossEvent.leafAddPlayer(this, player);
                 }
                 for (ServerPlayer player : witherBoss.remove) {
-                    if (!world.equals(player.level())) {
-                        continue;
-                    }
                     witherBoss.witherBoss.bossEvent.leafRemovePlayer(this, player);
                 }
             }
