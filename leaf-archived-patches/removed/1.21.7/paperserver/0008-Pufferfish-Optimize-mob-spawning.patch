@@ -1,0 +1,203 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Raneri <kevin.raneri@gmail.com>
+Date: Wed, 10 Nov 2021 00:37:03 -0500
+Subject: [PATCH] Pufferfish: Optimize mob spawning
+
+Removed since Leaf 1.21.7, unused.
+
+Original license: GPL v3
+Original project: https://github.com/pufferfish-gg/Pufferfish
+
+Co-authored-by: booky10 <boooky10@gmail.com>
+Co-authored-by: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+
+This patch aims to reduce the main-thread impact of mob spawning by
+offloading as much work as possible to other threads. It is possible for
+inconsistencies to come up, but when they happen they never interfere
+with the server's operation (they don't produce errors), and side
+effects are limited to more or less mobs being spawned in any particular
+tick.
+
+It is possible to disable this optimization if it is not required or if
+it interferes with any plugins. On servers with thousands of entities,
+this can result in performance gains of up to 15%, which is significant
+and, in my opinion, worth the low risk of minor mob-spawning-related
+inconsistencies.
+
+diff --git a/src/main/java/ca/spottedleaf/moonrise/common/list/IteratorSafeOrderedReferenceSet.java b/src/main/java/ca/spottedleaf/moonrise/common/list/IteratorSafeOrderedReferenceSet.java
+index ece6db7b9a0dfd535141c0c756947c4898140503..06bf5e6e40bde49da7a2a73119c24dd45e7378a7 100644
+--- a/src/main/java/ca/spottedleaf/moonrise/common/list/IteratorSafeOrderedReferenceSet.java
++++ b/src/main/java/ca/spottedleaf/moonrise/common/list/IteratorSafeOrderedReferenceSet.java
+@@ -11,7 +11,7 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+     public static final int ITERATOR_FLAG_SEE_ADDITIONS = 1 << 0;
+ 
+     private final Reference2IntLinkedOpenHashMap<E> indexMap;
+-    private int firstInvalidIndex = -1;
++    private final java.util.concurrent.atomic.AtomicInteger firstInvalidIndex = new java.util.concurrent.atomic.AtomicInteger(-1); // Leaf - Pufferfish - Async mob spawning - atomic
+ 
+     /* list impl */
+     private E[] listElements;
+@@ -19,27 +19,41 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+ 
+     private final double maxFragFactor;
+ 
+-    private int iteratorCount;
++    private int iteratorCount; // Pufferfish - async mob spawning
++
++    // Pufferfish start - async mob spawning
++    private final boolean threadRestricted;
+ 
+     public IteratorSafeOrderedReferenceSet() {
+-        this(Object.class);
++        this(16, 0.75f, 16, 0.2, Object.class, false);
++    }
++
++    public IteratorSafeOrderedReferenceSet(final boolean threadRestricted) {
++        this(16, 0.75f, 16, 0.2, Object.class, threadRestricted);
+     }
+ 
+     public IteratorSafeOrderedReferenceSet(final Class<? super E> arrComponent) {
+-        this(16, 0.75f, 16, 0.2, arrComponent);
++        this(16, 0.75f, 16, 0.2, arrComponent, false);
+     }
+ 
+     public IteratorSafeOrderedReferenceSet(final int setCapacity, final float setLoadFactor, final int arrayCapacity,
+                                            final double maxFragFactor) {
+-        this(setCapacity, setLoadFactor, arrayCapacity, maxFragFactor, Object.class);
++        this(setCapacity, setLoadFactor, arrayCapacity, maxFragFactor, Object.class, false);
+     }
+ 
+     public IteratorSafeOrderedReferenceSet(final int setCapacity, final float setLoadFactor, final int arrayCapacity,
+                                            final double maxFragFactor, final Class<? super E> arrComponent) {
++        this(setCapacity, setLoadFactor, arrayCapacity, maxFragFactor, arrComponent, false);
++    }
++
++    public IteratorSafeOrderedReferenceSet(final int setCapacity, final float setLoadFactor, final int arrayCapacity,
++                                           final double maxFragFactor, final Class<? super E> arrComponent, final boolean threadRestricted) {
+         this.indexMap = new Reference2IntLinkedOpenHashMap<>(setCapacity, setLoadFactor);
+         this.indexMap.defaultReturnValue(-1);
+         this.maxFragFactor = maxFragFactor;
+         this.listElements = (E[])Array.newInstance(arrComponent, arrayCapacity);
++        this.threadRestricted = threadRestricted;
++        // Pufferfish end - async mob spawning
+     }
+ 
+     // includes null (gravestone) elements
+@@ -94,16 +108,24 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+     }
+     */
+ 
++    // Pufferfish start - async mob spawning
++    // Bring back allowSafeIteration from Paper 1.20.4
++    // To defrag only on the main thread
++    private boolean allowSafeIteration() {
++        return !this.threadRestricted || ca.spottedleaf.moonrise.common.util.TickThread.isTickThread();
++    }
++    // Pufferfish end - async mob spawning
++
+     private double getFragFactor() {
+         return 1.0 - ((double)this.indexMap.size() / (double)this.listSize);
+     }
+ 
+     public int createRawIterator() {
+-        ++this.iteratorCount;
++        if (this.allowSafeIteration()) this.iteratorCount++; // Pufferfish - async mob spawning
+         if (this.indexMap.isEmpty()) {
+             return Integer.MAX_VALUE;
+         } else {
+-            return this.firstInvalidIndex == 0 ? this.indexMap.getInt(this.indexMap.firstKey()) : 0;
++            return this.firstInvalidIndex.get() == 0 ? this.indexMap.getInt(this.indexMap.firstKey()) : 0; // Leaf - Pufferfish - Async mob spawning
+         }
+     }
+ 
+@@ -120,7 +142,7 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+     }
+ 
+     public void finishRawIterator() {
+-        if (--this.iteratorCount == 0) {
++        if (--this.iteratorCount == 0) { // Pufferfish - async mob spawning
+             if (this.getFragFactor() >= this.maxFragFactor) {
+                 this.defrag();
+             }
+@@ -130,14 +152,17 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+     public boolean remove(final E element) {
+         final int index = this.indexMap.removeInt(element);
+         if (index >= 0) {
+-            if (this.firstInvalidIndex < 0 || index < this.firstInvalidIndex) {
+-                this.firstInvalidIndex = index;
++            // Leaf start - Pufferfish - Async mob spawning
++            int firstInvalidIndex = this.firstInvalidIndex.get();
++            if (firstInvalidIndex < 0 || index < firstInvalidIndex) {
++                this.firstInvalidIndex.set(index);
+             }
++            // Leaf end - Pufferfish - Async mob spawning
+             if (this.listElements[index] != element) {
+                 throw new IllegalStateException();
+             }
+             this.listElements[index] = null;
+-            if (this.iteratorCount == 0 && this.getFragFactor() >= this.maxFragFactor) {
++            if (this.allowSafeIteration() && this.iteratorCount == 0 && this.getFragFactor() >= this.maxFragFactor) { // Pufferfish - async mob spawning
+                 this.defrag();
+             }
+             //this.check();
+@@ -169,14 +194,17 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+     }
+ 
+     private void defrag() {
+-        if (this.firstInvalidIndex < 0) {
++        // Leaf start - Pufferfish - Async mob spawning
++        int firstInvalidIndex = this.firstInvalidIndex.get();
++        if (firstInvalidIndex < 0) {
+             return; // nothing to do
+         }
++        // Leaf end - Pufferfish - Async mob spawning
+ 
+         if (this.indexMap.isEmpty()) {
+             Arrays.fill(this.listElements, 0, this.listSize, null);
+             this.listSize = 0;
+-            this.firstInvalidIndex = -1;
++            this.firstInvalidIndex.set(-1); // Leaf - Pufferfish - Async mob spawning
+             //this.check();
+             return;
+         }
+@@ -186,11 +214,11 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+         int lastValidIndex;
+         java.util.Iterator<Reference2IntMap.Entry<E>> iterator;
+ 
+-        if (this.firstInvalidIndex == 0) {
++        if (firstInvalidIndex == 0) { // Leaf - Pufferfish - Async mob spawning
+             iterator = this.indexMap.reference2IntEntrySet().fastIterator();
+             lastValidIndex = 0;
+         } else {
+-            lastValidIndex = this.firstInvalidIndex;
++            lastValidIndex = firstInvalidIndex; // Leaf - Pufferfish - Async mob spawning
+             final E key = backingArray[lastValidIndex - 1];
+             iterator = this.indexMap.reference2IntEntrySet().fastIterator(new Reference2IntMap.Entry<E>() {
+                 @Override
+@@ -221,7 +249,7 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+         // cleanup end
+         Arrays.fill(backingArray, lastValidIndex, this.listSize, null);
+         this.listSize = lastValidIndex;
+-        this.firstInvalidIndex = -1;
++        this.firstInvalidIndex.set(-1); // Leaf - Pufferfish - Async mob spawning
+         //this.check();
+     }
+ 
+@@ -235,7 +263,7 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+     }
+ 
+     public IteratorSafeOrderedReferenceSet.Iterator<E> iterator(final int flags) {
+-        ++this.iteratorCount;
++        if (this.allowSafeIteration()) ++this.iteratorCount; // Pufferfish - async mob spawning
+         return new BaseIterator<>(this, true, (flags & ITERATOR_FLAG_SEE_ADDITIONS) != 0 ? Integer.MAX_VALUE : this.listSize);
+     }
+ 
+@@ -322,7 +350,7 @@ public final class IteratorSafeOrderedReferenceSet<E> {
+             }
+             this.lastReturned = null;
+             this.finished = true;
+-            this.set.finishRawIterator();
++            if (this.set.allowSafeIteration()) this.set.finishRawIterator(); // Pufferfish - async mob spawning - diff on change
+         }
+     }
+ }

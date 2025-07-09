@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: violetc <58360096+s-yh-china@users.noreply.github.com>
+Date: Tue, 26 Sep 2023 19:00:41 +0800
+Subject: [PATCH] Leaves: Protocol Core
+
+Original license: GPLv3
+Original project: https://github.com/LeavesMC/Leaves
+
+Commit: 3187d77f57058a81bc04ce7eaac1224f58b03c25
+
+diff --git a/net/minecraft/network/protocol/common/custom/CustomPacketPayload.java b/net/minecraft/network/protocol/common/custom/CustomPacketPayload.java
+index fb263fa1f30a7dfcb7ec2656abfb38e5fe88eac9..56fd1ed7ccaf96e7eedea60fbdbf7f934939d563 100644
+--- a/net/minecraft/network/protocol/common/custom/CustomPacketPayload.java
++++ b/net/minecraft/network/protocol/common/custom/CustomPacketPayload.java
+@@ -40,13 +40,22 @@ public interface CustomPacketPayload {
+ 
+             @Override
+             public void encode(B buffer, CustomPacketPayload value) {
++                // Leaves start - protocol core
++                if (value instanceof org.leavesmc.leaves.protocol.core.LeavesCustomPayload payload) {
++                    org.leavesmc.leaves.protocol.core.LeavesProtocolManager.encode(buffer, payload);
++                    return;
++                }
++                // Leaves end - protocol core
+                 this.writeCap(buffer, value.type(), value);
+             }
+ 
+             @Override
+             public CustomPacketPayload decode(B buffer) {
+                 ResourceLocation resourceLocation = buffer.readResourceLocation();
+-                return (CustomPacketPayload)this.findCodec(resourceLocation).decode(buffer);
++                // Leaves start - protocol core
++                var payload = org.leavesmc.leaves.protocol.core.LeavesProtocolManager.decode(resourceLocation, buffer);
++                return java.util.Objects.requireNonNullElseGet(payload, () -> this.findCodec(resourceLocation).decode(buffer));
++                // Leaves end - protocol core
+             }
+         };
+     }
+diff --git a/net/minecraft/network/protocol/common/custom/DiscardedPayload.java b/net/minecraft/network/protocol/common/custom/DiscardedPayload.java
+index 62b9d9486c15a1ec6527f786df4e9fc483390bcb..5384bbc6bb3dbe5481f9d8cb10282551a0f78ec1 100644
+--- a/net/minecraft/network/protocol/common/custom/DiscardedPayload.java
++++ b/net/minecraft/network/protocol/common/custom/DiscardedPayload.java
+@@ -4,12 +4,12 @@ import net.minecraft.network.FriendlyByteBuf;
+ import net.minecraft.network.codec.StreamCodec;
+ import net.minecraft.resources.ResourceLocation;
+ 
+-public record DiscardedPayload(ResourceLocation id, byte[] data) implements CustomPacketPayload { // Paper - store data
++public record DiscardedPayload(ResourceLocation id, byte @org.jetbrains.annotations.Nullable [] data) implements CustomPacketPayload { // Paper - store data // Leaves - nullable
+     public static <T extends FriendlyByteBuf> StreamCodec<T, DiscardedPayload> codec(ResourceLocation id, int maxSize) {
+         return CustomPacketPayload.codec((value, output) -> {
+             // Paper start
+             // Always write data
+-            output.writeBytes(value.data);
++            if (value.data != null) output.writeBytes(value.data); // Leaves - nullable
+         }, buffer -> {
+             int i = buffer.readableBytes();
+             if (i >= 0 && i <= maxSize) {
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 12e697a626ce68127ac2157fca0e5408beb13f0b..46118a63b721d445623c4d831881652d845df96d 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1738,6 +1738,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             GameTestTicker.SINGLETON.tick();
+         }
+ 
++        org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handleTick(tickCount); // Leaves - protocol
++
+         for (int i = 0; i < this.tickables.size(); i++) {
+             this.tickables.get(i).run();
+         }
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index c746d86439d45e60903248438a23cc1463154645..849428f5ad870ac93f29cec8bc7d3d335550cf14 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -437,6 +437,8 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+     private ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.PlayerChunkLoaderData chunkLoader;
+     private final ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.ViewDistanceHolder viewDistanceHolder = new ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.ViewDistanceHolder();
+ 
++    public net.minecraft.network.Connection internalConnection; // Leaves - protocol core
++
+     @Override
+     public final boolean moonrise$isRealPlayer() {
+         return this.isRealPlayer;
+diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+index ca9ba2a2535eab66622230778efdf941f540f6d2..95f89a415f7f7b9d4d7823744cb6bcc6b3886aa5 100644
+--- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+@@ -234,6 +234,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+         final String channel = new String(data, from, length, java.nio.charset.StandardCharsets.US_ASCII);
+         if (register) {
+             bridge.addChannel(channel);
++            org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handleMinecraftRegister(channel, bridge); // Leaves - protocol
+         } else {
+             bridge.removeChannel(channel);
+         }
+diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+index 1fda5f9d285a51fd642369b4cc32826c38019c69..aefe56847cab77cfc83ef24e965a1be9d9454107 100644
+--- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+@@ -3735,6 +3735,17 @@ public class ServerGamePacketListenerImpl
+ 
+     @Override
+     public void handleCustomPayload(ServerboundCustomPayloadPacket packet) {
++        // Leaves start - protocol
++        if (packet.payload() instanceof org.leavesmc.leaves.protocol.core.LeavesCustomPayload leavesPayload) {
++            org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handlePayload(player, leavesPayload);
++            return;
++        }
++        if (packet.payload() instanceof net.minecraft.network.protocol.common.custom.DiscardedPayload(net.minecraft.resources.ResourceLocation id, byte[] data)) {
++            if (org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handleBytebuf(player, id, io.netty.buffer.Unpooled.wrappedBuffer(data))) {
++                return;
++            }
++        }
++        // Leaves end - protocol
+         super.handleCustomPayload(packet); // Paper
+     }
+ 
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index b290d228fc3d71aee6db3c4915e96d675097c870..908a39c6cb0ebc68eb08886f2199e6b6cd7aa422 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -346,6 +346,9 @@ public abstract class PlayerList {
+ 
+             player.didPlayerJoinEvent = true; // Gale - EMC - do not process chat/commands before player has joined
+ 
++            if (player.internalConnection == null) player.internalConnection = connection; // Leaf - Leaves - protocol
++            org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handlePlayerJoin(player); // Leaves - protocol
++
+             final net.kyori.adventure.text.Component jm = playerJoinEvent.joinMessage();
+ 
+             if (jm != null && !jm.equals(net.kyori.adventure.text.Component.empty())) { // Paper - Adventure
+@@ -525,6 +528,7 @@ public abstract class PlayerList {
+         return this.remove(player, net.kyori.adventure.text.Component.translatable("multiplayer.player.left", net.kyori.adventure.text.format.NamedTextColor.YELLOW, io.papermc.paper.configuration.GlobalConfiguration.get().messages.useDisplayNameInQuitMessage ? player.getBukkitEntity().displayName() : io.papermc.paper.adventure.PaperAdventure.asAdventure(player.getDisplayName())));
+     }
+     public @Nullable net.kyori.adventure.text.Component remove(ServerPlayer player, net.kyori.adventure.text.Component leaveMessage) {
++        org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handlePlayerLeave(player); // Leaves - protocol
+         // Paper end - Fix kick event leave message not being sent
+         org.purpurmc.purpur.task.BossBarTask.removeFromAll(player.getBukkitEntity()); // Purpur - Implement TPSBar
+         ServerLevel serverLevel = player.level();
+@@ -1507,6 +1511,7 @@ public abstract class PlayerList {
+             serverPlayer.connection.send(clientboundUpdateRecipesPacket);
+             serverPlayer.getRecipeBook().sendInitialRecipeBook(serverPlayer);
+         }
++        org.leavesmc.leaves.protocol.core.LeavesProtocolManager.handleDataPackReload(); // Leaves - protocol core
+     }
+ 
+     public boolean isAllowCommandsForAllPlayers() {
