@@ -88,17 +88,4 @@ public sealed abstract class VirtualThreadService permits ReflectionVirtualThrea
      * even without any feature preview flags.
      */
     public static final int minimumJavaMajorVersionWithoutFeaturePreview = 21;
-
-    public static int getJavaMajorVersion() {
-        var version = System.getProperty("java.version");
-        if (version.startsWith("1.")) {
-            return version.charAt(2) - '0';
-        }
-        if (version.contains("-")) {
-            version = version.substring(0, version.indexOf("-"));
-        }
-
-        int dotIndex = version.indexOf(".");
-        return Integer.parseInt(dotIndex == -1 ? version : version.substring(0, dotIndex));
-    }
 }
