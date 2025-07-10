@@ -4,15 +4,12 @@ import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEn
 import net.minecraft.Util;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
 
 import java.util.concurrent.*;
 
 public class AsyncTracker {
-    private static final String THREAD_PREFIX = "Leaf Async Tracker";
-    public static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
+    private static final String THREAD_NAME = "Leaf Async Tracker Thread";
     public static ThreadPoolExecutor TRACKER_EXECUTOR = null;
 
     private AsyncTracker() {
@@ -32,7 +29,7 @@ public class AsyncTracker {
                 .uncaughtExceptionHandler(Util::onThreadException)
                 .daemon(false)
                 .priority(Thread.NORM_PRIORITY)
-                .name(THREAD_PREFIX + " Thread")
+                .name(THREAD_NAME)
                 .factory(),
             new ThreadPoolExecutor.CallerRunsPolicy()
         );
