@@ -58,20 +58,20 @@ public class AsyncTracker {
         }
     }
 
-    public static void onTickEnd(ServerLevel world) {
+    public static void onEntitiesTickEnd(ServerLevel world) {
         Future<TrackerCtx> prev = world.trackerTask;
         if (prev == null) {
             return;
         }
         world.deferredTrackerTask = true;
-        if (!prev.isDone()) {
+        if (MultithreadedTracker.nonblocking && !prev.isDone()) {
             return;
         }
         world.deferredTrackerTask = false;
         try {
-            prev.get(0L, TimeUnit.MILLISECONDS).handle();
+            prev.get().handle();
             world.trackerTask = null;
-        } catch (InterruptedException | TimeoutException ignore) {
+        } catch (InterruptedException ignore) {
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         }

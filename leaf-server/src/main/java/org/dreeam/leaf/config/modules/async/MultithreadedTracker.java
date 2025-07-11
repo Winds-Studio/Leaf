@@ -15,7 +15,8 @@ public class MultithreadedTracker extends ConfigModules {
     @Experimental
     public static boolean enabled = false;
     public static int threads = 0;
-    public static boolean nonblocking = true;
+    @Experimental
+    public static boolean nonblocking = false;
     private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
