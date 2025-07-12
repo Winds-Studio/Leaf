@@ -1,10 +1,16 @@
 package org.dreeam.leaf.async.tracker;
 
 import net.minecraft.world.entity.Entity;
+import org.jspecify.annotations.NullMarked;
 
 import java.util.Iterator;
 
+@NullMarked
 public record EntitySlice(Entity[] array, int start, int end) implements Iterable<Entity> {
+    public EntitySlice(final Entity[] entities) {
+        this(entities, 0, entities.length);
+    }
+
     public int size() {
         return end - start;
     }
@@ -25,6 +31,9 @@ public record EntitySlice(Entity[] array, int start, int end) implements Iterabl
     public EntitySlice[] splitEvenly(int parts) {
         if (parts > size()) {
             parts = size();
+        }
+        if (parts <= 1) {
+            return new EntitySlice[]{this};
         }
 
         final EntitySlice[] result = new EntitySlice[parts];

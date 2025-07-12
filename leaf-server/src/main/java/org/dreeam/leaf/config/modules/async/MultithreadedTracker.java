@@ -17,6 +17,7 @@ public class MultithreadedTracker extends ConfigModules {
     public static int threads = 0;
     @Experimental
     public static boolean nonblocking = false;
+    public static int parts = 0;
     private static boolean asyncMultithreadedTrackerInitialized;
 
     @Override
@@ -42,10 +43,17 @@ public class MultithreadedTracker extends ConfigModules {
         }
 
         threads = config.getInt(getBasePath() + ".threads", 0);
-        if (threads <= 0) {
-            threads = 1;
+        int aval = Runtime.getRuntime().availableProcessors();
+        if (threads < 0) {
+            threads = Math.max(aval + threads, 1);
+        } else if (threads == 0) {
+            threads = aval;
         }
         nonblocking = config.getBoolean(getBasePath() + ".nonblocking", nonblocking);
+        parts = config.getInt(getBasePath() + ".subtask-parts", 0);
+        if (parts <= 0) {
+            parts = Math.min(threads, 8);
+        }
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
             AsyncTracker.init(threads);

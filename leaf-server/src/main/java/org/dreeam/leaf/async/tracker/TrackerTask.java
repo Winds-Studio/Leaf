@@ -10,16 +10,11 @@ import java.util.concurrent.Callable;
 
 public final class TrackerTask implements Callable<TrackerCtx> {
     public final ServerLevel world;
-    private final Entity[] entities;
+    private final EntitySlice entities;
 
-    public TrackerTask(ServerLevel world, ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities) {
-        final Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
-        final int size = trackerEntities.size();
-        Entity[] entities = new Entity[size];
-        System.arraycopy(trackerEntitiesRaw, 0, entities, 0, size);
-
+    public TrackerTask(ServerLevel world, EntitySlice trackerEntities) {
         this.world = world;
-        this.entities = entities;
+        this.entities = trackerEntities;
     }
 
     @Override
