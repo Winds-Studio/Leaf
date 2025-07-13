@@ -21,7 +21,9 @@ public final class TrackerTask implements Callable<TrackerCtx> {
     public TrackerCtx call() throws Exception {
         NearbyPlayers nearbyPlayers = world.moonrise$getNearbyPlayers();
         TrackerCtx ctx = new TrackerCtx(this.world);
-        for (final Entity entity : entities) {
+        final Entity[] raw = entities.array();
+        for (int i = entities.start(); i < entities.end(); i++) {
+            final Entity entity = raw[i];
             final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity)entity).moonrise$getTrackedEntity();
             if (tracker == null) {
                 continue;
