@@ -6,7 +6,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 public class SkipInactiveEntityForExecute extends ConfigModules {
 
     public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName();
+        return EnumConfigCategory.PERF.getBaseKeyName() + ".datapack";
     }
 
     public static boolean skipInactiveEntityForExecute = false;
@@ -15,11 +15,9 @@ public class SkipInactiveEntityForExecute extends ConfigModules {
     public void onLoaded() {
         skipInactiveEntityForExecute = config.getBoolean(getBasePath() + ".skip-inactive-entity-for-execute-command", skipInactiveEntityForExecute,
             config.pickStringRegionBased("""
-                    *** Experimental Feature ***
                     Skip selecting inactive entities when using execute command.
                     Will improve performance on servers with massive datapack functions.""",
                 """
-                    *** 实验性功能 ***
                     execute 命令执行时跳过不活跃实体.
                     将会提升有大量数据包函数的服务器性能."""));
     }

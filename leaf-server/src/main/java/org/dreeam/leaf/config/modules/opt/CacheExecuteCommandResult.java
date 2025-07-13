@@ -7,7 +7,7 @@ import org.dreeam.leaf.config.annotations.Experimental;
 public class CacheExecuteCommandResult extends ConfigModules {
 
     public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName();
+        return EnumConfigCategory.PERF.getBaseKeyName() + ".datapack";
     }
 
     @Experimental
