@@ -1,7 +1,6 @@
 package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
-import net.minecraft.Util;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
@@ -10,28 +9,18 @@ import java.util.concurrent.*;
 
 public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
-    public static ThreadPoolExecutor TRACKER_EXECUTOR = null;
+    public static TrackerExecutor TRACKER_EXECUTOR = null;
 
     private AsyncTracker() {
     }
 
-    public static void init(int threads) {
+    public static void init(int threads, int queue) {
         if (TRACKER_EXECUTOR != null) {
             throw new IllegalStateException();
         }
-        TRACKER_EXECUTOR = new ThreadPoolExecutor(
+        TRACKER_EXECUTOR = new TrackerExecutor(
             threads,
-            threads,
-            0L,
-            TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<>(),
-            Thread.ofPlatform()
-                .uncaughtExceptionHandler(Util::onThreadException)
-                .daemon(false)
-                .priority(Thread.NORM_PRIORITY)
-                .name(THREAD_NAME)
-                .factory(),
-            new ThreadPoolExecutor.CallerRunsPolicy()
+            queue
         );
     }
 
@@ -70,8 +59,9 @@ public final class AsyncTracker {
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slice.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = TRACKER_EXECUTOR.submit(new TrackerTask(world, slice[i]));
+            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slice[i]));
         }
+        TRACKER_EXECUTOR.unpack();
         world.trackerTask = futures;
     }
 

@@ -44,7 +44,7 @@ public class ShutdownExecutors {
             LOGGER.info("Waiting for entity tracker executor to shutdown...");
             AsyncTracker.TRACKER_EXECUTOR.shutdown();
             try {
-                AsyncTracker.TRACKER_EXECUTOR.awaitTermination(10L, TimeUnit.SECONDS);
+                AsyncTracker.TRACKER_EXECUTOR.join(10_000L);
             } catch (InterruptedException ignored) {
             }
         }
