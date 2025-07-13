@@ -28,30 +28,34 @@ public final class DespawnMap {
     private static final int INITIAL_DEQUE_CAP = 16;
     private static final int INITIAL_NODE_CAP = 16;
     private static final int ROOT = -1;
-    private static final double NIL = 0.0;
 
     /// Stack for tree construction
     private final Deque stack = new Deque();
     /// Stack for tree traversal during nearest neighbor search
-    private final LongDeque search = new LongDeque();
+    private final IntDeque search = new IntDeque();
+
     private ServerPlayer[] pl = EMPTY_PLAYERS;
     private double[] pxl = EMPTY_DOUBLES;
     private double[] pyl = EMPTY_DOUBLES;
     private double[] pzl = EMPTY_DOUBLES;
+    /// Node length
     private int nl = 0;
-    /// Node X coordinates for each tree level
+
+    /// Node X coordinates for each internal node
     private double[] nxl = EMPTY_DOUBLES;
-    /// Node Y coordinates for each tree level
+    /// Node Y coordinates for each internal node
     private double[] nyl = EMPTY_DOUBLES;
-    /// Node Z coordinates for each tree level
+    /// Node Z coordinates for each internal node
     private double[] nzl = EMPTY_DOUBLES;
-    /// Left child indices for internal nodes
+    /// Left child indices for each internal node
     private int[] lnl = EMPTY_INTS;
-    /// Right child indices for internal nodes
+    /// Right child indices for each internal node
     private int[] rnl = EMPTY_INTS;
-    /// Flags indicating leaf node
+    /// Split axis for each internal node
+    private int[] axl = EMPTY_INTS;
+    /// indicating leaf node
     private boolean[] leaf = EMPTY_BOOLS;
-    /// Nested player indices stored in leaf nodes
+    /// Nested player indices of leaf nodes
     private final IntArrayList nbl = new IntArrayList();
     /// Offsets for each player list of leaf node
     private int[] nbi = EMPTY_INTS;
@@ -98,12 +102,8 @@ public final class DespawnMap {
             if (len <= LEAF_THRESHOLD) {
                 nbi[nl] = nbl.size();
                 nbs[nl] = len;
+                IntArrays.quickSort(data, offset, offset + len);
                 nbl.addElements(nbl.size(), data, offset, len);
-                nxl[nl] = NIL;
-                nyl[nl] = NIL;
-                nzl[nl] = NIL;
-                lnl[nl] = ROOT;
-                rnl[nl] = ROOT;
                 leaf[nl] = true;
             } else {
                 final int axis = depth % 3;
@@ -117,12 +117,13 @@ public final class DespawnMap {
                 nxl[nl] = pxl[pivot];
                 nyl[nl] = pyl[pivot];
                 nzl[nl] = pzl[pivot];
-                lnl[nl] = ROOT;
-                rnl[nl] = ROOT;
+                axl[nl] = axis;
                 leaf[nl] = false;
                 stack.push(new Node(nl, true, offset, median, depth + 1));
                 stack.push(new Node(nl, false, offset + median + 1, len - median - 1, depth + 1));
             }
+            lnl[nl] = ROOT;
+            rnl[nl] = ROOT;
             if (n.parent >= 0) {
                 if (n.left) {
                     lnl[n.parent] = nl;
@@ -154,6 +155,7 @@ public final class DespawnMap {
         nzl = DoubleArrays.forceCapacity(nzl, capacity, nl);
         lnl = IntArrays.forceCapacity(lnl, capacity, nl);
         rnl = IntArrays.forceCapacity(rnl, capacity, nl);
+        axl = IntArrays.forceCapacity(axl, capacity, nl);
         leaf = BooleanArrays.forceCapacity(leaf, capacity, nl);
         nbi = IntArrays.forceCapacity(nbi, capacity, nl);
         nbs = IntArrays.forceCapacity(nbs, capacity, nl);
@@ -175,18 +177,16 @@ public final class DespawnMap {
         final double[] nxl = this.nxl;
         final double[] nyl = this.nyl;
         final double[] nzl = this.nzl;
+        final int[] axl = this.axl;
         final int[] lnl = this.lnl;
         final int[] rnl = this.rnl;
         final boolean[] leaf = this.leaf;
         final int[] nbl = this.nbl.elements();
         final int[] nbi = this.nbi;
         final int[] nbs = this.nbs;
-        search.push(0L);
+        search.push(0);
         while (!search.isEmpty()) {
-            final long frame = search.poll();
-            final int idx = (int) frame;
-            final int depth = (int) (frame >>> 32);
-
+            final int idx = search.poll();
             if (leaf[idx]) {
                 int bucket = nbi[idx];
                 final int end = bucket + nbs[idx];
@@ -202,7 +202,7 @@ public final class DespawnMap {
                     }
                 }
             } else {
-                final int axis = depth % 3;
+                final int axis = axl[idx];
                 final double delta = axis == 0 ? tx - nxl[idx] : axis == 1 ? ty - nyl[idx] : tz - nzl[idx];
                 final int nearIdx;
                 final int farIdx;
@@ -214,10 +214,10 @@ public final class DespawnMap {
                     farIdx = lnl[idx];
                 }
                 if (nearIdx != -1) {
-                    search.push((long) nearIdx | (long) depth + 1L << 32);
+                    search.push(nearIdx);
                 }
                 if (farIdx != -1 && delta * delta < dist) {
-                    search.push((long) farIdx | (long) depth + 1L << 32);
+                    search.push(farIdx);
                 }
             }
         }
@@ -225,6 +225,7 @@ public final class DespawnMap {
         return nearest != -1 ? this.pl[nearest] : null;
     }
 
+    /// @see it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue
     private final static class Deque {
         private Node[] array;
         private int length;
@@ -248,6 +249,7 @@ public final class DespawnMap {
         private Node poll() {
             final Node t = array[start];
             if (++start == length) start = 0;
+            // no resize
             return t;
         }
 
@@ -271,14 +273,15 @@ public final class DespawnMap {
         }
     }
 
-    private final static class LongDeque {
-        private long[] array;
+    /// @see it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue
+    private final static class IntDeque {
+        private int[] array;
         private int length;
         private int start;
         private int end;
 
-        private LongDeque() {
-            array = new long[INITIAL_DEQUE_CAP];
+        private IntDeque() {
+            array = new int[INITIAL_DEQUE_CAP];
             length = array.length;
         }
 
@@ -291,20 +294,21 @@ public final class DespawnMap {
             return end == start;
         }
 
-        private long poll() {
-            final long t = array[start];
+        private int poll() {
+            final int t = array[start];
             if (++start == length) start = 0;
+            // no resize
             return t;
         }
 
-        private void push(final long node) {
+        private void push(final int node) {
             array[end++] = node;
             if (end == length) end = 0;
             if (end == start) resize(length, 2 * length);
         }
 
         private void resize(final int size, final int newLength) {
-            final long[] newArray = new long[newLength];
+            final int[] newArray = new int[newLength];
             assert end == start;
             if (size != 0) {
                 System.arraycopy(array, start, newArray, 0, length - start);
