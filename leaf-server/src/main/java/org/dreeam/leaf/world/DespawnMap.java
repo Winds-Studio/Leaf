@@ -23,16 +23,16 @@ public final class DespawnMap {
     private static final boolean[] EMPTY_BOOLEANS = {};
     static final boolean FMA = LeafBootstrap.enableFMA;
     private static final boolean SIMD = SIMDDetection.isEnabled();
-    private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.VECTOR_LENGTH : 4;
+    private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.DOUBLE_VECTOR_LENGTH : 4;
     private static final int INITIAL_DEQUE_CAP = 16;
     private static final int INITIAL_NODE_CAP = 8;
     static final int ROOT = -1;
     static final int AXIS_X = 0;
     static final int AXIS_Y = 1;
 
-    /// Stack for tree construction
+    /// FIFO Queue for tree construction
     private final Deque stack = new Deque();
-    /// Stack for tree traversal during nearest neighbor search
+    /// FIFO Queue for tree traversal during nearest neighbor search
     private final IntDeque search = new IntDeque(INITIAL_DEQUE_CAP);
 
     private ServerPlayer[] pl = EMPTY_PLAYERS;
@@ -97,9 +97,9 @@ public final class DespawnMap {
         for (int i = 0; i < pls; i++) {
             data[i] = i;
         }
-        stack.push(new Node(ROOT, false, 0, pls, 0));
+        stack.enqueueBack(new Node(ROOT, false, 0, pls, 0));
         while (!stack.isEmpty()) {
-            final Node n = stack.poll();
+            final Node n = stack.dequeueFront();
             final int depth = n.depth;
             final int offset = n.offset;
             final int len = n.length;
@@ -130,8 +130,8 @@ public final class DespawnMap {
                 nzl[nl] = pzl[pivot];
                 axl[nl] = axis;
                 leaf[nl] = false;
-                stack.push(new Node(nl, true, offset, median, depth + 1));
-                stack.push(new Node(nl, false, offset + median + 1, len - median - 1, depth + 1));
+                stack.enqueueBack(new Node(nl, true, offset, median, depth + 1));
+                stack.enqueueBack(new Node(nl, false, offset + median + 1, len - median - 1, depth + 1));
             }
             nll[nl] = ROOT;
             nrl[nl] = ROOT;
@@ -206,12 +206,12 @@ public final class DespawnMap {
         final double[] bzl = this.bzl;
         final int[] nbi = this.nbi;
         final int[] nbs = this.nbs;
-        search.push(0);
+        search.enqueueBack(0);
         if (SIMD) {
             dist = DespawnVectorAPI.nearest(search, nxl, nyl, nzl, axl, nll, nrl, leaf, bxl, byl, bzl, nbi, nbs, tx, ty, tz);
         } else {
             while (!search.isEmpty()) {
-                final int idx = search.poll();
+                final int idx = search.dequeueFront();
                 if (leaf[idx]) {
                     int bucket = nbi[idx];
                     final int end = bucket + nbs[idx];
@@ -232,10 +232,10 @@ public final class DespawnMap {
                     final int nearIdx = s * l + (1 - s) * r;
                     final int farIdx = s * r + (1 - s) * l;
                     if (nearIdx != ROOT) {
-                        search.push(nearIdx);
+                        search.enqueueBack(nearIdx);
                     }
                     if (farIdx != ROOT && delta * delta < dist) {
-                        search.push(farIdx);
+                        search.enqueueBack(farIdx);
                     }
                 }
             }
@@ -265,14 +265,14 @@ public final class DespawnMap {
             return end == start;
         }
 
-        private Node poll() {
+        private Node dequeueFront() {
             final Node t = array[start];
             if (++start == length) start = 0;
             // no resize
             return t;
         }
 
-        private void push(final Node node) {
+        private void enqueueBack(final Node node) {
             array[end++] = node;
             if (end == length) end = 0;
             if (end == start) resize(length, 2 * length);

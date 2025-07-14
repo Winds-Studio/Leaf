@@ -9,8 +9,8 @@ public final class DespawnVectorAPI {
     private DespawnVectorAPI() {
     }
 
-    private static final VectorSpecies<Double> SPECIES = DoubleVector.SPECIES_PREFERRED;
-    static final int VECTOR_LENGTH = SPECIES.length();
+    private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
+    static final int DOUBLE_VECTOR_LENGTH = DOUBLE_SPECIES.length();
 
     static double nearest(final IntDeque search,
                           final double[] nxl, final double[] nyl, final double[] nzl,
@@ -19,36 +19,36 @@ public final class DespawnVectorAPI {
                           final double[] bxl, final double[] byl, final double[] bzl,
                           final int[] nbi, final int[] nbs,
                           final double tx, final double ty, final double tz) {
-        DoubleVector vMinDist = DoubleVector.broadcast(SPECIES, Double.POSITIVE_INFINITY);
+        DoubleVector vMinDist = DoubleVector.broadcast(DOUBLE_SPECIES, Double.POSITIVE_INFINITY);
         double dist = Double.POSITIVE_INFINITY;
-        final DoubleVector vTx = DoubleVector.broadcast(SPECIES, tx);
-        final DoubleVector vTy = DoubleVector.broadcast(SPECIES, ty);
-        final DoubleVector vTz = DoubleVector.broadcast(SPECIES, tz);
+        final DoubleVector vtx = DoubleVector.broadcast(DOUBLE_SPECIES, tx);
+        final DoubleVector vty = DoubleVector.broadcast(DOUBLE_SPECIES, ty);
+        final DoubleVector vtz = DoubleVector.broadcast(DOUBLE_SPECIES, tz);
         while (!search.isEmpty()) {
-            final int idx = search.poll();
+            final int idx = search.dequeueFront();
             if (leaf[idx]) {
                 int bucket = nbi[idx];
                 final int end = bucket + nbs[idx];
                 final int bucketSize = end - bucket;
                 int i = 0;
-                if (VECTOR_LENGTH == bucketSize) {
+                if (DOUBLE_VECTOR_LENGTH == bucketSize) {
                     final int start = bucket + i;
-                    final DoubleVector vDx = DoubleVector.fromArray(SPECIES, bxl, start).sub(vTx);
-                    final DoubleVector vDy = DoubleVector.fromArray(SPECIES, byl, start).sub(vTy);
-                    final DoubleVector vDz = DoubleVector.fromArray(SPECIES, bzl, start).sub(vTz);
+                    final DoubleVector vdx = DoubleVector.fromArray(DOUBLE_SPECIES, bxl, start).sub(vtx);
+                    final DoubleVector vdy = DoubleVector.fromArray(DOUBLE_SPECIES, byl, start).sub(vty);
+                    final DoubleVector vdz = DoubleVector.fromArray(DOUBLE_SPECIES, bzl, start).sub(vtz);
                     final DoubleVector vDist = FMA ?
-                        vDz.fma(vDz, vDy.fma(vDy, vDx.mul(vDx))) :
-                        vDx.mul(vDx).add(vDy.mul(vDy)).add(vDz.mul(vDz));
+                        vdz.fma(vdz, vdy.fma(vdy, vdx.mul(vdx))) :
+                        vdx.mul(vdx).add(vdy.mul(vdy)).add(vdz.mul(vdz));
                     vMinDist = vMinDist.min(vDist);
                     dist = vMinDist.reduceLanes(VectorOperators.MIN);
-                } else if (VECTOR_LENGTH > 4 && bucketSize >= 4) {
-                    VectorMask<Double> mask = SPECIES.indexInRange(0, bucketSize);
-                    final DoubleVector vDx = DoubleVector.fromArray(SPECIES, bxl, bucket, mask).sub(vTx);
-                    final DoubleVector vDy = DoubleVector.fromArray(SPECIES, byl, bucket, mask).sub(vTy);
-                    final DoubleVector vDz = DoubleVector.fromArray(SPECIES, bzl, bucket, mask).sub(vTz);
+                } else if (DOUBLE_VECTOR_LENGTH > 4 && bucketSize >= 4) {
+                    VectorMask<Double> mask = DOUBLE_SPECIES.indexInRange(0, bucketSize);
+                    final DoubleVector vdx = DoubleVector.fromArray(DOUBLE_SPECIES, bxl, bucket, mask).sub(vtx);
+                    final DoubleVector vdy = DoubleVector.fromArray(DOUBLE_SPECIES, byl, bucket, mask).sub(vty);
+                    final DoubleVector vdz = DoubleVector.fromArray(DOUBLE_SPECIES, bzl, bucket, mask).sub(vtz);
                     final DoubleVector vDist = FMA ?
-                        vDz.fma(vDz, vDy.fma(vDy, vDx.mul(vDx))) :
-                        vDx.mul(vDx).add(vDy.mul(vDy)).add(vDz.mul(vDz));
+                        vdz.fma(vdz, vdy.fma(vdy, vdx.mul(vdx))) :
+                        vdx.mul(vdx).add(vdy.mul(vdy)).add(vdz.mul(vdz));
                     final DoubleVector newMinDist = vMinDist.min(vDist);
                     final double newDist = newMinDist.reduceLanes(VectorOperators.MIN);
                     if (newDist < dist) {
@@ -68,7 +68,7 @@ public final class DespawnVectorAPI {
                         }
                     }
                     if (scalarMin < dist) {
-                        vMinDist = DoubleVector.broadcast(SPECIES, scalarMin);
+                        vMinDist = DoubleVector.broadcast(DOUBLE_SPECIES, scalarMin);
                         dist = scalarMin;
                     }
                 }
@@ -80,10 +80,10 @@ public final class DespawnVectorAPI {
                 final int nearIdx = s * l + (1 - s) * r;
                 final int farIdx = s * r + (1 - s) * l;
                 if (nearIdx != ROOT) {
-                    search.push(nearIdx);
+                    search.enqueueBack(nearIdx);
                 }
                 if (farIdx != ROOT && delta * delta < dist) {
-                    search.push(farIdx);
+                    search.enqueueBack(farIdx);
                 }
             }
         }

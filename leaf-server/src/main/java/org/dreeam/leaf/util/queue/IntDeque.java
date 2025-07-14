@@ -17,18 +17,22 @@ public final class IntDeque {
         end = 0;
     }
 
+    public int size() {
+        return end - start;
+    }
+
     public boolean isEmpty() {
         return end == start;
     }
 
-    public int poll() {
+    public int dequeueFront() {
         final int t = array[start];
         if (++start == length) start = 0;
         // no resize
         return t;
     }
 
-    public void push(final int node) {
+    public void enqueueBack(final int node) {
         array[end++] = node;
         if (end == length) end = 0;
         if (end == start) resize(length, 2 * length);
