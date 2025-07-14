@@ -92,9 +92,7 @@ public final class DespawnMap {
             this.pyl[i] = this.pl[i].getY();
             this.pzl[i] = this.pl[i].getZ();
         }
-        final MapDouble mx = new MapDouble(pxl);
-        final MapDouble my = new MapDouble(pyl);
-        final MapDouble mz = new MapDouble(pzl);
+        final MapDouble[] ml = new MapDouble[]{new MapDouble(pxl), new MapDouble(pyl), new MapDouble(pzl)};
         final int[] data = new int[pls];
         for (int i = 0; i < pls; i++) {
             data[i] = i;
@@ -120,7 +118,7 @@ public final class DespawnMap {
                 leaf[nl] = true;
             } else {
                 final int axis = depth % 3;
-                IntArrays.quickSort(data, offset, offset + len, axis == AXIS_X ? mx : axis == AXIS_Y ? my : mz);
+                IntArrays.quickSort(data, offset, offset + len, ml[axis]);
 
                 final int median = len / 2;
                 final int pivot = data[offset + median];
@@ -230,8 +228,9 @@ public final class DespawnMap {
                     final int axis = axl[idx];
                     final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
                     final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
-                    int nearIdx = s * nll[idx] + (1 - s) * nrl[idx];
-                    int farIdx = (1 - s) * nll[idx] + s * nrl[idx];
+                    final int l = nll[idx], r = nrl[idx];
+                    final int nearIdx = s * l + (1 - s) * r;
+                    final int farIdx = s * r + (1 - s) * l;
                     if (nearIdx != ROOT) {
                         search.push(nearIdx);
                     }
@@ -295,7 +294,7 @@ public final class DespawnMap {
 
     private record MapDouble(double[] a) implements IntComparator {
         @Override
-        public int compare(int k1, int k2) {
+        public int compare(final int k1, final int k2) {
             return Double.compare(a[k1], a[k2]);
         }
     }
@@ -321,7 +320,7 @@ public final class DespawnMap {
             return;
         }
 
-        int i = mob.getType().getCategory().ordinal();
+        final int i = mob.getType().getCategory().ordinal();
         if (dist > OptimizeDespawn.hard[i] && mob.removeWhenFarAway(dist)) {
             mob.discard(EntityRemoveEvent.Cause.DESPAWN);
         } else if (dist > OptimizeDespawn.sort[i]) {

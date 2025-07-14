@@ -76,8 +76,9 @@ public final class DespawnVectorAPI {
                 final int axis = axl[idx];
                 final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
                 final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
-                final int nearIdx = s * nll[idx] + (1 - s) * nrl[idx];
-                final int farIdx = (1 - s) * nll[idx] + s * nrl[idx];
+                final int l = nll[idx], r = nrl[idx];
+                final int nearIdx = s * l + (1 - s) * r;
+                final int farIdx = s * r + (1 - s) * l;
                 if (nearIdx != ROOT) {
                     search.push(nearIdx);
                 }
