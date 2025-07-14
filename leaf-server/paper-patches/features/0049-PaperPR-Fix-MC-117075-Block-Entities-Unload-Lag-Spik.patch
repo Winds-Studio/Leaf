@@ -1,0 +1,425 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrPowerGamerBR <git@mrpowergamerbr.com>
+Date: Sun, 26 Nov 2023 13:02:16 -0300
+Subject: [PATCH] PaperPR: Fix MC-117075: Block Entities Unload Lag Spike
+
+Original license: GPLv3
+Original project: https://github.com/SparklyPower/SparklyPaper
+Paper pull request: https://github.com/PaperMC/Paper/pull/9970
+
+We replaced the `blockEntityTickers` list with a custom list based on fastutil's `ObjectArrayList` with a small yet huge change for us: A method that allows us to remove a list of indexes from the list.
+
+This is WAY FASTER than using `removeAll` with a list of entries to be removed, because we don't need to calculate the identity of each block entity to be removed, and we can jump directly to where the search should begin, giving a performance boost for small removals (because we don't need to loop thru the entire list to find what element should be removed) and a performance boost for big removals (no need to calculate the identity of each block entity).
+
+diff --git a/src/test/java/net/minecraft/world/level/BlockEntityTickersListTest.java b/src/test/java/net/minecraft/world/level/BlockEntityTickersListTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c697adaa750843d4358005c5e922e44ff76725ea
+--- /dev/null
++++ b/src/test/java/net/minecraft/world/level/BlockEntityTickersListTest.java
+@@ -0,0 +1,406 @@
++package net.minecraft.world.level;
++
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import net.minecraft.world.level.block.entity.TickingBlockEntity;
++import org.dreeam.leaf.util.list.BlockEntityTickersList;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++import org.mockito.Mock;
++import org.mockito.MockitoAnnotations;
++
++import org.bukkit.support.environment.LeafTest;
++
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++@LeafTest
++class BlockEntityTickersListTest {
++
++    @Mock
++    private TickingBlockEntity mockEntity1;
++    @Mock
++    private TickingBlockEntity mockEntity2;
++    @Mock
++    private TickingBlockEntity mockEntity3;
++    @Mock
++    private TickingBlockEntity mockEntity4;
++    @Mock
++    private TickingBlockEntity mockEntity5;
++
++    private BlockEntityTickersList list;
++
++    @BeforeEach
++    void setUp() {
++        MockitoAnnotations.openMocks(this);
++        list = new BlockEntityTickersList();
++    }
++
++    @Test
++    @DisplayName("Test empty list construction")
++    void testEmptyListConstruction() {
++        BlockEntityTickersList emptyList = new BlockEntityTickersList();
++        assertTrue(emptyList.isEmpty());
++        assertEquals(0, emptyList.size());
++    }
++
++    @Test
++    @DisplayName("Test collection-based construction")
++    void testCollectionBasedConstruction() {
++        List<TickingBlockEntity> collection = Arrays.asList(mockEntity1, mockEntity2, mockEntity3);
++        BlockEntityTickersList listFromCollection = new BlockEntityTickersList(collection);
++
++        assertEquals(3, listFromCollection.size());
++        assertEquals(mockEntity1, listFromCollection.get(0));
++        assertEquals(mockEntity2, listFromCollection.get(1));
++        assertEquals(mockEntity3, listFromCollection.get(2));
++    }
++
++    @Test
++    @DisplayName("Test construction with empty collection")
++    void testConstructionWithEmptyCollection() {
++        BlockEntityTickersList emptyList = new BlockEntityTickersList(Collections.emptyList());
++        assertTrue(emptyList.isEmpty());
++        assertEquals(0, emptyList.size());
++    }
++
++    @Test
++    @DisplayName("Test basic add and get operations")
++    void testBasicOperations() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity2, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test remove marked entries with no marked entries")
++    void testRemoveMarkedEntriesWithNoMarkedEntries() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        int originalSize = list.size();
++        list.removeMarkedEntries();
++
++        assertEquals(originalSize, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity2, list.get(1));
++        assertEquals(mockEntity3, list.get(2));
++    }
++
++    @Test
++    @DisplayName("Test remove marked entries on empty list")
++    void testRemoveMarkedEntriesOnEmptyList() {
++        assertTrue(list.isEmpty());
++
++        // Should not throw any exception
++        assertDoesNotThrow(() -> list.removeMarkedEntries());
++        assertTrue(list.isEmpty());
++    }
++
++    @Test
++    @DisplayName("Test mark and remove single entry")
++    void testMarkAndRemoveSingleEntry() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        list.markAsRemoved(1); // Remove middle element
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity3, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test mark and remove first entry")
++    void testMarkAndRemoveFirstEntry() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        list.markAsRemoved(0);
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity2, list.get(0));
++        assertEquals(mockEntity3, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test mark and remove last entry")
++    void testMarkAndRemoveLastEntry() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        list.markAsRemoved(2);
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity2, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test mark and remove multiple entries")
++    void testMarkAndRemoveMultipleEntries() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++        list.add(mockEntity4);
++        list.add(mockEntity5);
++
++        list.markAsRemoved(1);
++        list.markAsRemoved(3);
++        list.removeMarkedEntries();
++
++        assertEquals(3, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity3, list.get(1));
++        assertEquals(mockEntity5, list.get(2));
++    }
++
++    @Test
++    @DisplayName("Test mark and remove consecutive entries")
++    void testMarkAndRemoveConsecutiveEntries() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++        list.add(mockEntity4);
++        list.add(mockEntity5);
++
++        list.markAsRemoved(1);
++        list.markAsRemoved(2);
++        list.markAsRemoved(3);
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity5, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test mark and remove all entries")
++    void testMarkAndRemoveAllEntries() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        list.markAsRemoved(0);
++        list.markAsRemoved(1);
++        list.markAsRemoved(2);
++        list.removeMarkedEntries();
++
++        assertTrue(list.isEmpty());
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    @DisplayName("Test multiple mark and remove cycles")
++    void testMultipleMarkAndRemoveCycles() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++        list.add(mockEntity4);
++        list.add(mockEntity5);
++
++        // First cycle: remove index 1 and 3
++        list.markAsRemoved(1);
++        list.markAsRemoved(3);
++        list.removeMarkedEntries();
++
++        assertEquals(3, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity3, list.get(1));
++        assertEquals(mockEntity5, list.get(2));
++
++        // Second cycle: remove index 0 (which is now mockEntity1)
++        list.markAsRemoved(0);
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity3, list.get(0));
++        assertEquals(mockEntity5, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test mark same index multiple times")
++    void testMarkSameIndexMultipleTimes() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        list.markAsRemoved(1);
++        list.markAsRemoved(1); // Mark the same index again
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity3, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test list behavior consistency with ObjectArrayList")
++    void testListBehaviorConsistency() {
++        // Test that the basic list operations work the same as ObjectArrayList
++        ObjectArrayList<TickingBlockEntity> referenceList = new ObjectArrayList<>();
++
++        // Add elements to both lists
++        for (TickingBlockEntity entity : Arrays.asList(mockEntity1, mockEntity2, mockEntity3, mockEntity4, mockEntity5)) {
++            list.add(entity);
++            referenceList.add(entity);
++        }
++
++        // Test size
++        assertEquals(referenceList.size(), list.size());
++
++        // Test get
++        for (int i = 0; i < list.size(); i++) {
++            assertEquals(referenceList.get(i), list.get(i));
++        }
++
++        // Test contains
++        assertTrue(list.contains(mockEntity1));
++        assertTrue(list.contains(mockEntity3));
++        assertTrue(list.contains(mockEntity5));
++
++        // Test indexOf
++        assertEquals(referenceList.indexOf(mockEntity2), list.indexOf(mockEntity2));
++        assertEquals(referenceList.indexOf(mockEntity4), list.indexOf(mockEntity4));
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {1, 2, 5, 10, 50, 100})
++    @DisplayName("Test with various list sizes")
++    void testWithVariousListSizes(int size) {
++        // Fill the list
++        for (int i = 0; i < size; i++) {
++            list.add(mock(TickingBlockEntity.class));
++        }
++
++        assertEquals(size, list.size());
++
++        // Mark half the elements for removal
++        for (int i = 0; i < size / 2; i++) {
++            list.markAsRemoved(i * 2); // Mark every other element
++        }
++
++        list.removeMarkedEntries();
++
++        // Check that the remaining elements are correct
++        int expectedSize = size - size / 2;
++        assertEquals(expectedSize, list.size());
++
++        // Verify the list is still functional
++        if (!list.isEmpty()) {
++            assertNotNull(list.get(0));
++            assertNotNull(list.get(list.size() - 1));
++        }
++    }
++
++    @Test
++    @DisplayName("Test null handling")
++    void testNullHandling() {
++        list.add(mockEntity1);
++        list.add(null);
++        list.add(mockEntity2);
++
++        assertEquals(3, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertNull(list.get(1));
++        assertEquals(mockEntity2, list.get(2));
++
++        // Remove the null element
++        list.markAsRemoved(1);
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity2, list.get(1));
++    }
++
++    @Test
++    @DisplayName("Test startSearchFromIndex optimization")
++    void testStartSearchFromIndexOptimization() {
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++        list.add(mockEntity4);
++        list.add(mockEntity5);
++
++        // Mark indices starting from index 2 (should set startSearchFromIndex to 2)
++        list.markAsRemoved(2);
++        list.markAsRemoved(4);
++        list.removeMarkedEntries();
++
++        assertEquals(3, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity2, list.get(1));
++        assertEquals(mockEntity4, list.get(2));
++
++        // Verify the list is still functional after optimization
++        list.add(mockEntity5);
++        assertEquals(4, list.size());
++        assertEquals(mockEntity5, list.get(3));
++    }
++
++    @Test
++    @DisplayName("Test edge case - single element list")
++    void testSingleElementList() {
++        list.add(mockEntity1);
++
++        assertEquals(1, list.size());
++        assertEquals(mockEntity1, list.get(0));
++
++        // Remove the single element
++        list.markAsRemoved(0);
++        list.removeMarkedEntries();
++
++        assertTrue(list.isEmpty());
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    @DisplayName("Test state consistency after operations")
++    void testStateConsistencyAfterOperations() {
++        // Add elements
++        list.add(mockEntity1);
++        list.add(mockEntity2);
++        list.add(mockEntity3);
++
++        // Remove some elements
++        list.markAsRemoved(1);
++        list.removeMarkedEntries();
++
++        // Add more elements
++        list.add(mockEntity4);
++        list.add(mockEntity5);
++
++        // Final state should be consistent
++        assertEquals(4, list.size());
++        assertEquals(mockEntity1, list.get(0));
++        assertEquals(mockEntity3, list.get(1));
++        assertEquals(mockEntity4, list.get(2));
++        assertEquals(mockEntity5, list.get(3));
++
++        // Test that we can still perform operations
++        list.markAsRemoved(0);
++        list.markAsRemoved(2);
++        list.removeMarkedEntries();
++
++        assertEquals(2, list.size());
++        assertEquals(mockEntity3, list.get(0));
++        assertEquals(mockEntity5, list.get(1));
++    }
++}

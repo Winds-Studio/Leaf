@@ -141,17 +141,41 @@ public class LeafGlobalConfig {
 
     public Double getDouble(String path) {
         String value = configFile.getString(path, null);
-        return value == null ? null : Double.parseDouble(value); // TODO: Need to check whether need to handle NFE correctly
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            LeafConfig.LOGGER.warn("{} is not a valid number, skipped! Please check your configuration.", path, e);
+            return null;
+        }
     }
 
     public Integer getInt(String path) {
         String value = configFile.getString(path, null);
-        return value == null ? null : Integer.parseInt(value); // TODO: Need to check whether need to handle NFE correctly
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            LeafConfig.LOGGER.warn("{} is not a valid number, skipped! Please check your configuration.", path, e);
+            return null;
+        }
     }
 
     public Long getLong(String path) {
         String value = configFile.getString(path, null);
-        return value == null ? null : Long.parseLong(value); // TODO: Need to check whether need to handle NFE correctly
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            LeafConfig.LOGGER.warn("{} is not a valid number, skipped! Please check your configuration.", path, e);
+            return null;
+        }
     }
 
     public List<String> getList(String path) {
