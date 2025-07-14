@@ -1,38 +1,39 @@
 package org.dreeam.leaf.world;
 
-import io.papermc.paper.configuration.WorldConfiguration;
-import io.papermc.paper.configuration.type.DespawnRange;
+import gg.pufferfish.pufferfish.simd.SIMDDetection;
 import it.unimi.dsi.fastutil.booleans.BooleanArrays;
 import it.unimi.dsi.fastutil.doubles.DoubleArrays;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrays;
 import it.unimi.dsi.fastutil.ints.IntComparator;
 import it.unimi.dsi.fastutil.objects.ObjectArrays;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.entity.EntityTickList;
 import org.bukkit.event.entity.EntityRemoveEvent;
 import org.dreeam.leaf.LeafBootstrap;
+import org.dreeam.leaf.config.modules.opt.OptimizeDespawn;
+import org.dreeam.leaf.util.queue.IntDeque;
 
 public final class DespawnMap {
     private static final ServerPlayer[] EMPTY_PLAYERS = {};
     private static final double[] EMPTY_DOUBLES = {};
     private static final int[] EMPTY_INTS = {};
-    private static final boolean[] EMPTY_BOOLS = {};
-    private static final boolean FMA = LeafBootstrap.enableFMA;
-    private static final int LEAF_THRESHOLD = 4;
+    private static final boolean[] EMPTY_BOOLEANS = {};
+    static final boolean FMA = LeafBootstrap.enableFMA;
+    private static final boolean SIMD = SIMDDetection.isEnabled();
+    private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.VECTOR_LENGTH : 4;
     private static final int INITIAL_DEQUE_CAP = 16;
-    private static final int INITIAL_NODE_CAP = 16;
-    private static final int ROOT = -1;
+    private static final int INITIAL_NODE_CAP = 8;
+    static final int ROOT = -1;
+    static final int AXIS_X = 0;
+    static final int AXIS_Y = 1;
 
     /// Stack for tree construction
     private final Deque stack = new Deque();
     /// Stack for tree traversal during nearest neighbor search
-    private final IntDeque search = new IntDeque();
+    private final IntDeque search = new IntDeque(INITIAL_DEQUE_CAP);
 
     private ServerPlayer[] pl = EMPTY_PLAYERS;
     private double[] pxl = EMPTY_DOUBLES;
@@ -40,6 +41,8 @@ public final class DespawnMap {
     private double[] pzl = EMPTY_DOUBLES;
     /// Node length
     private int nl = 0;
+    /// Bucket length
+    private int bl = 0;
 
     /// Node X coordinates for each internal node
     private double[] nxl = EMPTY_DOUBLES;
@@ -48,18 +51,22 @@ public final class DespawnMap {
     /// Node Z coordinates for each internal node
     private double[] nzl = EMPTY_DOUBLES;
     /// Left child indices for each internal node
-    private int[] lnl = EMPTY_INTS;
+    private int[] nll = EMPTY_INTS;
     /// Right child indices for each internal node
-    private int[] rnl = EMPTY_INTS;
+    private int[] nrl = EMPTY_INTS;
     /// Split axis for each internal node
     private int[] axl = EMPTY_INTS;
     /// indicating leaf node
-    private boolean[] leaf = EMPTY_BOOLS;
-    /// Nested player indices of leaf nodes
-    private final IntArrayList nbl = new IntArrayList();
-    /// Offsets for each player list of leaf node
+    private boolean[] leaf = EMPTY_BOOLEANS;
+    /// Nested player X coordinates of leaf nodes
+    private double[] bxl = EMPTY_DOUBLES;
+    /// Nested player Y coordinates of leaf nodes
+    private double[] byl = EMPTY_DOUBLES;
+    /// Nested player Z coordinates of leaf nodes
+    private double[] bzl = EMPTY_DOUBLES;
+    /// Offsets for each player list of leaf nodes
     private int[] nbi = EMPTY_INTS;
-    /// Lengths for each player list of leaf node
+    /// Lengths for each player list of leaf nodes
     private int[] nbs = EMPTY_INTS;
     public boolean enabled = false;
 
@@ -92,7 +99,7 @@ public final class DespawnMap {
         for (int i = 0; i < pls; i++) {
             data[i] = i;
         }
-        stack.push(new Node(-1, false, 0, pls, 0));
+        stack.push(new Node(ROOT, false, 0, pls, 0));
         while (!stack.isEmpty()) {
             final Node n = stack.poll();
             final int depth = n.depth;
@@ -100,14 +107,20 @@ public final class DespawnMap {
             final int len = n.length;
             grow(nl + 1);
             if (len <= LEAF_THRESHOLD) {
-                nbi[nl] = nbl.size();
+                nbi[nl] = bl;
                 nbs[nl] = len;
-                IntArrays.quickSort(data, offset, offset + len);
-                nbl.addElements(nbl.size(), data, offset, len);
+                growBucket(bl + len);
+                for (int i = 0; i < len; i++) {
+                    int p = data[offset + i];
+                    bxl[bl + i] = pxl[p];
+                    byl[bl + i] = pyl[p];
+                    bzl[bl + i] = pzl[p];
+                }
+                bl += len;
                 leaf[nl] = true;
             } else {
                 final int axis = depth % 3;
-                IntArrays.quickSort(data, offset, offset + len, axis == 0 ? mx : axis == 1 ? my : mz);
+                IntArrays.quickSort(data, offset, offset + len, axis == AXIS_X ? mx : axis == AXIS_Y ? my : mz);
 
                 final int median = len / 2;
                 final int pivot = data[offset + median];
@@ -122,13 +135,13 @@ public final class DespawnMap {
                 stack.push(new Node(nl, true, offset, median, depth + 1));
                 stack.push(new Node(nl, false, offset + median + 1, len - median - 1, depth + 1));
             }
-            lnl[nl] = ROOT;
-            rnl[nl] = ROOT;
+            nll[nl] = ROOT;
+            nrl[nl] = ROOT;
             if (n.parent >= 0) {
                 if (n.left) {
-                    lnl[n.parent] = nl;
+                    nll[n.parent] = nl;
                 } else {
-                    rnl[n.parent] = nl;
+                    nrl[n.parent] = nl;
                 }
             }
             nl++;
@@ -139,11 +152,11 @@ public final class DespawnMap {
     private void reset() {
         pl = EMPTY_PLAYERS;
         nl = 0;
-        nbl.clear();
+        bl = 0;
     }
 
     private void grow(int capacity) {
-        if (capacity <= nxl.length) {
+        if (capacity <= nl) {
             return;
         }
         capacity += capacity >> 1;
@@ -153,76 +166,83 @@ public final class DespawnMap {
         nxl = DoubleArrays.forceCapacity(nxl, capacity, nl);
         nyl = DoubleArrays.forceCapacity(nyl, capacity, nl);
         nzl = DoubleArrays.forceCapacity(nzl, capacity, nl);
-        lnl = IntArrays.forceCapacity(lnl, capacity, nl);
-        rnl = IntArrays.forceCapacity(rnl, capacity, nl);
+        nll = IntArrays.forceCapacity(nll, capacity, nl);
+        nrl = IntArrays.forceCapacity(nrl, capacity, nl);
         axl = IntArrays.forceCapacity(axl, capacity, nl);
         leaf = BooleanArrays.forceCapacity(leaf, capacity, nl);
         nbi = IntArrays.forceCapacity(nbi, capacity, nl);
         nbs = IntArrays.forceCapacity(nbs, capacity, nl);
     }
 
+    private void growBucket(int capacity) {
+        if (capacity <= bl) {
+            return;
+        }
+        capacity += capacity >> 1;
+        if (capacity < INITIAL_NODE_CAP) {
+            capacity = INITIAL_NODE_CAP;
+        }
+        bxl = DoubleArrays.forceCapacity(bxl, capacity, bl);
+        byl = DoubleArrays.forceCapacity(byl, capacity, bl);
+        bzl = DoubleArrays.forceCapacity(bzl, capacity, bl);
+    }
+
     private record Node(int parent, boolean left, int offset, int length, int depth) {
     }
 
-    private ServerPlayer nearest(final double tx, final double ty, final double tz) {
+    private double nearest(final double tx, final double ty, final double tz) {
         if (nl == 0) {
-            return null;
+            return Double.POSITIVE_INFINITY;
         }
 
-        int nearest = -1;
         double dist = Double.POSITIVE_INFINITY;
-        final double[] pxl = this.pxl;
-        final double[] pyl = this.pyl;
-        final double[] pzl = this.pzl;
         final double[] nxl = this.nxl;
         final double[] nyl = this.nyl;
         final double[] nzl = this.nzl;
         final int[] axl = this.axl;
-        final int[] lnl = this.lnl;
-        final int[] rnl = this.rnl;
+        final int[] nll = this.nll;
+        final int[] nrl = this.nrl;
         final boolean[] leaf = this.leaf;
-        final int[] nbl = this.nbl.elements();
+        final double[] bxl = this.bxl;
+        final double[] byl = this.byl;
+        final double[] bzl = this.bzl;
         final int[] nbi = this.nbi;
         final int[] nbs = this.nbs;
         search.push(0);
-        while (!search.isEmpty()) {
-            final int idx = search.poll();
-            if (leaf[idx]) {
-                int bucket = nbi[idx];
-                final int end = bucket + nbs[idx];
-                for (; bucket < end; bucket++) {
-                    final int p = nbl[bucket];
-                    final double dx = pxl[p] - tx;
-                    final double dy = pyl[p] - ty;
-                    final double dz = pzl[p] - tz;
-                    final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
-                    if (d2 < dist) {
-                        dist = d2;
-                        nearest = p;
+        if (SIMD) {
+            dist = DespawnVectorAPI.nearest(search, nxl, nyl, nzl, axl, nll, nrl, leaf, bxl, byl, bzl, nbi, nbs, tx, ty, tz);
+        } else {
+            while (!search.isEmpty()) {
+                final int idx = search.poll();
+                if (leaf[idx]) {
+                    int bucket = nbi[idx];
+                    final int end = bucket + nbs[idx];
+                    for (; bucket < end; bucket++) {
+                        final double dx = bxl[bucket] - tx;
+                        final double dy = byl[bucket] - ty;
+                        final double dz = bzl[bucket] - tz;
+                        final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
+                        if (d2 < dist) {
+                            dist = d2;
+                        }
                     }
-                }
-            } else {
-                final int axis = axl[idx];
-                final double delta = axis == 0 ? tx - nxl[idx] : axis == 1 ? ty - nyl[idx] : tz - nzl[idx];
-                final int nearIdx;
-                final int farIdx;
-                if (delta < 0.0) {
-                    nearIdx = lnl[idx];
-                    farIdx = rnl[idx];
                 } else {
-                    nearIdx = rnl[idx];
-                    farIdx = lnl[idx];
-                }
-                if (nearIdx != -1) {
-                    search.push(nearIdx);
-                }
-                if (farIdx != -1 && delta * delta < dist) {
-                    search.push(farIdx);
+                    final int axis = axl[idx];
+                    final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
+                    final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
+                    int nearIdx = s * nll[idx] + (1 - s) * nrl[idx];
+                    int farIdx = (1 - s) * nll[idx] + s * nrl[idx];
+                    if (nearIdx != ROOT) {
+                        search.push(nearIdx);
+                    }
+                    if (farIdx != ROOT && delta * delta < dist) {
+                        search.push(farIdx);
+                    }
                 }
             }
         }
         search.clear();
-        return nearest != -1 ? this.pl[nearest] : null;
+        return dist;
     }
 
     /// @see it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue
@@ -273,54 +293,6 @@ public final class DespawnMap {
         }
     }
 
-    /// @see it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue
-    private final static class IntDeque {
-        private int[] array;
-        private int length;
-        private int start;
-        private int end;
-
-        private IntDeque() {
-            array = new int[INITIAL_DEQUE_CAP];
-            length = array.length;
-        }
-
-        private void clear() {
-            start = 0;
-            end = 0;
-        }
-
-        private boolean isEmpty() {
-            return end == start;
-        }
-
-        private int poll() {
-            final int t = array[start];
-            if (++start == length) start = 0;
-            // no resize
-            return t;
-        }
-
-        private void push(final int node) {
-            array[end++] = node;
-            if (end == length) end = 0;
-            if (end == start) resize(length, 2 * length);
-        }
-
-        private void resize(final int size, final int newLength) {
-            final int[] newArray = new int[newLength];
-            assert end == start;
-            if (size != 0) {
-                System.arraycopy(array, start, newArray, 0, length - start);
-                System.arraycopy(array, 0, newArray, length - start, end);
-            }
-            start = 0;
-            end = size;
-            array = newArray;
-            length = newLength;
-        }
-    }
-
     private record MapDouble(double[] a) implements IntComparator {
         @Override
         public int compare(int k1, int k2) {
@@ -344,23 +316,16 @@ public final class DespawnMap {
         final double x = mob.getX();
         final double y = mob.getY();
         final double z = mob.getZ();
-        ServerPlayer nearestPlayer = nearest(x, y, z);
-        if (nearestPlayer == null) {
+        final double dist = nearest(x, y, z);
+        if (dist == Double.POSITIVE_INFINITY) {
             return;
         }
-        Level world = mob.level();
-        final WorldConfiguration.Entities.Spawning.DespawnRangePair despawnRangePair = world.paperConfig().entities.spawning.despawnRanges.get(mob.getType().getCategory());
-        final DespawnRange.Shape shape = world.paperConfig().entities.spawning.despawnRangeShape;
-        final double dy = nearestPlayer.getY() - y;
-        final double dyAbs = Math.abs(dy);
-        final double dxSqr = Mth.square(nearestPlayer.getX() - x);
-        final double dySqr = Mth.square(dy);
-        final double dzSqr = Mth.square(nearestPlayer.getZ() - z);
-        final double distanceSqr = dxSqr + dzSqr + dySqr;
-        if (despawnRangePair.hard().shouldDespawn(shape, dxSqr, dySqr, dzSqr, dyAbs) && mob.removeWhenFarAway(distanceSqr)) {
+
+        int i = mob.getType().getCategory().ordinal();
+        if (dist > OptimizeDespawn.hard[i] && mob.removeWhenFarAway(dist)) {
             mob.discard(EntityRemoveEvent.Cause.DESPAWN);
-        } else if (despawnRangePair.soft().shouldDespawn(shape, dxSqr, dySqr, dzSqr, dyAbs)) {
-            if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(distanceSqr)) {
+        } else if (dist > OptimizeDespawn.sort[i]) {
+            if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist)) {
                 mob.discard(EntityRemoveEvent.Cause.DESPAWN);
             }
         } else {
