@@ -32,6 +32,11 @@ public final class IntDeque {
         return t;
     }
 
+    public int dequeueBack() {
+        if (end == 0) end = length;
+        return array[--end];
+    }
+
     public void enqueueBack(final int node) {
         array[end++] = node;
         if (end == length) end = 0;

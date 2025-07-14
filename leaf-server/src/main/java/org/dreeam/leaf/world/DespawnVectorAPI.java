@@ -15,7 +15,6 @@ public final class DespawnVectorAPI {
     static double nearest(final IntDeque search,
                           final double[] nxl, final double[] nyl, final double[] nzl,
                           final int[] axl, final int[] nll, final int[] nrl,
-                          final boolean[] leaf,
                           final double[] bxl, final double[] byl, final double[] bzl,
                           final int[] nbi, final int[] nbs,
                           final double tx, final double ty, final double tz) {
@@ -25,9 +24,22 @@ public final class DespawnVectorAPI {
         final DoubleVector vty = DoubleVector.broadcast(DOUBLE_SPECIES, ty);
         final DoubleVector vtz = DoubleVector.broadcast(DOUBLE_SPECIES, tz);
         while (!search.isEmpty()) {
-            final int idx = search.dequeueFront();
-            if (leaf[idx]) {
-                int bucket = nbi[idx];
+            final int idx = search.dequeueBack();
+            int bucket = nbi[idx];
+            if (bucket == INTERNAL) {
+                final int axis = axl[idx];
+                final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
+                final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
+                final int l = nll[idx], r = nrl[idx];
+                final int nearIdx = s * l + (1 - s) * r;
+                final int farIdx = s * r + (1 - s) * l;
+                if (nearIdx != ROOT) {
+                    search.enqueueBack(nearIdx);
+                }
+                if (farIdx != ROOT && delta * delta < dist) {
+                    search.enqueueBack(farIdx);
+                }
+            } else {
                 final int end = bucket + nbs[idx];
                 final int bucketSize = end - bucket;
                 int i = 0;
@@ -72,22 +84,8 @@ public final class DespawnVectorAPI {
                         dist = scalarMin;
                     }
                 }
-            } else {
-                final int axis = axl[idx];
-                final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
-                final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
-                final int l = nll[idx], r = nrl[idx];
-                final int nearIdx = s * l + (1 - s) * r;
-                final int farIdx = s * r + (1 - s) * l;
-                if (nearIdx != ROOT) {
-                    search.enqueueBack(nearIdx);
-                }
-                if (farIdx != ROOT && delta * delta < dist) {
-                    search.enqueueBack(farIdx);
-                }
             }
         }
-        search.clear();
         return vMinDist.reduceLanes(VectorOperators.MIN);
     }
 }

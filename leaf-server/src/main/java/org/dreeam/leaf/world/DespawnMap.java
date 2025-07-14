@@ -1,7 +1,6 @@
 package org.dreeam.leaf.world;
 
 import gg.pufferfish.pufferfish.simd.SIMDDetection;
-import it.unimi.dsi.fastutil.booleans.BooleanArrays;
 import it.unimi.dsi.fastutil.doubles.DoubleArrays;
 import it.unimi.dsi.fastutil.ints.IntArrays;
 import it.unimi.dsi.fastutil.ints.IntComparator;
@@ -27,12 +26,13 @@ public final class DespawnMap {
     private static final int INITIAL_DEQUE_CAP = 16;
     private static final int INITIAL_NODE_CAP = 8;
     static final int ROOT = -1;
+    static final int INTERNAL = -1;
     static final int AXIS_X = 0;
     static final int AXIS_Y = 1;
 
-    /// FIFO Queue for tree construction
+    /// Stack for tree construction
     private final Deque stack = new Deque();
-    /// FIFO Queue for tree traversal during nearest neighbor search
+    /// Stack for tree traversal during nearest neighbor search
     private final IntDeque search = new IntDeque(INITIAL_DEQUE_CAP);
 
     private ServerPlayer[] pl = EMPTY_PLAYERS;
@@ -56,8 +56,6 @@ public final class DespawnMap {
     private int[] nrl = EMPTY_INTS;
     /// Split axis for each internal node
     private int[] axl = EMPTY_INTS;
-    /// indicating leaf node
-    private boolean[] leaf = EMPTY_BOOLEANS;
     /// Nested player X coordinates of leaf nodes
     private double[] bxl = EMPTY_DOUBLES;
     /// Nested player Y coordinates of leaf nodes
@@ -65,6 +63,7 @@ public final class DespawnMap {
     /// Nested player Z coordinates of leaf nodes
     private double[] bzl = EMPTY_DOUBLES;
     /// Offsets for each player list of leaf nodes
+    /// `INTERNAL` indicating internal node
     private int[] nbi = EMPTY_INTS;
     /// Lengths for each player list of leaf nodes
     private int[] nbs = EMPTY_INTS;
@@ -99,14 +98,16 @@ public final class DespawnMap {
         }
         stack.enqueueBack(new Node(ROOT, false, 0, pls, 0));
         while (!stack.isEmpty()) {
-            final Node n = stack.dequeueFront();
+            grow(nl + 1);
+
+            final Node n = stack.dequeueBack();
             final int depth = n.depth;
             final int offset = n.offset;
             final int len = n.length;
-            grow(nl + 1);
+            final int curr = nl++;
             if (len <= LEAF_THRESHOLD) {
-                nbi[nl] = bl;
-                nbs[nl] = len;
+                nbi[curr] = bl;
+                nbs[curr] = len;
                 growBucket(bl + len);
                 for (int i = 0; i < len; i++) {
                     int p = data[offset + i];
@@ -115,7 +116,6 @@ public final class DespawnMap {
                     bzl[bl + i] = pzl[p];
                 }
                 bl += len;
-                leaf[nl] = true;
             } else {
                 final int axis = depth % 3;
                 IntArrays.quickSort(data, offset, offset + len, ml[axis]);
@@ -123,26 +123,24 @@ public final class DespawnMap {
                 final int median = len / 2;
                 final int pivot = data[offset + median];
 
-                nbs[nl] = 0;
-                nbi[nl] = 0;
-                nxl[nl] = pxl[pivot];
-                nyl[nl] = pyl[pivot];
-                nzl[nl] = pzl[pivot];
-                axl[nl] = axis;
-                leaf[nl] = false;
-                stack.enqueueBack(new Node(nl, true, offset, median, depth + 1));
-                stack.enqueueBack(new Node(nl, false, offset + median + 1, len - median - 1, depth + 1));
+                nbs[curr] = 0;
+                nbi[curr] = INTERNAL;
+                nxl[curr] = pxl[pivot];
+                nyl[curr] = pyl[pivot];
+                nzl[curr] = pzl[pivot];
+                axl[curr] = axis;
+                stack.enqueueBack(new Node(curr, true, offset, median, depth + 1));
+                stack.enqueueBack(new Node(curr, false, offset + median + 1, len - median - 1, depth + 1));
             }
-            nll[nl] = ROOT;
-            nrl[nl] = ROOT;
+            nll[curr] = ROOT;
+            nrl[curr] = ROOT;
             if (n.parent >= 0) {
                 if (n.left) {
-                    nll[n.parent] = nl;
+                    nll[n.parent] = curr;
                 } else {
-                    nrl[n.parent] = nl;
+                    nrl[n.parent] = curr;
                 }
             }
-            nl++;
         }
         stack.clear();
     }
@@ -167,7 +165,6 @@ public final class DespawnMap {
         nll = IntArrays.forceCapacity(nll, capacity, nl);
         nrl = IntArrays.forceCapacity(nrl, capacity, nl);
         axl = IntArrays.forceCapacity(axl, capacity, nl);
-        leaf = BooleanArrays.forceCapacity(leaf, capacity, nl);
         nbi = IntArrays.forceCapacity(nbi, capacity, nl);
         nbs = IntArrays.forceCapacity(nbs, capacity, nl);
     }
@@ -200,7 +197,6 @@ public final class DespawnMap {
         final int[] axl = this.axl;
         final int[] nll = this.nll;
         final int[] nrl = this.nrl;
-        final boolean[] leaf = this.leaf;
         final double[] bxl = this.bxl;
         final double[] byl = this.byl;
         final double[] bzl = this.bzl;
@@ -208,23 +204,12 @@ public final class DespawnMap {
         final int[] nbs = this.nbs;
         search.enqueueBack(0);
         if (SIMD) {
-            dist = DespawnVectorAPI.nearest(search, nxl, nyl, nzl, axl, nll, nrl, leaf, bxl, byl, bzl, nbi, nbs, tx, ty, tz);
+            dist = DespawnVectorAPI.nearest(search, nxl, nyl, nzl, axl, nll, nrl, bxl, byl, bzl, nbi, nbs, tx, ty, tz);
         } else {
             while (!search.isEmpty()) {
-                final int idx = search.dequeueFront();
-                if (leaf[idx]) {
-                    int bucket = nbi[idx];
-                    final int end = bucket + nbs[idx];
-                    for (; bucket < end; bucket++) {
-                        final double dx = bxl[bucket] - tx;
-                        final double dy = byl[bucket] - ty;
-                        final double dz = bzl[bucket] - tz;
-                        final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
-                        if (d2 < dist) {
-                            dist = d2;
-                        }
-                    }
-                } else {
+                final int idx = search.dequeueBack();
+                int bucket = nbi[idx];
+                if (bucket == INTERNAL) {
                     final int axis = axl[idx];
                     final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
                     final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
@@ -236,6 +221,17 @@ public final class DespawnMap {
                     }
                     if (farIdx != ROOT && delta * delta < dist) {
                         search.enqueueBack(farIdx);
+                    }
+                } else {
+                    final int end = bucket + nbs[idx];
+                    for (; bucket < end; bucket++) {
+                        final double dx = bxl[bucket] - tx;
+                        final double dy = byl[bucket] - ty;
+                        final double dz = bzl[bucket] - tz;
+                        final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
+                        if (d2 < dist) {
+                            dist = d2;
+                        }
                     }
                 }
             }
@@ -270,6 +266,11 @@ public final class DespawnMap {
             if (++start == length) start = 0;
             // no resize
             return t;
+        }
+
+        private Node dequeueBack() {
+            if (end == 0) end = length;
+            return array[--end];
         }
 
         private void enqueueBack(final Node node) {
