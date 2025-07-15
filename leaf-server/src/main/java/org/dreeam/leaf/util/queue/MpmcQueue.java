@@ -1,3 +1,6 @@
+// Copyright (c) 2018 Aron Wieck Crown Communications GmbH, Karlsruhe, Germany
+// Licensed under the terms of MIT license and the Apache License (Version 2.0).
+
 package org.dreeam.leaf.util.queue;
 
 import java.lang.invoke.MethodHandles;
