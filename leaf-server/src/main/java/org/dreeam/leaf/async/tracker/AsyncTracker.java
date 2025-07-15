@@ -13,8 +13,8 @@ import java.util.concurrent.*;
 public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
     public static final boolean ENABLED = MultithreadedTracker.enabled;
-    public static final int PARTS = MultithreadedTracker.parts;
     public static final int QUEUE = 1024;
+    public static final int MIN_CHUNK = 16;
     public static final int THREADS = MultithreadedTracker.threads;
     public static final FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
         THREADS,
@@ -41,11 +41,12 @@ public final class AsyncTracker {
         Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
         Entity[] entities = new Entity[trackerEntitiesSize];
         System.arraycopy(trackerEntitiesRaw, 0, entities, 0, trackerEntitiesSize);
-        EntitySlice[] slice = new EntitySlice(entities).splitEvenly(entities.length <= PARTS * 4 ? Math.max(1, PARTS / 2) : PARTS);
+        EntitySlice slice = new EntitySlice(entities);
+        EntitySlice[] slices = entities.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
         @SuppressWarnings("unchecked")
-        Future<TrackerCtx>[] futures = new Future[slice.length];
+        Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slice[i]));
+            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i]));
         }
         TRACKER_EXECUTOR.unpack();
         world.trackerTask = futures;
