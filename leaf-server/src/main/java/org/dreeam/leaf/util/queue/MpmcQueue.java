@@ -12,6 +12,7 @@ public final class MpmcQueue<T> {
     private static final long PENDING_MASK = 0x0000_0000_0000_00FFL;
     private static final long FAST_PATH_MASK = 0x00FF_FFFF_FFFF_FF00L;
     private static final int MAX_CAPACITY = 1 << 30;
+    private static final int PARALLELISM = Runtime.getRuntime().availableProcessors();
 
     private static final VarHandle READ;
     private static final VarHandle WRITE;
@@ -51,12 +52,23 @@ public final class MpmcQueue<T> {
             : (T[]) java.lang.reflect.Array.newInstance(clazz, mask + 1);
     }
 
+    private void spinWait(final int attempts) {
+        if (attempts == 0) {
+        } else if (PARALLELISM != 1 && (attempts & 31) != 31) {
+            Thread.onSpinWait();
+        } else {
+            Thread.yield();
+        }
+    }
+
     public boolean send(final T item) {
         long write = (long) WRITE.getAcquire(this);
         boolean success;
         long newWrite = 0L;
         int index = 0;
+        int attempts = 0;
         while (true) {
+            spinWait(attempts++);
             final int inProgressCnt = (int) (write & PENDING_MASK);
             if ((((int) (write >>> 16) + 1) & mask) == (int) ((long) READ.getAcquire(this) >>> 16)) {
                 success = false;
@@ -64,7 +76,6 @@ public final class MpmcQueue<T> {
             }
 
             if (inProgressCnt == MAX_IN_PROGRESS) {
-                Thread.onSpinWait();
                 write = (long) WRITE.getAcquire(this);
                 continue;
             }
@@ -106,6 +117,7 @@ public final class MpmcQueue<T> {
                     break;
                 }
                 write = (long) WRITE.getVolatile(this);
+                spinWait(attempts++);
             }
         }
 
@@ -117,7 +129,9 @@ public final class MpmcQueue<T> {
         boolean success;
         int index = 0;
         long newRead = 0L;
+        int attempts = 0;
         while (true) {
+            spinWait(attempts++);
             final int inProgressCnt = (int) (read & PENDING_MASK);
             if ((int) (read >>> 16) == (int) ((long) WRITE.getAcquire(this) >>> 16)) {
                 success = false;
@@ -125,7 +139,6 @@ public final class MpmcQueue<T> {
             }
 
             if (inProgressCnt == MAX_IN_PROGRESS) {
-                Thread.onSpinWait();
                 read = (long) READ.getAcquire(this);
                 continue;
             }
@@ -168,6 +181,7 @@ public final class MpmcQueue<T> {
                     break;
                 }
                 read = (long) READ.getVolatile(this);
+                spinWait(attempts++);
             }
         }
         return result;
