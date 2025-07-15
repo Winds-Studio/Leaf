@@ -1,4 +1,4 @@
-package org.dreeam.leaf.async.tracker;
+package org.dreeam.leaf.async;
 
 import net.minecraft.Util;
 import org.dreeam.leaf.util.queue.MpmcQueue;
@@ -7,23 +7,23 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.locks.LockSupport;
 
-public final class TrackerExecutor {
+public final class FixedThreadExecutor {
     private final Thread[] workers;
     private final MpmcQueue<Runnable> channel;
     private static volatile boolean SHUTDOWN = false;
 
-    public TrackerExecutor(int numThreads, int queueCapacity) {
+    public FixedThreadExecutor(int numThreads, int queue, String prefix) {
         if (numThreads <= 0) {
             throw new IllegalArgumentException();
         }
         this.workers = new Thread[numThreads];
-        this.channel = new MpmcQueue<>(Runnable.class, queueCapacity);
+        this.channel = new MpmcQueue<>(Runnable.class, queue);
         for (int i = 0; i < numThreads; i++) {
             workers[i] = Thread.ofPlatform()
                 .uncaughtExceptionHandler(Util::onThreadException)
                 .daemon(false)
                 .priority(Thread.NORM_PRIORITY)
-                .name("Leaf Async Tracker Thread - " + i)
+                .name(prefix + " - " + i)
                 .start(new Worker(channel));
         }
     }

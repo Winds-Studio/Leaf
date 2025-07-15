@@ -1,51 +1,37 @@
 package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
+import org.dreeam.leaf.async.FixedThreadExecutor;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
+import org.dreeam.leaf.util.EntitySlice;
 
 import java.util.concurrent.*;
 
 public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
-    public static TrackerExecutor TRACKER_EXECUTOR = null;
+    public static final boolean ENABLED = MultithreadedTracker.enabled;
+    public static final int PARTS = MultithreadedTracker.parts;
+    public static final int QUEUE = MultithreadedTracker.queue;
+    public static final int THREADS = MultithreadedTracker.threads;
+    public static final FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
+        THREADS,
+        QUEUE,
+        THREAD_NAME
+    ) : null;
 
     private AsyncTracker() {
     }
 
-    public static void init(int threads, int queue) {
-        if (TRACKER_EXECUTOR != null) {
+    public static void init() {
+        if (TRACKER_EXECUTOR == null || !ENABLED) {
             throw new IllegalStateException();
         }
-        TRACKER_EXECUTOR = new TrackerExecutor(
-            threads,
-            queue
-        );
     }
 
     public static void tick(ServerLevel world) {
-        world.deferredTrackerTask = false;
-        Future<TrackerCtx>[] prev = world.trackerTask;
-        if (MultithreadedTracker.nonblocking && prev != null) {
-            for (Future<TrackerCtx> fut : prev) {
-                if (!fut.isDone()) {
-                    return;
-                }
-            }
-            try {
-                TrackerCtx ctx = new TrackerCtx(world);
-                for (Future<TrackerCtx> fut : prev) {
-                    ctx.join(fut.get());
-                }
-                world.trackerTask = null;
-                ctx.handle();
-            } catch (InterruptedException ignore) {
-                return;
-            } catch (ExecutionException e) {
-                throw new RuntimeException(e);
-            }
-        }
         ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
         ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         int trackerEntitiesSize = trackerEntities.size();
@@ -55,7 +41,7 @@ public final class AsyncTracker {
         Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
         Entity[] entities = new Entity[trackerEntitiesSize];
         System.arraycopy(trackerEntitiesRaw, 0, entities, 0, trackerEntitiesSize);
-        EntitySlice[] slice = new EntitySlice(entities).splitEvenly(MultithreadedTracker.parts);
+        EntitySlice[] slice = new EntitySlice(entities).splitEvenly(entities.length <= PARTS * 4 ? Math.max(1, PARTS / 2) : PARTS);
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slice.length];
         for (int i = 0; i < futures.length; i++) {
@@ -66,28 +52,37 @@ public final class AsyncTracker {
     }
 
     public static void onEntitiesTickEnd(ServerLevel world) {
-        Future<TrackerCtx>[] prev = world.trackerTask;
-        world.deferredTrackerTask = true;
-        if (prev == null) {
+        Future<TrackerCtx>[] task = world.trackerTask;
+        if (task == null) {
             return;
         }
-        if (MultithreadedTracker.nonblocking) {
-            for (Future<TrackerCtx> fut : prev) {
-                if (!fut.isDone()) {
-                    return;
-                }
+        for (Future<TrackerCtx> fut : task) {
+            if (!fut.isDone()) {
+                return;
             }
-            return;
         }
-        world.deferredTrackerTask = false;
+        handle(world, task);
+    }
+
+    public static void onTickEnd(MinecraftServer server) {
+        for (ServerLevel world : server.getAllLevels()) {
+            Future<TrackerCtx>[] task = world.trackerTask;
+            if (task != null) {
+                handle(world, task);
+            }
+        }
+    }
+
+    private static void handle(ServerLevel world, Future<TrackerCtx>[] futures) {
         try {
-            TrackerCtx ctx = new TrackerCtx(world);
-            for (Future<TrackerCtx> fut : prev) {
-                ctx.join(fut.get());
+            TrackerCtx ctx = futures[0].get();
+            for (int i = 1; i < futures.length; i++) {
+                ctx.join(futures[i].get());
             }
             world.trackerTask = null;
             ctx.handle();
-        } catch (InterruptedException ignore) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         }

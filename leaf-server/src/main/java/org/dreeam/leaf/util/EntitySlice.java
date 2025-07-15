@@ -1,4 +1,4 @@
-package org.dreeam.leaf.async.tracker;
+package org.dreeam.leaf.util;
 
 import net.minecraft.world.entity.Entity;
 import org.jspecify.annotations.NullMarked;

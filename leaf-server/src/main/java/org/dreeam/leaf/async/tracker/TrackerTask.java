@@ -5,6 +5,7 @@ import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
+import org.dreeam.leaf.util.EntitySlice;
 
 import java.util.concurrent.Callable;
 
@@ -49,9 +50,6 @@ public final class TrackerTask implements Callable<TrackerCtx> {
             if (flag) {
                 tracker.serverEntity.leafSendChanges(ctx, tracker);
             }
-        }
-        if (world.getServer().isRunning() && world.deferredTrackerTask) {
-            world.getServer().execute(ctx::handle);
         }
         return ctx;
     }

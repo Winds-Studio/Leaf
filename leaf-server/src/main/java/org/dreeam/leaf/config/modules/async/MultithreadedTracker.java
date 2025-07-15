@@ -15,8 +15,6 @@ public class MultithreadedTracker extends ConfigModules {
     @Experimental
     public static boolean enabled = false;
     public static int threads = 0;
-    @Experimental
-    public static boolean nonblocking = false;
     public static int parts = 0;
     public static int queue = 0;
     private static boolean asyncMultithreadedTrackerInitialized;
@@ -37,22 +35,17 @@ public class MultithreadedTracker extends ConfigModules {
         }
         asyncMultithreadedTrackerInitialized = true;
 
-        enabled = config.getBoolean(getBasePath() + ".force-enabled", false);
-        boolean old = config.getBoolean(getBasePath() + ".enabled", false);
-        if (old && !enabled) {
-            LOGGER.warn("Disabled async-entity-tracker due to experimentation. Set force-enabled to true to enable.");
-        }
-
+        enabled = config.getBoolean(getBasePath() + ".enabled", false);
         threads = config.getInt(getBasePath() + ".threads", 0);
-        nonblocking = config.getBoolean(getBasePath() + ".nonblocking", nonblocking);
-        parts = config.getInt(getBasePath() + ".subtask-parts", 0);
+        parts = config.getInt(getBasePath() + ".subtask-size", 0);
         queue = config.getInt(getBasePath() + ".queue-size", 0);
         int aval = Runtime.getRuntime().availableProcessors();
         if (threads < 0) {
-            threads = Math.max(aval + threads, 1);
+            threads = aval + threads;
         } else if (threads == 0) {
             threads = Math.min(aval, 8);
         }
+        threads = Math.max(threads, 1);
         if (parts <= 0) {
             parts = threads;
         }
@@ -61,7 +54,7 @@ public class MultithreadedTracker extends ConfigModules {
         }
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
-            AsyncTracker.init(threads, queue);
+            AsyncTracker.init();
         }
     }
 }

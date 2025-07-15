@@ -8,6 +8,7 @@ import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
@@ -187,7 +188,7 @@ public final class TrackerCtx {
                         for (final net.minecraft.server.network.ServerPlayerConnection connection : trackedEntity.seenBy()) {
                             final ServerPlayer serverPlayer = connection.getPlayer(); // Paper
                             savedData.tickCarriedBy(serverPlayer, item);
-                            Packet updatePacket = savedData.getUpdatePacket(mapId, serverPlayer);
+                            Packet<? super ClientGamePacketListener> updatePacket = (Packet<? super ClientGamePacketListener>) savedData.getUpdatePacket(mapId, serverPlayer);
                             if (updatePacket != null) {
                                 send(serverPlayer.connection, updatePacket);
                             }
@@ -218,7 +219,7 @@ public final class TrackerCtx {
                         connection.getPlayer().getBukkitEntity(),
                         startSeen.e.getBukkitEntity()
                     ).callEvent()) {
-                        // todo: handle cancel track
+                        send(connection, new ClientboundRemoveEntitiesPacket(startSeen.e.getId()));
                     }
                 }
             }
