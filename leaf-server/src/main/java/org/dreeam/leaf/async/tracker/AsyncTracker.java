@@ -14,7 +14,7 @@ public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
     public static final boolean ENABLED = MultithreadedTracker.enabled;
     public static final int PARTS = MultithreadedTracker.parts;
-    public static final int QUEUE = MultithreadedTracker.queue;
+    public static final int QUEUE = 1024;
     public static final int THREADS = MultithreadedTracker.threads;
     public static final FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
         THREADS,
