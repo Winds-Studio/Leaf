@@ -42,17 +42,29 @@ public final class AsyncTracker {
         Entity[] entities = new Entity[trackerEntitiesSize];
         System.arraycopy(trackerEntitiesRaw, 0, entities, 0, trackerEntitiesSize);
         EntitySlice slice = new EntitySlice(entities);
-        EntitySlice[] slices = entities.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
+        boolean usePWT = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled;
+        FixedThreadExecutor executor = usePWT ? world.leafAsyncTrackerExecutor : TRACKER_EXECUTOR;
+        if (executor == null) {
+            // Executor might not be initialized, skip this tick
+            return;
+        }
+
+        int threadCount = usePWT ? 1 : THREADS;
+        EntitySlice[] slices = entities.length <= threadCount * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(threadCount);
+
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i]));
+            futures[i] = executor.submitOrRun(new TrackerTask(world, slices[i]));
         }
-        TRACKER_EXECUTOR.unpack();
+        executor.unpack();
         world.trackerTask = futures;
     }
 
     public static void onEntitiesTickEnd(ServerLevel world) {
+        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+            return;
+        }
         Future<TrackerCtx>[] task = world.trackerTask;
         if (task == null) {
             return;
@@ -66,6 +78,9 @@ public final class AsyncTracker {
     }
 
     public static void onTickEnd(MinecraftServer server) {
+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+            return;
+        }
         for (ServerLevel world : server.getAllLevels()) {
             Future<TrackerCtx>[] task = world.trackerTask;
             if (task != null) {

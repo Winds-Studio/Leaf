@@ -424,7 +424,7 @@ index 8f41326fda8c5f9f6926038508be6c6529b051bc..46e171ca454253c32e22c0c18587e9a7
              }
          }
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc23ee5ae9f 100644
+index 67ba089dc878afa5c9023ea72ab9a21f7cb1cd37..547e629a57b8c0f1a67140fb598712711a6be8c5 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -180,7 +180,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -446,7 +446,17 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
  
      // CraftBukkit start
      public final LevelStorageSource.LevelStorageAccess levelStorageAccess;
-@@ -680,7 +683,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -218,6 +221,9 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     final List<ServerPlayer> realPlayers; // Leaves - skip
+     public volatile @Nullable java.util.concurrent.Future<org.dreeam.leaf.async.tracker.TrackerCtx>[] trackerTask; // Leaf - Multithreaded tracker
+ 
++    // Leaf start - PWT/Tracker Compatibility Fix
++    public org.dreeam.leaf.async.FixedThreadExecutor leafAsyncTrackerExecutor;
++    // Leaf end - PWT/Tracker Compatibility Fix
+     @Override
+     public @Nullable LevelChunk getChunkIfLoaded(int x, int z) {
+         return this.chunkSource.getChunkAtIfLoadedImmediately(x, z); // Paper - Use getChunkIfLoadedImmediately
+@@ -680,7 +686,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          this.sleepStatus = new SleepStatus();
          this.gameEventDispatcher = new GameEventDispatcher(this);
          this.randomSequences = Objects.requireNonNullElseGet(randomSequences, () -> this.getDataStorage().computeIfAbsent(RandomSequences.TYPE));
@@ -455,13 +465,26 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          // Paper start - rewrite chunk system
          this.moonrise$setEntityLookup(new ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup((ServerLevel)(Object)this, ((ServerLevel)(Object)this).new EntityCallbacks()));
          this.chunkTaskScheduler = new ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkTaskScheduler((ServerLevel)(Object)this);
-@@ -698,8 +701,26 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -698,8 +704,39 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
          this.preciseTime = this.serverLevelData.getDayTime(); // Purpur - Configurable daylight cycle
          this.realPlayers = Lists.newArrayList(); // Leaves - skip
 +        this.tickExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(new org.dreeam.leaf.async.world.SparklyPaperServerLevelTickExecutorThreadFactory(getWorld().getName())); // SparklyPaper - parallel world ticking
++        // Leaf start - PWT/Tracker Compatibility Fix
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            this.leafAsyncTrackerExecutor = new org.dreeam.leaf.async.FixedThreadExecutor(
++                1, // Use only 1 thread per world to keep it simple and safe
++                org.dreeam.leaf.async.tracker.AsyncTracker.QUEUE,
++                "Leaf World Tracker - " + this.getWorld().getName()
++            );
++        } else {
++            this.leafAsyncTrackerExecutor = null; // Ensure it's null if not used
++        }
++        // Leaf end - PWT/Tracker Compatibility Fix
      }
  
++
++
 +    // Leaf start - SparklyPaper - parallel world ticking - Shutdown handling for async reads
 +    public boolean isShuttingDown() {
 +        return this.isShuttingDown;
@@ -482,7 +505,7 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
      // Paper start
      @Override
      public boolean hasChunk(int chunkX, int chunkZ) {
-@@ -730,8 +751,112 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -730,8 +767,112 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          return this.structureManager;
      }
  
@@ -595,7 +618,7 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          TickRateManager tickRateManager = this.tickRateManager();
          boolean runsNormally = tickRateManager.runsNormally();
          if (runsNormally) {
-@@ -739,6 +864,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -739,6 +880,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              this.advanceWeatherCycle();
          }
  
@@ -610,7 +633,21 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          int _int = this.getGameRules().getInt(GameRules.RULE_PLAYERS_SLEEPING_PERCENTAGE);
          if (this.purpurConfig.playersSkipNight && this.sleepStatus.areEnoughSleeping(_int) && this.sleepStatus.areEnoughDeepSleeping(_int, this.players)) { // Purpur - Config for skipping night
              // Paper start - create time skip event - move up calculations
-@@ -1308,9 +1441,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -838,7 +987,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+             this.tickBlockEntities();
+         }
+         // Paper - rewrite chunk system
+-        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) { org.dreeam.leaf.async.tracker.AsyncTracker.onEntitiesTickEnd(this); } // Leaf - Multithreaded tracker
++        // Leaf start - PWT/Tracker Compatibility Fix
++        // When PWT is on, we must wait for this world's tracker tasks to finish before this world's tick ends.
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            org.dreeam.leaf.async.tracker.AsyncTracker.onEntitiesTickEnd(this);
++        }
++        // Leaf end - PWT/Tracker Compatibility Fix
+     }
+ 
+     @Override
+@@ -1308,9 +1462,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              fluidState.tick(this, pos, blockState);
          }
          // Paper start - rewrite chunk system
@@ -625,7 +662,7 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          // Paper end - rewrite chunk system
  
      }
-@@ -1321,9 +1457,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1321,9 +1478,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              blockState.tick(this, pos, this.random);
          }
          // Paper start - rewrite chunk system
@@ -640,7 +677,7 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          // Paper end - rewrite chunk system
  
      }
-@@ -1588,6 +1727,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1588,6 +1748,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
      }
  
      private void addPlayer(ServerPlayer player) {
@@ -649,7 +686,7 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          Entity entity = this.getEntity(player.getUUID());
          if (entity != null) {
              LOGGER.warn("Force-added player with duplicate UUID {}", player.getUUID());
-@@ -1600,7 +1741,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1600,7 +1762,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
  
      // CraftBukkit start
      private boolean addEntity(Entity entity, @Nullable org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason spawnReason) {
@@ -663,6 +700,19 @@ index af190cb959478cde3fa9011df85032dbab60ce56..bc9cf4aa9b1e71e03100a10c45ef9fc2
          entity.generation = false; // Paper - Don't fire sync event during generation; Reset flag if it was added during a ServerLevel generation process
          // Paper start - extra debug info
          if (entity.valid) {
+@@ -2586,6 +2753,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+ 
+     @Override
+     public void close() throws IOException {
++        // Leaf start - PWT/Tracker Compatibility Fix
++        if (this.leafAsyncTrackerExecutor != null) {
++            this.leafAsyncTrackerExecutor.shutdown();
++            this.leafAsyncTrackerExecutor = null;
++        }
++        // Leaf end - PWT/Tracker Compatibility Fix
+         super.close();
+         // Paper - rewrite chunk system
+     }
 diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
 index 567187499c29fbd159b472278665a824dbb1cfd6..4b359856e2981cfb52f43bab8c088e0e273dad93 100644
 --- a/net/minecraft/server/level/ServerPlayer.java
@@ -719,7 +769,7 @@ index 567187499c29fbd159b472278665a824dbb1cfd6..4b359856e2981cfb52f43bab8c088e0e
          // Paper end - Inventory close reason
          this.connection.send(new ClientboundContainerClosePacket(this.containerMenu.containerId));
 diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
-index 9dbc73b7d5406c7e82b8f1dd2d60d144d24d5220..283115b85ba910f7b155354dd536146bb57e378e 100644
+index ff3798fd384679fd8324d4d47e71095024209fe2..8b72f2612c6968c4602a4cb72f3d1160d9679e36 100644
 --- a/net/minecraft/server/players/PlayerList.java
 +++ b/net/minecraft/server/players/PlayerList.java
 @@ -251,6 +251,8 @@ public abstract class PlayerList {
