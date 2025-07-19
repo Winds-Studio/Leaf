@@ -1,6 +1,5 @@
 package org.dreeam.leaf.world;
 import jdk.incubator.vector.*;
-import org.dreeam.leaf.util.queue.IntDeque;
 
 import static org.dreeam.leaf.world.DespawnMap.*;
 
@@ -12,39 +11,41 @@ public final class DespawnVectorAPI {
     private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
     static final int DOUBLE_VECTOR_LENGTH = DOUBLE_SPECIES.length();
 
-    static double nearest(final IntDeque search,
+    static double nearest(final int[] stack,
                           final double[] nxl, final double[] nyl, final double[] nzl,
-                          final int[] axl, final int[] nll, final int[] nrl,
+                          final long[] nll, final long[] nbl,
                           final double[] bxl, final double[] byl, final double[] bzl,
-                          final int[] nbi, final int[] nbs,
                           final double tx, final double ty, final double tz) {
         DoubleVector vMinDist = DoubleVector.broadcast(DOUBLE_SPECIES, Double.POSITIVE_INFINITY);
         double dist = Double.POSITIVE_INFINITY;
         final DoubleVector vtx = DoubleVector.broadcast(DOUBLE_SPECIES, tx);
         final DoubleVector vty = DoubleVector.broadcast(DOUBLE_SPECIES, ty);
         final DoubleVector vtz = DoubleVector.broadcast(DOUBLE_SPECIES, tz);
-        while (!search.isEmpty()) {
-            final int idx = search.dequeueBack();
-            int bucket = nbi[idx];
+        int i = 0;
+        stack[i++] = 0;
+        while (i != 0) {
+            final int idx = stack[--i];
+            final long bucket = nbl[idx];
             if (bucket == INTERNAL) {
-                final int axis = axl[idx];
+                final long data = nll[idx];
+                final long axis = data & 0b11;
                 final double delta = axis == AXIS_X ? tx - nxl[idx] : axis == AXIS_Y ? ty - nyl[idx] : tz - nzl[idx];
-                final int s = (int) (Double.doubleToRawLongBits(delta) >>> 63);
-                final int l = nll[idx], r = nrl[idx];
-                final int nearIdx = s * l + (1 - s) * r;
-                final int farIdx = s * r + (1 - s) * l;
-                if (nearIdx != ROOT) {
-                    search.enqueueBack(nearIdx);
+                final boolean negative = (Double.doubleToRawLongBits(delta) & 0x8000_0000_0000_0000L) == 0x8000_0000_0000_0000L;
+                final long sMask = negative ? -1L : 0L;
+                final boolean leftValid = (data & 0xfffffffcL) != 0xfffffffcL;
+                final boolean rightValid = (data & 0x3fffffff00000000L) != 0x3fffffff00000000L;
+                final long node = sMask & (data & 0xfffffffcL) >>> 2 | ~sMask & data >>> 32;
+                final long other = sMask & data >>> 32 | ~sMask & (data & 0xfffffffcL) >>> 2;
+                if ((negative & leftValid) | (!negative & rightValid)) {
+                    stack[i++] = (int) node;
                 }
-                if (farIdx != ROOT && delta * delta < dist) {
-                    search.enqueueBack(farIdx);
+                if ((!negative & leftValid) | (negative & rightValid) && delta * delta < dist) {
+                    stack[i++] = (int) other;
                 }
             } else {
-                final int end = bucket + nbs[idx];
-                final int bucketSize = end - bucket;
-                int i = 0;
+                final int start = (int) (bucket >>> 32);
+                final int bucketSize = (int) (bucket & 0xffffffffL);
                 if (DOUBLE_VECTOR_LENGTH == bucketSize) {
-                    final int start = bucket + i;
                     final DoubleVector vdx = DoubleVector.fromArray(DOUBLE_SPECIES, bxl, start).sub(vtx);
                     final DoubleVector vdy = DoubleVector.fromArray(DOUBLE_SPECIES, byl, start).sub(vty);
                     final DoubleVector vdz = DoubleVector.fromArray(DOUBLE_SPECIES, bzl, start).sub(vtz);
@@ -55,9 +56,9 @@ public final class DespawnVectorAPI {
                     dist = vMinDist.reduceLanes(VectorOperators.MIN);
                 } else if (DOUBLE_VECTOR_LENGTH > 4 && bucketSize >= 4) {
                     VectorMask<Double> mask = DOUBLE_SPECIES.indexInRange(0, bucketSize);
-                    final DoubleVector vdx = DoubleVector.fromArray(DOUBLE_SPECIES, bxl, bucket, mask).sub(vtx);
-                    final DoubleVector vdy = DoubleVector.fromArray(DOUBLE_SPECIES, byl, bucket, mask).sub(vty);
-                    final DoubleVector vdz = DoubleVector.fromArray(DOUBLE_SPECIES, bzl, bucket, mask).sub(vtz);
+                    final DoubleVector vdx = DoubleVector.fromArray(DOUBLE_SPECIES, bxl, start, mask).sub(vtx);
+                    final DoubleVector vdy = DoubleVector.fromArray(DOUBLE_SPECIES, byl, start, mask).sub(vty);
+                    final DoubleVector vdz = DoubleVector.fromArray(DOUBLE_SPECIES, bzl, start, mask).sub(vtz);
                     final DoubleVector vDist = FMA ?
                         vdz.fma(vdz, vdy.fma(vdy, vdx.mul(vdx))) :
                         vdx.mul(vdx).add(vdy.mul(vdy)).add(vdz.mul(vdz));
@@ -68,12 +69,12 @@ public final class DespawnVectorAPI {
                         dist = newDist;
                     }
                 } else {
+                    final int end = start + bucketSize;
                     double scalarMin = dist;
-                    for (; i < bucketSize; i++) {
-                        final int pointIdx = bucket + i;
-                        final double dx = bxl[pointIdx] - tx;
-                        final double dy = byl[pointIdx] - ty;
-                        final double dz = bzl[pointIdx] - tz;
+                    for (int j = start; j < end; j++) {
+                        final double dx = bxl[j] - tx;
+                        final double dy = byl[j] - ty;
+                        final double dz = bzl[j] - tz;
                         final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
                         if (d2 < scalarMin) {
                             scalarMin = d2;
