@@ -15,7 +15,7 @@ import java.util.AbstractMap.SimpleEntry;
 public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, AttributeInstance>, Cloneable {
 
     private int size = 0;
-    private transient AttributeInstance[] a = new AttributeInstance[RegistryTypeManager.ATTRIBUTE_ID_COUNTER];
+    private transient AttributeInstance[] a = new AttributeInstance[RegistryTypeManager.ATTRIBUTE_SIZE];
     private transient KeySet keys;
     private transient Values values;
     private transient EntrySet entries;
