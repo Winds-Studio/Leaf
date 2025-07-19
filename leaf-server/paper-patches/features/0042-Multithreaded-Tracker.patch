@@ -12,34 +12,21 @@ Original project: https://github.com/TECHNOVE/Airplane-Experimental
 Co-authored-by: Paul Sauve <paul@technove.co>
 Co-authored-by: Kevin Raneri <kevin.raneri@gmail.com>
 Co-authored-by: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Co-authored-by: hayanesuru <hayanesuru@outlook.jp>
 
 This patch refactored from original multithreaded tracker (Petal version),
 and is derived from the Airplane fork by Paul Sauve, the tree is like:
-Airplane -> Pufferfish? -> Petal -> Leaf
+Airplane -> Pufferfish(?) -> Petal -> Leaf
 
-We made much of tracking logic asynchronously, and fixed visible issue
-for the case of some NPC plugins which using real entity type, e.g. Citizens.
+The core logic has beed reworked compared to the old one, can handle larger
+scale situation better now.
+Current impl includes many improvements and fixes we made, such as
+plugin compat issues with some NPC plugins using real entity type,
+e.g. Citizens.
 
-But it is still recommending to use those packet based, virtual entity
-based NPC plugins, e.g. ZNPC Plus, Adyeshach, Fancy NPC, etc.
+However we still recommend to use those packet based NPC plugins,
+e.g. ZNPC Plus, Adyeshach, Fancy NPC, etc.
 
-diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
-index 379c2dc1853e45a96dda9b13bf28b7e08f65658a..361f4de9cdf0f7505628a2fed2a3f5366031e04b 100644
---- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
-+++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
-@@ -42,6 +42,12 @@ class PaperEventManager {
-         if (event.isAsynchronous() && this.server.isPrimaryThread()) {
-             throw new IllegalStateException(event.getEventName() + " may only be triggered asynchronously.");
-         } else if (!event.isAsynchronous() && !this.server.isPrimaryThread() && !this.server.isStopping()) {
-+            // Leaf start - Multithreaded tracker
-+            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
-+                net.minecraft.server.MinecraftServer.getServer().scheduleOnMain(event::callEvent);
-+                return;
-+            }
-+            // Leaf end - Multithreaded tracker
-             throw new IllegalStateException(event.getEventName() + " may only be triggered synchronously.");
-         }
-         // Leaves start - skip photographer
 diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java
 index beae8a57a0ce9b8e7d81619efe4c39d908869319..6b1926080eddf61ff9c0156a6846f7f0bcff1c2d 100644
 --- a/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java
@@ -72,9 +59,18 @@ index beae8a57a0ce9b8e7d81619efe4c39d908869319..6b1926080eddf61ff9c0156a6846f7f0
          }
          return set;
 diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
-index 1e08ac054947b1a0a6cce2f886be1ed83c74a642..d4b7b7747dda687fe3d12b85b7eccc96a0b825f6 100644
+index 1e08ac054947b1a0a6cce2f886be1ed83c74a642..7850bc5432bc88ec060ee64e45613b6f9c5c4fac 100644
 --- a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
 +++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+@@ -217,7 +217,7 @@ public class CraftPlayer extends CraftHumanEntity implements Player, PluginMessa
+     private static final WeakHashMap<Plugin, WeakReference<Plugin>> pluginWeakReferences = new WeakHashMap<>();
+     private static final net.kyori.adventure.text.Component DEFAULT_KICK_COMPONENT = net.kyori.adventure.text.Component.translatable("multiplayer.disconnect.kicked");
+     private final ConversationTracker conversationTracker = new ConversationTracker();
+-    private final Map<UUID, Set<WeakReference<Plugin>>> invertedVisibilityEntities = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // SparklyPaper - optimize canSee checks
++    private final Map<UUID, Set<WeakReference<Plugin>>> invertedVisibilityEntities = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled ? it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>()) : new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // SparklyPaper - optimize canSee checks // Leaf - Multithreaded tracker
+     private final Set<UUID> unlistedEntities = new HashSet<>(); // Paper - Add Listing API for Player
+     public org.bukkit.event.player.PlayerResourcePackStatusEvent.Status resourcePackStatus; // Paper - more resource pack API
+     private long firstPlayed = 0;
 @@ -2962,7 +2962,7 @@ public class CraftPlayer extends CraftHumanEntity implements Player, PluginMessa
          Iterator<AttributeInstance> iterator = collection.iterator();
          while (iterator.hasNext()) {
@@ -84,34 +80,3 @@ index 1e08ac054947b1a0a6cce2f886be1ed83c74a642..d4b7b7747dda687fe3d12b85b7eccc96
                  iterator.remove();
                  break;
              }
-diff --git a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
-index a162440a583801671787163d998d6b9546ef7e61..5e73db484a5526f4c39c7cc2de5ddc3ff037d2e4 100644
---- a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
-+++ b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
-@@ -1808,6 +1808,26 @@ public class CraftEventFactory {
-     }
- 
-     public static boolean handleBlockFormEvent(Level world, BlockPos pos, net.minecraft.world.level.block.state.BlockState state, int flags, @Nullable Entity entity, boolean checkSetResult) {
-+        // Leaf start - Multithreaded tracker
-+        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled && Thread.currentThread() instanceof org.dreeam.leaf.async.tracker.MultithreadedTracker.MultithreadedTrackerThread) {
-+            java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
-+            net.minecraft.server.MinecraftServer.getServer().scheduleOnMain(() -> {
-+                boolean resultFlag = false;
-+                CraftBlockState snapshot = CraftBlockStates.getBlockState(world, pos);
-+                snapshot.setData(state);
-+
-+                BlockFormEvent event = (entity == null) ? new BlockFormEvent(snapshot.getBlock(), snapshot) : new EntityBlockFormEvent(entity.getBukkitEntity(), snapshot.getBlock(), snapshot);
-+                if (event.callEvent()) {
-+                    boolean result = snapshot.place(flags);
-+                    resultFlag = !checkSetResult || result;
-+                }
-+
-+                future.complete(resultFlag);
-+            });
-+
-+            return future.join();
-+        }
-+        // Leaf end - Multithreaded tracker
-         CraftBlockState snapshot = CraftBlockStates.getBlockState(world, pos);
-         snapshot.setData(state);
- 

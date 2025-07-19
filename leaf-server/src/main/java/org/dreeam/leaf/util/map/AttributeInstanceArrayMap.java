@@ -4,6 +4,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import org.dreeam.leaf.util.RegistryTypeManager;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -13,18 +14,14 @@ import java.util.AbstractMap.SimpleEntry;
 // fast array backend map with O(1) get & put & remove
 public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, AttributeInstance>, Cloneable {
 
-    private static final int VANILLA_ATTRIBUTE_SIZE = 35; // 1.21.6 (Check this on every Minecraft version)
-
     private int size = 0;
-    private transient AttributeInstance[] a = new AttributeInstance[VANILLA_ATTRIBUTE_SIZE];
+    private transient AttributeInstance[] a = new AttributeInstance[RegistryTypeManager.ATTRIBUTE_SIZE];
     private transient KeySet keys;
     private transient Values values;
     private transient EntrySet entries;
 
     public AttributeInstanceArrayMap() {
-        if (BuiltInRegistries.ATTRIBUTE.size() != VANILLA_ATTRIBUTE_SIZE) {
-            throw new IllegalStateException("Unexpected registry minecraft:attribute size");
-        }
+        // The check for a fixed vanilla size is no longer necessary
     }
 
     public AttributeInstanceArrayMap(final @NotNull Map<Holder<Attribute>, AttributeInstance> m) {

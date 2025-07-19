@@ -2,7 +2,7 @@
 <div align="center">
 
 [![下载](https://img.shields.io/badge/releases-blue?label=%e4%b8%8b%e8%bd%bd&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/zh/download)⠀
-[![Github Actions 构建](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1217.yml?label=%e6%9e%84%e5%bb%ba&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Github Actions 构建](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1218.yml?label=%e6%9e%84%e5%bb%ba&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 ![QQ](https://img.shields.io/badge/619278377-blue?label=QQ%e7%be%a4&style=for-the-badge&colorA=19201a&colorB=298046)
 [![文档](https://img.shields.io/badge/leafmc.one/zh/docs-blue?label=%e6%96%87%e6%a1%a3&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/zh/docs)
 
@@ -58,14 +58,14 @@
 ```xml
 <repository>
     <id>leafmc</id>
-    <url>https://maven.nostal.ink/repository/maven-snapshots/</url>
+    <url>https://maven.leafmc.one/snapshots/</url>
 </repository>
 ```
 ```xml
 <dependency>
     <groupId>cn.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>1.21.7-R0.1-SNAPSHOT</version>
+    <version>1.21.8-R0.1-SNAPSHOT</version>
     <scope>provided</scope>
 </dependency>
 ```
@@ -73,12 +73,12 @@
 ```kotlin
 repositories {
   maven {
-    url = uri("https://maven.nostal.ink/repository/maven-snapshots/")
+    url = uri("https://maven.leafmc.one/snapshots/")
   }
 }
 
 dependencies {
-    compileOnly("cn.dreeam.leaf:leaf-api:1.21.7-R0.1-SNAPSHOT")
+    compileOnly("cn.dreeam.leaf:leaf-api:1.21.8-R0.1-SNAPSHOT")
 }
 
 java {

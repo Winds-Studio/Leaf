@@ -64,7 +64,7 @@ fi
 
 # Purpur updates
 if [ -n "$purpurHash" ]; then
-    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/1.21.7") # Update this on every version update
+    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/1.21.8") # Update this on every version update
 
     # Updates found
     if [ -n "$purpur" ]; then
