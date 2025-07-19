@@ -2,72 +2,69 @@ package org.dreeam.leaf.util.cache;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongList;
+import java.util.Iterator;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.core.BlockPos;
 
-import java.util.Iterator;
-import java.util.Random;
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
- * @author 2No2Name, original implemenation by SuperCoder7979 and Gegy1000
+ * Cache for positions computed with BlockPos.withinManhattan() away from BlockPos(0,0,0).
+ * Note: POS_ZERO must not be replaced with BlockPos.ORIGIN, otherwise iterateOutwards at BlockPos.ORIGIN will not use the cache.
+ * Original implementation by SuperCoder7979 and Gegy1000, modified by 2No2Name.
  */
 public class IterateOutwardsCache {
 
-    //POS_ZERO must not be replaced with BlockPos.ORIGIN, otherwise iterateOutwards at BlockPos.ORIGIN will not use the cache
     public static final BlockPos POS_ZERO = new BlockPos(0, 0, 0);
-
 
     private final ConcurrentHashMap<Long, LongArrayList> table;
     private final int capacity;
-    private final Random random;
 
     public IterateOutwardsCache(int capacity) {
         this.capacity = capacity;
-        this.table = new ConcurrentHashMap<>(31);
-        this.random = new Random();
+        // Pre-size the map based on expected load to reduce rehashing
+        int initialCapacity = Math.max(31, capacity / 4);
+        this.table = new ConcurrentHashMap<>(initialCapacity);
     }
 
     private void fillPositionsWithIterateOutwards(LongList entry, int xRange, int yRange, int zRange) {
-        // Add all positions to the cached list
+        // Add all positions (as long value) within Manhattan distance from POS_ZERO.
         for (BlockPos pos : BlockPos.withinManhattan(POS_ZERO, xRange, yRange, zRange)) {
             entry.add(pos.asLong());
         }
     }
 
+    /**
+     * Retrieves a cached list of positions for the given range or computes and caches it if not present.
+     */
     public LongList getOrCompute(int xRange, int yRange, int zRange) {
         long key = BlockPos.asLong(xRange, yRange, zRange);
-
         LongArrayList entry = this.table.get(key);
         if (entry != null) {
             return entry;
         }
 
-        // Cache miss: compute and store
-        entry = new LongArrayList(128);
+        // Cache miss: compute the list.
+        LongArrayList computed = new LongArrayList(128);
+        fillPositionsWithIterateOutwards(computed, xRange, yRange, zRange);
+        computed.trim();
 
-        this.fillPositionsWithIterateOutwards(entry, xRange, yRange, zRange);
+        // Use putIfAbsent to avoid long compute locks; if another thread computed concurrently, use that entry.
+        LongArrayList previous = this.table.putIfAbsent(key, computed);
+        LongArrayList result = (previous != null) ? previous : computed;
 
-        //decrease the array size, as of now it won't be modified anymore anyways
-        entry.trim();
-
-        //this might overwrite an entry as the same entry could have been computed and added during this thread's computation
-        //we do not use computeIfAbsent, as it can delay other threads for too long
-        Object previousEntry = this.table.put(key, entry);
-
-
-        if (previousEntry == null && this.table.size() > this.capacity) {
-            //prevent a memory leak by randomly removing about 1/8th of the elements when the exceed the desired capacity is exceeded
-            final Iterator<Long> iterator = this.table.keySet().iterator();
-            //prevent an unlikely infinite loop caused by another thread filling the table concurrently using counting
+        // If the cache size exceeds the capacity, randomly remove some entries (~1/8th chance).
+        if (previous == null && this.table.size() > this.capacity) {
+            Iterator<Long> iterator = this.table.keySet().iterator();
+            // Avoid potential infinite loop with a small counter limit.
             for (int i = -this.capacity; iterator.hasNext() && i < 5; i++) {
-                Long key2 = iterator.next();
-                //random is not threadsafe, but it doesn't matter here, because we don't need quality random numbers
-                if (this.random.nextInt(8) == 0 && key2 != key) {
+                Long currentKey = iterator.next();
+                // Random removal: quality of randomness isn't critical here.
+                // Using ThreadLocalRandom for better performance in multi-threaded environment
+                if (ThreadLocalRandom.current().nextInt(8) == 0 && currentKey != key) {
                     iterator.remove();
                 }
             }
         }
-
-        return entry;
+        return result;
     }
 }
