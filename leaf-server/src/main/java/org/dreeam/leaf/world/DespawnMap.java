@@ -31,6 +31,7 @@ public final class DespawnMap {
     static final long AXIS_Y = 1L;
     static final long LEFT_MASK = 0xfffffffcL;
     static final long RIGHT_MASK = 0x3fffffff00000000L;
+    static final long AXIS_MASK = 0b11L;
 
     /// Stack for tree construction
     private final Stack stack = new Stack(INITIAL_CAP);
@@ -64,16 +65,16 @@ public final class DespawnMap {
             sort[i] = caps[i].getNoDespawnDistance();
             hard[i] = caps[i].getDespawnDistance();
         }
-        for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> mobCategoryDespawnRangePairEntry : worldConfiguration.entities.spawning.despawnRanges.entrySet()) {
-            OptionalInt a = mobCategoryDespawnRangePairEntry.getValue().soft().verticalLimit.value();
-            OptionalInt b = mobCategoryDespawnRangePairEntry.getValue().soft().horizontalLimit.value();
-            OptionalInt c = mobCategoryDespawnRangePairEntry.getValue().hard().verticalLimit.value();
-            OptionalInt d = mobCategoryDespawnRangePairEntry.getValue().hard().horizontalLimit.value();
+        for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> e : worldConfiguration.entities.spawning.despawnRanges.entrySet()) {
+            OptionalInt a = e.getValue().soft().verticalLimit.value();
+            OptionalInt b = e.getValue().soft().horizontalLimit.value();
+            OptionalInt c = e.getValue().hard().verticalLimit.value();
+            OptionalInt d = e.getValue().hard().horizontalLimit.value();
             if (a.isPresent() && b.isPresent() && a.getAsInt() == b.getAsInt()) {
-                sort[mobCategoryDespawnRangePairEntry.getKey().ordinal()] = a.getAsInt();
+                sort[e.getKey().ordinal()] = a.getAsInt();
             }
             if (c.isPresent() && d.isPresent() && c.getAsInt() == d.getAsInt()) {
-                hard[mobCategoryDespawnRangePairEntry.getKey().ordinal()] = c.getAsInt();
+                hard[e.getKey().ordinal()] = c.getAsInt();
             }
         }
         for (int i = 0; i < caps.length; i++) {
@@ -86,13 +87,13 @@ public final class DespawnMap {
         }
     }
 
-    private void build(double[] pxl, double[] pyl, double[] pzl) {
-        final double[][] ml = {pxl, pyl, pzl};
-        final int[] data = new int[pxl.length];
-        for (int i = 0; i < pxl.length; i++) {
+    private void build(double[] coordX, double[] coordY, double[] coordZ) {
+        final double[][] map = {coordX, coordY, coordZ};
+        final int[] data = new int[coordX.length];
+        for (int i = 0; i < coordX.length; i++) {
             data[i] = i;
         }
-        stack.push(new Node(-1, false, 0, pxl.length, 0));
+        stack.push(new Node(-1, false, 0, coordX.length, 0));
         while (!stack.isEmpty()) {
             grow();
 
@@ -106,37 +107,75 @@ public final class DespawnMap {
                 growBucket(len);
                 for (int i = 0; i < len; i++) {
                     int p = data[offset + i];
-                    bxl[bucketLen + i] = pxl[p];
-                    byl[bucketLen + i] = pyl[p];
-                    bzl[bucketLen + i] = pzl[p];
+                    bxl[bucketLen + i] = coordX[p];
+                    byl[bucketLen + i] = coordY[p];
+                    bzl[bucketLen + i] = coordZ[p];
                 }
                 bucketLen += len;
                 nll[curr] = LEAF;
             } else {
                 final int axis = depth % 3;
                 final int median = len / 2;
-                quickSelect(data, offset, offset + len - 1, offset + median, ml[axis]);
+                quickSelect(data, offset, offset + len - 1, offset + median, map[axis]);
                 final int pivot = data[offset + median];
-                nsl[curr] = axis == AXIS_X ? pxl[pivot] : axis == AXIS_Y ? pyl[pivot] : pzl[pivot];
-                nll[curr] = 0x3ffffffffffffffcL | ((long) axis);
+                nsl[curr] = axis == AXIS_X ? coordX[pivot] : axis == AXIS_Y ? coordY[pivot] : coordZ[pivot];
+                nll[curr] = LEFT_MASK | RIGHT_MASK | (long) axis;
                 stack.push(new Node(curr, true, offset, median, depth + 1));
                 stack.push(new Node(curr, false, offset + median + 1, len - median - 1, depth + 1));
             }
             if (n.parent >= 0) {
                 if (n.left) {
-                    nll[n.parent] &= 0x3fffffff00000003L;
+                    nll[n.parent] &= AXIS_MASK | RIGHT_MASK;
                     nll[n.parent] |= (long) curr << 2;
                 } else {
-                    nll[n.parent] &= 0xffffffffL;
+                    nll[n.parent] &= AXIS_MASK | LEFT_MASK;
                     nll[n.parent] |= (long) curr << 32;
                 }
             }
         }
     }
 
-    private void quickSelect(int[] data, int left, int right, int k, double[] coord) {
+    private void insertionSort(int[] indices, int left, int right, double[] coord) {
+        for (int i = left + 1; i <= right; i++) {
+            int key = indices[i];
+            double val = coord[key];
+            int j = i - 1;
+
+            while (j >= left && coord[indices[j]] > val) {
+                indices[j + 1] = indices[j];
+                j--;
+            }
+            indices[j + 1] = key;
+        }
+    }
+
+    private void quickSelect(int[] indices, int left, int right, int k, double[] coord) {
         while (left < right) {
-            int p = partition(data, left, right, coord);
+            if (right - left < 8) {
+                insertionSort(indices, left, right, coord);
+                return;
+            }
+            int mid = left + (right - left) / 2;
+            int a = indices[left], b = indices[mid], c = indices[right];
+            double va = coord[a], vb = coord[b], vc = coord[c];
+            int pivotIdx = (va < vb)
+                ? (vb < vc ? mid : (va < vc ? right : left))
+                : (va < vc ? left : (vb < vc ? right : mid));
+            swap(indices, pivotIdx, left);
+            double pivot = coord[indices[left]];
+
+            int i = left;
+            int j = right + 1;
+
+            while (true) {
+                while (++i <= right && coord[indices[i]] < pivot) ;
+                while (--j > left && coord[indices[j]] > pivot) ;
+                if (i >= j) break;
+                swap(indices, i, j);
+            }
+
+            swap(indices, left, j);
+            int p = j;
             if (p == k) {
                 return;
             } else if (k < p) {
@@ -147,18 +186,10 @@ public final class DespawnMap {
         }
     }
 
-    private int partition(int[] data, int left, int right, double[] coord) {
-        double pivot = coord[data[left + (right - left) / 2]];
-        int i = left - 1;
-        int j = right + 1;
-        while (true) {
-            do i++; while (coord[data[i]] < pivot);
-            do j--; while (coord[data[j]] > pivot);
-            if (i >= j) return j;
-            int tmp = data[i];
-            data[i] = data[j];
-            data[j] = tmp;
-        }
+    private void swap(int[] arr, int i, int j) {
+        int temp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = temp;
     }
 
     private void reset() {
@@ -197,7 +228,7 @@ public final class DespawnMap {
     private record Node(int parent, boolean left, int offset, int length, int depth) {
     }
 
-    private double nearest(final double tx, final double ty, final double tz) {
+    private double nearest(final double tx, final double ty, final double tz, double dist) {
         if (nodeLen == 0) {
             return Double.POSITIVE_INFINITY;
         }
@@ -205,9 +236,8 @@ public final class DespawnMap {
             search = new int[Math.max(64, nodeLen * 4)];
         }
         if (SIMD) {
-            return DespawnVectorAPI.nearest(search, nsl, nll, nbl, bxl, byl, bzl, tx, ty, tz);
+            return DespawnVectorAPI.nearest(search, nsl, nll, nbl, bxl, byl, bzl, tx, ty, tz, dist);
         }
-        double dist = Double.POSITIVE_INFINITY;
         final int[] stack = this.search;
         final double[] nsl = this.nsl;
         final long[] nll = this.nll;
@@ -221,7 +251,7 @@ public final class DespawnMap {
             final int idx = stack[--i];
             final long data = nll[idx];
             if (data != LEAF) {
-                final long axis = data & 0b11;
+                final long axis = data & AXIS_MASK;
                 final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
                 final boolean negative = (Double.doubleToRawLongBits(delta) & 0x8000_0000_0000_0000L) == 0x8000_0000_0000_0000L;
                 final long sMask = negative ? -1L : 0L;
@@ -309,13 +339,13 @@ public final class DespawnMap {
         final double x = mob.getX();
         final double y = mob.getY();
         final double z = mob.getZ();
-        final double dist = nearest(x, y, z);
+        final int i = mob.getType().getCategory().ordinal();
+        final double dist = nearest(x, y, z, hard[i]);
         if (dist == Double.POSITIVE_INFINITY) {
             return;
         }
 
-        final int i = mob.getType().getCategory().ordinal();
-        if (dist > hard[i] && mob.removeWhenFarAway(dist)) {
+        if (dist >= hard[i] && mob.removeWhenFarAway(dist)) {
             mob.discard(EntityRemoveEvent.Cause.DESPAWN);
         } else if (dist > sort[i]) {
             if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist)) {

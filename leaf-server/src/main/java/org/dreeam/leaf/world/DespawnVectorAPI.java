@@ -13,10 +13,11 @@ public final class DespawnVectorAPI {
 
     static double nearest(final int[] stack,
                           final double[] nsl,
-                          final long[] nll, final long[] nbl,
+                          final long[] nll,
+                          final long[] nbl,
                           final double[] bxl, final double[] byl, final double[] bzl,
-                          final double tx, final double ty, final double tz) {
-        double dist = Double.POSITIVE_INFINITY;
+                          final double tx, final double ty, final double tz,
+                          double dist) {
         final DoubleVector vtx = DoubleVector.broadcast(DOUBLE_SPECIES, tx);
         final DoubleVector vty = DoubleVector.broadcast(DOUBLE_SPECIES, ty);
         final DoubleVector vtz = DoubleVector.broadcast(DOUBLE_SPECIES, tz);
@@ -26,7 +27,7 @@ public final class DespawnVectorAPI {
             final int idx = stack[--i];
             final long data = nll[idx];
             if (data != LEAF) {
-                final long axis = data & 0b11;
+                final long axis = data & AXIS_MASK;
                 final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
                 final boolean negative = (Double.doubleToRawLongBits(delta) & 0x8000_0000_0000_0000L) == 0x8000_0000_0000_0000L;
                 final long sMask = negative ? -1L : 0L;
@@ -53,7 +54,7 @@ public final class DespawnVectorAPI {
                         vdx.mul(vdx).add(vdy.mul(vdy)).add(vdz.mul(vdz));
                     dist = Math.min(dist, vDist.reduceLanes(VectorOperators.MIN));
                 } else if (DOUBLE_VECTOR_LENGTH > 4 && bucketSize >= 4) {
-                    VectorMask<Double> mask = DOUBLE_SPECIES.indexInRange(0, bucketSize);
+                    final VectorMask<Double> mask = DOUBLE_SPECIES.indexInRange(0, bucketSize);
                     final DoubleVector vdx = DoubleVector.fromArray(DOUBLE_SPECIES, bxl, start, mask).sub(vtx);
                     final DoubleVector vdy = DoubleVector.fromArray(DOUBLE_SPECIES, byl, start, mask).sub(vty);
                     final DoubleVector vdz = DoubleVector.fromArray(DOUBLE_SPECIES, bzl, start, mask).sub(vtz);
