@@ -11,7 +11,7 @@ import java.util.*;
 
 public final class ActivityBitSet extends AbstractObjectSet<Activity> {
 
-    public int bitset = 0;
+    private int bitset = 0;
     private boolean dirty = true;
 
     public boolean unsetDirty() {

@@ -101,7 +101,6 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
 
     @Override
     public @NotNull Object[] toArray() {
-
         final int size = size();
         if (size == 0) return it.unimi.dsi.fastutil.objects.ObjectArrays.EMPTY_ARRAY;
         return java.util.Arrays.copyOf(a, size, Object[].class);
@@ -149,10 +148,5 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
     public void clear() {
         java.util.Arrays.fill(a, 0, size, null);
         size = 0;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        return false;
     }
 }
