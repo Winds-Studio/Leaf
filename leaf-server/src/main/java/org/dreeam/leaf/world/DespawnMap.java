@@ -26,10 +26,11 @@ public final class DespawnMap {
     private static final boolean SIMD = SIMDDetection.isEnabled();
     private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.DOUBLE_VECTOR_LENGTH : 4;
     private static final int INITIAL_CAP = 8;
-    private static final int INSERTION_SORT = 8;
+    private static final int INSERTION_SORT = 16;
     static final long LEAF = -1L;
     static final long AXIS_X = 0L;
     static final long AXIS_Y = 1L;
+    static final long AXIS_Z = 2L;
     static final long LEFT_MASK = 0xfffffffcL;
     static final long RIGHT_MASK = 0x3fffffff00000000L;
     static final long AXIS_MASK = 0b11L;
@@ -94,7 +95,7 @@ public final class DespawnMap {
         for (int i = 0; i < coordX.length; i++) {
             data[i] = i;
         }
-        stack.push(new Node(-1, false, 0, coordX.length, 0));
+        stack.push(new Node(-1, false, 0, data.length, 0));
         while (!stack.isEmpty()) {
             grow();
 
@@ -115,9 +116,9 @@ public final class DespawnMap {
                 bucketLen += len;
                 nll[curr] = LEAF;
             } else {
-                final int axis = depth % 3;
-                final int median = len / 2;
-                quickSelect(data, offset, offset + len - 1, offset + median, map[axis]);
+                final int axis = depth % 3 == 0 ? (int) AXIS_X : depth % 3 == 1 ? (int) AXIS_Z : (int) AXIS_Y;
+                final int median = (len - 1) / 2;
+                quickSelect(data, map[axis], offset, offset + len - 1, offset + median);
                 final int pivot = data[offset + median];
                 nsl[curr] = axis == AXIS_X ? coordX[pivot] : axis == AXIS_Y ? coordY[pivot] : coordZ[pivot];
                 nll[curr] = LEFT_MASK | RIGHT_MASK | (long) axis;
@@ -136,7 +137,7 @@ public final class DespawnMap {
         }
     }
 
-    private void insertionSort(int[] indices, int left, int right, double[] coord) {
+    private void insertionSort(int[] indices, double[] coord, int left, int right) {
         for (int i = left + 1; i <= right; i++) {
             int key = indices[i];
             double val = coord[key];
@@ -150,10 +151,10 @@ public final class DespawnMap {
         }
     }
 
-    private void quickSelect(int[] indices, int left, int right, int k, double[] coord) {
+    private void quickSelect(int[] indices, double[] coord, int left, int right, int k) {
         while (left < right) {
             if (right - left < INSERTION_SORT) {
-                insertionSort(indices, left, right, coord);
+                insertionSort(indices, coord, left, right);
                 return;
             }
             int mid = left + (right - left) / 2;
@@ -187,10 +188,10 @@ public final class DespawnMap {
         }
     }
 
-    private void swap(int[] arr, int i, int j) {
-        int temp = arr[i];
-        arr[i] = arr[j];
-        arr[j] = temp;
+    private void swap(int[] a, int i, int j) {
+        int tmp = a[i];
+        a[i] = a[j];
+        a[j] = tmp;
     }
 
     private void reset() {
@@ -224,9 +225,6 @@ public final class DespawnMap {
         bxl = DoubleArrays.forceCapacity(bxl, capacity, bucketLen);
         byl = DoubleArrays.forceCapacity(byl, capacity, bucketLen);
         bzl = DoubleArrays.forceCapacity(bzl, capacity, bucketLen);
-    }
-
-    private record Node(int parent, boolean left, int offset, int length, int depth) {
     }
 
     private double nearest(final double tx, final double ty, final double tz, double dist) {
@@ -280,6 +278,9 @@ public final class DespawnMap {
             }
         }
         return dist;
+    }
+
+    private record Node(int parent, boolean left, int offset, int length, int depth) {
     }
 
     private static final class Stack {
