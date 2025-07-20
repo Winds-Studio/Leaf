@@ -29,16 +29,18 @@ public final class DespawnVectorAPI {
             if (data != LEAF) {
                 final long axis = data & AXIS_MASK;
                 final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
-                final boolean negative = (Double.doubleToRawLongBits(delta) & 0x8000_0000_0000_0000L) == 0x8000_0000_0000_0000L;
-                final long sMask = negative ? -1L : 0L;
+                final long sign = Double.doubleToRawLongBits(delta) & SIGN_BIT;
+                final long sMask = sign >> 63; // -1L or 0L
                 final boolean leftValid = (data & LEFT_MASK) != LEFT_MASK;
                 final boolean rightValid = (data & RIGHT_MASK) != RIGHT_MASK;
-                final long node = sMask & (data & LEFT_MASK) >>> 2 | ~sMask & data >>> 32;
-                final long other = sMask & data >>> 32 | ~sMask & (data & LEFT_MASK) >>> 2;
-                if ((negative & leftValid) | (!negative & rightValid)) {
+                final boolean pushNode = (sign == SIGN_BIT & leftValid) | ((sign == 0L) & rightValid);
+                final boolean pushOther = ((sign == 0L) & leftValid) | (sign == SIGN_BIT & rightValid);
+                final long node = (sMask & ((data & LEFT_MASK) >>> 2)) | (~sMask & (data >>> 32));
+                final long other = (sMask & (data >>> 32)) | (~sMask & ((data & LEFT_MASK) >>> 2));
+                if (pushNode) {
                     stack[i++] = (int) node;
                 }
-                if ((!negative & leftValid) | (negative & rightValid) && delta * delta < dist) {
+                if (pushOther && delta * delta < dist) {
                     stack[i++] = (int) other;
                 }
             } else {
