@@ -26,13 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -40,21 +34,18 @@ import java.util.jar.JarFile;
 /*
  *  Yoinked from: https://github.com/xGinko/AnarchyExploitFixes/ & https://github.com/LuminolMC/Luminol
  *  @author: @xGinko & @MrHua269
+ *
+ *  Rewritten by @Taiyou
  */
 public class LeafConfig {
 
     public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
     protected static final File I_CONFIG_FOLDER = new File("config");
+    protected static final File I_LEAF_CONFIG_FOLDER = new File(I_CONFIG_FOLDER, "leaf");
     protected static final String I_CONFIG_PKG = "org.dreeam.leaf.config.modules";
     protected static final String I_GLOBAL_CONFIG_FILE = "leaf-global.yml";
-    protected static final String I_LEVEL_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per level config
 
-    private static LeafGlobalConfig leafGlobalConfig;
-
-    //private static int preMajorVer;
-    private static int preMinorVer;
-    //private static int currMajorVer;
-    private static int currMinorVer;
+    private static Map<EnumConfigCategory, LeafCategoryConfig> categoryConfigs = new HashMap<>();
 
     /* Load & Reload */
 
@@ -84,6 +75,10 @@ public class LeafConfig {
             LOGGER.info("Loading config...");
 
             purgeOutdated();
+
+            // Auto-migrate if old config exists
+            autoMigrateIfNeeded();
+
             loadConfig(true);
 
             LOGGER.info("Successfully loaded config in {}ms.", (System.nanoTime() - begin) / 1_000_000);
@@ -95,17 +90,58 @@ public class LeafConfig {
     /* Load Global Config */
 
     private static void loadConfig(boolean init) throws Exception {
-        // Create config folder
-        createDirectory(I_CONFIG_FOLDER);
+        // Create leaf config folder
+        createDirectory(I_LEAF_CONFIG_FOLDER);
 
-        leafGlobalConfig = new LeafGlobalConfig(init);
+        // Load all category configs
+        categoryConfigs.clear();
+        for (EnumConfigCategory category : EnumConfigCategory.getCategoryValues()) {
+            categoryConfigs.put(category, new LeafCategoryConfig(category, init));
+        }
 
         // Load config modules
         ConfigModules.initModules();
     }
 
-    public static LeafGlobalConfig config() {
-        return leafGlobalConfig;
+    public static LeafCategoryConfig config(EnumConfigCategory category) {
+        return categoryConfigs.get(category);
+    }
+
+    // For backward compatibility - returns misc config
+    @Deprecated
+    public static LeafCategoryConfig config() {
+        return categoryConfigs.get(EnumConfigCategory.MISC);
+    }
+
+    /* Auto-migration logic */
+
+    private static void autoMigrateIfNeeded() {
+        File oldConfigFile = new File(I_CONFIG_FOLDER, I_GLOBAL_CONFIG_FILE);
+        if (!oldConfigFile.exists()) {
+            return; // No old config to migrate
+        }
+
+        // Check if any category files are missing
+        boolean needsMigration = false;
+        for (EnumConfigCategory category : EnumConfigCategory.getCategoryValues()) {
+            File categoryFile = new File(I_LEAF_CONFIG_FOLDER, category.getFileName());
+            if (!categoryFile.exists()) {
+                needsMigration = true;
+                break;
+            }
+        }
+
+        if (needsMigration) {
+            LOGGER.info("Detected old config file. Automatically migrating to multi-file system...");
+            try {
+                ConfigMigrator migrator = new ConfigMigrator();
+                migrator.migrate();
+                LOGGER.info("Migration completed successfully!");
+            } catch (Exception e) {
+                LOGGER.error("Auto-migration failed!", e);
+                throw new RuntimeException("Failed to migrate config", e);
+            }
+        }
     }
 
     /* Create config folder */
@@ -203,40 +239,42 @@ public class LeafConfig {
         }
     }
 
-    // TODO
-    public static void loadConfigVersion(String preVer, String currVer) {
-        int currMinor;
-        int preMinor;
-
-        // First time user
-        if (preVer == null) {
-
-        }
-    }
-
     /* Register Spark profiler extra server configurations */
 
-    private static List<String> buildSparkExtraConfigs() {
-        List<String> extraConfigs = new ArrayList<>(Arrays.asList(
-            "config/leaf-global.yml",
-            "config/gale-global.yml",
-            "config/gale-world-defaults.yml"
-        ));
+    public static void regSparkExtraConfig() {
+        if (GlobalConfiguration.get().spark.enabled || Bukkit.getServer().getPluginManager().getPlugin("spark") != null) {
+            List<String> extraConfigs = new ArrayList<>();
 
-        @Nullable String existing = System.getProperty("spark.serverconfigs.extra");
-        if (existing != null) {
-            extraConfigs.addAll(Arrays.asList(existing.split(",")));
+            // Add all category config files from config/leaf folder (individual files)
+            for (EnumConfigCategory category : EnumConfigCategory.getCategoryValues()) {
+                extraConfigs.add("config/leaf/" + category.getFileName());
+            }
+
+            // Add other configs
+            extraConfigs.addAll(Arrays.asList(
+                "config/gale-global.yml",
+                "config/gale-world-defaults.yml"
+            ));
+
+            @Nullable String existing = System.getProperty("spark.serverconfigs.extra");
+            if (existing != null) {
+                extraConfigs.addAll(Arrays.asList(existing.split(",")));
+            }
+
+            // Use same way in spark's BukkitServerConfigProvider#getNestedFiles to get all world configs
+            // It may spam in the spark profiler, but it's ok, since spark uses YamlConfigParser.INSTANCE to
+            // get configs defined in extra config flag instead of using SplitYamlConfigParser.INSTANCE
+            for (World world : Bukkit.getWorlds()) {
+                Path galeWorldFolder = world.getWorldFolder().toPath().resolve("gale-world.yml");
+                extraConfigs.add(galeWorldFolder.toString().replace("\\", "/").replace("./", "")); // Gale world config
+            }
+
+            String extraConfigsStr = String.join(",", extraConfigs);
+            String hiddenPaths = String.join(",", buildSparkHiddenPaths());
+
+            System.setProperty("spark.serverconfigs.extra", extraConfigsStr);
+            System.setProperty("spark.serverconfigs.hiddenpaths", hiddenPaths);
         }
-
-        // Use same way in spark's BukkitServerConfigProvider#getNestedFiles to get all world configs
-        // It may spam in the spark profiler, but it's ok, since spark uses YamlConfigParser.INSTANCE to
-        // get configs defined in extra config flag instead of using SplitYamlConfigParser.INSTANCE
-        for (World world : Bukkit.getWorlds()) {
-            Path galeWorldFolder = world.getWorldFolder().toPath().resolve("gale-world.yml");
-            extraConfigs.add(galeWorldFolder.toString().replace("\\", "/").replace("./", "")); // Gale world config
-        }
-
-        return extraConfigs;
     }
 
     private static List<String> buildSparkHiddenPaths() {
@@ -247,16 +285,6 @@ public class LeafConfig {
         extraHidden.add(FastBiomeManagerSeedObfuscation.seedObfKeyPath); // Hide FastBiomeManagerSeedObfuscation key
 
         return extraHidden;
-    }
-
-    public static void regSparkExtraConfig() {
-        if (GlobalConfiguration.get().spark.enabled || Bukkit.getServer().getPluginManager().getPlugin("spark") != null) {
-            String extraConfigs = String.join(",", buildSparkExtraConfigs());
-            String hiddenPaths = String.join(",", buildSparkHiddenPaths());
-
-            System.setProperty("spark.serverconfigs.extra", extraConfigs);
-            System.setProperty("spark.serverconfigs.hiddenpaths", hiddenPaths);
-        }
     }
 
     /* Purge and backup old Leaf config & Pufferfish config */
@@ -295,7 +323,7 @@ public class LeafConfig {
 
             if (foundLegacy) {
                 LOGGER.warn("Found legacy Leaf config files, move to backup directory: {}", backupDir);
-                LOGGER.warn("New Leaf config located at config/ folder, You need to transfer config to the new one manually and restart the server!");
+                LOGGER.warn("New Leaf config located at config/leaf/ folder, You need to transfer config to the new one manually and restart the server!");
             }
         } catch (IOException e) {
             LOGGER.error("Failed to purge old configs.", e);

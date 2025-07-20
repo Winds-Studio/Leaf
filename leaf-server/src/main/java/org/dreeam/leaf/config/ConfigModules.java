@@ -15,10 +15,32 @@ public abstract class ConfigModules extends LeafConfig {
 
     private static final Set<ConfigModules> MODULES = new HashSet<>();
 
-    public LeafGlobalConfig config;
+    public LeafCategoryConfig config;
+    private EnumConfigCategory category;
 
     public ConfigModules() {
-        this.config = LeafConfig.config();
+        // Determine category from the module's base path
+        this.category = determineCategory();
+        this.config = LeafConfig.config(this.category);
+    }
+
+    // Abstract method that modules must implement to specify their base path
+    public abstract String getBasePath();
+
+    // Determine category from base path
+    private EnumConfigCategory determineCategory() {
+        String basePath = getBasePath();
+        for (EnumConfigCategory cat : EnumConfigCategory.getCategoryValues()) {
+            if (basePath.startsWith(cat.getBaseKeyName())) {
+                return cat;
+            }
+        }
+        // Fallback to MISC if no category matches
+        return EnumConfigCategory.MISC;
+    }
+
+    public EnumConfigCategory getCategory() {
+        return category;
     }
 
     public static void initModules() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
@@ -38,7 +60,8 @@ public abstract class ConfigModules extends LeafConfig {
         }
 
         if (!enabledExperimentalModules.isEmpty()) {
-            LeafConfig.LOGGER.warn("You have following experimental module(s) enabled: {}, please proceed with caution!", enabledExperimentalModules.stream().map(f -> f.getDeclaringClass().getSimpleName() + "." + f.getName()).toList());
+            LeafConfig.LOGGER.warn("You have following experimental module(s) enabled: {}, please proceed with caution!",
+                enabledExperimentalModules.stream().map(f -> f.getDeclaringClass().getSimpleName() + "." + f.getName()).toList());
         }
     }
 
@@ -47,11 +70,13 @@ public abstract class ConfigModules extends LeafConfig {
             module.onPostLoaded();
         }
 
-        // Save config to disk
-        try {
-            LeafConfig.config().saveConfig();
-        } catch (Exception e) {
-            LeafConfig.LOGGER.error("Failed to save config file!", e);
+        // Save all config files to disk
+        for (EnumConfigCategory category : EnumConfigCategory.getCategoryValues()) {
+            try {
+                LeafConfig.config(category).saveConfig();
+            } catch (Exception e) {
+                LeafConfig.LOGGER.error("Failed to save config file for category {}!", category.name(), e);
+            }
         }
     }
 

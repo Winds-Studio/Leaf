@@ -8,46 +8,45 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-public class LeafGlobalConfig {
+public class LeafCategoryConfig {
 
-    private static final String CURRENT_VERSION = "4.0";
-    private static final String CURRENT_REGION = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT); // It will be in uppercase by default, just make sure
+    private static final String CURRENT_VERSION = "3.0";
+    private static final String CURRENT_REGION = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT);
     private static final boolean isCN = CURRENT_REGION.equals("CN");
 
-    private static ConfigFile configFile;
+    private final EnumConfigCategory category;
+    private ConfigFile configFile;
 
-    public LeafGlobalConfig(boolean init) throws Exception {
-        configFile = ConfigFile.loadConfig(new File(LeafConfig.I_CONFIG_FOLDER, LeafConfig.I_GLOBAL_CONFIG_FILE));
+    public LeafCategoryConfig(EnumConfigCategory category, boolean init) throws Exception {
+        this.category = category;
+        this.configFile = ConfigFile.loadConfig(new File(LeafConfig.I_LEAF_CONFIG_FOLDER, category.getFileName()));
 
+        // Add version and header comments
         configFile.set("config-version", CURRENT_VERSION);
+        configFile.addComments("config-version", pickStringRegionBased(
+            String.format("Leaf %s Config\nGitHub Repo: https://github.com/Winds-Studio/Leaf\nDiscord: https://discord.com/invite/gfgAwdSEuM",
+                category.name()),
+            String.format("Leaf %s Config\nGitHub Repo: https://github.com/Winds-Studio/Leaf\nQQ Group: 619278377",
+                category.name())
+        ));
 
-        configFile.addComments("config-version", pickStringRegionBased("""
-                Leaf Config
-                GitHub Repo: https://github.com/Winds-Studio/Leaf
-                Discord: https://discord.com/invite/gfgAwdSEuM""",
-            """
-                Leaf Config
-                GitHub Repo: https://github.com/Winds-Studio/Leaf
-                QQ Group: 619278377"""));
-
-        // Pre-structure to force order
+        // Pre-structure the config
         structureConfig();
     }
 
     protected void structureConfig() {
-        for (EnumConfigCategory configCate : EnumConfigCategory.getCategoryValues()) {
-            createTitledSection(configCate.name(), configCate.getBaseKeyName());
-        }
+        createTitledSection(category.name(), category.getBaseKeyName());
     }
 
     public void saveConfig() throws Exception {
         configFile.save();
     }
 
+    public EnumConfigCategory getCategory() {
+        return category;
+    }
+
     // Config Utilities
-
-    /* getAndSet */
-
     public void createTitledSection(String title, String path) {
         configFile.addSection(title);
         configFile.addDefault(path, null);
@@ -127,8 +126,7 @@ public class LeafGlobalConfig {
         return configFile.getConfigSection(path);
     }
 
-    /* get */
-
+    // Getter methods
     public Boolean getBoolean(String path) {
         String value = configFile.getString(path, null);
         return value == null ? null : Boolean.parseBoolean(value);
@@ -181,11 +179,9 @@ public class LeafGlobalConfig {
         return configFile.getList(path, null);
     }
 
-    // TODO, check
     public ConfigSection getConfigSection(String path) {
         configFile.addDefault(path, null);
         configFile.makeSectionLenient(path);
-        //defaultKeyValue.forEach((string, object) -> configFile.addExample(path + "." + string, object));
         return configFile.getConfigSection(path);
     }
 
