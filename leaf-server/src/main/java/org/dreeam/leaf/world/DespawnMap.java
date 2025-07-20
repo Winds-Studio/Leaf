@@ -26,6 +26,7 @@ public final class DespawnMap {
     private static final boolean SIMD = SIMDDetection.isEnabled();
     private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.DOUBLE_VECTOR_LENGTH : 4;
     private static final int INITIAL_CAP = 8;
+    private static final int INSERTION_SORT = 8;
     static final long LEAF = -1L;
     static final long AXIS_X = 0L;
     static final long AXIS_Y = 1L;
@@ -151,7 +152,7 @@ public final class DespawnMap {
 
     private void quickSelect(int[] indices, int left, int right, int k, double[] coord) {
         while (left < right) {
-            if (right - left < 8) {
+            if (right - left < INSERTION_SORT) {
                 insertionSort(indices, left, right, coord);
                 return;
             }
