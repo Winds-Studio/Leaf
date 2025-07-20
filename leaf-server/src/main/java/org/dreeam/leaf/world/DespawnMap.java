@@ -106,25 +106,28 @@ public final class DespawnMap {
             final int len = n.length;
             final int curr = nodeLen++;
             if (len <= LEAF_THRESHOLD) {
-                nbl[curr] = (long) bucketLen << 32 | (long) len;
-                growBucket(len);
-                for (int i = 0; i < len; i++) {
-                    int p = data[offset + i];
-                    bxl[bucketLen + i] = coordX[p];
-                    byl[bucketLen + i] = coordY[p];
-                    bzl[bucketLen + i] = coordZ[p];
-                }
-                bucketLen += len;
+
                 nll[curr] = LEAF;
+                nbl[curr] = (long) bucketLen << 32 | (long) len;
+
+                growBucket(len);
+                for (int i = offset, end = offset + len; i < end; i++) {
+                    bxl[bucketLen] = coordX[data[i]];
+                    byl[bucketLen] = coordY[data[i]];
+                    bzl[bucketLen] = coordZ[data[i]];
+                    bucketLen++;
+                }
             } else {
+
                 final int axis = depth % 3 == 0 ? (int) AXIS_X : depth % 3 == 1 ? (int) AXIS_Z : (int) AXIS_Y;
                 final int median = (len - 1) / 2;
                 quickSelect(data, map[axis], offset, offset + len - 1, offset + median);
                 final int pivot = data[offset + median];
                 nsl[curr] = axis == AXIS_X ? coordX[pivot] : axis == AXIS_Y ? coordY[pivot] : coordZ[pivot];
                 nll[curr] = LEFT_MASK | RIGHT_MASK | (long) axis;
-                stack.push(new Node(curr, true, offset, median, depth + 1));
+
                 stack.push(new Node(curr, false, offset + median + 1, len - median - 1, depth + 1));
+                stack.push(new Node(curr, true, offset, median + 1, depth + 1));
             }
             if (n.parent >= 0) {
                 if (n.left) {

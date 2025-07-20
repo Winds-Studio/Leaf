@@ -63,7 +63,7 @@ public final class DespawnVectorAPI {
                     final DoubleVector vDist = FMA ?
                         vdz.fma(vdz, vdy.fma(vdy, vdx.mul(vdx))) :
                         vdx.mul(vdx).add(vdy.mul(vdy)).add(vdz.mul(vdz));
-                    dist = Math.min(dist, vDist.reduceLanes(VectorOperators.MIN));
+                    dist = Math.min(dist, vDist.reduceLanes(VectorOperators.MIN, mask));
                 } else {
                     final int end = start + bucketSize;
                     for (int j = start; j < end; j++) {
