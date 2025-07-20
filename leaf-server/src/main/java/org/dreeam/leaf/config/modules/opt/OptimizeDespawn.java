@@ -1,5 +1,6 @@
 package org.dreeam.leaf.config.modules.opt;
 
+import net.minecraft.world.entity.MobCategory;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;

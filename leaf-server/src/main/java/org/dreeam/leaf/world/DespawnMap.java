@@ -1,81 +1,354 @@
 package org.dreeam.leaf.world;
 
+import gg.pufferfish.pufferfish.simd.SIMDDetection;
 import io.papermc.paper.configuration.WorldConfiguration;
-import io.papermc.paper.configuration.type.DespawnRange;
-import it.unimi.dsi.fastutil.objects.ObjectArrays;
+import it.unimi.dsi.fastutil.doubles.DoubleArrays;
+import it.unimi.dsi.fastutil.longs.LongArrays;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.Level;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.level.entity.EntityTickList;
 import org.bukkit.event.entity.EntityRemoveEvent;
+import org.dreeam.leaf.LeafBootstrap;
 
-import java.util.List;
+import java.util.Map;
+import java.util.OptionalInt;
 
 public final class DespawnMap {
-    private static final ServerPlayer[] EMPTY_PLAYER_ARRAY = {};
+    private static final ServerPlayer[] EMPTY_PLAYERS = {};
+    private static final double[] EMPTY_DOUBLES = {};
+    private static final long[] EMPTY_LONGS = {};
+    private static final int[] EMPTY_INTS = {};
+    static final boolean FMA = LeafBootstrap.enableFMA;
+    private static final boolean SIMD = SIMDDetection.isEnabled();
+    private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.DOUBLE_VECTOR_LENGTH : 4;
+    private static final int INITIAL_CAP = 8;
+    static final long LEAF = -1L;
+    static final long AXIS_X = 0L;
+    static final long AXIS_Y = 1L;
+    static final long LEFT_MASK = 0xfffffffcL;
+    static final long RIGHT_MASK = 0x3fffffff00000000L;
+    static final long AXIS_MASK = 0b11L;
 
-    private ServerPlayer[] players = EMPTY_PLAYER_ARRAY;
-    private double[] pos = {};
+    /// Stack for tree construction
+    private final Stack stack = new Stack(INITIAL_CAP);
+    /// Stack for tree traversal
+    private int[] search = EMPTY_INTS;
 
-    public void prepare(ServerLevel world) {
-        this.players = world.players().toArray(EMPTY_PLAYER_ARRAY);
+    private int nodeLen = 0;
+    private int bucketLen = 0;
 
-        List<ServerPlayer> playerList = world.players();
-        ServerPlayer[] list = new ServerPlayer[playerList.size()];
+    /// Node coordinate for each internal node
+    private double[] nsl = EMPTY_DOUBLES;
+    /// Offsets(32) Lengths(32) for each player list of leaf nodes
+    private long[] nbl = EMPTY_LONGS;
+    /// Left(30) Right(30) Axis(2) for each internal node
+    private long[] nll = EMPTY_LONGS;
+    /// Nested player X coordinates of leaf nodes
+    private double[] bxl = EMPTY_DOUBLES;
+    /// Nested player Y coordinates of leaf nodes
+    private double[] byl = EMPTY_DOUBLES;
+    /// Nested player Z coordinates of leaf nodes
+    private double[] bzl = EMPTY_DOUBLES;
+
+    private final double[] hard;
+    private final double[] sort;
+
+    public DespawnMap(WorldConfiguration worldConfiguration) {
+        MobCategory[] caps = MobCategory.values();
+        hard = new double[caps.length];
+        sort = new double[caps.length];
+        for (int i = 0; i < caps.length; i++) {
+            sort[i] = caps[i].getNoDespawnDistance();
+            hard[i] = caps[i].getDespawnDistance();
+        }
+        for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> e : worldConfiguration.entities.spawning.despawnRanges.entrySet()) {
+            OptionalInt a = e.getValue().soft().verticalLimit.value();
+            OptionalInt b = e.getValue().soft().horizontalLimit.value();
+            OptionalInt c = e.getValue().hard().verticalLimit.value();
+            OptionalInt d = e.getValue().hard().horizontalLimit.value();
+            if (a.isPresent() && b.isPresent() && a.getAsInt() == b.getAsInt()) {
+                sort[e.getKey().ordinal()] = a.getAsInt();
+            }
+            if (c.isPresent() && d.isPresent() && c.getAsInt() == d.getAsInt()) {
+                hard[e.getKey().ordinal()] = c.getAsInt();
+            }
+        }
+        for (int i = 0; i < caps.length; i++) {
+            if (sort[i] > 0.0) {
+                sort[i] = sort[i] * sort[i];
+            }
+            if (hard[i] > 0.0) {
+                hard[i] = hard[i] * hard[i];
+            }
+        }
+    }
+
+    private void build(double[] coordX, double[] coordY, double[] coordZ) {
+        final double[][] map = {coordX, coordY, coordZ};
+        final int[] data = new int[coordX.length];
+        for (int i = 0; i < coordX.length; i++) {
+            data[i] = i;
+        }
+        stack.push(new Node(-1, false, 0, coordX.length, 0));
+        while (!stack.isEmpty()) {
+            grow();
+
+            final Node n = stack.pop();
+            final int depth = n.depth;
+            final int offset = n.offset;
+            final int len = n.length;
+            final int curr = nodeLen++;
+            if (len <= LEAF_THRESHOLD) {
+                nbl[curr] = (long) bucketLen << 32 | (long) len;
+                growBucket(len);
+                for (int i = 0; i < len; i++) {
+                    int p = data[offset + i];
+                    bxl[bucketLen + i] = coordX[p];
+                    byl[bucketLen + i] = coordY[p];
+                    bzl[bucketLen + i] = coordZ[p];
+                }
+                bucketLen += len;
+                nll[curr] = LEAF;
+            } else {
+                final int axis = depth % 3;
+                final int median = len / 2;
+                quickSelect(data, offset, offset + len - 1, offset + median, map[axis]);
+                final int pivot = data[offset + median];
+                nsl[curr] = axis == AXIS_X ? coordX[pivot] : axis == AXIS_Y ? coordY[pivot] : coordZ[pivot];
+                nll[curr] = LEFT_MASK | RIGHT_MASK | (long) axis;
+                stack.push(new Node(curr, true, offset, median, depth + 1));
+                stack.push(new Node(curr, false, offset + median + 1, len - median - 1, depth + 1));
+            }
+            if (n.parent >= 0) {
+                if (n.left) {
+                    nll[n.parent] &= AXIS_MASK | RIGHT_MASK;
+                    nll[n.parent] |= (long) curr << 2;
+                } else {
+                    nll[n.parent] &= AXIS_MASK | LEFT_MASK;
+                    nll[n.parent] |= (long) curr << 32;
+                }
+            }
+        }
+    }
+
+    private void insertionSort(int[] indices, int left, int right, double[] coord) {
+        for (int i = left + 1; i <= right; i++) {
+            int key = indices[i];
+            double val = coord[key];
+            int j = i - 1;
+
+            while (j >= left && coord[indices[j]] > val) {
+                indices[j + 1] = indices[j];
+                j--;
+            }
+            indices[j + 1] = key;
+        }
+    }
+
+    private void quickSelect(int[] indices, int left, int right, int k, double[] coord) {
+        while (left < right) {
+            if (right - left < 8) {
+                insertionSort(indices, left, right, coord);
+                return;
+            }
+            int mid = left + (right - left) / 2;
+            int a = indices[left], b = indices[mid], c = indices[right];
+            double va = coord[a], vb = coord[b], vc = coord[c];
+            int pivotIdx = (va < vb)
+                ? (vb < vc ? mid : (va < vc ? right : left))
+                : (va < vc ? left : (vb < vc ? right : mid));
+            swap(indices, pivotIdx, left);
+            double pivot = coord[indices[left]];
+
+            int i = left;
+            int j = right + 1;
+
+            while (true) {
+                while (++i <= right && coord[indices[i]] < pivot) ;
+                while (--j > left && coord[indices[j]] > pivot) ;
+                if (i >= j) break;
+                swap(indices, i, j);
+            }
+
+            swap(indices, left, j);
+            int p = j;
+            if (p == k) {
+                return;
+            } else if (k < p) {
+                right = p - 1;
+            } else {
+                left = p + 1;
+            }
+        }
+    }
+
+    private void swap(int[] arr, int i, int j) {
+        int temp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = temp;
+    }
+
+    private void reset() {
+        nodeLen = 0;
+        bucketLen = 0;
+    }
+
+    private void grow() {
+        int capacity = nodeLen + 1;
+        if (capacity < nsl.length) {
+            return;
+        }
+        capacity += capacity >> 1;
+        if (capacity < INITIAL_CAP) {
+            capacity = INITIAL_CAP;
+        }
+        nsl = DoubleArrays.forceCapacity(nsl, capacity, nodeLen);
+        nll = LongArrays.forceCapacity(nll, capacity, nodeLen);
+        nbl = LongArrays.forceCapacity(nbl, capacity, nodeLen);
+    }
+
+    private void growBucket(int capacity) {
+        capacity = bucketLen + capacity;
+        if (capacity < bxl.length) {
+            return;
+        }
+        capacity += capacity >> 1;
+        if (capacity < INITIAL_CAP) {
+            capacity = INITIAL_CAP;
+        }
+        bxl = DoubleArrays.forceCapacity(bxl, capacity, bucketLen);
+        byl = DoubleArrays.forceCapacity(byl, capacity, bucketLen);
+        bzl = DoubleArrays.forceCapacity(bzl, capacity, bucketLen);
+    }
+
+    private record Node(int parent, boolean left, int offset, int length, int depth) {
+    }
+
+    private double nearest(final double tx, final double ty, final double tz, double dist) {
+        if (nodeLen == 0) {
+            return Double.POSITIVE_INFINITY;
+        }
+        if (search.length < Math.max(64, nodeLen * 4)) {
+            search = new int[Math.max(64, nodeLen * 4)];
+        }
+        if (SIMD) {
+            return DespawnVectorAPI.nearest(search, nsl, nll, nbl, bxl, byl, bzl, tx, ty, tz, dist);
+        }
+        final int[] stack = this.search;
+        final double[] nsl = this.nsl;
+        final long[] nll = this.nll;
+        final double[] bxl = this.bxl;
+        final double[] byl = this.byl;
+        final double[] bzl = this.bzl;
+        final long[] nbl = this.nbl;
+        int i = 0;
+        stack[i++] = 0;
+        while (i != 0) {
+            final int idx = stack[--i];
+            final long data = nll[idx];
+            if (data != LEAF) {
+                final long axis = data & AXIS_MASK;
+                final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
+                final boolean negative = (Double.doubleToRawLongBits(delta) & 0x8000_0000_0000_0000L) == 0x8000_0000_0000_0000L;
+                final long sMask = negative ? -1L : 0L;
+                final boolean leftValid = (data & LEFT_MASK) != LEFT_MASK;
+                final boolean rightValid = (data & RIGHT_MASK) != RIGHT_MASK;
+                final long node = sMask & (data & LEFT_MASK) >>> 2 | ~sMask & data >>> 32;
+                final long other = sMask & data >>> 32 | ~sMask & (data & LEFT_MASK) >>> 2;
+                if ((negative & leftValid) | (!negative & rightValid)) {
+                    stack[i++] = (int) node;
+                }
+                if ((!negative & leftValid) | (negative & rightValid) && delta * delta < dist) {
+                    stack[i++] = (int) other;
+                }
+            } else {
+                final long bucket = nbl[idx];
+                int start = (int) (bucket >>> 32);
+                final int end = start + (int) (bucket & 0xffffffffL);
+                for (; start < end; start++) {
+                    final double dx = bxl[start] - tx;
+                    final double dy = byl[start] - ty;
+                    final double dz = bzl[start] - tz;
+                    final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
+                    dist = Math.min(dist, d2);
+                }
+            }
+        }
+        return dist;
+    }
+
+    private static final class Stack {
+
+        private Node[] a;
+        private int i;
+
+        private Stack(int capacity) {
+            a = new Node[capacity];
+            i = 0;
+        }
+
+        private boolean isEmpty() {
+            return i == 0;
+        }
+
+        private void push(Node value) {
+            if (i == a.length) {
+                grow();
+            }
+            a[i++] = value;
+        }
+
+        private Node pop() {
+            return a[--i];
+        }
+
+        private void grow() {
+            Node[] b = new Node[a.length << 1];
+            System.arraycopy(a, 0, b, 0, i);
+            a = b;
+        }
+    }
+
+    public void tick(ServerLevel world, EntityTickList entityTickList) {
+        final ServerPlayer[] playerArr = world.players().toArray(EMPTY_PLAYERS);
+        final ServerPlayer[] list = new ServerPlayer[playerArr.length];
         int newSize = 0;
-        for (ServerPlayer player1 : playerList) {
+        for (ServerPlayer player1 : playerArr) {
             if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(player1)) {
                 list[newSize++] = player1;
             }
         }
-        list = ObjectArrays.trim(list, newSize);
-        this.players = list;
-        this.pos = new double[this.players.length * 3];
-        for (int i = 0; i < players.length; i++) {
-            this.pos[i * 3] = this.players[i].getX();
-            this.pos[i * 3 + 1] = this.players[i].getY();
-            this.pos[i * 3 + 2] = this.players[i].getZ();
+        double[] pxl = new double[newSize];
+        double[] pyl = new double[newSize];
+        double[] pzl = new double[newSize];
+        for (int i = 0; i < newSize; i++) {
+            pxl[i] = list[i].getX();
+            pyl[i] = list[i].getY();
+            pzl[i] = list[i].getZ();
         }
-    }
-
-    public void reset() {
-        this.players = EMPTY_PLAYER_ARRAY;
+        build(pxl, pyl, pzl);
+        entityTickList.forEach(Entity::leafCheckDespawn);
+        reset();
     }
 
     public void checkDespawn(Mob mob) {
-        double x = mob.getX();
-        double y = mob.getY();
-        double z = mob.getZ();
-        double distance = Double.MAX_VALUE;
-        Player nearestPlayer = null;
-        for (int i = 0, playersSize = players.length; i < playersSize; i++) {
-            final double dx = this.pos[i * 3] - x;
-            final double dy = this.pos[i * 3 + 1] - y;
-            final double dz = this.pos[i * 3 + 2] - z;
-            double d1 = dx * dx + dy * dy + dz * dz;
-            if (d1 < distance) {
-                distance = d1;
-                nearestPlayer = players[i];
-            }
-        }
-        if (nearestPlayer == null) {
+        final double x = mob.getX();
+        final double y = mob.getY();
+        final double z = mob.getZ();
+        final int i = mob.getType().getCategory().ordinal();
+        final double dist = nearest(x, y, z, hard[i]);
+        if (dist == Double.POSITIVE_INFINITY) {
             return;
         }
-        Level world = mob.level();
-        final WorldConfiguration.Entities.Spawning.DespawnRangePair despawnRangePair = world.paperConfig().entities.spawning.despawnRanges.get(mob.getType().getCategory());
-        final DespawnRange.Shape shape = world.paperConfig().entities.spawning.despawnRangeShape;
-        final double dy = Math.abs(nearestPlayer.getY() - y);
-        final double dySqr = Mth.square(dy);
-        final double dxSqr = Mth.square(nearestPlayer.getX() - x);
-        final double dzSqr = Mth.square(nearestPlayer.getZ() - z);
-        final double distanceSquared = dxSqr + dzSqr + dySqr;
-        if (despawnRangePair.hard().shouldDespawn(shape, dxSqr, dySqr, dzSqr, dy) && mob.removeWhenFarAway(distanceSquared)) {
+
+        if (dist >= hard[i] && mob.removeWhenFarAway(dist)) {
             mob.discard(EntityRemoveEvent.Cause.DESPAWN);
-        } else if (despawnRangePair.soft().shouldDespawn(shape, dxSqr, dySqr, dzSqr, dy)) {
-            if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(distanceSquared)) {
+        } else if (dist > sort[i]) {
+            if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist)) {
                 mob.discard(EntityRemoveEvent.Cause.DESPAWN);
             }
         } else {
