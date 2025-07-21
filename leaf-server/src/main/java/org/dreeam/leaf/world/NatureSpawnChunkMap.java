@@ -27,8 +27,8 @@ public class NatureSpawnChunkMap {
     };
     private static final int MAX_RADIUS = 8;
     private static final int SIZE_RADIUS = 9;
-    private static final int REGION_MASK = 15;
-    private static final int REGION_SHIFT = 4;
+    private static final int REGION_MASK = 7;
+    private static final int REGION_SHIFT = 3;
 
     private final LongArrayList[] centersByRadius;
     private final Long2LongOpenHashMap regionBitSets;
