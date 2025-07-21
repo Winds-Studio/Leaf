@@ -1,36 +1,45 @@
 package su.plo.matter;
 
+import java.util.Arrays;
+
 public class Hashing {
 
     // https://en.wikipedia.org/wiki/BLAKE_(hash_function)
-    // https://github.com/bcgit/bc-java/blob/master/core/src/main/java/org/bouncycastle/crypto/digests/Blake2bDigest.java
+    // https://github.com/bcgit/bc-java/blob/main/core/src/main/java/org/bouncycastle/crypto/digests/Blake3Digest.java
 
-    private final static long[] blake2b_IV = {
-        0x6a09e667f3bcc908L, 0xbb67ae8584caa73bL, 0x3c6ef372fe94f82bL,
-        0xa54ff53a5f1d36f1L, 0x510e527fade682d1L, 0x9b05688c2b3e6c1fL,
-        0x1f83d9abfb41bd6bL, 0x5be0cd19137e2179L
-    };
+    // BLAKE3 constants
+    private static final int NUMWORDS = 8;
+    private static final int ROUNDS = 7;
+    private static final int BLOCKLEN = NUMWORDS * 4 * 2; // 64 bytes
 
-    private final static byte[][] blake2b_sigma = {
-        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-        {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
-        {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
-        {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
-        {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
-        {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
-        {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
-        {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
-        {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
-        {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
-        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-        {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3}
+    // Flags
+    private static final int CHUNKSTART = 1;
+    private static final int CHUNKEND = 2;
+    private static final int ROOT = 8;
+    private static final int KEYEDHASH = 16;
+
+    // State positions
+    private static final int CHAINING0 = 0, CHAINING1 = 1, CHAINING2 = 2, CHAINING3 = 3;
+    private static final int CHAINING4 = 4, CHAINING5 = 5, CHAINING6 = 6, CHAINING7 = 7;
+    private static final int IV0 = 8, IV1 = 9, IV2 = 10, IV3 = 11;
+    private static final int COUNT0 = 12, COUNT1 = 13, DATALEN = 14, FLAGS = 15;
+
+    // Message permutation sigma
+    private static final byte[] SIGMA = {2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8};
+
+    // BLAKE3 IV
+    private static final int[] IV = {
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
     };
 
     public static long[] hashWorldSeed(long[] worldSeed) {
-        long[] result = blake2b_IV.clone();
-        result[0] ^= 0x01010040;
-        hash(worldSeed, result, new long[16], 0, false);
-        return result;
+        byte[] input = longsToBytes(worldSeed);
+
+        Blake3SinglePass hasher = new Blake3SinglePass();
+        int[] hash32 = hasher.hashToWords(input, 64);
+
+        return wordsToLongs(hash32);
     }
 
     public static void hash(long[] message, long[] chainValue, long[] internalState, long messageOffset, boolean isFinal) {
@@ -38,37 +47,241 @@ public class Hashing {
         assert chainValue.length == 8;
         assert internalState.length == 16;
 
-        System.arraycopy(chainValue, 0, internalState, 0, chainValue.length);
-        System.arraycopy(blake2b_IV, 0, internalState, chainValue.length, 4);
-        internalState[12] = messageOffset ^ blake2b_IV[4];
-        internalState[13] = blake2b_IV[5];
-        if (isFinal) internalState[14] = ~blake2b_IV[6];
-        internalState[15] = blake2b_IV[7];
+        byte[] messageBytes = longsToBytes(message);
+        byte[] keyBytes = longsToBytes(chainValue);
 
-        for (int round = 0; round < 12; round++) {
-            G(message[blake2b_sigma[round][0]], message[blake2b_sigma[round][1]], 0, 4, 8, 12, internalState);
-            G(message[blake2b_sigma[round][2]], message[blake2b_sigma[round][3]], 1, 5, 9, 13, internalState);
-            G(message[blake2b_sigma[round][4]], message[blake2b_sigma[round][5]], 2, 6, 10, 14, internalState);
-            G(message[blake2b_sigma[round][6]], message[blake2b_sigma[round][7]], 3, 7, 11, 15, internalState);
-            G(message[blake2b_sigma[round][8]], message[blake2b_sigma[round][9]], 0, 5, 10, 15, internalState);
-            G(message[blake2b_sigma[round][10]], message[blake2b_sigma[round][11]], 1, 6, 11, 12, internalState);
-            G(message[blake2b_sigma[round][12]], message[blake2b_sigma[round][13]], 2, 7, 8, 13, internalState);
-            G(message[blake2b_sigma[round][14]], message[blake2b_sigma[round][15]], 3, 4, 9, 14, internalState);
-        }
+        Blake3SinglePass hasher = new Blake3SinglePass();
+        hasher.initWithKey(keyBytes);
+
+        hasher.setCounter(messageOffset);
+
+        hasher.update(messageBytes);
+
+        int[] result32 = hasher.finalizeToWords(64);
+        long[] result64 = wordsToLongs(result32);
 
         for (int i = 0; i < 8; i++) {
-            chainValue[i] ^= internalState[i] ^ internalState[i + 8];
+            chainValue[i] ^= result64[i];
         }
     }
 
-    private static void G(long m1, long m2, int posA, int posB, int posC, int posD, long[] internalState) {
-        internalState[posA] = internalState[posA] + internalState[posB] + m1;
-        internalState[posD] = Long.rotateRight(internalState[posD] ^ internalState[posA], 32);
-        internalState[posC] = internalState[posC] + internalState[posD];
-        internalState[posB] = Long.rotateRight(internalState[posB] ^ internalState[posC], 24); // replaces 25 of BLAKE
-        internalState[posA] = internalState[posA] + internalState[posB] + m2;
-        internalState[posD] = Long.rotateRight(internalState[posD] ^ internalState[posA], 16);
-        internalState[posC] = internalState[posC] + internalState[posD];
-        internalState[posB] = Long.rotateRight(internalState[posB] ^ internalState[posC], 63); // replaces 11 of BLAKE
+    private static class Blake3SinglePass {
+        private final int[] key = new int[NUMWORDS];
+        private final int[] chaining = new int[NUMWORDS];
+        private final int[] state = new int[NUMWORDS * 2];
+        private final int[] message = new int[NUMWORDS * 2];
+        private final byte[] indices = new byte[NUMWORDS * 2];
+
+        private int mode = 0;
+        private long counter = 0;
+        private int currentBytes = 0;
+        private boolean finalized = false;
+
+        public Blake3SinglePass() {
+            initNullKey();
+            reset();
+        }
+
+        public void initWithKey(byte[] keyBytes) {
+            if (keyBytes.length >= 32) {
+                littleEndianToInt(keyBytes, 0, key);
+                mode = KEYEDHASH;
+            } else {
+                initNullKey();
+            }
+            reset();
+        }
+
+        public void setCounter(long counter) {
+            this.counter = counter;
+        }
+
+        private void initNullKey() {
+            System.arraycopy(IV, 0, key, 0, NUMWORDS);
+            mode = 0;
+        }
+
+        private void reset() {
+            currentBytes = 0;
+            finalized = false;
+            System.arraycopy(key, 0, chaining, 0, NUMWORDS);
+        }
+
+        public void update(byte[] data) {
+            if (finalized) {
+                throw new IllegalStateException("Already finalized");
+            }
+
+            if (data.length <= BLOCKLEN) {
+                processSingleBlock(data);
+            } else {
+                for (int offset = 0; offset < data.length; offset += BLOCKLEN) {
+                    int blockSize = Math.min(BLOCKLEN, data.length - offset);
+                    byte[] block = new byte[BLOCKLEN];
+                    System.arraycopy(data, offset, block, 0, blockSize);
+                    processSingleBlock(block);
+                }
+            }
+        }
+
+        private void processSingleBlock(byte[] block) {
+            initChunkBlock(block.length, true);
+            initMessage(block, 0);
+            compress();
+            currentBytes += block.length;
+        }
+
+        public int[] finalizeToWords(int outputBytes) {
+            if (!finalized) {
+                finalized = true;
+            }
+
+            int outputWords = (outputBytes + 3) / 4;
+            int[] result = new int[outputWords];
+
+            generateOutput(result, outputBytes);
+            return result;
+        }
+
+        public int[] hashToWords(byte[] data, int outputBytes) {
+            reset();
+            update(data);
+            return finalizeToWords(outputBytes);
+        }
+
+        private void generateOutput(int[] output, int outputBytes) {
+            int wordsNeeded = (outputBytes + 3) / 4;
+            int outputCounter = 0;
+            int outputPos = 0;
+
+            while (outputPos < wordsNeeded) {
+                System.arraycopy(chaining, 0, state, 0, NUMWORDS);
+                System.arraycopy(IV, 0, state, NUMWORDS, 4);
+
+                state[COUNT0] = (int) outputCounter;
+                state[COUNT1] = (int) (outputCounter >>> 32);
+                state[DATALEN] = outputBytes;
+                state[FLAGS] = mode | ROOT;
+
+                Arrays.fill(message, 0);
+
+                compress();
+
+                int toCopy = Math.min(NUMWORDS, wordsNeeded - outputPos);
+                for (int i = 0; i < toCopy; i++) {
+                    output[outputPos + i] = state[i] ^ state[i + NUMWORDS];
+                }
+
+                outputPos += toCopy;
+                outputCounter++;
+            }
+        }
+
+        private void compress() {
+            initIndices();
+
+            for (int round = 0; round < ROUNDS - 1; round++) {
+                performRound();
+                permuteIndices();
+            }
+            performRound();
+            adjustChaining();
+        }
+
+        private void performRound() {
+            mixG(0, CHAINING0, CHAINING4, IV0, COUNT0);
+            mixG(1, CHAINING1, CHAINING5, IV1, COUNT1);
+            mixG(2, CHAINING2, CHAINING6, IV2, DATALEN);
+            mixG(3, CHAINING3, CHAINING7, IV3, FLAGS);
+
+            mixG(4, CHAINING0, CHAINING5, IV2, FLAGS);
+            mixG(5, CHAINING1, CHAINING6, IV3, COUNT0);
+            mixG(6, CHAINING2, CHAINING7, IV0, COUNT1);
+            mixG(7, CHAINING3, CHAINING4, IV1, DATALEN);
+        }
+
+        private void mixG(int msgIdx, int posA, int posB, int posC, int posD) {
+            int msg = msgIdx * 2;
+
+            state[posA] += state[posB] + message[indices[msg++]];
+            state[posD] = Integer.rotateRight(state[posD] ^ state[posA], 16);
+            state[posC] += state[posD];
+            state[posB] = Integer.rotateRight(state[posB] ^ state[posC], 12);
+            state[posA] += state[posB] + message[indices[msg]];
+            state[posD] = Integer.rotateRight(state[posD] ^ state[posA], 8);
+            state[posC] += state[posD];
+            state[posB] = Integer.rotateRight(state[posB] ^ state[posC], 7);
+        }
+
+        private void initIndices() {
+            for (byte i = 0; i < indices.length; i++) {
+                indices[i] = i;
+            }
+        }
+
+        private void permuteIndices() {
+            for (int i = 0; i < indices.length; i++) {
+                indices[i] = SIGMA[indices[i]];
+            }
+        }
+
+        private void initMessage(byte[] data, int offset) {
+            byte[] paddedData = new byte[BLOCKLEN];
+            int copyLen = Math.min(data.length - offset, BLOCKLEN);
+            System.arraycopy(data, offset, paddedData, 0, copyLen);
+
+            littleEndianToInt(paddedData, 0, message);
+        }
+
+        private void initChunkBlock(int dataLen, boolean isFinal) {
+            System.arraycopy(currentBytes == 0 ? key : chaining, 0, state, 0, NUMWORDS);
+            System.arraycopy(IV, 0, state, NUMWORDS, 4);
+
+            state[COUNT0] = (int) counter;
+            state[COUNT1] = (int) (counter >>> 32);
+            state[DATALEN] = dataLen;
+            state[FLAGS] = mode | CHUNKSTART | (isFinal ? CHUNKEND : 0);
+
+            if (isFinal) {
+                state[FLAGS] |= ROOT;
+            }
+        }
+
+        private void adjustChaining() {
+            for (int i = 0; i < NUMWORDS; i++) {
+                chaining[i] = state[i] ^ state[i + NUMWORDS];
+            }
+        }
+    }
+
+    private static void littleEndianToInt(byte[] data, int offset, int[] output) {
+        for (int i = 0; i < output.length && (offset + i * 4 + 3) < data.length; i++) {
+            output[i] = (data[offset + i * 4] & 0xFF) |
+                ((data[offset + i * 4 + 1] & 0xFF) << 8) |
+                ((data[offset + i * 4 + 2] & 0xFF) << 16) |
+                ((data[offset + i * 4 + 3] & 0xFF) << 24);
+        }
+    }
+
+    private static byte[] longsToBytes(long[] longs) {
+        byte[] bytes = new byte[longs.length * 8];
+        for (int i = 0; i < longs.length; i++) {
+            long value = longs[i];
+            for (int j = 0; j < 8; j++) {
+                bytes[i * 8 + j] = (byte) (value >>> (j * 8));
+            }
+        }
+        return bytes;
+    }
+
+    private static long[] wordsToLongs(int[] words) {
+        long[] longs = new long[(words.length + 1) / 2];
+        for (int i = 0; i < longs.length; i++) {
+            long low = words[i * 2] & 0xFFFFFFFFL;
+            long high = (i * 2 + 1 < words.length) ?
+                (words[i * 2 + 1] & 0xFFFFFFFFL) << 32 : 0L;
+            longs[i] = low | high;
+        }
+        return longs;
     }
 }
