@@ -3,7 +3,13 @@ From: Taiyou06 <kaandindar21@gmail.com>
 Date: Sat, 12 Jul 2025 02:00:43 +0200
 Subject: [PATCH] Optimise-getEntities
 
+- Re-ordereed logic on isAlive
+- Better collection on collidableExemptions
+- Inlined predicate testing on EntitySelector.pushable
+
 Co-authored by: Martijn Muijsers <martijnmuijsers@live.nl>
+
+Licensed under: LGPL-3.0 (https://www.gnu.org/licenses/lgpl-3.0.html)
 
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 index 5ebc1b2cf186b512da5b62fedba16b612f2fa6ed..14dc37f0ed08b4eb4c7740ec68d23df0060c0955 100644
@@ -80,4 +86,161 @@ index 5ebc1b2cf186b512da5b62fedba16b612f2fa6ed..14dc37f0ed08b4eb4c7740ec68d23df0
 +                    if (entityBB.maxX <= boxMinX || entityBB.minX >= boxMaxX || entityBB.maxY <= boxMinY || entityBB.minY >= boxMaxY || entityBB.maxZ <= boxMinZ || entityBB.minZ >= boxMaxZ) {
                          continue;
                      }
+ 
+diff --git a/net/minecraft/world/entity/EntitySelector.java b/net/minecraft/world/entity/EntitySelector.java
+index a6a216c598978f719851856e4ea61e757ce47d7e..d521d18aad59dff9f87a1a879895fbcb765ef50b 100644
+--- a/net/minecraft/world/entity/EntitySelector.java
++++ b/net/minecraft/world/entity/EntitySelector.java
+@@ -50,30 +50,79 @@ public final class EntitySelector {
+     }
+ 
+     public static Predicate<Entity> pushable(Entity entity, boolean ignoreClimbing) {
+-        // Paper end - Climbing should not bypass cramming gamerule
+         Team team = entity.getTeam();
+         Team.CollisionRule collisionRule = team == null ? Team.CollisionRule.ALWAYS : team.getCollisionRule();
+-        return (Predicate<Entity>)(collisionRule == Team.CollisionRule.NEVER
+-            ? Predicates.alwaysFalse()
+-            : NO_SPECTATORS.and(
+-                entity1 -> { final Entity pushedEntity = entity1; // Paper - OBFHELPER
+-                    if (!pushedEntity.isCollidable(ignoreClimbing) || !pushedEntity.canCollideWithBukkit(entity) || !entity.canCollideWithBukkit(pushedEntity)) { // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
+-                        return false;
+-                    } else if (!entity.level().isClientSide || entity1 instanceof Player player && player.isLocalPlayer()) {
+-                        Team team1 = entity1.getTeam();
+-                        Team.CollisionRule collisionRule1 = team1 == null ? Team.CollisionRule.ALWAYS : team1.getCollisionRule();
+-                        if (collisionRule1 == Team.CollisionRule.NEVER || (pushedEntity instanceof Player && !io.papermc.paper.configuration.GlobalConfiguration.get().collisions.enablePlayerCollisions)) { // Paper - Configurable player collision
+-                            return false;
+-                        } else {
+-                            boolean flag = team != null && team.isAlliedTo(team1);
+-                            return (collisionRule != Team.CollisionRule.PUSH_OWN_TEAM && collisionRule1 != Team.CollisionRule.PUSH_OWN_TEAM || !flag)
+-                                && (collisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS && collisionRule1 != Team.CollisionRule.PUSH_OTHER_TEAMS || flag);
+-                        }
+-                    } else {
+-                        return false;
+-                    }
++        if (collisionRule == Team.CollisionRule.NEVER) {
++            return Predicates.alwaysFalse();
++        }
++
++        net.minecraft.world.level.Level level = entity.level();
++        boolean fixClimbingRule = level.paperConfig().collisions.fixClimbingBypassingCrammingRule;
++
++        return entity1 -> {
++            // Skip spectators first (cheapest check)
++            if (entity1.isSpectator()) {
++                return false;
++            }
++
++            final Entity pushedEntity = entity1;
++
++            // Inline all collision logic to avoid method calls
++            // Check if pushedEntity can collide
++            boolean pushedEntityCanCollide;
++            if (pushedEntity instanceof LivingEntity living) {
++                // Inline isCollidable + canCollideWithBukkit logic
++                if (!living.isAlive() || !living.collides) {
++                    pushedEntityCanCollide = living.collides != living.collidableExemptions.contains(entity.getUUID());
++                } else if (!ignoreClimbing && living.onClimbable()) {
++                    pushedEntityCanCollide = living.collides != living.collidableExemptions.contains(entity.getUUID());
++                } else {
++                    pushedEntityCanCollide = !living.collidableExemptions.contains(entity.getUUID());
+                 }
+-            ));
++            } else {
++                // Non-living entities use simpler logic
++                pushedEntityCanCollide = pushedEntity.isPickable();
++            }
++
++            if (!pushedEntityCanCollide) {
++                return false;
++            }
++
++            // Check if source entity can collide with pushed entity
++            boolean sourceCanCollide;
++            if (entity instanceof LivingEntity living) {
++                if (!living.isAlive() || !living.collides) {
++                    sourceCanCollide = living.collides != living.collidableExemptions.contains(pushedEntity.getUUID());
++                } else if (!fixClimbingRule && living.onClimbable()) {
++                    sourceCanCollide = living.collides != living.collidableExemptions.contains(pushedEntity.getUUID());
++                } else {
++                    sourceCanCollide = !living.collidableExemptions.contains(pushedEntity.getUUID());
++                }
++            } else {
++                sourceCanCollide = entity.isPickable();
++            }
++
++            if (!sourceCanCollide) {
++                return false;
++            }
++
++            // Rest of team collision logic
++            if (!entity.level().isClientSide || (entity1 instanceof Player player && player.isLocalPlayer())) {
++                Team team1 = entity1.getTeam();
++                Team.CollisionRule collisionRule1 = team1 == null ? Team.CollisionRule.ALWAYS : team1.getCollisionRule();
++
++                if (collisionRule1 == Team.CollisionRule.NEVER ||
++                    (pushedEntity instanceof Player && !io.papermc.paper.configuration.GlobalConfiguration.get().collisions.enablePlayerCollisions)) {
++                    return false;
++                }
++
++                boolean flag = team != null && team.isAlliedTo(team1);
++                return (collisionRule != Team.CollisionRule.PUSH_OWN_TEAM && collisionRule1 != Team.CollisionRule.PUSH_OWN_TEAM || !flag)
++                    && (collisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS && collisionRule1 != Team.CollisionRule.PUSH_OTHER_TEAMS || flag);
++            }
++
++            return false;
++        };
+     }
+ 
+     public static Predicate<Entity> notRiding(Entity entity) {
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index d6be86981219f0fe0db15d36d9c85e9a56020373..3c2b7f4b54ec8d630c506db17b994f0cbe4785a6 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -282,7 +282,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     public List<DefaultDrop> drops = new java.util.ArrayList<>(); // Paper - Restore vanilla drops behavior
+     public final org.bukkit.craftbukkit.attribute.CraftAttributeMap craftAttributes;
+     public boolean collides = true;
+-    public Set<UUID> collidableExemptions = new java.util.HashSet<>();
++    public Set<UUID> collidableExemptions = new it.unimi.dsi.fastutil.objects.ObjectOpenHashSet<>(); // Leaf - better collection
+     public boolean bukkitPickUpLoot;
+     public org.bukkit.craftbukkit.entity.CraftLivingEntity getBukkitLivingEntity() { return (org.bukkit.craftbukkit.entity.CraftLivingEntity) super.getBukkitEntity(); } // Paper
+     public boolean silentDeath = false; // Paper - mark entity as dying silently for cancellable death event
+@@ -2282,7 +2282,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+ 
+     @Override
+     public boolean isAlive() {
+-        return !this.isRemoved() && this.getHealth() > 0.0F && !this.dead; // Paper - Check this.dead
++        return !this.dead && !this.isRemoved() && this.getHealth() > 0.0F; // Paper - Check this.dead // Leaf - do the cheapest check first
+     }
+ 
+     public boolean isLookingAtMe(LivingEntity entity, double tolerance, boolean scaleByDistance, boolean visual, double... yValues) {
+@@ -4047,7 +4047,8 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     // Paper start - Climbing should not bypass cramming gamerule
+     @Override
+     public boolean isPushable() {
+-        return this.isCollidable(this.level().paperConfig().collisions.fixClimbingBypassingCrammingRule);
++        Level level = this.level();
++        return this.isCollidable(level.paperConfig().collisions.fixClimbingBypassingCrammingRule);
+     }
+ 
+     @Override
+@@ -4059,7 +4060,18 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     // CraftBukkit start - collidable API
+     @Override
+     public boolean canCollideWithBukkit(Entity entity) {
+-        return this.isPushable() && this.collides != this.collidableExemptions.contains(entity.getUUID());
++        // Inline the full collision check to avoid method call overhead
++        if (!this.isAlive() || this.isSpectator() || !this.collides) {
++            return this.collides != this.collidableExemptions.contains(entity.getUUID());
++        }
++
++        Level level = this.level();
++        boolean ignoreClimbing = level.paperConfig().collisions.fixClimbingBypassingCrammingRule;
++        if (!ignoreClimbing && this.onClimbable()) {
++            return this.collides != this.collidableExemptions.contains(entity.getUUID());
++        }
++
++        return !this.collidableExemptions.contains(entity.getUUID());
+     }
+     // CraftBukkit end
  
