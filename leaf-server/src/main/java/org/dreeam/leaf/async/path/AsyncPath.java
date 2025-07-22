@@ -18,6 +18,8 @@ import java.util.function.Supplier;
  */
 public class AsyncPath extends Path {
 
+    private volatile boolean fastPath = false;
+
     /**
      * marks whether this async path has been processed
      */
@@ -26,7 +28,7 @@ public class AsyncPath extends Path {
     /**
      * runnables waiting for this to be processed
      */
-    private final List<Runnable> postProcessing = new ArrayList<>(0);
+    private final List<Runnable> postProcessing = new ArrayList<>(2);
 
     /**
      * a list of positions that this path could path towards
@@ -78,17 +80,24 @@ public class AsyncPath extends Path {
 
     @Override
     public boolean isProcessed() {
-        return this.processState == PathProcessState.COMPLETED;
+        return fastPath || (this.processState == PathProcessState.COMPLETED);
     }
 
     /**
      * returns the future representing the processing state of this path
      */
-    public synchronized void postProcessing(@NotNull Runnable runnable) {
+    public void postProcessing(@NotNull Runnable runnable) {
         if (isProcessed()) {
             runnable.run();
-        } else {
-            this.postProcessing.add(runnable);
+            return;
+        }
+
+        synchronized (this) {
+            if (isProcessed()) {
+                runnable.run();
+            } else {
+                this.postProcessing.add(runnable);
+            }
         }
     }
 
@@ -103,40 +112,59 @@ public class AsyncPath extends Path {
             return false;
         }
 
+        // For single position (common case), do direct comparison
+        if (positions.size() == 1 && this.positions.size() == 1) {
+            return this.positions.iterator().next().equals(positions.iterator().next());
+        }
+
         return this.positions.containsAll(positions);
     }
 
     /**
      * starts processing this path
      */
-    public synchronized void process() {
-        if (this.processState == PathProcessState.COMPLETED ||
-            this.processState == PathProcessState.PROCESSING) {
+    public void process() {
+        // Double-checked locking pattern for better performance
+        if (this.processState == PathProcessState.COMPLETED) {
             return;
         }
 
-        processState = PathProcessState.PROCESSING;
+        synchronized (this) {
+            // Check again after acquiring lock
+            if (this.processState != PathProcessState.WAITING) {
+                return;
+            }
 
+            processState = PathProcessState.PROCESSING;
+        }
+
+        // Do the heavy lifting outside the synchronized block
         final Path bestPath = this.pathSupplier.get();
 
-        this.nodes.addAll(bestPath.nodes); // we mutate this list to reuse the logic in Path
-        this.target = bestPath.getTarget();
-        this.distToTarget = bestPath.getDistToTarget();
-        this.canReach = bestPath.canReach();
+        synchronized (this) {
+            // Only synchronize the final state update
+            this.nodes.addAll(bestPath.nodes);
+            this.target = bestPath.getTarget();
+            this.distToTarget = bestPath.getDistToTarget();
+            this.canReach = bestPath.canReach();
 
-        processState = PathProcessState.COMPLETED;
+            processState = PathProcessState.COMPLETED;
 
-        for (Runnable runnable : this.postProcessing) {
-            runnable.run();
-        } // Run tasks after processing
+            // Process callbacks
+            for (Runnable runnable : this.postProcessing) {
+                runnable.run();
+            }
+            this.postProcessing.clear(); // Free memory
+        }
     }
 
     /**
      * if this path is accessed while it hasn't processed, just process it in-place
      */
     private void checkProcessed() {
-        if (this.processState == PathProcessState.WAITING ||
-            this.processState == PathProcessState.PROCESSING) { // Block if we are on processing
+        // Use single volatile read instead of multiple comparisons
+        PathProcessState state = this.processState;
+        if (state != PathProcessState.COMPLETED) {
             this.process();
         }
     }

@@ -106,27 +106,24 @@ public class AsyncPathProcessor {
     private static @NotNull RejectedExecutionHandler getRejectedPolicy() {
         return (Runnable rejectedTask, ThreadPoolExecutor executor) -> {
             BlockingQueue<Runnable> workQueue = executor.getQueue();
-            if (!executor.isShutdown()) {
-                switch (AsyncPathfinding.asyncPathfindingRejectPolicy) {
-                    case FLUSH_ALL -> {
-                        if (!workQueue.isEmpty()) {
-                            List<Runnable> pendingTasks = new ArrayList<>(workQueue.size());
 
-                            workQueue.drainTo(pendingTasks);
+            switch (AsyncPathfinding.asyncPathfindingRejectPolicy) {
+                case FLUSH_ALL -> {
+                    // Process in batches instead of all at once to avoid blocking main thread
+                    int batchSize = Math.min(32, workQueue.size());
+                    List<Runnable> batch = new ArrayList<>(batchSize);
+                    workQueue.drainTo(batch, batchSize);
 
-                            for (Runnable pendingTask : pendingTasks) {
-                                pendingTask.run();
-                            }
-                        }
-                        rejectedTask.run();
-                    }
-                    case CALLER_RUNS -> rejectedTask.run();
+                    batch.forEach(Runnable::run);
+                    rejectedTask.run();
                 }
+                case CALLER_RUNS -> rejectedTask.run();
             }
 
-            if (System.currentTimeMillis() - lastWarnMillis > 30000L) {
-                LOGGER.warn("Async pathfinding processor is busy! Pathfinding tasks will be treated as policy defined in config. Increasing max-threads in Leaf config may help.");
-                lastWarnMillis = System.currentTimeMillis();
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastWarnMillis > 30000L) {
+                LOGGER.warn("Async pathfinding processor is busy! Consider increasing max-threads.");
+                lastWarnMillis = currentTime;
             }
         };
     }
