@@ -106,18 +106,22 @@ public class AsyncPathProcessor {
     private static @NotNull RejectedExecutionHandler getRejectedPolicy() {
         return (Runnable rejectedTask, ThreadPoolExecutor executor) -> {
             BlockingQueue<Runnable> workQueue = executor.getQueue();
+            if (!executor.isShutdown()) {
+                switch (AsyncPathfinding.asyncPathfindingRejectPolicy) {
+                    case FLUSH_ALL -> {
+                        if (!workQueue.isEmpty()) {
+                            List<Runnable> pendingTasks = new ArrayList<>(workQueue.size());
 
-            switch (AsyncPathfinding.asyncPathfindingRejectPolicy) {
-                case FLUSH_ALL -> {
-                    // Process in batches instead of all at once to avoid blocking main thread
-                    int batchSize = Math.min(32, workQueue.size());
-                    List<Runnable> batch = new ArrayList<>(batchSize);
-                    workQueue.drainTo(batch, batchSize);
+                            workQueue.drainTo(pendingTasks);
 
-                    batch.forEach(Runnable::run);
-                    rejectedTask.run();
+                            for (Runnable pendingTask : pendingTasks) {
+                                pendingTask.run();
+                            }
+                        }
+                        rejectedTask.run();
+                    }
+                    case CALLER_RUNS -> rejectedTask.run();
                 }
-                case CALLER_RUNS -> rejectedTask.run();
             }
 
             long currentTime = System.currentTimeMillis();
