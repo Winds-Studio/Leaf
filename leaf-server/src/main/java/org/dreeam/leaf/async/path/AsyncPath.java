@@ -100,12 +100,17 @@ public class AsyncPath extends Path {
             return;
         }
 
+        boolean shouldRun = false;
         synchronized (this) {
             if (isProcessed()) {
-                runnable.run();
+                shouldRun = true;
             } else {
                 this.postProcessing.add(runnable);
             }
+        }
+
+        if (shouldRun) {
+            runnable.run();
         }
     }
 
