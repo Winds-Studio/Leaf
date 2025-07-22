@@ -9,21 +9,25 @@ public class Cache extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".cache";
     }
 
-    public static boolean cachePlayerProfileResult = false;
-    public static int cachePlayerProfileResultTimeout = 1440;
+    public static boolean cacheProfileLookup = false;
+    public static int cacheProfileLookupTimeout = 1440; // 24 hours in minutes
+    public static int cacheProfileLookupMaxSize = 8192;
 
     @Override
     public void onLoaded() {
-        cachePlayerProfileResult = config.getBoolean(getBasePath() + ".cache-player-profile-result", cachePlayerProfileResult, config.pickStringRegionBased("""
-                Cache the player profile result on they first join.
-                It's useful if Mojang's verification server is down.""",
+        cacheProfileLookup = config.getBoolean(getBasePath() + ".cache-profile-lookup", cacheProfileLookup, config.pickStringRegionBased("""
+                Cache profile data lookups (skins, textures, etc.) to reduce API calls to Mojang.""",
             """
-                玩家首次加入时缓存 PlayerProfile.
-                正版验证服务器宕机时非常有用."""));
-        cachePlayerProfileResultTimeout = config.getInt(getBasePath() + ".cache-player-profile-result-timeout", cachePlayerProfileResultTimeout,
+                缓存玩家资料查询 (皮肤, 材质等) 以减少对 Mojang API 的调用."""));
+        cacheProfileLookupTimeout = config.getInt(getBasePath() + ".cache-profile-lookup-timeout", cacheProfileLookupTimeout,
             config.pickStringRegionBased(
-                "The timeout of the cache. Unit: Minutes.",
-                "缓存过期时间. 单位: 分钟."
+                "The timeout for profile lookup cache. Unit: Minutes.",
+                "玩家资料查询缓存过期时间. 单位: 分钟. (推荐: 1440 = 24小时)"
+            ));
+        cacheProfileLookupMaxSize = config.getInt(getBasePath() + ".cache-profile-lookup-max-size", cacheProfileLookupMaxSize,
+            config.pickStringRegionBased(
+                "Maximum number of profiles to cache. Higher values use more memory (not that much).",
+                "最大缓存的玩家资料数量. 更高的值会使用更多内存."
             ));
     }
 }
