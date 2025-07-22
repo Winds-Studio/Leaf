@@ -20,6 +20,8 @@ public class AsyncPath extends Path {
 
     private volatile boolean fastPath = false;
 
+    private volatile boolean processingFinished = false;
+
     /**
      * marks whether this async path has been processed
      */
@@ -92,6 +94,12 @@ public class AsyncPath extends Path {
             return;
         }
 
+        boolean finished = this.processingFinished;
+        if (finished) {
+            runnable.run();
+            return;
+        }
+
         synchronized (this) {
             if (isProcessed()) {
                 runnable.run();
@@ -124,13 +132,18 @@ public class AsyncPath extends Path {
      * starts processing this path
      */
     public void process() {
-        // Double-checked locking pattern for better performance
         if (this.processState == PathProcessState.COMPLETED) {
             return;
         }
 
+        // Can we also check for PROCESSING state here?
+        PathProcessState currentState = this.processState;
+        if (currentState == PathProcessState.COMPLETED || currentState == PathProcessState.PROCESSING) {
+            return;
+        }
+
         synchronized (this) {
-            // Check again after acquiring lock
+            // Double-check after acquiring lock
             if (this.processState != PathProcessState.WAITING) {
                 return;
             }
@@ -138,23 +151,43 @@ public class AsyncPath extends Path {
             processState = PathProcessState.PROCESSING;
         }
 
-        // Do the heavy lifting outside the synchronized block
-        final Path bestPath = this.pathSupplier.get();
+        // computation outside synchronized block
+        final Path bestPath;
+        try {
+            bestPath = this.pathSupplier.get();
+        } catch (Exception e) {
+            // Handle pathfinding failures gracefully
+            synchronized (this) {
+                processState = PathProcessState.COMPLETED;
+                this.processingFinished = true;
 
+                // Still run callbacks even if pathfinding failed
+                for (Runnable runnable : this.postProcessing) {
+                    runnable.run();
+                }
+                this.postProcessing.clear();
+            }
+            return;
+        }
+
+        // Final state update - minimal synchronization
+        List<Runnable> callbacksToRun;
         synchronized (this) {
-            // Only synchronize the final state update
             this.nodes.addAll(bestPath.nodes);
             this.target = bestPath.getTarget();
             this.distToTarget = bestPath.getDistToTarget();
             this.canReach = bestPath.canReach();
 
             processState = PathProcessState.COMPLETED;
+            this.processingFinished = true; // Mark as finished for postProcessing
 
-            // Process callbacks
-            for (Runnable runnable : this.postProcessing) {
-                runnable.run();
-            }
-            this.postProcessing.clear(); // Free memory
+            // Copy callbacks to run outside synchronized block
+            callbacksToRun = new ArrayList<>(this.postProcessing);
+            this.postProcessing.clear();
+        }
+
+        for (Runnable runnable : callbacksToRun) {
+            runnable.run();
         }
     }
 

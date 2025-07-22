@@ -31,6 +31,7 @@ public class AsyncPathProcessor {
     private static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
     private static long lastWarnMillis = System.currentTimeMillis();
     public static ThreadPoolExecutor PATH_PROCESSING_EXECUTOR = null;
+    private static long lastWarnNanos = System.nanoTime();
 
     public static void init() {
         if (PATH_PROCESSING_EXECUTOR == null) {
@@ -124,10 +125,10 @@ public class AsyncPathProcessor {
                 }
             }
 
-            long currentTime = System.currentTimeMillis();
-            if (currentTime - lastWarnMillis > 30000L) {
+            long currentNanos = System.nanoTime();
+            if (currentNanos - lastWarnNanos > 30_000_000_000L) {
                 LOGGER.warn("Async pathfinding processor is busy! Consider increasing max-threads.");
-                lastWarnMillis = currentTime;
+                lastWarnNanos = currentNanos;
             }
         };
     }
