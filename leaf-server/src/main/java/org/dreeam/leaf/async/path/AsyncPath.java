@@ -132,13 +132,8 @@ public class AsyncPath extends Path {
      * starts processing this path
      */
     public void process() {
-        if (this.processState == PathProcessState.COMPLETED) {
-            return;
-        }
-
-        // Can we also check for PROCESSING state here?
-        PathProcessState currentState = this.processState;
-        if (currentState == PathProcessState.COMPLETED || currentState == PathProcessState.PROCESSING) {
+        // Single check - if not WAITING, we're either COMPLETED or PROCESSING
+        if (this.processState != PathProcessState.WAITING) {
             return;
         }
 
