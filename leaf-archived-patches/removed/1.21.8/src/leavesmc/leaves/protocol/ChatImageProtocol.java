@@ -1,3 +1,5 @@
+// Removed since Leaf 1.21.5, replaced by Leaves's ChatImage protocol support since Leaf 1.21.8
+
 package org.leavesmc.leaves.protocol;
 
 import com.google.common.collect.Lists;

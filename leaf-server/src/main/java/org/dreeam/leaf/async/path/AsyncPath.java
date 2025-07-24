@@ -18,6 +18,10 @@ import java.util.function.Supplier;
  */
 public class AsyncPath extends Path {
 
+    private volatile boolean fastPath = false;
+
+    private volatile boolean processingFinished = false;
+
     /**
      * marks whether this async path has been processed
      */
@@ -26,7 +30,7 @@ public class AsyncPath extends Path {
     /**
      * runnables waiting for this to be processed
      */
-    private final List<Runnable> postProcessing = new ArrayList<>(0);
+    private final List<Runnable> postProcessing = new ArrayList<>(2);
 
     /**
      * a list of positions that this path could path towards
@@ -78,17 +82,35 @@ public class AsyncPath extends Path {
 
     @Override
     public boolean isProcessed() {
-        return this.processState == PathProcessState.COMPLETED;
+        return fastPath || (this.processState == PathProcessState.COMPLETED);
     }
 
     /**
      * returns the future representing the processing state of this path
      */
-    public synchronized void postProcessing(@NotNull Runnable runnable) {
+    public void postProcessing(@NotNull Runnable runnable) {
         if (isProcessed()) {
             runnable.run();
-        } else {
-            this.postProcessing.add(runnable);
+            return;
+        }
+
+        boolean finished = this.processingFinished;
+        if (finished) {
+            runnable.run();
+            return;
+        }
+
+        boolean shouldRun = false;
+        synchronized (this) {
+            if (isProcessed()) {
+                shouldRun = true;
+            } else {
+                this.postProcessing.add(runnable);
+            }
+        }
+
+        if (shouldRun) {
+            runnable.run();
         }
     }
 
@@ -103,40 +125,79 @@ public class AsyncPath extends Path {
             return false;
         }
 
+        // For single position (common case), do direct comparison
+        if (positions.size() == 1 && this.positions.size() == 1) {
+            return this.positions.iterator().next().equals(positions.iterator().next());
+        }
+
         return this.positions.containsAll(positions);
     }
 
     /**
      * starts processing this path
      */
-    public synchronized void process() {
-        if (this.processState == PathProcessState.COMPLETED ||
-            this.processState == PathProcessState.PROCESSING) {
+    public void process() {
+        // Single check - if not WAITING, we're either COMPLETED or PROCESSING
+        if (this.processState != PathProcessState.WAITING) {
             return;
         }
 
-        processState = PathProcessState.PROCESSING;
+        synchronized (this) {
+            // Double-check after acquiring lock
+            if (this.processState != PathProcessState.WAITING) {
+                return;
+            }
 
-        final Path bestPath = this.pathSupplier.get();
+            processState = PathProcessState.PROCESSING;
+        }
 
-        this.nodes.addAll(bestPath.nodes); // we mutate this list to reuse the logic in Path
-        this.target = bestPath.getTarget();
-        this.distToTarget = bestPath.getDistToTarget();
-        this.canReach = bestPath.canReach();
+        // computation outside synchronized block
+        final Path bestPath;
+        try {
+            bestPath = this.pathSupplier.get();
+        } catch (Exception e) {
+            // Handle pathfinding failures gracefully
+            synchronized (this) {
+                processState = PathProcessState.COMPLETED;
+                this.processingFinished = true;
 
-        processState = PathProcessState.COMPLETED;
+                // Still run callbacks even if pathfinding failed
+                for (Runnable runnable : this.postProcessing) {
+                    runnable.run();
+                }
+                this.postProcessing.clear();
+            }
+            return;
+        }
 
-        for (Runnable runnable : this.postProcessing) {
+        // Final state update - minimal synchronization
+        List<Runnable> callbacksToRun;
+        synchronized (this) {
+            this.nodes.addAll(bestPath.nodes);
+            this.target = bestPath.getTarget();
+            this.distToTarget = bestPath.getDistToTarget();
+            this.canReach = bestPath.canReach();
+
+            processState = PathProcessState.COMPLETED;
+            this.processingFinished = true; // Mark as finished for postProcessing
+
+            // Copy callbacks to run outside synchronized block
+            callbacksToRun = new ArrayList<>(this.postProcessing);
+            this.postProcessing.clear();
+        }
+
+        for (Runnable runnable : callbacksToRun) {
             runnable.run();
-        } // Run tasks after processing
+        }
     }
 
     /**
      * if this path is accessed while it hasn't processed, just process it in-place
      */
     private void checkProcessed() {
-        if (this.processState == PathProcessState.WAITING ||
-            this.processState == PathProcessState.PROCESSING) { // Block if we are on processing
+        // Use single volatile read instead of multiple comparisons
+        PathProcessState state = this.processState;
+        if (state != PathProcessState.COMPLETED) {
             this.process();
         }
     }

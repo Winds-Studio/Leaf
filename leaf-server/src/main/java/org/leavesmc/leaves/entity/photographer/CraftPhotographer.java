@@ -1,4 +1,4 @@
-package org.leavesmc.leaves.entity;
+package org.leavesmc.leaves.entity.photographer;
 
 import net.minecraft.server.level.ServerPlayer;
 import org.bukkit.craftbukkit.CraftServer;

@@ -14,6 +14,7 @@ public abstract class AbstractInvokerHolder<T> {
     protected final T handler;
     protected final Class<?> returnType;
     protected final Class<?>[] parameterTypes;
+    protected final boolean isStatic;
 
     protected AbstractInvokerHolder(LeavesProtocol owner, Method invoker, T handler, @Nullable Class<?> returnType, @NotNull Class<?>... parameterTypes) {
         this.owner = owner;
@@ -21,6 +22,7 @@ public abstract class AbstractInvokerHolder<T> {
         this.handler = handler;
         this.returnType = returnType;
         this.parameterTypes = parameterTypes;
+        this.isStatic = Modifier.isStatic(invoker.getModifiers());
 
         validateMethodSignature();
     }
@@ -58,7 +60,7 @@ public abstract class AbstractInvokerHolder<T> {
             return null;
         }
         try {
-            if (Modifier.isStatic(invoker.getModifiers())) {
+            if (isStatic) {
                 return invoker.invoke(null, args);
             } else {
                 return invoker.invoke(owner, args);

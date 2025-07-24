@@ -1,4 +1,4 @@
-package org.leavesmc.leaves.entity;
+package org.leavesmc.leaves.entity.photographer;
 
 import org.bukkit.Location;
 import org.jetbrains.annotations.NotNull;

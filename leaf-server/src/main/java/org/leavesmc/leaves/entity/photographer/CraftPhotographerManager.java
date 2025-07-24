@@ -1,4 +1,4 @@
-package org.leavesmc.leaves.entity;
+package org.leavesmc.leaves.entity.photographer;
 
 import com.google.common.collect.Lists;
 import org.bukkit.Location;

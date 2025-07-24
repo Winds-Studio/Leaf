@@ -5,9 +5,9 @@ import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import io.papermc.paper.event.player.PlayerUntrackEntityEvent;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
-import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ChunkMap;
@@ -25,12 +25,8 @@ import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import org.bukkit.event.player.PlayerVelocityEvent;
 
-import java.util.Arrays;
-
 public final class TrackerCtx {
-    private static final int SIZE_LIMIT_PER_BUNDLE = 4096;
-
-    private final Reference2ReferenceOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<? super ClientGamePacketListener>>> packets;
+    private final Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> packets;
     private final ServerLevel world;
     private final ObjectArrayList<ServerPlayer> bukkitVelocityEvent = new ObjectArrayList<>();
     private final ObjectArrayList<ItemFrame> bukkitItemFrames = new ObjectArrayList<>();
@@ -108,7 +104,7 @@ public final class TrackerCtx {
     }
 
     public void send(ServerPlayerConnection connection, Packet<? super ClientGamePacketListener> packet) {
-        packets.computeIfAbsent(connection, x -> new ObjectArrayList<>()).add(packet);
+        packets.computeIfAbsent(connection, x -> ReferenceArrayList.wrap(new Packet[16])).add(packet);
     }
 
     void join(TrackerCtx other) {
@@ -123,12 +119,12 @@ public final class TrackerCtx {
         var iterator = other.packets.reference2ReferenceEntrySet().fastIterator();
         while (iterator.hasNext()) {
             var entry = iterator.next();
-            packets.computeIfAbsent(entry.getKey(), x -> new ObjectArrayList<>()).addAll(entry.getValue());
+            packets.computeIfAbsent(entry.getKey(), x -> ReferenceArrayList.wrap(new Packet[0])).addAll(entry.getValue());
         }
     }
 
-    void handle() {
-        handlePackets(world, packets);
+    void handle(boolean flush) {
+        handlePackets(world, packets, flush);
 
         if (!pluginEntity.isEmpty()) {
             for (final Entity entity : pluginEntity) {
@@ -237,10 +233,10 @@ public final class TrackerCtx {
             paperStopSeen.clear();
         }
 
-        handlePackets(world, packets);
+        handlePackets(world, packets, flush);
     }
 
-    private static void handlePackets(ServerLevel world, Reference2ReferenceOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<? super ClientGamePacketListener>>> packets) {
+    private static void handlePackets(ServerLevel world, Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> packets, boolean flush) {
         if (packets.isEmpty()) {
             return;
         }
@@ -248,25 +244,16 @@ public final class TrackerCtx {
         while (iter.hasNext()) {
             var entry = iter.next();
             ServerPlayerConnection connection = entry.getKey();
-            ObjectArrayList<Packet<? super ClientGamePacketListener>> list = entry.getValue();
+            ReferenceArrayList<Packet<? super ClientGamePacketListener>> list = entry.getValue();
             if (!world.equals(connection.getPlayer().level())) {
                 continue;
             }
-            int size = list.size();
-            if (size > SIZE_LIMIT_PER_BUNDLE) {
-                int from = 0;
-                while (from < size) {
-                    int chunkLen = Math.min(SIZE_LIMIT_PER_BUNDLE, size - from);
-                    Packet<? super ClientGamePacketListener>[] chunk = new Packet[chunkLen];
-                    list.getElements(from, chunk, 0, chunkLen);
-                    connection.send(new ClientboundBundlePacket(Arrays.asList(chunk)));
-                    from += chunkLen;
-                }
-            } else {
-                connection.send(new ClientboundBundlePacket(list));
+            Packet[] packetsRaw = list.elements();
+            for (int i = 0, size = list.size(); i < size; i++) {
+                connection.send(packetsRaw[i]);
             }
-            if (connection instanceof ServerGamePacketListenerImpl conn) {
-                conn.connection.flushChannel();
+            if (flush && connection instanceof ServerGamePacketListenerImpl playerConnection) {
+                playerConnection.connection.flushChannel();
             }
         }
         packets.clear();
