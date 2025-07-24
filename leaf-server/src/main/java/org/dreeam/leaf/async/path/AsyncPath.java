@@ -62,7 +62,7 @@ public class AsyncPath extends Path {
     /**
      * How far we are to the target
      * <p>
-     * While processing, the target could be anywhere but theoretically we're always "close" to a theoretical target so default is 0
+     * While processing, the target could be anywhere, but theoretically we're always "close" to a theoretical target so default is 0
      */
     private float distToTarget = 0;
     /**
@@ -89,23 +89,26 @@ public class AsyncPath extends Path {
     }
 
     /**
-     * returns the future representing the processing state of this path
+     * Returns the future representing the processing state of this path
      */
-    public void postProcessing(@NotNull Runnable runnable) {
+    public final void schedulePostProcessing(@NotNull Runnable runnable) {
         if (this.ready) {
             runnable.run();
         } else {
             this.postProcessing.offer(runnable);
+            if (this.ready) {
+                this.runAllPostProcessing(true);
+            }
         }
     }
 
     /**
-     * an easy way to check if this processing path is the same as an attempted new path
+     * An easy way to check if this processing path is the same as an attempted new path
      *
      * @param positions - the positions to compare against
      * @return true if we are processing the same positions
      */
-    public boolean hasSameProcessingPositions(final Set<BlockPos> positions) {
+    public final boolean hasSameProcessingPositions(final Set<BlockPos> positions) {
         if (this.positions.size() != positions.size()) {
             return false;
         }
@@ -122,31 +125,35 @@ public class AsyncPath extends Path {
      * Starts processing this path
      * Since this is no longer a synchronized function, checkProcessed is no longer required
      */
-    public void process() {
+    public final void process() {
         if (this.ready) return;
 
         synchronized (this) {
             if (this.ready) return; // In the worst case, the main thread only waits until any async thread is done and returns immediately
             final Path bestPath = this.pathSupplier.get();
-            this.nodes.addAll(bestPath.nodes); // we mutate this list to reuse the logic in Path
+            this.nodes.addAll(bestPath.nodes); // We mutate this list to reuse the logic in Path
             this.target = bestPath.getTarget();
             this.distToTarget = bestPath.getDistToTarget();
             this.canReach = bestPath.canReach();
             this.ready = true;
         }
 
-        boolean isTickThread = TickThread.isTickThread();
-        while (!this.postProcessing.isEmpty()) { // Only one thread can reach here, it should never poll null
+        this.runAllPostProcessing(TickThread.isTickThread());
+    }
+
+    private void runAllPostProcessing(boolean isTickThread) {
+        Runnable runnable;
+        while ((runnable = this.postProcessing.poll()) != null) {
             if (isTickThread) {
-                this.postProcessing.poll().run();
+                runnable.run();
             } else {
-                MinecraftServer.getServer().scheduleOnMain(this.postProcessing.poll());
+                MinecraftServer.getServer().scheduleOnMain(runnable);
             }
         }
     }
 
     /*
-     * overrides we need for final fields that we cannot modify after processing
+     * Overrides we need for final fields that we cannot modify after processing
      */
 
     @Override
@@ -169,7 +176,7 @@ public class AsyncPath extends Path {
     }
 
     /*
-     * overrides to ensure we're processed first
+     * Overrides to ensure we're processed first
      */
 
     @Override
