@@ -27,10 +27,9 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     private static final int DEFAULT_INITIAL_CAPACITY = 10;
     private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8; // JVM limit
     private static final int GROWTH_SHIFT = 1; // equivalent to /2 but faster
-    private static final int CAPACITY_THRESHOLD = 1 << 30; // Powers of 2 optimization
+    private static final int CAPACITY_THRESHOLD = 1 << 30;
 
     private static final int HAS_DEFAULT_FLAG = 2;
-    private static final int FILLED_FLAG = 4;
 
     /** Packed flags for various boolean states */
     private int flags;
@@ -39,7 +38,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     protected transient E[] a;
 
     /** The current actual size - kept as power of 2 when possible for faster operations */
-    protected int size;
+    protected transient int size;
 
     /** The default value */
     @Nullable
@@ -108,10 +107,6 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     private boolean hasFlag(int flag) {
         return (flags & flag) != 0;
-    }
-
-    private void setFlag(int flag) {
-        flags |= flag;
     }
 
     // === GROWTH LOGIC ===
@@ -239,7 +234,6 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     public void fillWithDefault() {
         if (hasFlag(HAS_DEFAULT_FLAG) && size > 0) {
             Arrays.fill(a, 0, size, defaultValue);
-            setFlag(FILLED_FLAG);
             invalidateHash();
         }
     }
@@ -414,7 +408,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     @Serial
     private void writeObject(ObjectOutputStream s) throws IOException {
         s.defaultWriteObject();
-        final E[] a = this.a;
+        s.writeInt(size);
         for (int i = 0; i < size; i++) {
             s.writeObject(a[i]);
         }
@@ -423,10 +417,12 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     @Serial
     private void readObject(ObjectInputStream s) throws IOException, ClassNotFoundException {
         s.defaultReadObject();
-        this.a = (E[])new Object[size];
+        this.size = s.readInt();
+        this.a = (E[])new Object[this.size];
         for (int i = 0; i < size; i++) {
             a[i] = (E)s.readObject();
         }
+        this.flags = (defaultValue != null) ? HAS_DEFAULT_FLAG : 0;
         this.hashValid = false;
     }
 }
