@@ -4,10 +4,10 @@ import com.google.common.base.Suppliers;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
@@ -41,13 +41,13 @@ public class EntityAccessorImpl extends AccessorImpl<EntityHitResult> implements
     }
 
     public static class Builder implements EntityAccessor.Builder {
-        private Level level;
+        private ServerLevel level;
         private Player player;
         private Supplier<EntityHitResult> hit;
         private Supplier<Entity> entity;
 
         @Override
-        public Builder level(Level level) {
+        public Builder level(ServerLevel level) {
             this.level = level;
             return this;
         }

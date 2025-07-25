@@ -17,7 +17,12 @@ import java.util.Map;
 
 import static org.leavesmc.leaves.protocol.jade.util.JadeCodec.PRIMITIVE_STREAM_CODEC;
 
-public record ServerHandshakePayload(Map<ResourceLocation, Object> serverConfig, List<Block> shearableBlocks, List<ResourceLocation> blockProviderIds, List<ResourceLocation> entityProviderIds) implements LeavesCustomPayload {
+public record ServerHandshakePayload(
+    Map<ResourceLocation, Object> serverConfig,
+    List<Block> shearableBlocks,
+    List<ResourceLocation> blockProviderIds,
+    List<ResourceLocation> entityProviderIds
+) implements LeavesCustomPayload {
 
     @ID
     private static final ResourceLocation PACKET_SERVER_HANDSHAKE = JadeProtocol.id("server_handshake");

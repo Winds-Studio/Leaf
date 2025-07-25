@@ -6,10 +6,10 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -61,14 +61,14 @@ public class BlockAccessorImpl extends AccessorImpl<BlockHitResult> implements B
     }
 
     public static class Builder implements BlockAccessor.Builder {
-        private Level level;
+        private ServerLevel level;
         private Player player;
         private BlockHitResult hit;
         private BlockState blockState = Blocks.AIR.defaultBlockState();
         private Supplier<BlockEntity> blockEntity;
 
         @Override
-        public Builder level(Level level) {
+        public Builder level(ServerLevel level) {
             this.level = level;
             return this;
         }

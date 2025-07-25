@@ -8,6 +8,7 @@ import net.minecraft.world.level.GameRules;
 import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.leavesmc.leaves.protocol.core.Context;
 import org.leavesmc.leaves.protocol.core.LeavesProtocol;
 import org.leavesmc.leaves.protocol.core.ProtocolHandler;
 import org.leavesmc.leaves.protocol.core.ProtocolUtils;
@@ -16,6 +17,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 @LeavesProtocol.Register(namespace = "appleskin")
 public class AppleSkinProtocol implements LeavesProtocol {
@@ -32,7 +34,7 @@ public class AppleSkinProtocol implements LeavesProtocol {
     private static final Map<ServerPlayer, Float> previousExhaustionLevels = new HashMap<>();
     private static final Map<ServerPlayer, Boolean> previousNaturalRegeneration = new HashMap<>();
 
-    private static final Map<ServerPlayer, Set<String>> subscribedChannels = new HashMap<>();
+    private static final Map<UUID, Set<String>> subscribedChannels = new HashMap<>();
 
     @Contract("_ -> new")
     public static ResourceLocation id(String path) {
@@ -46,21 +48,24 @@ public class AppleSkinProtocol implements LeavesProtocol {
 
     @ProtocolHandler.PlayerLeave
     public static void onPlayerLoggedOut(@NotNull ServerPlayer player) {
-        subscribedChannels.remove(player);
+        subscribedChannels.remove(player.getUUID());
         resetPlayerData(player);
     }
 
     @ProtocolHandler.MinecraftRegister(onlyNamespace = true)
-    public static void onPlayerSubscribed(@NotNull ServerPlayer player, ResourceLocation id) {
-        subscribedChannels.computeIfAbsent(player, k -> new HashSet<>()).add(id.getPath());
+    public static void onPlayerSubscribed(@NotNull Context context, ResourceLocation id) {
+        subscribedChannels.computeIfAbsent(context.profile().getId(), k -> new HashSet<>()).add(id.getPath());
     }
 
     @ProtocolHandler.Ticker
     public static void tick() {
-        for (Map.Entry<ServerPlayer, Set<String>> entry : subscribedChannels.entrySet()) {
-            ServerPlayer player = entry.getKey();
-            FoodData data = player.getFoodData();
+        for (Map.Entry<UUID, Set<String>> entry : subscribedChannels.entrySet()) {
+            ServerPlayer player = MinecraftServer.getServer().getPlayerList().getPlayer(entry.getKey());
+            if (player == null) {
+                continue;
+            }
 
+            FoodData data = player.getFoodData();
             for (String channel : entry.getValue()) {
                 switch (channel) {
                     case "saturation" -> {

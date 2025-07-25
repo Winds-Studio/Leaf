@@ -22,7 +22,7 @@ public enum MobSpawnerCooldownProvider implements StreamServerDataProvider<Block
     public @Nullable Integer streamData(@NotNull BlockAccessor accessor) {
         TrialSpawnerBlockEntity spawner = (TrialSpawnerBlockEntity) accessor.getBlockEntity();
         TrialSpawnerStateData spawnerData = spawner.getTrialSpawner().getStateData();
-        ServerLevel level = ((ServerLevel) accessor.getLevel());
+        ServerLevel level = accessor.getLevel();
         if (spawner.getTrialSpawner().canSpawnInLevel(level) && level.getGameTime() < spawnerData.cooldownEndsAt) {
             return (int) (spawnerData.cooldownEndsAt - level.getGameTime());
         }
