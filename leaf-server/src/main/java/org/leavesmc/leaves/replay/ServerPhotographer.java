@@ -14,8 +14,8 @@ import org.bukkit.craftbukkit.CraftWorld;
 import org.jetbrains.annotations.NotNull;
 import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.bot.BotStatsCounter;
-import org.leavesmc.leaves.entity.CraftPhotographer;
-import org.leavesmc.leaves.entity.Photographer;
+import org.leavesmc.leaves.entity.photographer.CraftPhotographer;
+import org.leavesmc.leaves.entity.photographer.Photographer;
 
 import java.io.File;
 import java.io.IOException;
@@ -77,7 +77,7 @@ public class ServerPhotographer extends ServerPlayer {
         super.tick();
         super.doTick();
 
-        if (this.server.getTickCount() % 10 == 0) {
+        if (this.getServer().getTickCount() % 10 == 0) {
             connection.resetPosition();
             this.level().chunkSource.move(this);
         }
@@ -129,7 +129,7 @@ public class ServerPhotographer extends ServerPlayer {
         super.remove(RemovalReason.KILLED);
         photographers.remove(this);
         this.recorder.stop();
-        this.server.getPlayerList().removePhotographer(this);
+        this.getServer().getPlayerList().removePhotographer(this);
 
         LeavesLogger.LOGGER.info("Photographer " + createState.id + " removed");
 
