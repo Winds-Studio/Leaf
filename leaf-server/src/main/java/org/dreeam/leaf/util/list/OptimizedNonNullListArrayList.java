@@ -181,7 +181,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     @Override
     public E get(final int index) {
-        if (Integer.compareUnsigned(index, size) >= 0) {
+        if ((index | (size - 1 - index)) < 0) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
         }
         return a[index];
@@ -189,7 +189,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     @Override
     public E remove(final int index) {
-        if (Integer.compareUnsigned(index, size) >= 0) {
+        if ((index | (size - 1 - index)) < 0) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
         }
 
@@ -209,7 +209,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     public E set(final int index, final E k) {
         Objects.requireNonNull(k, "Cannot set null element in this list");
 
-        if (Integer.compareUnsigned(index, size) >= 0) {
+        if ((index | (size - 1 - index)) < 0) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
         }
 
@@ -221,8 +221,8 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     @Override
     public void clear() {
-        if (defaultValue == null) {
-            Arrays.fill(a, 0, size, null);
+        if (defaultValue != null && size > 0) {
+            Arrays.fill(a, 0, size, defaultValue);
         }
         size = 0;
         invalidateHash();
