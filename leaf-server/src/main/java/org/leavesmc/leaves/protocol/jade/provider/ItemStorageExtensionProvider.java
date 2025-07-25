@@ -13,7 +13,6 @@ import net.minecraft.world.entity.vehicle.ContainerEntity;
 import net.minecraft.world.inventory.PlayerEnderChestContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.EnderChestBlock;
 import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.entity.EnderChestBlockEntity;
@@ -58,7 +57,11 @@ public enum ItemStorageExtensionProvider implements IServerExtensionProvider<Ite
                         if (blockEntity.getBlockState().getBlock() instanceof ChestBlock chestBlock) {
                             Container compound = null;
                             if (blockEntity.getLevel() != null) {
-                                compound = ChestBlock.getContainer(chestBlock, blockEntity.getBlockState(), blockEntity.getLevel(), blockEntity.getBlockPos(), false);
+                                compound = ChestBlock.getContainer(
+                                    chestBlock, blockEntity.getBlockState(),
+                                    blockEntity.getLevel(), blockEntity.getBlockPos(),
+                                    true // Bypass lock check
+                                );
                             }
                             if (compound != null) {
                                 return compound;

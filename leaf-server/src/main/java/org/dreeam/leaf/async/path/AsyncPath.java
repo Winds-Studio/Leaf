@@ -20,9 +20,6 @@ import java.util.function.Supplier;
  */
 public class AsyncPath extends Path {
 
-    private volatile boolean fastPath = false;
-
-
     /**
      * Instead of three states, only one is actually required
      * This will update when any thread is done with the path
@@ -85,7 +82,7 @@ public class AsyncPath extends Path {
 
     @Override
     public boolean isProcessed() {
-        return this.fastPath || this.ready;
+        return this.ready;
     }
 
     /**

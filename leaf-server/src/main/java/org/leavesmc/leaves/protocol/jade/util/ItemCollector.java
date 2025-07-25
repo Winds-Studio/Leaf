@@ -55,7 +55,7 @@ public class ItemCollector<T> {
             return null;
         }
         long currentVersion = iterator.getVersion(container);
-        long gameTime = request.getLevel().getGameTime();
+        long gameTime = request.getLevel().getServer().getTickCount();
         if (mergedResult != null && iterator.isFinished()) {
             if (version == currentVersion) {
                 return mergedResult; // content not changed
@@ -73,7 +73,7 @@ public class ItemCollector<T> {
                 items.addTo(def, stack.getCount());
             }
         });
-        iterator.afterPopulate(count.get());
+        iterator.afterPopulate(container, count.get());
         if (mergedResult != null && !iterator.isFinished()) {
             updateCollectingProgress(mergedResult.getFirst());
             return mergedResult;

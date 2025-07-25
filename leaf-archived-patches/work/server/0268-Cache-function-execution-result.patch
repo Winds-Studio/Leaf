@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Cache function execution result
+
+TODO: Need to find a better way to identify the entity selector, currently splitting command arguments is a bit brittle.
+
+diff --git a/net/minecraft/commands/arguments/EntityArgument.java b/net/minecraft/commands/arguments/EntityArgument.java
+index 8f6a1788b5ca396b79a638955fc6a6b3a276337f..4acf68e42a9644612608c8521020a989cbdea4a9 100644
+--- a/net/minecraft/commands/arguments/EntityArgument.java
++++ b/net/minecraft/commands/arguments/EntityArgument.java
+@@ -65,6 +65,37 @@ public class EntityArgument implements ArgumentType<EntitySelector> {
+         }
+     }
+ 
++    // Leaf start - Cache function getEntity calls
++    public static final java.util.Map<String, Collection<? extends Entity>> TICK_ENTITY_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
++    public static Collection<? extends Entity> getOptionalEntitiesCachedAs(CommandContext<CommandSourceStack> context, String name) throws CommandSyntaxException {
++        if (!(context.getSource().source instanceof net.minecraft.server.MinecraftServer)) return getOptionalEntities(context, name);
++        EntitySelector selector = context.getArgument(name, EntitySelector.class);
++        List<com.mojang.brigadier.context.ParsedCommandNode<CommandSourceStack>> nodes = context.getNodes();
++        int idxStart = nodes.get(1).getRange().getStart();
++        int idxEnd = nodes.get(2).getRange().getEnd();
++        String selectorString = context.getInput().substring(idxStart, idxEnd);
++        Collection<? extends Entity> entities = TICK_ENTITY_CACHE.get(selectorString);
++        if (entities == null) {
++            entities = selector.findEntities(context.getSource());
++            TICK_ENTITY_CACHE.put(selectorString, entities);
++        }
++        return entities;
++    }
++    public static Collection<? extends Entity> getOptionalEntitiesCachedPositionedAs(CommandContext<CommandSourceStack> context, String name) throws CommandSyntaxException {
++        if (!(context.getSource().source instanceof net.minecraft.server.MinecraftServer)) return getOptionalEntities(context, name);
++        EntitySelector selector = context.getArgument(name, EntitySelector.class);
++        List<com.mojang.brigadier.context.ParsedCommandNode<CommandSourceStack>> nodes = context.getNodes();
++        int idxStart = nodes.get(1).getRange().getStart();
++        int idxEnd = nodes.get(3).getRange().getEnd();
++        String selectorString = context.getInput().substring(idxStart, idxEnd);
++        Collection<? extends Entity> entities = TICK_ENTITY_CACHE.get(selectorString);
++        if (entities == null) {
++            entities = selector.findEntities(context.getSource());
++            TICK_ENTITY_CACHE.put(selectorString, entities);
++        }
++        return entities;
++    }
++    // Leaf end - Cache function getEntity calls
+     public static Collection<? extends Entity> getOptionalEntities(CommandContext<CommandSourceStack> context, String name) throws CommandSyntaxException {
+         return context.getArgument(name, EntitySelector.class).findEntities(context.getSource());
+     }
+diff --git a/net/minecraft/server/ServerFunctionManager.java b/net/minecraft/server/ServerFunctionManager.java
+index 10c79570432491bfb2bbfedf0491ab2b803d0c71..a8e64068c6ac76fe0c5bdebadd537f9f8a3435b9 100644
+--- a/net/minecraft/server/ServerFunctionManager.java
++++ b/net/minecraft/server/ServerFunctionManager.java
+@@ -35,6 +35,7 @@ public class ServerFunctionManager {
+         return this.server.getCommands().getDispatcher();
+     }
+ 
++    int ticksCached = 0;  // Leaf - Cache function getEntity calls
+     public void tick() {
+         if (this.server.tickRateManager().runsNormally()) {
+             if (this.postReload) {
+@@ -44,6 +45,15 @@ public class ServerFunctionManager {
+             }
+ 
+             this.executeTagFunctions(this.ticking, TICK_FUNCTION_TAG);
++            // Leaf start - Cache function getEntity calls
++            if (org.dreeam.leaf.config.modules.opt.CacheExecuteCommandResult.cacheExecuteCommandResult) {
++                ticksCached++;
++                if (ticksCached > 1) {
++                    net.minecraft.commands.arguments.EntityArgument.TICK_ENTITY_CACHE.clear();
++                    ticksCached = 0;
++                }
++            }
++            // Leaf end - Cache function getEntity calls
+         }
+     }
+ 
+diff --git a/net/minecraft/server/commands/ExecuteCommand.java b/net/minecraft/server/commands/ExecuteCommand.java
+index 862ab68b3904873b72928463c6651aafe69c977c..512476098a6c03132e55ecc2c4c1cbcf2d644671 100644
+--- a/net/minecraft/server/commands/ExecuteCommand.java
++++ b/net/minecraft/server/commands/ExecuteCommand.java
+@@ -148,7 +148,7 @@ public class ExecuteCommand {
+                 .then(Commands.literal("as").then(Commands.argument("targets", EntityArgument.entities()).fork(literalCommandNode, commandContext -> {
+                     List<CommandSourceStack> list = Lists.newArrayList();
+ 
+-                    for (Entity entity : EntityArgument.getOptionalEntities(commandContext, "targets")) {
++                    for (Entity entity : org.dreeam.leaf.config.modules.opt.CacheExecuteCommandResult.cacheExecuteCommandResult ? EntityArgument.getOptionalEntitiesCachedAs(commandContext, "targets") : EntityArgument.getOptionalEntities(commandContext, "targets")) {  // Leaf - Cache function getEntity calls
+                         list.add(commandContext.getSource().withEntity(entity));
+                     }
+ 
+@@ -196,7 +196,7 @@ public class ExecuteCommand {
+                         .then(Commands.literal("as").then(Commands.argument("targets", EntityArgument.entities()).fork(literalCommandNode, context -> {
+                             List<CommandSourceStack> list = Lists.newArrayList();
+ 
+-                            for (Entity entity : EntityArgument.getOptionalEntities(context, "targets")) {
++                            for (Entity entity : org.dreeam.leaf.config.modules.opt.CacheExecuteCommandResult.cacheExecuteCommandResult ? EntityArgument.getOptionalEntitiesCachedPositionedAs(context, "targets") : EntityArgument.getOptionalEntities(context, "targets")) {  // Leaf - Cache function getEntity calls
+                                 list.add(context.getSource().withPosition(entity.position()));
+                             }
+ 
