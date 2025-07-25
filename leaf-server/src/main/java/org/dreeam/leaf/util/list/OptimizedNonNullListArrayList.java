@@ -221,11 +221,11 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     @Override
     public void clear() {
-        if (size > 0) {
+        if (defaultValue == null) {
             Arrays.fill(a, 0, size, null);
-            size = 0;
-            invalidateHash();
         }
+        size = 0;
+        invalidateHash();
     }
 
     /**
