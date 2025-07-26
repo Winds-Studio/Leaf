@@ -3,6 +3,7 @@ package org.leavesmc.leaves.protocol;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.level.GameRules;
 import org.dreeam.leaf.config.modules.network.ProtocolSupport;
@@ -59,8 +60,9 @@ public class AppleSkinProtocol implements LeavesProtocol {
 
     @ProtocolHandler.Ticker
     public static void tick() {
+        final PlayerList playerList = MinecraftServer.getServer().getPlayerList(); // Leaf - optimize leaves protocol manager
         for (Map.Entry<UUID, Set<String>> entry : subscribedChannels.entrySet()) {
-            ServerPlayer player = MinecraftServer.getServer().getPlayerList().getPlayer(entry.getKey());
+            ServerPlayer player = playerList.getPlayer(entry.getKey()); // Leaf - optimize leaves protocol manager
             if (player == null) {
                 continue;
             }
