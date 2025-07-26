@@ -163,7 +163,7 @@ public final class TrackerCtx {
                 if (!cancelled) {
                     player.hurtMarked = false;
                     ChunkMap.TrackedEntity trackedEntity = player.moonrise$getTrackedEntity();
-                    trackedEntity.leafBroadcast(this, new ClientboundSetEntityMotionPacket(player));
+                    trackedEntity.leafBroadcastAndSend(this, new ClientboundSetEntityMotionPacket(player));
                 }
             }
             bukkitVelocityEvent.clear();
