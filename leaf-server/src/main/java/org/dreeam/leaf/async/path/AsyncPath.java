@@ -55,7 +55,7 @@ public class AsyncPath extends Path {
      * <p>
      * While processing, we have no idea where this is so consumers of `Path` should check that the path is processed before checking the target block
      */
-    private @Nullable BlockPos target;
+    private BlockPos target;
     /**
      * How far we are to the target
      * <p>
@@ -154,7 +154,6 @@ public class AsyncPath extends Path {
      */
 
     @Override
-    @SuppressWarnings("ConstantConditions")
     public @NotNull BlockPos getTarget() {
         this.process();
         return this.target;
@@ -193,9 +192,8 @@ public class AsyncPath extends Path {
         return super.notStarted();
     }
 
-    @Nullable
     @Override
-    public Node getEndNode() {
+    public @Nullable Node getEndNode() {
         this.process();
         return super.getEndNode();
     }
