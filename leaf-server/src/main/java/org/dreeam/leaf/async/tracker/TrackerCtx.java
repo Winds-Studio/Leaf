@@ -91,12 +91,7 @@ public final class TrackerCtx {
     }
 
     public void playerVelocity(ServerPlayer player) {
-        if (PlayerVelocityEvent.getHandlerList().getRegisteredListeners().length == 0) {
-            player.hurtMarked = false;
-            player.moonrise$getTrackedEntity().leafBroadcastAndSend(this, new ClientboundSetEntityMotionPacket(player));
-        } else {
-            bukkitVelocityEvent.add(player);
-        }
+        bukkitVelocityEvent.add(player);
     }
 
     public void citizensEntity(Entity entity) {
