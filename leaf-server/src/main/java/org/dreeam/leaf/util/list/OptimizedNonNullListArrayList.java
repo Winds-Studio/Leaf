@@ -29,6 +29,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     private static final int GROWTH_SHIFT = 1; // equivalent to /2 but faster
     private static final int CAPACITY_THRESHOLD = 1 << 30;
 
+    private static final int HASH_VALID_FLAG = 1;
     private static final int HAS_DEFAULT_FLAG = 2;
 
     /** Packed flags for various boolean states */
@@ -46,7 +47,6 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     /** Cached hash code for performance (invalidated on modifications) */
     private transient int cachedHashCode = 0;
-    private transient boolean hashValid = false;
 
     // === CONSTRUCTORS ===
 
@@ -109,6 +109,14 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
         return (flags & flag) != 0;
     }
 
+    private void setFlag(int flag) {
+        flags |= flag;
+    }
+
+    private void clearFlag(int flag) {
+        flags &= ~flag;
+    }
+
     // === GROWTH LOGIC ===
 
     private void grow(int minCapacity) {
@@ -134,7 +142,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
             if (newCapacity > MAX_ARRAY_SIZE) {
                 newCapacity = hugeCapacity(minCapacity);
             }
-            if (newCapacity < 1024 && !isPowerOfTwo(newCapacity)) {
+            if (newCapacity < 1024) {
                 newCapacity = nextPowerOfTwo(newCapacity);
             }
         }
@@ -284,31 +292,37 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     @Override
     public int hashCode() {
-        if (hashValid) return cachedHashCode;
+        if (hasFlag(HASH_VALID_FLAG)) return cachedHashCode;
 
-        int h = 1;
         final Object[] array = this.a;
         final int length = this.size;
-
+        int h;
         int i = 0;
-        for (; i < length - 3; i += 4) {
-            h = 31 * h + array[i].hashCode();
-            h = 31 * h + array[i + 1].hashCode();
-            h = 31 * h + array[i + 2].hashCode();
-            h = 31 * h + array[i + 3].hashCode();
+        if (length >=4) {
+            int h1 = 1;
+            int h2 = 3;
+            int h3 = 7;
+            int h4 = 11;
+            for (; i < length - 3; i += 4) {
+                h1 = 31 * h1 + array[i].hashCode();
+                h2 = 31 * h2 + array[i + 1].hashCode();
+                h3 = 31 * h3 + array[i + 2].hashCode();
+                h4 = 31 * h4 + array[i + 3].hashCode();
+            }
+            h = h1 + h2 + h3 + h4;
+        } else {
+            h = 1;
         }
-
         for (; i < length; i++) {
             h = 31 * h + array[i].hashCode();
         }
-
         cachedHashCode = h;
-        hashValid = true;
+        setFlag(HASH_VALID_FLAG);
         return h;
     }
 
     private void invalidateHash() {
-        hashValid = false;
+        clearFlag(HASH_VALID_FLAG);
     }
 
     @Override
@@ -319,7 +333,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
         if (o instanceof OptimizedNonNullListArrayList) {
             final OptimizedNonNullListArrayList<E> other = (OptimizedNonNullListArrayList<E>)o;
             if (size != other.size) return false;
-            if (hashValid && other.hashValid && cachedHashCode != other.cachedHashCode) {
+            if (hasFlag(HASH_VALID_FLAG) && other.hasFlag(HASH_VALID_FLAG) && cachedHashCode != other.cachedHashCode) {
                 return false;
             }
             return Arrays.equals(a, 0, size, other.a, 0, size);
@@ -401,7 +415,7 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
         }
 
         cloned.a = Arrays.copyOf(this.a, this.size);
-        cloned.hashValid = false; // Invalidate hash cache
+        cloned.clearFlag(HASH_VALID_FLAG);
         return cloned;
     }
 
@@ -423,6 +437,6 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
             a[i] = (E)s.readObject();
         }
         this.flags = (defaultValue != null) ? HAS_DEFAULT_FLAG : 0;
-        this.hashValid = false;
+        // Hash is not valid after deserialization (HASH_VALID_FLAG remains cleared)
     }
 }
