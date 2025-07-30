@@ -1,0 +1,206 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martijn Muijsers <martijnmuijsers@live.nl>
+Date: Wed, 23 Nov 2022 22:33:06 +0100
+Subject: [PATCH] Use aging cache for biome temperatures
+
+License: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.html)
+Gale - https://galemc.org
+
+This patch is based on the following patch:
+"Use aging cache for biome temperatures"
+By: Paul Sauve <paul@technove.co>
+As part of: Airplane (https://github.com/TECHNOVE/Airplane)
+Licensed under: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.html)
+
+* Airplane copyright *
+
+Airplane
+Copyright (C) 2020 Technove LLC
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+diff --git a/src/main/java/gg/airplane/structs/Long2FloatAgingCache.java b/src/main/java/gg/airplane/structs/Long2FloatAgingCache.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f3835d6934f4d82980eb068c0b8c238f9c4bae2f
+--- /dev/null
++++ b/src/main/java/gg/airplane/structs/Long2FloatAgingCache.java
+@@ -0,0 +1,121 @@
++// Gale - Airplane - use aging cache for biome temperatures
++
++package gg.airplane.structs;
++
++import it.unimi.dsi.fastutil.HashCommon;
++
++/**
++ * A replacement for the cache used in Biome.
++ */
++public class Long2FloatAgingCache {
++
++    private static class AgingEntry {
++        private long data;
++        private float value;
++        private int uses = 0;
++        private int age = 0;
++
++        private AgingEntry(long data, float value) {
++            this.data = data;
++            this.value = value;
++        }
++
++        public void replace(long data, float flag) {
++            this.data = data;
++            this.value = flag;
++        }
++
++        public int getValue() {
++            return this.uses - (this.age >> 1); // age isn't as important as uses
++        }
++
++        public void incrementUses() {
++            this.uses = this.uses + 1 & Integer.MAX_VALUE;
++        }
++
++        public void incrementAge() {
++            this.age = this.age + 1 & Integer.MAX_VALUE;
++        }
++    }
++
++    private final AgingEntry[] entries;
++    private final int mask;
++    private final int maxDistance; // the most amount of entries to check for a value
++
++    public Long2FloatAgingCache(int size) {
++        int arraySize = HashCommon.nextPowerOfTwo(size);
++        this.entries = new AgingEntry[arraySize];
++        this.mask = arraySize - 1;
++        this.maxDistance = Math.min(arraySize, 4);
++    }
++
++    public float getValue(long data) {
++        AgingEntry curr;
++        int pos;
++
++        if ((curr = this.entries[pos = HashCommon.mix(HashCommon.long2int(data)) & this.mask]) == null) {
++            return Float.NaN;
++        } else if (data == curr.data) {
++            curr.incrementUses();
++            return curr.value;
++        }
++
++        int checked = 1; // start at 1 because we already checked the first spot above
++
++        while ((curr = this.entries[pos = (pos + 1) & this.mask]) != null) {
++            if (data == curr.data) {
++                curr.incrementUses();
++                return curr.value;
++            } else if (++checked >= this.maxDistance) {
++                break;
++            }
++        }
++
++        return Float.NaN;
++    }
++
++    public void putValue(long data, float value) {
++        AgingEntry curr;
++        int pos;
++
++        if ((curr = this.entries[pos = HashCommon.mix(HashCommon.long2int(data)) & this.mask]) == null) {
++            this.entries[pos] = new AgingEntry(data, value); // add
++            return;
++        } else if (data == curr.data) {
++            curr.incrementUses();
++            return;
++        }
++
++        int checked = 1; // start at 1 because we already checked the first spot above
++
++        while ((curr = this.entries[pos = (pos + 1) & this.mask]) != null) {
++            if (data == curr.data) {
++                curr.incrementUses();
++                return;
++            } else if (++checked >= this.maxDistance) {
++                this.forceAdd(data, value);
++                return;
++            }
++        }
++
++        this.entries[pos] = new AgingEntry(data, value); // add
++    }
++
++    private void forceAdd(long data, float value) {
++        int expectedPos = HashCommon.mix(HashCommon.long2int(data)) & this.mask;
++        AgingEntry entryToRemove = this.entries[expectedPos];
++
++        for (int i = expectedPos + 1; i < expectedPos + this.maxDistance; i++) {
++            int pos = i & this.mask;
++            AgingEntry entry = this.entries[pos];
++            if (entry.getValue() < entryToRemove.getValue()) {
++                entryToRemove = entry;
++            }
++
++            entry.incrementAge(); // use this as a mechanism to age the other entries
++        }
++
++        // remove the least used/oldest entry
++        entryToRemove.replace(data, value);
++    }
++}
+diff --git a/src/main/java/net/minecraft/world/level/biome/Biome.java b/src/main/java/net/minecraft/world/level/biome/Biome.java
+index 15f82c9a1ce1fef2e951d1b3c7a65e64b82061ea..115a9adac2131dd875d4bf1b6bc998125a96008d 100644
+--- a/src/main/java/net/minecraft/world/level/biome/Biome.java
++++ b/src/main/java/net/minecraft/world/level/biome/Biome.java
+@@ -63,13 +63,18 @@ public final class Biome {
+     private final BiomeGenerationSettings generationSettings;
+     private final MobSpawnSettings mobSettings;
+     private final BiomeSpecialEffects specialEffects;
+-    private final ThreadLocal<Long2FloatLinkedOpenHashMap> temperatureCache = ThreadLocal.withInitial(() -> Util.make(() -> {
++    // Gale start - Airplane - use aging cache for biome temperatures - use our cache
++    private final ThreadLocal<gg.airplane.structs.Long2FloatAgingCache> temperatureCache = ThreadLocal.withInitial(() -> Util.make(() -> {
++            /*
+             Long2FloatLinkedOpenHashMap long2FloatLinkedOpenHashMap = new Long2FloatLinkedOpenHashMap(1024, 0.25F) {
+                 protected void rehash(int i) {
+                 }
+             };
+             long2FloatLinkedOpenHashMap.defaultReturnValue(Float.NaN);
+             return long2FloatLinkedOpenHashMap;
++            */
++            return new gg.airplane.structs.Long2FloatAgingCache(TEMPERATURE_CACHE_SIZE);
++            // Gale end - Airplane - use aging cache for biome temperatures - use our cache
+         }));
+ 
+     Biome(Biome.ClimateSettings weather, BiomeSpecialEffects effects, BiomeGenerationSettings generationSettings, MobSpawnSettings spawnSettings) {
+@@ -112,17 +117,15 @@ public final class Biome {
+     @Deprecated
+     public float getTemperature(BlockPos blockPos) {
+         long l = blockPos.asLong();
+-        Long2FloatLinkedOpenHashMap long2FloatLinkedOpenHashMap = this.temperatureCache.get();
+-        float f = long2FloatLinkedOpenHashMap.get(l);
++        // Gale start - Airplane - use aging cache for biome temperatures
++        gg.airplane.structs.Long2FloatAgingCache cache = this.temperatureCache.get();
++        float f = cache.getValue(l);
+         if (!Float.isNaN(f)) {
+             return f;
+         } else {
+             float g = this.getHeightAdjustedTemperature(blockPos);
+-            if (long2FloatLinkedOpenHashMap.size() == 1024) {
+-                long2FloatLinkedOpenHashMap.removeFirstFloat();
+-            }
+-
+-            long2FloatLinkedOpenHashMap.put(l, g);
++            cache.putValue(l, g);
++            // Gale end - Airplane - use aging cache for biome temperatures
+             return g;
+         }
+     }

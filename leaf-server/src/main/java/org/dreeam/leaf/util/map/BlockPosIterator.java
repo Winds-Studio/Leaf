@@ -29,7 +29,7 @@ public final class BlockPosIterator extends AbstractIterator<BlockPos> {
         Vec3 movement = vec.scale(toTravel);
         AABB fromBB = boundingBox.move(-vec.x, -vec.y, -vec.z);
         AABB searchArea = fromBB.expandTowards(movement);
-        return org.dreeam.leaf.util.map.BlockPosIterator.iterable(searchArea);
+        return iterable(searchArea);
     }
 
     public BlockPosIterator(AABB bb) {
@@ -46,25 +46,25 @@ public final class BlockPosIterator extends AbstractIterator<BlockPos> {
         MutableBlockPos pos = this.pos;
         if (pos == null) {
             return this.pos = new MutableBlockPos(this.startX, this.startY, this.startZ);
-        } else {
-            int x = pos.getX();
-            int y = pos.getY();
-            int z = pos.getZ();
-
-            if (y < this.endY) {
-                y += 1;
-            } else if (x < this.endX) {
-                x += 1;
-                y = this.startY;
-            } else if (z < this.endZ) {
-                z += 1;
-                x = this.startX;
-            } else {
-                return this.endOfData();
-            }
-
-            pos.set(x, y, z);
-            return pos;
         }
+        int x = pos.getX();
+        int y = pos.getY();
+        int z = pos.getZ();
+
+        if (y < this.endY) {
+            y += 1;
+        } else if (x < this.endX) {
+            x += 1;
+            y = this.startY;
+        } else if (z < this.endZ) {
+            z += 1;
+            x = this.startX;
+            y = this.startY; // Reset y also!
+        } else {
+            return this.endOfData();
+        }
+
+        pos.set(x, y, z);
+        return pos;
     }
 }

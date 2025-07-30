@@ -1,17 +1,26 @@
 package org.leavesmc.leaves.protocol.syncmatica.exchange;
 
 import net.minecraft.network.FriendlyByteBuf;
+import org.leavesmc.leaves.protocol.syncmatica.CommunicationManager;
+import org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol;
 
 import java.util.UUID;
 
 public abstract class AbstractExchange implements Exchange {
 
+    private final ExchangeTarget partner;
     private boolean success = false;
     private boolean finished = false;
-    private final ExchangeTarget partner;
 
     protected AbstractExchange(final ExchangeTarget partner) {
         this.partner = partner;
+    }
+
+    protected static boolean checkUUID(final FriendlyByteBuf sourceBuf, final UUID targetId) {
+        final int r = sourceBuf.readerIndex();
+        final UUID sourceId = sourceBuf.readUUID();
+        sourceBuf.readerIndex(r);
+        return sourceId.equals(targetId);
     }
 
     @Override
@@ -39,6 +48,10 @@ public abstract class AbstractExchange implements Exchange {
         }
     }
 
+    public CommunicationManager getManager() {
+        return SyncmaticaProtocol.getCommunicationManager();
+    }
+
     protected void sendCancelPacket() {
     }
 
@@ -49,12 +62,5 @@ public abstract class AbstractExchange implements Exchange {
         finished = true;
         success = true;
         onClose();
-    }
-
-    protected static boolean checkUUID(final FriendlyByteBuf sourceBuf, final UUID targetId) {
-        final int r = sourceBuf.readerIndex();
-        final UUID sourceId = sourceBuf.readUUID();
-        sourceBuf.readerIndex(r);
-        return sourceId.equals(targetId);
     }
 }

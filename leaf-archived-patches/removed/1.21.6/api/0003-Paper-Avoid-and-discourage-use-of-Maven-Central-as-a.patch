@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Penilla <11360596+jpenilla@users.noreply.github.com>
+Date: Wed, 18 Jun 2025 10:47:21 -0700
+Subject: [PATCH] Paper: Avoid and discourage use of Maven Central as a CDN
+
+Removed since Leaf 1.21.6, added in Paper
+
+Original license: GPLv3
+Original project: https://github.com/PaperMC/Paper
+
+https://github.com/PaperMC/Paper/commit/62b7f86dae659deb2fc450285452d7c1439f92dc
+
+Dreeam's Note:
+We use soft warning which in Paper is directly exception throw,
+Only print warning to avoid break plugins directly.
+
+Also see `Configurable LibraryLoader maven repos` patch,
+able to match googleapi mirror urls, to replace to repo url we custom defined.
+This able to switch back to maven central repo, to prevent
+situation that dependencies exist in maven central, but not in mirror.
+
+Default LibraryLoader to Google's Maven Central mirror, add MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR, and warn on use of Maven Central with MavenLibraryResolver
+
+https://www.sonatype.com/blog/maven-central-and-the-tragedy-of-the-commons
+https://www.sonatype.com/blog/beyond-ips-addressing-organizational-overconsumption-in-maven-central
+
+diff --git a/src/main/java/io/papermc/paper/plugin/loader/library/impl/MavenLibraryResolver.java b/src/main/java/io/papermc/paper/plugin/loader/library/impl/MavenLibraryResolver.java
+index 107705db2d82b7c191e5e625ec888e0bc3b03831..f12c25f35f3d26dc69e05c7965385e66a3d3d545 100644
+--- a/src/main/java/io/papermc/paper/plugin/loader/library/impl/MavenLibraryResolver.java
++++ b/src/main/java/io/papermc/paper/plugin/loader/library/impl/MavenLibraryResolver.java
+@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory;
+  * MavenLibraryResolver resolver = new MavenLibraryResolver();
+  * resolver.addDependency(new Dependency(new DefaultArtifact("org.jooq:jooq:3.17.7"), null));
+  * resolver.addRepository(new RemoteRepository.Builder(
+- *     "central", "default", "https://repo1.maven.org/maven2/"
++ *     "central", "default", MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR // Paper - Avoid and discourage use of Maven Central as a CDN
+  * ).build());
+  * }</pre>
+  * <p>
+@@ -50,6 +50,24 @@ import org.slf4j.LoggerFactory;
+ @NullMarked
+ public class MavenLibraryResolver implements ClassPathLibrary {
+ 
++    // Paper start - Avoid and discourage use of Maven Central as a CDN
++    /**
++     * The default Maven Central mirror, configurable through the {@code PAPER_DEFAULT_CENTRAL_REPOSITORY} environment
++     * variable. Use this instead of Maven Central directly when you do not have your own mirror, as using
++     * Maven Central as a CDN is against the Maven Central Terms of Service, and you will cause users to hit
++     * rate limits.
++     *
++     * <p>This repository is also used by the legacy {@link org.bukkit.plugin.java.LibraryLoader}.</p>
++     */
++    public static final String MAVEN_CENTRAL_DEFAULT_MIRROR = getDefaultMavenCentralMirror();
++    private static final List<String> MAVEN_CENTRAL_URLS = List.of(
++        "https://repo1.maven.org/maven2",
++        "http://repo1.maven.org/maven2",
++        "https://repo.maven.apache.org/maven2",
++        "http://repo.maven.apache.org/maven2"
++    );
++    // Paper end - Avoid and discourage use of Maven Central as a CDN
++
+     private static final Logger LOGGER = LoggerFactory.getLogger("MavenLibraryResolver");
+ 
+     private final RepositorySystem repository;
+@@ -105,6 +123,15 @@ public class MavenLibraryResolver implements ClassPathLibrary {
+      * dependencies from
+      */
+     public void addRepository(final RemoteRepository remoteRepository) {
++        // Paper start - Avoid and discourage use of Maven Central as a CDN
++        if (MAVEN_CENTRAL_URLS.stream().anyMatch(remoteRepository.getUrl()::startsWith)) {
++            try {
++                throw new RuntimeException("Plugin used Maven Central for library resolution");
++            } catch (RuntimeException e) {
++                LOGGER.error("Use of Maven Central as a CDN is against the Maven Central Terms of Service. Use MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR instead.", e);
++            }
++        }
++        // Paper end - Avoid and discourage use of Maven Central as a CDN
+         this.repositories.add(remoteRepository);
+     }
+ 
+@@ -130,4 +157,17 @@ public class MavenLibraryResolver implements ClassPathLibrary {
+             store.addLibrary(file.toPath());
+         }
+     }
++
++    // Paper start - Avoid and discourage use of Maven Central as a CDN
++    private static String getDefaultMavenCentralMirror() {
++        String central = System.getenv("PAPER_DEFAULT_CENTRAL_REPOSITORY");
++        if (central == null) {
++            central = System.getProperty("org.bukkit.plugin.java.LibraryLoader.centralURL");
++        }
++        if (central == null) {
++            central = "https://maven-central.storage-download.googleapis.com/maven2";
++        }
++        return central;
++    }
++    // Paper end - Avoid and discourage use of Maven Central as a CDN
+ }
+diff --git a/src/main/java/org/bukkit/plugin/java/LibraryLoader.java b/src/main/java/org/bukkit/plugin/java/LibraryLoader.java
+index 7e4e702845f61703f0741add59f7cfc0afea1543..012ba8ee3d84a7bb09068e42fd1bae8ad221622e 100644
+--- a/src/main/java/org/bukkit/plugin/java/LibraryLoader.java
++++ b/src/main/java/org/bukkit/plugin/java/LibraryLoader.java
+@@ -47,19 +47,11 @@ public class LibraryLoader {
+     public static java.util.function.BiFunction<URL[], ClassLoader, URLClassLoader> LIBRARY_LOADER_FACTORY; // Paper - rewrite reflection in libraries
+     public static java.util.function.Function<List<java.nio.file.Path>, List<java.nio.file.Path>> REMAPPER; // Paper - remap libraries
+ 
+-    // TODO: Consider moving this and adding per plugin support for defining repositories
++    // Paper start - Avoid and discourage use of Maven Central as a CDN
+     private static List<RemoteRepository> getRepositories() {
+-        String central = System.getenv("PAPER_DEFAULT_CENTRAL_REPOSITORY");
+-        if (central == null) {
+-            central = System.getProperty("org.bukkit.plugin.java.LibraryLoader.centralURL");
+-        }
+-        if (central == null) {
+-            central = "https://repo.maven.apache.org/maven2";
+-        }
+-
+-        return Arrays.asList(new RemoteRepository.Builder("central", "default", central).build());
+-
++        return List.of(new RemoteRepository.Builder("central", "default", io.papermc.paper.plugin.loader.library.impl.MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR).build());
+     }
++    // Paper end - Avoid and discourage use of Maven Central as a CDN
+ 
+     public LibraryLoader(@NotNull Logger logger) {
+         this.logger = logger;
+@@ -87,7 +79,7 @@ public class LibraryLoader {
+         session.setSystemProperties(System.getProperties());
+         session.setReadOnly();
+ 
+-        this.repositories = repository.newResolutionRepositories(session, getRepositories());
++        this.repositories = repository.newResolutionRepositories(session, getRepositories()); // Paper - Avoid and discourage use of Maven Central as a CDN
+     }
+ 
+     @Nullable

@@ -1,6 +1,7 @@
 package org.leavesmc.leaves.replay;
 
 import com.mojang.serialization.DynamicOps;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.local.LocalChannel;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.LayeredRegistryAccess;
@@ -9,7 +10,6 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.Connection;
 import net.minecraft.network.ConnectionProtocol;
-import net.minecraft.network.PacketSendListener;
 import net.minecraft.network.protocol.BundlePacket;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
@@ -46,20 +46,18 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 public class Recorder extends Connection {
 
-    private static final LeavesLogger LOGGER = LeavesLogger.LOGGER;
+    public static final Executor saveService = Executors.newVirtualThreadPerTaskExecutor();
+    public static final LeavesLogger LOGGER = LeavesLogger.LOGGER;
 
     private final ReplayFile replayFile;
     private final ServerPhotographer photographer;
     private final RecorderOption recorderOption;
     private final RecordMetaData metaData;
-
-    private final ExecutorService saveService = Executors.newSingleThreadExecutor();
 
     private boolean stopped = false;
     private boolean paused = false;
@@ -89,7 +87,7 @@ public class Recorder extends Connection {
         metaData.singleplayer = false;
         metaData.serverName = recorderOption.serverName;
         metaData.date = startTime;
-        metaData.mcversion = SharedConstants.getCurrentVersion().getName();
+        metaData.mcversion = SharedConstants.getCurrentVersion().name();
 
         // TODO start event
         this.savePacket(new ClientboundLoginFinishedPacket(photographer.getGameProfile()), ConnectionProtocol.LOGIN);
@@ -171,7 +169,7 @@ public class Recorder extends Connection {
     }
 
     @Override
-    public void send(@NotNull Packet<?> packet, @Nullable PacketSendListener callbacks, boolean flush) {
+    public void send(@NotNull Packet<?> packet, @Nullable ChannelFutureListener callbacks, boolean flush) {
         if (!stopped) {
             if (packet instanceof BundlePacket<?> packet1) {
                 packet1.subPackets().forEach(subPacket -> send(subPacket, null));
@@ -209,7 +207,7 @@ public class Recorder extends Connection {
     }
 
     private void saveMetadata() {
-        saveService.submit(() -> {
+        saveService.execute(() -> {
             try {
                 replayFile.saveMetaData(metaData);
             } catch (IOException e) {
@@ -225,14 +223,7 @@ public class Recorder extends Connection {
     private void savePacket(Packet<?> packet, final ConnectionProtocol protocol) {
         try {
             final long timestamp = getCurrentTimeAndUpdate();
-            saveService.submit(() -> {
-                try {
-                    replayFile.savePacket(timestamp, packet, protocol);
-                } catch (Exception e) {
-                    LOGGER.severe("Error saving packet");
-                    e.printStackTrace();
-                }
-            });
+            replayFile.savePacket(timestamp, packet, protocol);
         } catch (Exception e) {
             LOGGER.severe("Error saving packet");
             e.printStackTrace();
@@ -250,13 +241,7 @@ public class Recorder extends Connection {
             metaData.duration = (int) lastPacket;
             return CompletableFuture.runAsync(() -> {
                 saveMetadata();
-                saveService.shutdown();
                 boolean interrupted = false;
-                try {
-                    saveService.awaitTermination(10, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                }
                 try {
                     if (save) {
                         replayFile.closeAndSave(dest);

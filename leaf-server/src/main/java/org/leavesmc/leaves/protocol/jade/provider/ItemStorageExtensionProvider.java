@@ -37,6 +37,58 @@ public enum ItemStorageExtensionProvider implements IServerExtensionProvider<Ite
 
     private static final ResourceLocation UNIVERSAL_ITEM_STORAGE = JadeProtocol.mc_id("item_storage.default");
 
+    public static ItemCollector<?> createItemCollector(Accessor<?> request) {
+        if (request.getTarget() instanceof AbstractHorse) {
+            return new ItemCollector<>(new ItemIterator.ContainerItemIterator(o -> {
+                if (o instanceof AbstractHorse horse) {
+                    return horse.inventory;
+                }
+                return null;
+            }, 2));
+        }
+
+        // TODO BlockEntity like fabric's ItemStorage
+
+        final Container container = findContainer(request);
+        if (container != null) {
+            if (container instanceof ChestBlockEntity) {
+                return new ItemCollector<>(new ItemIterator.ContainerItemIterator(o -> {
+                    if (o instanceof ChestBlockEntity blockEntity) {
+                        if (blockEntity.getBlockState().getBlock() instanceof ChestBlock chestBlock) {
+                            Container compound = null;
+                            if (blockEntity.getLevel() != null) {
+                                compound = ChestBlock.getContainer(
+                                    chestBlock, blockEntity.getBlockState(),
+                                    blockEntity.getLevel(), blockEntity.getBlockPos(),
+                                    true // Bypass lock check
+                                );
+                            }
+                            if (compound != null) {
+                                return compound;
+                            }
+                        }
+                        return blockEntity;
+                    }
+                    return null;
+                }, 0));
+            }
+            return new ItemCollector<>(new ItemIterator.ContainerItemIterator(0));
+        }
+
+        return ItemCollector.EMPTY;
+    }
+
+    public static @Nullable Container findContainer(@NotNull Accessor<?> accessor) {
+        Object target = accessor.getTarget();
+        if (target == null && accessor instanceof BlockAccessor blockAccessor &&
+            blockAccessor.getBlock() instanceof WorldlyContainerHolder holder) {
+            return holder.getContainer(blockAccessor.getBlockState(), accessor.getLevel(), blockAccessor.getPosition());
+        } else if (target instanceof Container container) {
+            return container;
+        }
+        return null;
+    }
+
     @Override
     public List<ViewGroup<ItemStack>> getGroups(Accessor<?> request) {
         Object target = request.getTarget();
@@ -49,6 +101,9 @@ public enum ItemStorageExtensionProvider implements IServerExtensionProvider<Ite
                 return List.of();
             }
             case ContainerEntity containerEntity when containerEntity.getContainerLootTable() != null -> {
+                return List.of();
+            }
+            case EnderChestBlockEntity enderChest when request.getPlayer().getEnderChestInventory().isEmpty() -> {
                 return List.of();
             }
             default -> {
@@ -83,56 +138,8 @@ public enum ItemStorageExtensionProvider implements IServerExtensionProvider<Ite
         return UNIVERSAL_ITEM_STORAGE;
     }
 
-    public static ItemCollector<?> createItemCollector(Accessor<?> request) {
-        if (request.getTarget() instanceof AbstractHorse) {
-            return new ItemCollector<>(new ItemIterator.ContainerItemIterator(o -> {
-                if (o instanceof AbstractHorse horse) {
-                    return horse.inventory;
-                }
-                return null;
-            }, 2));
-        }
-
-        // TODO BlockEntity like fabric's ItemStorage
-
-        final Container container = findContainer(request);
-        if (container != null) {
-            if (container instanceof ChestBlockEntity) {
-                return new ItemCollector<>(new ItemIterator.ContainerItemIterator(o -> {
-                    if (o instanceof ChestBlockEntity blockEntity) {
-                        if (blockEntity.getBlockState().getBlock() instanceof ChestBlock chestBlock) {
-                            Container compound = null;
-                            if (blockEntity.getLevel() != null) {
-                                compound = ChestBlock.getContainer(chestBlock, blockEntity.getBlockState(), blockEntity.getLevel(), blockEntity.getBlockPos(), false);
-                            }
-                            if (compound != null) {
-                                return compound;
-                            }
-                        }
-                        return blockEntity;
-                    }
-                    return null;
-                }, 0));
-            }
-            return new ItemCollector<>(new ItemIterator.ContainerItemIterator(0));
-        }
-
-        return ItemCollector.EMPTY;
-    }
-
-    public static @Nullable Container findContainer(@NotNull Accessor<?> accessor) {
-        Object target = accessor.getTarget();
-        if (target == null && accessor instanceof BlockAccessor blockAccessor &&
-            blockAccessor.getBlock() instanceof WorldlyContainerHolder holder) {
-            return holder.getContainer(blockAccessor.getBlockState(), accessor.getLevel(), blockAccessor.getPosition());
-        } else if (target instanceof Container container) {
-            return container;
-        }
-        return null;
-    }
-
     @Override
     public int getDefaultPriority() {
-        return IServerExtensionProvider.super.getDefaultPriority() + 1000;
+        return 9999;
     }
 }

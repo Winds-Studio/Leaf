@@ -1,5 +1,7 @@
 package org.leavesmc.leaves.protocol.core;
 
+import net.minecraft.server.level.ServerPlayer;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -15,19 +17,25 @@ public class ProtocolHandler {
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.RUNTIME)
     public @interface PayloadReceiver {
-        Class<? extends LeavesCustomPayload<?>> payload();
+        Class<? extends LeavesCustomPayload> payload();
 
-        String[] payloadId() default "";
+        Stage stage() default Stage.GAME;
+    }
 
-        boolean ignoreId() default false;
+    @Target(ElementType.METHOD)
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface BytebufReceiver {
+        String key() default "";
 
-        boolean sendFabricRegister() default true;
+        boolean onlyNamespace() default false;
+
+        Stage stage() default Stage.GAME;
     }
 
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.RUNTIME)
     public @interface Ticker {
-        int delay() default 0;
+        String tickerId() default "";
     }
 
     @Target(ElementType.METHOD)
@@ -48,9 +56,30 @@ public class ProtocolHandler {
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.RUNTIME)
     public @interface MinecraftRegister {
+        String key() default "";
 
-        String[] channelId() default "";
+        boolean onlyNamespace() default false;
 
-        boolean ignoreId() default false;
+        Stage stage() default Stage.CONFIGURATION;
+    }
+
+    @Target(ElementType.METHOD)
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface ReloadDataPack {
+    }
+
+    public enum Stage {
+        CONFIGURATION(Context.class),
+        GAME(ServerPlayer.class);
+
+        private final Class<?> identifier;
+
+        Stage(Class<?> identifier) {
+            this.identifier = identifier;
+        }
+
+        public Class<?> identifier() {
+            return identifier;
+        }
     }
 }

@@ -71,33 +71,35 @@ public final class BlockEntityTickersList extends ObjectArrayList<TickingBlockEn
             return; // exit early, we don't need to do anything
 
         final Object[] a = this.a;
-        int j = startSearchFromIndex;
+        int writeIndex = startSearchFromIndex;
+        int lastCopyIndex = startSearchFromIndex;
         int matches = 0;
-        for (int i = startSearchFromIndex; i < size; i++) { // If the user knows the first index to be removed, we can skip a lot of unnecessary comparsions
-            if (!c.contains(i)) {
-                // TODO: It can be possible to optimize this loop by tracking the start/finish and then using arraycopy to "skip" the elements,
-                //  this would optimize cases where the index to be removed are far apart, HOWEVER it does have a big performance impact if you are doing
-                //  "arraycopy" for each element
-                a[j++] = a[i];
-            } else {
-                matches++;
-            }
 
-            if (matches == requiredMatches) { // Exit the loop if we already removed everything, we don't need to check anything else
-                // We need to update the final size here, because we know that we already found everything!
-                // Because we know that the size must be currentSize - requiredMatches (because we have matched everything), let's update the value
-                // However, we need to copy the rest of the stuff over
-                if (i != (size - 1)) { // If it isn't the last index...
-                    // i + 1 because we want to copy the *next* element over
-                    // and the size - i - 1 is because we want to get the current size, minus the current index (which is i), and then - 1 because we want to copy -1 ahead (remember, we are adding +1 to copy the *next* element)
-                    System.arraycopy(a, i + 1, a, j, size - i - 1);
+        for (int readIndex = startSearchFromIndex; readIndex < size; readIndex++) {
+            if (c.contains(readIndex)) {
+                matches++;
+                final int blockLength = readIndex - lastCopyIndex;
+                if (blockLength > 0) {
+                    System.arraycopy(a, lastCopyIndex, a, writeIndex, blockLength);
+                    writeIndex += blockLength;
                 }
-                j = size - requiredMatches;
-                break;
+                lastCopyIndex = readIndex + 1;
+
+                if (matches == requiredMatches) {
+                    break;
+                }
             }
         }
 
-        Arrays.fill(a, j, size, null);
-        size = j;
+        final int finalBlockLength = size - lastCopyIndex;
+        if (finalBlockLength > 0) {
+            System.arraycopy(a, lastCopyIndex, a, writeIndex, finalBlockLength);
+            writeIndex += finalBlockLength;
+        }
+
+        if (writeIndex < size) {
+            Arrays.fill(a, writeIndex, size, null);
+        }
+        size = writeIndex;
     }
 }

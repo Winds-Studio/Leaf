@@ -3,6 +3,7 @@ package org.leavesmc.leaves.replay;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import net.minecraft.SharedConstants;
 import net.minecraft.network.ConnectionProtocol;
@@ -36,6 +37,9 @@ import java.util.UUID;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+
+import static org.leavesmc.leaves.replay.Recorder.LOGGER;
+import static org.leavesmc.leaves.replay.Recorder.saveService;
 
 public class ReplayFile {
 
@@ -93,8 +97,7 @@ public class ReplayFile {
         protocol.codec().encode(buf, packet);
 
         buf.readerIndex(0);
-        byte[] ret = new byte[buf.readableBytes()];
-        buf.readBytes(ret);
+        byte[] ret = ByteBufUtil.getBytes(buf);
         buf.release();
         return ret;
     }
@@ -108,7 +111,7 @@ public class ReplayFile {
     public void saveMetaData(@NotNull RecordMetaData data) throws IOException {
         data.fileFormat = "MCPR";
         data.fileFormatVersion = RecordMetaData.CURRENT_FILE_FORMAT_VERSION;
-        data.protocol = SharedConstants.getCurrentVersion().getProtocolVersion();
+        data.protocol = SharedConstants.getCurrentVersion().protocolVersion();
         data.generator = ProtocolUtils.buildProtocolVersion("replay");
 
         try (Writer writer = new OutputStreamWriter(new FileOutputStream(metaFile), StandardCharsets.UTF_8)) {
@@ -118,9 +121,16 @@ public class ReplayFile {
 
     public void savePacket(long timestamp, Packet<?> packet, ConnectionProtocol protocol) throws Exception {
         byte[] data = getPacketBytes(packet, protocol);
-        packetStream.writeInt((int) timestamp);
-        packetStream.writeInt(data.length);
-        packetStream.write(data);
+        saveService.execute(() -> {
+            try {
+                packetStream.writeInt((int) timestamp);
+                packetStream.writeInt(data.length);
+                packetStream.write(data);
+            } catch (Exception e) {
+                LOGGER.severe("Error saving packet");
+                e.printStackTrace();
+            }
+        });
     }
 
     public synchronized void closeAndSave(File file) throws IOException {

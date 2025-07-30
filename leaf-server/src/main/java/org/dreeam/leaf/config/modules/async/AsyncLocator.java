@@ -27,11 +27,13 @@ public class AsyncLocator extends ConfigModules {
         asyncLocatorThreads = config.getInt(getBasePath() + ".threads", asyncLocatorThreads);
         asyncLocatorKeepalive = config.getInt(getBasePath() + ".keepalive", asyncLocatorKeepalive);
 
-        if (asyncLocatorThreads <= 0)
+        if (asyncLocatorThreads <= 0) {
             asyncLocatorThreads = 1;
-        if (!enabled)
+        }
+        if (!enabled) {
             asyncLocatorThreads = 0;
-        else
+        } else {
             LeafConfig.LOGGER.info("Using {} threads for Async Locator", asyncLocatorThreads);
+        }
     }
 }

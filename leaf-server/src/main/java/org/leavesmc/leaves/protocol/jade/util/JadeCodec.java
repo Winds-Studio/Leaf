@@ -6,7 +6,6 @@ import net.minecraft.network.codec.StreamCodec;
 import org.jetbrains.annotations.NotNull;
 
 public class JadeCodec {
-
     public static final StreamCodec<ByteBuf, Object> PRIMITIVE_STREAM_CODEC = new StreamCodec<>() {
         @Override
         public @NotNull Object decode(@NotNull ByteBuf buf) {
@@ -53,8 +52,7 @@ public class JadeCodec {
                     ByteBufCodecs.STRING_UTF8.encode(buf, anEnum.name());
                 }
                 case null -> throw new NullPointerException();
-                default ->
-                    throw new IllegalArgumentException("Unknown primitive type: %s (%s)".formatted(o, o.getClass()));
+                default -> throw new IllegalArgumentException("Unknown primitive type: %s (%s)".formatted(o, o.getClass()));
             }
         }
     };

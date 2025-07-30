@@ -1,32 +1,37 @@
 package org.leavesmc.leaves.protocol.jade.tool;
 
-import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.item.component.Tool;
 import net.minecraft.world.level.block.state.BlockState;
-import org.leavesmc.leaves.protocol.jade.JadeProtocol;
 
 import java.util.List;
 
-public class ShearsToolHandler extends SimpleToolHandler {
+public class ShearsToolHandler {
 
     private static final ShearsToolHandler INSTANCE = new ShearsToolHandler();
+
+    private final List<ItemStack> tools;
+
+    public ShearsToolHandler() {
+        this.tools = List.of(Items.SHEARS.getDefaultInstance());
+    }
 
     public static ShearsToolHandler getInstance() {
         return INSTANCE;
     }
 
-    public ShearsToolHandler() {
-        super(JadeProtocol.id("shears"), List.of(Items.SHEARS.getDefaultInstance()), true);
-    }
-
-    @Override
-    public ItemStack test(BlockState state, Level world, BlockPos pos) {
-        if (state.is(Blocks.TRIPWIRE)) {
-            return tools.getFirst();
+    public ItemStack test(BlockState state) {
+        for (ItemStack toolItem : tools) {
+            if (toolItem.isCorrectToolForDrops(state)) {
+                return toolItem;
+            }
+            Tool tool = toolItem.get(DataComponents.TOOL);
+            if (tool != null && tool.getMiningSpeed(state) > tool.defaultMiningSpeed()) {
+                return toolItem;
+            }
         }
-        return super.test(state, world, pos);
+        return ItemStack.EMPTY;
     }
 }

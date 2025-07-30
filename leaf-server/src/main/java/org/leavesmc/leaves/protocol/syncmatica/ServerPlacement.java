@@ -28,10 +28,61 @@ public class ServerPlacement {
 
     public ServerPlacement(final UUID id, final String fileName, final UUID hashValue, final PlayerIdentifier owner) {
         this.id = id;
-        this.fileName = fileName;
+        this.fileName = removeExtension(fileName);
         this.hashValue = hashValue;
         this.owner = owner;
         lastModifiedBy = owner;
+    }
+
+    private static String removeExtension(final String fileName) {
+        final int pos = fileName.lastIndexOf(".");
+        if (pos < 0) {
+            return fileName;
+        }
+        return fileName.substring(0, pos);
+    }
+
+    @Nullable
+    public static ServerPlacement fromJson(final @NotNull JsonObject obj) {
+        if (obj.has("id")
+            && obj.has("file_name")
+            && obj.has("hash")
+            && obj.has("origin")
+            && obj.has("rotation")
+            && obj.has("mirror")) {
+            final UUID id = UUID.fromString(obj.get("id").getAsString());
+            final String name = obj.get("file_name").getAsString();
+            final UUID hashValue = UUID.fromString(obj.get("hash").getAsString());
+
+            PlayerIdentifier owner = PlayerIdentifier.MISSING_PLAYER;
+            if (obj.has("owner")) {
+                owner = SyncmaticaProtocol.getPlayerIdentifierProvider().fromJson(obj.get("owner").getAsJsonObject());
+            }
+
+            final ServerPlacement newPlacement = new ServerPlacement(id, name, hashValue, owner);
+            final ServerPosition pos = ServerPosition.fromJson(obj.get("origin").getAsJsonObject());
+            if (pos == null) {
+                return null;
+            }
+            newPlacement.origin = pos;
+            newPlacement.rotation = Rotation.valueOf(obj.get("rotation").getAsString());
+            newPlacement.mirror = Mirror.valueOf(obj.get("mirror").getAsString());
+
+            if (obj.has("lastModifiedBy")) {
+                newPlacement.lastModifiedBy = SyncmaticaProtocol.getPlayerIdentifierProvider()
+                    .fromJson(obj.get("lastModifiedBy").getAsJsonObject());
+            } else {
+                newPlacement.lastModifiedBy = owner;
+            }
+
+            if (obj.has("subregionData")) {
+                newPlacement.subRegionData = SubRegionData.fromJson(obj.get("subregionData"));
+            }
+
+            return newPlacement;
+        }
+
+        return null;
     }
 
     public UUID getId() {
@@ -119,48 +170,5 @@ public class ServerPlacement {
         }
 
         return obj;
-    }
-
-    @Nullable
-    public static ServerPlacement fromJson(final @NotNull JsonObject obj) {
-        if (obj.has("id")
-            && obj.has("file_name")
-            && obj.has("hash")
-            && obj.has("origin")
-            && obj.has("rotation")
-            && obj.has("mirror")) {
-            final UUID id = UUID.fromString(obj.get("id").getAsString());
-            final String name = obj.get("file_name").getAsString();
-            final UUID hashValue = UUID.fromString(obj.get("hash").getAsString());
-
-            PlayerIdentifier owner = PlayerIdentifier.MISSING_PLAYER;
-            if (obj.has("owner")) {
-                owner = SyncmaticaProtocol.getPlayerIdentifierProvider().fromJson(obj.get("owner").getAsJsonObject());
-            }
-
-            final ServerPlacement newPlacement = new ServerPlacement(id, name, hashValue, owner);
-            final ServerPosition pos = ServerPosition.fromJson(obj.get("origin").getAsJsonObject());
-            if (pos == null) {
-                return null;
-            }
-            newPlacement.origin = pos;
-            newPlacement.rotation = Rotation.valueOf(obj.get("rotation").getAsString());
-            newPlacement.mirror = Mirror.valueOf(obj.get("mirror").getAsString());
-
-            if (obj.has("lastModifiedBy")) {
-                newPlacement.lastModifiedBy = SyncmaticaProtocol.getPlayerIdentifierProvider()
-                    .fromJson(obj.get("lastModifiedBy").getAsJsonObject());
-            } else {
-                newPlacement.lastModifiedBy = owner;
-            }
-
-            if (obj.has("subregionData")) {
-                newPlacement.subRegionData = SubRegionData.fromJson(obj.get("subregionData"));
-            }
-
-            return newPlacement;
-        }
-
-        return null;
     }
 }

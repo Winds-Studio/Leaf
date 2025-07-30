@@ -3,9 +3,12 @@ package org.leavesmc.leaves.protocol;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.food.FoodData;
+import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.leavesmc.leaves.protocol.core.Context;
 import org.leavesmc.leaves.protocol.core.LeavesProtocol;
 import org.leavesmc.leaves.protocol.core.ProtocolHandler;
 import org.leavesmc.leaves.protocol.core.ProtocolUtils;
@@ -16,8 +19,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-@LeavesProtocol(namespace = "asteorbar")
-public class AsteorBarProtocol {
+@LeavesProtocol.Register(namespace = "asteorbar")
+public class AsteorBarProtocol implements LeavesProtocol {
 
     public static final String PROTOCOL_ID = "asteorbar";
 
@@ -28,11 +31,7 @@ public class AsteorBarProtocol {
 
     private static final float THRESHOLD = 0.01F;
 
-    private static final Set<ServerPlayer> players = new HashSet<>();
-
-    public static boolean shouldEnable() {
-        return org.dreeam.leaf.config.modules.network.ProtocolSupport.asteorBarProtocol;
-    }
+    private static final Set<UUID> players = new HashSet<>();
 
     @Contract("_ -> new")
     public static @NotNull ResourceLocation id(String path) {
@@ -46,38 +45,44 @@ public class AsteorBarProtocol {
 
     @ProtocolHandler.PlayerLeave
     public static void onPlayerLoggedOut(@NotNull ServerPlayer player) {
-        players.remove(player);
+        players.remove(player.getUUID());
         resetPlayerData(player);
     }
 
-    @ProtocolHandler.MinecraftRegister(ignoreId = true)
-    public static void onPlayerSubscribed(@NotNull ServerPlayer player) {
-        players.add(player);
+    @ProtocolHandler.MinecraftRegister(onlyNamespace = true)
+    public static void onPlayerSubscribed(@NotNull Context context, ResourceLocation id) {
+        players.add(context.profile().getId());
     }
 
     @ProtocolHandler.Ticker
     public static void tick() {
-        for (ServerPlayer player : players) {
+        final PlayerList playerList = MinecraftServer.getServer().getPlayerList();
+        for (UUID uuid : players) {
+            ServerPlayer player = playerList.getPlayer(uuid);
+            if (player == null) {
+                continue;
+            }
+
             FoodData data = player.getFoodData();
 
             float saturation = data.getSaturationLevel();
-            Float previousSaturation = previousSaturationLevels.get(player.getUUID());
+            Float previousSaturation = previousSaturationLevels.get(uuid);
             if (previousSaturation == null || saturation != previousSaturation) {
-                ProtocolUtils.sendPayloadPacket(player, NETWORK_KEY, buf -> {
+                ProtocolUtils.sendBytebufPacket(player, NETWORK_KEY, buf -> {
                     buf.writeByte(1);
                     buf.writeFloat(saturation);
                 });
-                previousSaturationLevels.put(player.getUUID(), saturation);
+                previousSaturationLevels.put(uuid, saturation);
             }
 
             float exhaustion = data.exhaustionLevel;
-            Float previousExhaustion = previousExhaustionLevels.get(player.getUUID());
+            Float previousExhaustion = previousExhaustionLevels.get(uuid);
             if (previousExhaustion == null || Math.abs(exhaustion - previousExhaustion) >= THRESHOLD) {
-                ProtocolUtils.sendPayloadPacket(player, NETWORK_KEY, buf -> {
+                ProtocolUtils.sendBytebufPacket(player, NETWORK_KEY, buf -> {
                     buf.writeByte(0);
                     buf.writeFloat(exhaustion);
                 });
-                previousExhaustionLevels.put(player.getUUID(), exhaustion);
+                previousExhaustionLevels.put(uuid, exhaustion);
             }
         }
     }
@@ -98,5 +103,10 @@ public class AsteorBarProtocol {
     private static void resetPlayerData(@NotNull ServerPlayer player) {
         previousExhaustionLevels.remove(player.getUUID());
         previousSaturationLevels.remove(player.getUUID());
+    }
+
+    @Override
+    public boolean isActive() {
+        return ProtocolSupport.asteorBarProtocol;
     }
 }

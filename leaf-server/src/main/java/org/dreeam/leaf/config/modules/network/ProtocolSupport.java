@@ -2,6 +2,8 @@ package org.dreeam.leaf.config.modules.network;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.protocol.DoABarrelRollPackets;
+import org.dreeam.leaf.protocol.DoABarrelRollProtocol;
 
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -22,6 +24,12 @@ public class ProtocolSupport extends ConfigModules {
     public static boolean syncmaticaQuota = false;
     public static int syncmaticaQuotaLimit = 40000000;
 
+    public static boolean doABarrelRollProtocol = false;
+    public static boolean doABarrelRollAllowThrusting = false;
+    public static boolean doABarrelRollForceEnabled = false;
+    public static boolean doABarrelRollForceInstalled = false;
+    public static int doABarrelRollInstalledTimeout = 40;
+
     @Override
     public void onLoaded() {
         jadeProtocol = config.getBoolean(getBasePath() + ".jade-protocol", jadeProtocol);
@@ -35,8 +43,26 @@ public class ProtocolSupport extends ConfigModules {
         syncmaticaQuota = config.getBoolean(getBasePath() + ".syncmatica-quota", syncmaticaQuota);
         syncmaticaQuotaLimit = config.getInt(getBasePath() + ".syncmatica-quota-limit", syncmaticaQuotaLimit);
 
-        if (syncmaticaProtocol) {
-            org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init();
+        org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol);
+
+        doABarrelRollProtocol = config.getBoolean(getBasePath() + ".do-a-barrel-roll-protocol", doABarrelRollProtocol);
+        doABarrelRollAllowThrusting = config.getBoolean(getBasePath() + ".do-a-barrel-roll-allow-thrusting", doABarrelRollAllowThrusting);
+        doABarrelRollForceEnabled = config.getBoolean(getBasePath() + ".do-a-barrel-roll-force-enabled", doABarrelRollForceEnabled);
+        doABarrelRollForceInstalled = config.getBoolean(getBasePath() + ".do-a-barrel-roll-force-installed", doABarrelRollForceInstalled);
+        doABarrelRollInstalledTimeout = config.getInt(getBasePath() + ".do-a-barrel-roll-installed-timeout", 0);
+        if (doABarrelRollInstalledTimeout <= 0) {
+            doABarrelRollInstalledTimeout = 40;
+        }
+        if (doABarrelRollProtocol) {
+            DoABarrelRollProtocol.init(
+                doABarrelRollAllowThrusting,
+                doABarrelRollForceEnabled,
+                doABarrelRollForceInstalled,
+                doABarrelRollInstalledTimeout,
+                DoABarrelRollPackets.KineticDamage.VANILLA
+            );
+        } else {
+            DoABarrelRollProtocol.deinit();
         }
     }
 }

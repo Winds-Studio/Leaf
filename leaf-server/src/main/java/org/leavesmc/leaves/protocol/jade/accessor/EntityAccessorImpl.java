@@ -4,10 +4,10 @@ import com.google.common.base.Suppliers;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
@@ -20,7 +20,7 @@ public class EntityAccessorImpl extends AccessorImpl<EntityHitResult> implements
     private final Supplier<Entity> entity;
 
     public EntityAccessorImpl(Builder builder) {
-        super(builder.level, builder.player, builder.hit, builder.connected, builder.showDetails);
+        super(builder.level, builder.player, builder.hit);
         entity = builder.entity;
     }
 
@@ -41,16 +41,13 @@ public class EntityAccessorImpl extends AccessorImpl<EntityHitResult> implements
     }
 
     public static class Builder implements EntityAccessor.Builder {
-
-        public boolean showDetails;
-        private Level level;
+        private ServerLevel level;
         private Player player;
-        private boolean connected;
         private Supplier<EntityHitResult> hit;
         private Supplier<Entity> entity;
 
         @Override
-        public Builder level(Level level) {
+        public Builder level(ServerLevel level) {
             this.level = level;
             return this;
         }
@@ -61,11 +58,6 @@ public class EntityAccessorImpl extends AccessorImpl<EntityHitResult> implements
             return this;
         }
 
-        @Override
-        public Builder showDetails(boolean showDetails) {
-            this.showDetails = showDetails;
-            return this;
-        }
 
         @Override
         public Builder hit(Supplier<EntityHitResult> hit) {
@@ -83,8 +75,6 @@ public class EntityAccessorImpl extends AccessorImpl<EntityHitResult> implements
         public Builder from(EntityAccessor accessor) {
             level = accessor.getLevel();
             player = accessor.getPlayer();
-            connected = accessor.isServerConnected();
-            showDetails = accessor.showDetails();
             hit = accessor::getHitResult;
             entity = accessor::getEntity;
             return this;
@@ -114,7 +104,6 @@ public class EntityAccessorImpl extends AccessorImpl<EntityHitResult> implements
             return new EntityAccessorImpl.Builder()
                 .level(player.level())
                 .player(player)
-                .showDetails(showDetails)
                 .entity(entity)
                 .hit(Suppliers.memoize(() -> new EntityHitResult(entity.get(), hitVec)))
                 .build();

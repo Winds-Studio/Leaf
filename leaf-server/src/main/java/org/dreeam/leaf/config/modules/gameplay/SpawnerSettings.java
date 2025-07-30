@@ -18,6 +18,7 @@ public class SpawnerSettings extends ConfigModules {
     public static boolean checkForNearbyPlayers = true;
     public static boolean spawnerBlockChecks = false;
     public static boolean waterPreventSpawnCheck = false;
+    public static boolean ignoreSpawnRules = false;
 
     public static int minSpawnDelay = 200;
     public static int maxSpawnDelay = 800;
@@ -60,14 +61,19 @@ public class SpawnerSettings extends ConfigModules {
 
         spawnerBlockChecks = config.getBoolean(getBasePath() + ".checks.spawner-block-checks", spawnerBlockChecks,
             config.pickStringRegionBased(
-                "Check if there are blocks blocking the spawner to spawn the mob",
-                "检查是否有方块阻挡刷怪笼生成怪物"
+                "Check if there are physical blocks obstructing the spawn location, or if custom spawn rules (isValidPosition) fail due to block conditions.",
+                "检查是否有物理方块阻挡生成位置, 或自定义生成规则(isValidPosition)因方块条件失败."
             ));
 
         waterPreventSpawnCheck = config.getBoolean(getBasePath() + ".checks.water-prevent-spawn-check", waterPreventSpawnCheck,
             config.pickStringRegionBased(
                 "Checks if there is water around that prevents spawning",
                 "检查周围是否有水阻止生成"
+            ));
+        ignoreSpawnRules = config.getBoolean(getBasePath() + ".checks.ignore-spawn-rules", ignoreSpawnRules,
+            config.pickStringRegionBased(
+                "Ignore mob-specific spawn rules, like animals needing grass or specific biomes/blocks (does not affect light level or physical obstruction checks).",
+                "忽略特定于生物的生成规则, 例如动物需要草方块或特定的生物群系/方块 (不影响光照等级或物理障碍物检查)."
             ));
 
         // Delay settings

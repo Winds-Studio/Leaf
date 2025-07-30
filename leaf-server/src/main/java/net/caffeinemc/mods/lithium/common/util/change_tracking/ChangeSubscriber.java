@@ -96,7 +96,7 @@ public interface ChangeSubscriber<T> {
      * @param publisher      The publisher that is about to change
      * @param subscriberData The data associated with the subscriber, given when the subscriber was added
      */
-    void notify(@Nullable T publisher, int subscriberData);
+    void lithium$notify(@Nullable T publisher, int subscriberData);
 
     /**
      * Notify the subscriber about being unsubscribed from the publisher. Used when the publisher becomes invalid.
@@ -105,7 +105,7 @@ public interface ChangeSubscriber<T> {
      * @param publisher      The publisher unsubscribed from
      * @param subscriberData The data associated with the subscriber, given when the subscriber was added
      */
-    void forceUnsubscribe(T publisher, int subscriberData);
+    void lithium$forceUnsubscribe(T publisher, int subscriberData);
 
     interface CountChangeSubscriber<T> extends ChangeSubscriber<T> {
 
@@ -116,7 +116,7 @@ public interface ChangeSubscriber<T> {
          * @param subscriberData The data associated with the subscriber, given when the subscriber was added
          * @param newCount       The new count of the publisher
          */
-        void notifyCount(T publisher, int subscriberData, int newCount);
+        void lithium$notifyCount(T publisher, int subscriberData, int newCount);
     }
 
     interface EnchantmentSubscriber<T> extends ChangeSubscriber<T> {
@@ -127,7 +127,7 @@ public interface ChangeSubscriber<T> {
          * @param publisher      The publisher that has changed
          * @param subscriberData The data associated with the subscriber, given when the subscriber was added
          */
-        void notifyAfterEnchantmentChange(T publisher, int subscriberData);
+        void lithium$notifyAfterEnchantmentChange(T publisher, int subscriberData);
     }
 
     class Multi<T> implements CountChangeSubscriber<T>, EnchantmentSubscriber<T> {
@@ -140,30 +140,30 @@ public interface ChangeSubscriber<T> {
         }
 
         @Override
-        public void notify(T publisher, int subscriberData) {
+        public void lithium$notify(T publisher, int subscriberData) {
             ArrayList<ChangeSubscriber<T>> changeSubscribers = this.subscribers;
             for (int i = 0; i < changeSubscribers.size(); i++) {
                 ChangeSubscriber<T> subscriber = changeSubscribers.get(i);
-                subscriber.notify(publisher, this.subscriberDatas.getInt(i));
+                subscriber.lithium$notify(publisher, this.subscriberDatas.getInt(i));
             }
         }
 
         @Override
-        public void forceUnsubscribe(T publisher, int subscriberData) {
+        public void lithium$forceUnsubscribe(T publisher, int subscriberData) {
             ArrayList<ChangeSubscriber<T>> changeSubscribers = this.subscribers;
             for (int i = 0; i < changeSubscribers.size(); i++) {
                 ChangeSubscriber<T> subscriber = changeSubscribers.get(i);
-                subscriber.forceUnsubscribe(publisher, this.subscriberDatas.getInt(i));
+                subscriber.lithium$forceUnsubscribe(publisher, this.subscriberDatas.getInt(i));
             }
         }
 
         @Override
-        public void notifyCount(T publisher, int subscriberData, int newCount) {
+        public void lithium$notifyCount(T publisher, int subscriberData, int newCount) {
             ArrayList<ChangeSubscriber<T>> changeSubscribers = this.subscribers;
             for (int i = 0; i < changeSubscribers.size(); i++) {
                 ChangeSubscriber<T> subscriber = changeSubscribers.get(i);
                 if (subscriber instanceof ChangeSubscriber.CountChangeSubscriber<T> countChangeSubscriber) {
-                    countChangeSubscriber.notifyCount(publisher, this.subscriberDatas.getInt(i), newCount);
+                    countChangeSubscriber.lithium$notifyCount(publisher, this.subscriberDatas.getInt(i), newCount);
                 }
             }
         }
@@ -182,12 +182,12 @@ public interface ChangeSubscriber<T> {
         }
 
         @Override
-        public void notifyAfterEnchantmentChange(T publisher, int subscriberData) {
+        public void lithium$notifyAfterEnchantmentChange(T publisher, int subscriberData) {
             ArrayList<ChangeSubscriber<T>> changeSubscribers = this.subscribers;
             for (int i = 0; i < changeSubscribers.size(); i++) {
                 ChangeSubscriber<T> subscriber = changeSubscribers.get(i);
                 if (subscriber instanceof ChangeSubscriber.EnchantmentSubscriber<T> enchantmentSubscriber) {
-                    enchantmentSubscriber.notifyAfterEnchantmentChange(publisher, this.subscriberDatas.getInt(i));
+                    enchantmentSubscriber.lithium$notifyAfterEnchantmentChange(publisher, this.subscriberDatas.getInt(i));
                 }
             }
         }

@@ -24,8 +24,7 @@ import java.util.Map;
 
 public abstract class ItemStorageProvider<T extends Accessor<?>> implements IServerDataProvider<T> {
 
-    private static final StreamCodec<RegistryFriendlyByteBuf, Map.Entry<ResourceLocation, List<ViewGroup<ItemStack>>>> STREAM_CODEC = ViewGroup.listCodec(
-        ItemStack.OPTIONAL_STREAM_CODEC);
+    private static final StreamCodec<RegistryFriendlyByteBuf, Map.Entry<ResourceLocation, List<ViewGroup<ItemStack>>>> STREAM_CODEC = ViewGroup.listCodec(ItemStack.OPTIONAL_STREAM_CODEC);
 
     private static final ResourceLocation UNIVERSAL_ITEM_STORAGE = JadeProtocol.mc_id("item_storage");
 
@@ -35,14 +34,6 @@ public abstract class ItemStorageProvider<T extends Accessor<?>> implements ISer
 
     public static ForEntity getEntity() {
         return ForEntity.INSTANCE;
-    }
-
-    public static class ForBlock extends ItemStorageProvider<BlockAccessor> {
-        private static final ForBlock INSTANCE = new ForBlock();
-    }
-
-    public static class ForEntity extends ItemStorageProvider<EntityAccessor> {
-        private static final ForEntity INSTANCE = new ForEntity();
     }
 
     public static void putData(CompoundTag tag, @NotNull Accessor<?> accessor) {
@@ -83,6 +74,14 @@ public abstract class ItemStorageProvider<T extends Accessor<?>> implements ISer
 
     @Override
     public int getDefaultPriority() {
-        return 9999;
+        return 1000;
+    }
+
+    public static class ForBlock extends ItemStorageProvider<BlockAccessor> {
+        private static final ForBlock INSTANCE = new ForBlock();
+    }
+
+    public static class ForEntity extends ItemStorageProvider<EntityAccessor> {
+        private static final ForEntity INSTANCE = new ForEntity();
     }
 }

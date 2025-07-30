@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.gameplay;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.annotations.Experimental;
 
 public class Knockback extends ConfigModules {
 
@@ -12,6 +13,9 @@ public class Knockback extends ConfigModules {
     public static boolean snowballCanKnockback = false;
     public static boolean eggCanKnockback = false;
     public static boolean canPlayerKnockbackZombie = true;
+    @Experimental
+    public static boolean flushKnockback = false;
+    public static boolean oldBlastProtectionKnockbackBehavior = false;
 
     @Override
     public void onLoaded() {
@@ -30,5 +34,7 @@ public class Knockback extends ConfigModules {
                 "Make players can knockback zombie.",
                 "使玩家可以击退僵尸."
             ));
+        flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback);
+        oldBlastProtectionKnockbackBehavior = config.getBoolean(getBasePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
     }
 }

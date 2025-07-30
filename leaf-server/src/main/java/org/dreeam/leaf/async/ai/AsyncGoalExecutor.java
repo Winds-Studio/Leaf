@@ -8,77 +8,64 @@ import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncTargetFinding;
 import org.dreeam.leaf.util.queue.SpscIntQueue;
 
-import java.util.concurrent.locks.LockSupport;
+import java.util.OptionalInt;
 
 public class AsyncGoalExecutor {
 
-    public static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
-
+    protected static final Logger LOGGER = LogManager.getLogger("Leaf Async Goal");
     protected final SpscIntQueue queue;
-    protected final SpscIntQueue wake;
-    private final AsyncGoalThread thread;
     private final ServerLevel world;
-    private boolean dirty = false;
-    private long tickCount = 0L;
 
-    public AsyncGoalExecutor(AsyncGoalThread thread, ServerLevel world) {
+    public AsyncGoalExecutor(ServerLevel world) {
         this.world = world;
         this.queue = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        this.wake = new SpscIntQueue(AsyncTargetFinding.queueSize);
-        this.thread = thread;
     }
 
-    boolean wake(int id) {
-        Entity entity = this.world.getEntities().get(id);
-        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
-            return false;
-        }
-        mob.goalSelector.wake();
-        mob.targetSelector.wake();
-        return true;
-    }
-
-    public final void submit(int entityId) {
-        dirty = true;
-        if (!this.queue.send(entityId)) {
-            unpark();
-            do {
-                wake(entityId);
-            } while (poll(entityId));
-        }
-    }
-
-    public final void unpark() {
-        if (dirty) LockSupport.unpark(thread);
-        dirty = false;
-    }
-
-    public final void midTick() {
+    boolean wakeAll() {
+        boolean success = false;
         while (true) {
-            Integer id = this.wake.recv();
-            if (id == null) {
+            OptionalInt result = queue.recv();
+            if (result.isEmpty()) {
                 break;
             }
-            if (poll(id)) {
-                submit(id);
-            }
+            int id = result.getAsInt();
+            success = true;
+            wake(id);
         }
-        if ((tickCount & 7L) == 7L) {
-            unpark();
-        }
-        tickCount += 1;
+        return success;
     }
 
-    private boolean poll(int id) {
+    public void tickMob(Mob mob) {
+        if (!poll(mob)) {
+            return;
+        }
+        int entityId = mob.getId();
+        if (!this.queue.send(entityId)) {
+            do {
+                wake(entityId);
+            } while (poll(mob));
+        }
+    }
+
+    private void wake(int id) {
         Entity entity = this.world.getEntities().get(id);
-        if (entity == null || !entity.isAlive() || !(entity instanceof Mob mob)) {
+        if (entity == null || entity.isRemoved() || !(entity instanceof Mob mob)) {
+            return;
+        }
+        mob.goalSelector.ctx.wake(this.world);
+        mob.targetSelector.ctx.wake(this.world);
+    }
+
+    private boolean poll(Mob mob) {
+        try {
+            mob.tickingTarget = true;
+            boolean a = mob.targetSelector.poll();
+            mob.tickingTarget = false;
+            boolean b = mob.goalSelector.poll();
+            return a || b;
+        } catch (Exception e) {
+            LOGGER.error("Exception while polling", e);
             return false;
         }
-
-        mob.tickingTarget = true;
-        boolean a = mob.targetSelector.poll();
-        mob.tickingTarget = false;
-        boolean b = mob.goalSelector.poll();
-        return a || b;
     }
 }

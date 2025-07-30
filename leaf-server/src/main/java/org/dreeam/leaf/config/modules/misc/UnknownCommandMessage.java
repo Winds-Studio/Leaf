@@ -9,15 +9,19 @@ public class UnknownCommandMessage extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".message";
     }
 
-    public static String unknownCommandMessage = "<red><lang:command.unknown.command><newline><detail>";
+    public static String unknownCommandMessage = "default";
 
     @Override
     public void onLoaded() {
         unknownCommandMessage = config.getString(getBasePath() + ".unknown-command", unknownCommandMessage, config.pickStringRegionBased("""
                 Unknown command message, using MiniMessage format, set to "default" to use vanilla message,
-                placeholder: <detail>, shows detail of the unknown command information.""",
+                placeholder:
+                <message>, show message of the command exception.
+                <detail>, shows detail of the command exception.""",
             """
                 发送未知命令时的消息, 使用 MiniMessage 格式, 设置为 "default" 使用原版消息.
-                变量: <detail>, 显示未知命令详细信息."""));
+                变量:
+                <message>, 显示命令错误所附提示消息.
+                <detail>, 显示命令错误详细信息."""));
     }
 }

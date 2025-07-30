@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Tue, 3 Jun 2025 15:16:32 +0900
+Subject: [PATCH] optimise ChunkGenerator#getMobsAt
+
+inline fillStartsForStructure
+
+diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
+index 3399922d79a713484e16beb6e4e9985c284ddfb5..fbe93098ce0366054a6da857cd808af1431b6612 100644
+--- a/net/minecraft/world/level/StructureManager.java
++++ b/net/minecraft/world/level/StructureManager.java
+@@ -78,7 +78,7 @@ public class StructureManager {
+ 
+     public void fillStartsForStructure(Structure structure, LongSet structureRefs, Consumer<StructureStart> startConsumer) {
+         for (long l : structureRefs) {
+-            SectionPos sectionPos = SectionPos.of(new ChunkPos(l), this.level.getMinSectionY());
++            SectionPos sectionPos = SectionPos.of(ChunkPos.getX(l), this.level.getMinSectionY(), ChunkPos.getZ(l)); // Leaf - optimise ChunkGenerator#getMobsAt
+             StructureStart startForStructure = this.getStartForStructure(
+                 sectionPos, structure, this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_STARTS)
+             );
+@@ -178,8 +178,8 @@ public class StructureManager {
+     }
+ 
+     public Map<Structure, LongSet> getAllStructuresAt(BlockPos pos) {
+-        SectionPos sectionPos = SectionPos.of(pos);
+-        return this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_REFERENCES).getAllReferences();
++        //SectionPos sectionPos = SectionPos.of(pos); // Leaf - optimise ChunkGenerator#getMobsAt
++        return this.level.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.STRUCTURE_REFERENCES).getAllReferences(); // Leaf - optimise ChunkGenerator#getMobsAt
+     }
+ 
+     public StructureCheckResult checkStructurePresence(ChunkPos chunkPos, Structure structure, StructurePlacement placement, boolean skipKnownStructures) {
+diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
+index e1ebbfab87aed9cc633f2fedb1e6edeca4ddc2ec..11c7c299d4affb9e78488590e7db939efe6e3dd9 100644
+--- a/net/minecraft/world/level/chunk/ChunkGenerator.java
++++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
+@@ -496,18 +496,20 @@ public abstract class ChunkGenerator {
+             Structure structure = entry.getKey();
+             StructureSpawnOverride structureSpawnOverride = structure.spawnOverrides().get(category);
+             if (structureSpawnOverride != null) {
+-                MutableBoolean mutableBoolean = new MutableBoolean(false);
+-                Predicate<StructureStart> predicate = structureSpawnOverride.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
+-                    ? structureStart -> structureManager.structureHasPieceAt(pos, structureStart)
+-                    : structureStart -> structureStart.getBoundingBox().isInside(pos);
+-                structureManager.fillStartsForStructure(structure, entry.getValue(), structureStart -> {
+-                    if (mutableBoolean.isFalse() && predicate.test(structureStart)) {
+-                        mutableBoolean.setTrue();
++                // Leaf start - optimise ChunkGenerator#getMobsAt
++                for (long l : entry.getValue()) {
++                    StructureStart startForStructure = structureManager.getStartForStructure(
++                        null, structure, structureManager.level.getChunk(ChunkPos.getX(l), ChunkPos.getZ(l), ChunkStatus.STRUCTURE_STARTS)
++                    );
++                    if (startForStructure != null && startForStructure.isValid()) {
++                        if (structureSpawnOverride.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
++                            ? structureManager.structureHasPieceAt(pos, startForStructure)
++                            : startForStructure.getBoundingBox().isInside(pos)) {
++                            return structureSpawnOverride.spawns();
++                        }
+                     }
+-                });
+-                if (mutableBoolean.isTrue()) {
+-                    return structureSpawnOverride.spawns();
+                 }
++                // Leaf end - optimise ChunkGenerator#getMobsAt
+             }
+         }
+ 

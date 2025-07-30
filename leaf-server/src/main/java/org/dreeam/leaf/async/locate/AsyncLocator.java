@@ -11,15 +11,23 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 // Original project: https://github.com/thebrightspark/AsyncLocator
 public class AsyncLocator {
 
-    private static final ExecutorService LOCATING_EXECUTOR_SERVICE;
+    public static final Logger LOGGER = LogManager.getLogger("Leaf Async Locator");
+    public static final ExecutorService LOCATING_EXECUTOR_SERVICE;
 
     private AsyncLocator() {
     }
@@ -38,10 +46,9 @@ public class AsyncLocator {
     }
 
     static {
-        int threads = org.dreeam.leaf.config.modules.async.AsyncLocator.asyncLocatorThreads;
-        LOCATING_EXECUTOR_SERVICE = new ThreadPoolExecutor(
+        LOCATING_EXECUTOR_SERVICE = !org.dreeam.leaf.config.modules.async.AsyncLocator.enabled ? null : new ThreadPoolExecutor(
             1,
-            threads,
+            org.dreeam.leaf.config.modules.async.AsyncLocator.asyncLocatorThreads,
             org.dreeam.leaf.config.modules.async.AsyncLocator.asyncLocatorKeepalive,
             TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(),
@@ -58,12 +65,6 @@ public class AsyncLocator {
                 .setPriority(Thread.NORM_PRIORITY - 2)
                 .build()
         );
-    }
-
-    public static void shutdownExecutorService() {
-        if (LOCATING_EXECUTOR_SERVICE != null) {
-            LOCATING_EXECUTOR_SERVICE.shutdown();
-        }
     }
 
     /**

@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sat, 7 Jun 2025 19:21:19 +0200
+Subject: [PATCH] Cache potential behaviors in Brain
+
+Replace by ActivityBitSet and cache availableBehaviorsByPriority TreeMap entry
+TODO: benchmark
+
+diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
+index 655c3028440e62bcc01d8f1b3e808fd68484128e..7f6572d2259cd244222e5893c9e906075cc3cb92 100644
+--- a/net/minecraft/world/entity/ai/Brain.java
++++ b/net/minecraft/world/entity/ai/Brain.java
+@@ -60,6 +60,7 @@ public class Brain<E extends LivingEntity> {
+     private Activity defaultActivity = Activity.IDLE;
+     private long lastScheduleUpdate = -9999L;
+ 
++    private ObjectArrayList<BehaviorControl<? super E>> cachedPotentialBehaviors; // Leaf - Cache potential behaviors in Brain
+     public static <E extends LivingEntity> Brain.Provider<E> provider(
+         Collection<? extends MemoryModuleType<?>> memoryTypes, Collection<? extends SensorType<? extends Sensor<? super E>>> sensorTypes
+     ) {
+@@ -166,6 +167,7 @@ public class Brain<E extends LivingEntity> {
+         for (Brain.MemoryValue<?> memoryValue : memoryValues) {
+             memoryValue.setMemoryInternal(this);
+         }
++        this.invalidateBehaviorCache(); // Leaf - Cache potential behaviors in Brain
+     }
+ 
+     public <T> DataResult<T> serializeStart(DynamicOps<T> ops) {
+@@ -314,6 +316,7 @@ public class Brain<E extends LivingEntity> {
+             this.activeActivities.clear();
+             this.activeActivities.addAll(this.coreActivities);
+             this.activeActivities.add(activity);
++            this.invalidateBehaviorCache(); // Leaf - Cache potential behaviors in Brain
+         }
+     }
+ 
+@@ -403,11 +406,13 @@ public class Brain<E extends LivingEntity> {
+                 .computeIfAbsent(activity, activity1 -> new it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet<>()) // Leaf - Replace brain activity maps with optimized collection
+                 .add((BehaviorControl<? super E>)pair.getSecond());
+         }
++        this.invalidateBehaviorCache(); // Leaf - Cache potential behaviors in Brain
+     }
+ 
+     @VisibleForTesting
+     public void removeAllBehaviors() {
+         this.availableBehaviorsByPriority.clear();
++        this.invalidateBehaviorCache(); // Leaf - Cache potential behaviors in Brain
+     }
+ 
+     public boolean isActive(Activity activity) {
+@@ -461,23 +466,44 @@ public class Brain<E extends LivingEntity> {
+         }
+     }
+ 
+-    private void startEachNonRunningBehavior(ServerLevel level, E entity) {
+-        long gameTime = level.getGameTime();
++    // Leaf start - Cache potential behaviors in Brain
++    private void invalidateBehaviorCache() {
++        this.cachedPotentialBehaviors = null;
++    }
++
++    private void rebuildBehaviorCache() {
++        this.cachedPotentialBehaviors = new ObjectArrayList<>(30);
+ 
+         for (Map<Activity, Set<BehaviorControl<? super E>>> map : this.availableBehaviorsByPriority.values()) {
+-            for (Entry<Activity, Set<BehaviorControl<? super E>>> entry : map.entrySet()) {
++            for (Map.Entry<Activity, Set<BehaviorControl<? super E>>> entry : map.entrySet()) {
+                 Activity activity = entry.getKey();
+                 if (this.activeActivities.contains(activity)) {
+-                    for (BehaviorControl<? super E> behaviorControl : entry.getValue()) {
+-                        if (behaviorControl.getStatus() == Behavior.Status.STOPPED) {
+-                            behaviorControl.tryStart(level, entity, gameTime);
+-                        }
++                    for (BehaviorControl<? super E> task : entry.getValue()) {
++                        this.cachedPotentialBehaviors.add(task);
+                     }
+                 }
+             }
+         }
+     }
+ 
++    private ObjectArrayList<BehaviorControl<? super E>> getPotentialBehaviors() {
++        if (this.cachedPotentialBehaviors == null) {
++            this.rebuildBehaviorCache();
++        }
++        return this.cachedPotentialBehaviors;
++    }
++
++    private void startEachNonRunningBehavior(ServerLevel level, E entity) {
++        long startTime = level.getGameTime();
++
++        for (BehaviorControl<? super E> task : this.getPotentialBehaviors()) {
++            if (task.getStatus() == Behavior.Status.STOPPED) {
++                task.tryStart(level, entity, startTime);
++            }
++        }
++    }
++    // Leaf end - Cache potential behaviors in Brain
++
+     private void tickEachRunningBehavior(ServerLevel level, E entity) {
+         long gameTime = level.getGameTime();
+ 

@@ -1,5 +1,7 @@
 package org.leavesmc.leaves.protocol.syncmatica;
 
+import org.apache.commons.io.FilenameUtils;
+import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
@@ -16,14 +18,15 @@ public class SyncmaticaProtocol {
 
     public static final String PROTOCOL_ID = "syncmatica";
     public static final String PROTOCOL_VERSION = "leaves-syncmatica-1.1.0";
-
-    private static boolean loaded = false;
     private static final File litematicFolder = new File("." + File.separator + "syncmatics");
     private static final PlayerIdentifierProvider playerIdentifierProvider = new PlayerIdentifierProvider();
     private static final CommunicationManager communicationManager = new CommunicationManager();
     private static final FeatureSet featureSet = new FeatureSet(Arrays.asList(Feature.values()));
     private static final SyncmaticManager syncmaticManager = new SyncmaticManager();
     private static final FileStorage fileStorage = new FileStorage();
+    private static final int[] ILLEGAL_CHARS = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 58, 42, 63, 92, 47, 34, 60, 62, 124};
+    private static final String ILLEGAL_PATTERNS = "(^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\\..*)?$)|(^\\.\\.*$)";
+    private static boolean loaded = false;
 
     public static File getLitematicFolder() {
         return litematicFolder;
@@ -49,11 +52,14 @@ public class SyncmaticaProtocol {
         return fileStorage;
     }
 
-    public static void init() {
-        if (!loaded) {
+    public static void init(boolean status) {
+        if (status && !loaded) {
             litematicFolder.mkdirs();
             syncmaticManager.startup();
             loaded = true;
+        } else if (!status && loaded) {
+            syncmaticManager.updateServerPlacement();
+            loaded = false;
         }
     }
 
@@ -74,16 +80,18 @@ public class SyncmaticaProtocol {
         return UUID.nameUUIDFromBytes(messageDigest.digest());
     }
 
-    private static final int[] ILLEGAL_CHARS = {34, 60, 62, 124, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 58, 42, 63, 92, 47};
-    private static final String ILLEGAL_PATTERNS = "(^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\\..*)?$)|(^\\.\\.*$)";
-
     @NotNull
     public static String sanitizeFileName(final @NotNull String badFileName) {
+        String input = badFileName;
+        try {
+            input = FilenameUtils.getName(input);
+        } catch (Exception ignored) {
+        }
         final StringBuilder sanitized = new StringBuilder();
-        final int len = badFileName.codePointCount(0, badFileName.length());
+        final int len = input.codePointCount(0, input.length());
 
         for (int i = 0; i < len; i++) {
-            final int c = badFileName.codePointAt(i);
+            final int c = input.codePointAt(i);
             if (Arrays.binarySearch(ILLEGAL_CHARS, c) < 0) {
                 sanitized.appendCodePoint(c);
                 if (sanitized.length() == 255) {
@@ -96,7 +104,7 @@ public class SyncmaticaProtocol {
     }
 
     public static boolean isOverQuota(int sent) {
-        return org.dreeam.leaf.config.modules.network.ProtocolSupport.syncmaticaQuota && sent > org.dreeam.leaf.config.modules.network.ProtocolSupport.syncmaticaQuotaLimit;
+        return ProtocolSupport.syncmaticaQuota && sent > ProtocolSupport.syncmaticaQuotaLimit;
     }
 
     public static void backupAndReplace(final Path backup, final Path current, final Path incoming) {

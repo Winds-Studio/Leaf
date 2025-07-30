@@ -17,6 +17,7 @@ import java.util.List;
 public enum StatusEffectsProvider implements StreamServerDataProvider<EntityAccessor, List<MobEffectInstance>> {
     INSTANCE;
 
+
     private static final StreamCodec<RegistryFriendlyByteBuf, List<MobEffectInstance>> STREAM_CODEC = ByteBufCodecs.<RegistryFriendlyByteBuf, MobEffectInstance>list()
         .apply(MobEffectInstance.STREAM_CODEC);
     private static final ResourceLocation MC_POTION_EFFECTS = JadeProtocol.mc_id("potion_effects");

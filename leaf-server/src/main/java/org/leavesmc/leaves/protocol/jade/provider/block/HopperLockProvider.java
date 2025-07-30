@@ -29,4 +29,9 @@ public enum HopperLockProvider implements StreamServerDataProvider<BlockAccessor
     public ResourceLocation getUid() {
         return MC_HOPPER_LOCK;
     }
+
+    @Override
+    public int getDefaultPriority() {
+        return BlockNameProvider.INSTANCE.getDefaultPriority() + 10;
+    }
 }

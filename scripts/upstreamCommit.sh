@@ -4,9 +4,8 @@
 # Credit: https://github.com/PurpurMC/Purpur
 
 # Usage:
-# upstreamCommit --paper HASH --gale HASH --purpur HASH --leaves HASH
+# upstreamCommit --paper HASH --purpur HASH --leaves HASH
 # flag: --paper HASH - (Optional) the commit hash to use for comparing commits between paper (PaperMC/Paper/compare/HASH...HEAD)
-# flag: --gale HASH - the commit hash to use for comparing commits between gale (Dreeam-qwq/Gale/compare/HASH...HEAD)
 # flag: --purpur HASH - the commit hash to use for comparing commits between purpur (PurpurMC/Purpur/compare/HASH...HEAD)
 # flag: --leaves HASH - the commit hash to use for comparing commits between leaves (LeavesMC/Leaves/compare/HASH...HEAD)
 
@@ -18,22 +17,17 @@ function getCommits() {
 set -e
 PS1="$"
 
-galeHash=$(git diff gradle.properties | awk '/^-galeCommit =/{print $NF}')
-paperHash=""
+paperHash=$(git diff gradle.properties | awk '/^-paperCommit =/{print $NF}')
 purpurHash=""
 leavesHash=""
 
 # Useless params standardize
-# TEMP=$(getopt --long paper:,gale:,purpur:,leaves: -o "" -- "$@")
+# TEMP=$(getopt --long paper:,purpur:,leaves: -o "" -- "$@")
 # eval set -- "$TEMP"
 while true; do
     case "$1" in
         --paper)
             paperHash="$2"
-            shift 2
-            ;;
-        --gale)
-            galeHash="$2"
             shift 2
             ;;
         --purpur)
@@ -51,7 +45,6 @@ while true; do
 done
 
 paper=""
-gale=""
 purpur=""
 leaves=""
 updated=""
@@ -59,7 +52,8 @@ logsuffix=""
 
 # Paper updates
 if [ -n "$paperHash" ]; then
-    paper=$(getCommits "PaperMC/Paper" "$paperHash" "HEAD")
+    newHash=$(git diff gradle.properties | awk '/^+paperCommit =/{print $NF}')
+    paper=$(getCommits "PaperMC/Paper" "$paperHash" $(echo $newHash | grep . -q && echo $newHash || echo "main")) # Update this on every version update
 
     # Updates found
     if [ -n "$paper" ]; then
@@ -68,21 +62,9 @@ if [ -n "$paperHash" ]; then
     fi
 fi
 
-# Gale updates
-if [ -n "$galeHash" ]; then
-    newHash=$(git diff gradle.properties | awk '/^+galeCommit =/{print $NF}')
-    gale=$(getCommits "Dreeam-qwq/Gale" "$galeHash" $(echo $newHash | grep . -q && echo $newHash || echo "HEAD"))
-
-    # Updates found
-    if [ -n "$gale" ]; then
-        updated="${updated:+$updated/}Gale"
-        logsuffix="$logsuffix\n\nGale Changes:\n$gale"
-    fi
-fi
-
 # Purpur updates
 if [ -n "$purpurHash" ]; then
-    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "HEAD")
+    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/1.21.8") # Update this on every version update
 
     # Updates found
     if [ -n "$purpur" ]; then

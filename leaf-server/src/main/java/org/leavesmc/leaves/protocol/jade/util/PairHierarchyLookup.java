@@ -9,11 +9,9 @@ import net.minecraft.resources.ResourceLocation;
 import org.apache.commons.lang3.tuple.Pair;
 import org.jetbrains.annotations.Nullable;
 import org.leavesmc.leaves.LeavesLogger;
-import org.leavesmc.leaves.protocol.jade.JadeProtocol;
 import org.leavesmc.leaves.protocol.jade.provider.IJadeProvider;
 
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,7 +19,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
 public class PairHierarchyLookup<T extends IJadeProvider> implements IHierarchyLookup<T> {
-
     public final IHierarchyLookup<T> first;
     public final IHierarchyLookup<T> second;
     private final Cache<Pair<Class<?>, Class<?>>, List<T>> mergedCache = CacheBuilder.newBuilder().build();
@@ -47,10 +44,7 @@ public class PairHierarchyLookup<T extends IJadeProvider> implements IHierarchyL
                 } else if (secondList.isEmpty()) {
                     return firstList;
                 }
-                return ImmutableList.sortedCopyOf(
-                    Comparator.comparingInt(JadeProtocol.priorities::byValue),
-                    Iterables.concat(firstList, secondList)
-                );
+                return ImmutableList.sortedCopyOf(COMPARATOR, Iterables.concat(firstList, secondList));
             });
         } catch (ExecutionException e) {
             LeavesLogger.LOGGER.severe(e.toString());

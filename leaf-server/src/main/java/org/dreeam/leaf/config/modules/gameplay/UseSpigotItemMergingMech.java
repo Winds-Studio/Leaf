@@ -9,7 +9,7 @@ public class UseSpigotItemMergingMech extends ConfigModules {
         return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".use-spigot-item-merging-mechanism";
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
 
     @Override
     public void onLoaded() {

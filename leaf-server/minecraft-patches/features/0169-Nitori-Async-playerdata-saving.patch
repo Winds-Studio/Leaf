@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Fri, 23 Aug 2024 22:04:20 -0400
+Subject: [PATCH] Nitori: Async playerdata saving
+
+Original license: GPL v3
+Original project: https://github.com/Gensokyo-Reimagined/Nitori
+
+diff --git a/net/minecraft/world/level/storage/LevelStorageSource.java b/net/minecraft/world/level/storage/LevelStorageSource.java
+index 3b40822ea6ec9783fe3cb8eaba069a8d626d8382..0098ff448d2981723701765b063f103ac88ba1a2 100644
+--- a/net/minecraft/world/level/storage/LevelStorageSource.java
++++ b/net/minecraft/world/level/storage/LevelStorageSource.java
+@@ -521,15 +521,26 @@ public class LevelStorageSource {
+         private void saveLevelData(CompoundTag tag) {
+             Path path = this.levelDirectory.path();
+ 
++            // Leaf start - Async playerdata saving
++            // Save level.dat asynchronously
++            var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
+             try {
+-                Path path1 = Files.createTempFile(path, "level", ".dat");
+-                NbtIo.writeCompressed(tag, path1);
+-                Path path2 = this.levelDirectory.oldDataFile();
+-                Path path3 = this.levelDirectory.dataFile();
+-                Util.safeReplaceFile(path3, path1, path2);
++                NbtIo.writeCompressed(tag, nbtBytes);
+             } catch (Exception var6) {
+-                LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
++                LevelStorageSource.LOGGER.error("Failed to encode level {}", path, var6);
+             }
++            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++                try {
++                    Path path1 = Files.createTempFile(path, "level", ".dat");
++                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
++                    Path path2 = this.levelDirectory.oldDataFile();
++                    Path path3 = this.levelDirectory.dataFile();
++                    Util.safeReplaceFile(path3, path1, path2);
++                } catch (Exception var6) {
++                    LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
++                }
++            });
++            // Leaf end - Async playerdata saving
+         }
+ 
+         public Optional<Path> getIconFile() {
+diff --git a/net/minecraft/world/level/storage/PlayerDataStorage.java b/net/minecraft/world/level/storage/PlayerDataStorage.java
+index fe44d8d17d2622b3d6021c11579af85ef96737bb..45da3bace1262a18c55c13ee72a08c72fc5ba7c0 100644
+--- a/net/minecraft/world/level/storage/PlayerDataStorage.java
++++ b/net/minecraft/world/level/storage/PlayerDataStorage.java
+@@ -24,6 +24,7 @@ public class PlayerDataStorage {
+     private final File playerDir;
+     protected final DataFixer fixerUpper;
+     private static final DateTimeFormatter FORMATTER = FileNameDateFormatter.create();
++    private final java.util.Map<java.util.UUID, java.util.concurrent.Future<?>> savingLocks = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // Leaf - Async playerdata saving
+ 
+     public PlayerDataStorage(LevelStorageSource.LevelStorageAccess levelStorageAccess, DataFixer fixerUpper) {
+         this.fixerUpper = fixerUpper;
+@@ -33,21 +34,84 @@ public class PlayerDataStorage {
+ 
+     public void save(Player player) {
+         if (org.spigotmc.SpigotConfig.disablePlayerDataSaving) return; // Spigot
++        // Leaf start - Async playerdata saving
++        CompoundTag compoundTag;
+         try (ProblemReporter.ScopedCollector scopedCollector = new ProblemReporter.ScopedCollector(player.problemPath(), LOGGER)) {
+             TagValueOutput tagValueOutput = TagValueOutput.createWithContext(scopedCollector, player.registryAccess());
+             player.saveWithoutId(tagValueOutput);
+-            Path path = this.playerDir.toPath();
+-            Path path1 = Files.createTempFile(path, player.getStringUUID() + "-", ".dat");
+-            CompoundTag compoundTag = tagValueOutput.buildResult();
+-            NbtIo.writeCompressed(compoundTag, path1);
+-            Path path2 = path.resolve(player.getStringUUID() + ".dat");
+-            Path path3 = path.resolve(player.getStringUUID() + ".dat_old");
+-            Util.safeReplaceFile(path2, path1, path3);
+-        } catch (Exception var11) {
+-            LOGGER.warn("Failed to save player data for {}", player.getScoreboardName(), var11); // Paper - Print exception
++            compoundTag = tagValueOutput.buildResult();
++        } catch (Exception exception) {
++            LOGGER.warn("Failed to encode player data for {}", player.getScoreboardName(), exception);
++            return;
+         }
++        save(player.getScoreboardName(), player.getUUID(), player.getStringUUID(), compoundTag);
++        // Leaf end - Async playerdata saving
+     }
+ 
++    // Leaf start - Async playerdata saving
++    public void save(String playerName, java.util.UUID uniqueId, String stringId, CompoundTag compoundTag) {
++        var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
++        try {
++            NbtIo.writeCompressed(compoundTag, nbtBytes);
++        } catch (Exception exception) {
++            LOGGER.warn("Failed to encode player data for {}", stringId, exception);
++        }
++        lockFor(uniqueId, playerName);
++        synchronized (PlayerDataStorage.this) {
++            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++                try {
++                    Path path = this.playerDir.toPath();
++                    Path path1 = Files.createTempFile(path, stringId + "-", ".dat");
++                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
++                    Path path2 = path.resolve(stringId + ".dat");
++                    Path path3 = path.resolve(stringId + ".dat_old");
++                    Util.safeReplaceFile(path2, path1, path3);
++                } catch (Exception var7) {
++                    LOGGER.warn("Failed to save player data for {}", playerName, var7);
++                } finally {
++                    synchronized (PlayerDataStorage.this) {
++                        savingLocks.remove(uniqueId);
++                    }
++                }
++            }).ifPresent(future -> savingLocks.put(uniqueId, future));
++        }
++    }
++
++    private void lockFor(java.util.UUID uniqueId, String playerName) {
++        java.util.concurrent.Future<?> fut;
++        synchronized (this) {
++            fut = savingLocks.get(uniqueId);
++        }
++        if (fut == null) {
++            return;
++        }
++        while (true) {
++            try {
++                fut.get(10_000L, java.util.concurrent.TimeUnit.MILLISECONDS);
++                break;
++            } catch (InterruptedException ignored) {
++            } catch (java.util.concurrent.ExecutionException
++                     | java.util.concurrent.TimeoutException exception) {
++                LOGGER.warn("Failed to save player data for {}", playerName, exception);
++
++                String threadDump = "";
++                var threadMXBean = java.lang.management.ManagementFactory.getThreadMXBean();
++                for (var threadInfo : threadMXBean.dumpAllThreads(true, true)) {
++                    if (threadInfo.getThreadName().equals("Leaf IO Thread")) {
++                        threadDump = threadInfo.toString();
++                        break;
++                    }
++                }
++                LOGGER.warn(threadDump);
++                fut.cancel(true);
++                break;
++            } finally {
++                savingLocks.remove(uniqueId);
++            }
++        }
++    }
++    // Leaf end - Async playerdata saving
++
+     private void backup(String name, String stringUuid, String suffix) { // CraftBukkit
+         Path path = this.playerDir.toPath();
+         Path path1 = path.resolve(stringUuid + suffix); // CraftBukkit
+@@ -61,7 +125,13 @@ public class PlayerDataStorage {
+         }
+     }
+ 
+-    private Optional<CompoundTag> load(String name, String stringUuid, String suffix) { // CraftBukkit
++    // Leaf start - Async playerdata saving
++    private Optional<CompoundTag> load(String name, String stringUuid, String suffix) {
++        return load(name, stringUuid, java.util.UUID.fromString(stringUuid), suffix);
++    }
++    private Optional<CompoundTag> load(String name, String stringUuid, java.util.UUID playerUuid, String suffix) { // CraftBukkit
++        lockFor(playerUuid, name);
++        // Leaf end - Async playerdata saving
+         File file = new File(this.playerDir, stringUuid + suffix); // CraftBukkit
+         // Spigot start
+         boolean usingWrongFile = false;
+@@ -92,7 +162,7 @@ public class PlayerDataStorage {
+ 
+     public Optional<ValueInput> load(Player player, ProblemReporter problemReporter) {
+         // CraftBukkit start
+-        return this.load(player.getName().getString(), player.getStringUUID(), problemReporter).map((tag) -> {
++        return this.load(player.getName().getString(), player.getStringUUID(), player.getUUID(), problemReporter).map((tag) -> { // Leaf - Async playerdata saving
+             if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
+                 org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = serverPlayer.getBukkitEntity();
+                 // Only update first played if it is older than the one we have
+@@ -108,19 +178,24 @@ public class PlayerDataStorage {
+         });
+     }
+ 
++    // Leaf start - Async playerdata saving
+     public Optional<CompoundTag> load(String name, String uuid, ProblemReporter problemReporter) {
++        return this.load(name, uuid, java.util.UUID.fromString(uuid), problemReporter);
++    }
++    public Optional<CompoundTag> load(String name, String uuid, java.util.UUID playerUuid, ProblemReporter problemReporter) {
+         // CraftBukkit end
+-        Optional<CompoundTag> optional = this.load(name, uuid, ".dat"); // CraftBukkit
++        Optional<CompoundTag> optional = this.load(name, uuid, playerUuid, ".dat"); // CraftBukkit
+         if (optional.isEmpty()) {
+             this.backup(name, uuid, ".dat"); // CraftBukkit
+         }
+ 
+-        return optional.or(() -> this.load(name, uuid, ".dat_old")).map(compoundTag -> { // CraftBukkit
++        return optional.or(() -> this.load(name, uuid, playerUuid, ".dat_old")).map(compoundTag -> { // CraftBukkit
+             int dataVersion = NbtUtils.getDataVersion(compoundTag, -1);
+             compoundTag = ca.spottedleaf.dataconverter.minecraft.MCDataConverter.convertTag(ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry.PLAYER, compoundTag, dataVersion, ca.spottedleaf.dataconverter.minecraft.util.Version.getCurrentVersion()); // Paper - rewrite data conversion system
+             return compoundTag; // CraftBukkit - handled above
+         });
+     }
++    // Leaf end - Async playerdata saving
+ 
+     // CraftBukkit start
+     public File getPlayerDir() {

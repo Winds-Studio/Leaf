@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Tue, 22 Jul 2025 01:24:40 +0200
+Subject: [PATCH] cache profile data
+
+This patch includes code that references the Caffeine caching library,
+which is licensed under the Apache License, Version 2.0.
+
+Caffeine (https://github.com/ben-manes/caffeine)
+Copyright (c) Ben Manes
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Aside from the Caffeine cache, the code is licensed under: LGPL-3.0 (https://www.gnu.org/licenses/lgpl-3.0.html)
+
+diff --git a/src/main/java/com/destroystokyo/paper/profile/CraftPlayerProfile.java b/src/main/java/com/destroystokyo/paper/profile/CraftPlayerProfile.java
+index d2d16055df7ca3c625a720dfca5b4cd090e2972e..db43329d57144471d0c9ce0eed92d2f1bd05f120 100644
+--- a/src/main/java/com/destroystokyo/paper/profile/CraftPlayerProfile.java
++++ b/src/main/java/com/destroystokyo/paper/profile/CraftPlayerProfile.java
+@@ -35,6 +35,13 @@ public class CraftPlayerProfile implements PlayerProfile, SharedPlayerProfile {
+     private GameProfile profile;
+     private final PropertySet properties = new PropertySet();
+ 
++    // Leaf start - cache profile data
++    private static final com.github.benmanes.caffeine.cache.Cache<UUID, ProfileResult> PROFILE_DATA_CACHE = com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
++        .expireAfterWrite(org.dreeam.leaf.config.modules.misc.CacheProfileLookup.timeout, java.util.concurrent.TimeUnit.MINUTES)
++        .maximumSize(org.dreeam.leaf.config.modules.misc.CacheProfileLookup.maxSize)
++        .build();
++    // Leaf end - cache profile data
++
+     public CraftPlayerProfile(CraftPlayer player) {
+         this.profile = player.getHandle().getGameProfile();
+     }
+@@ -195,11 +202,7 @@ public class CraftPlayerProfile implements PlayerProfile, SharedPlayerProfile {
+ 
+     @Override
+     public @NotNull CompletableFuture<PlayerProfile> update() {
+-        return CompletableFuture.supplyAsync(() -> {
+-            final CraftPlayerProfile clone = clone();
+-            clone.complete(true);
+-            return clone;
+-        }, Util.PROFILE_EXECUTOR);
++        return CompletableFuture.supplyAsync(this::getNewProfile, Util.PROFILE_EXECUTOR); // Leaf - cache profile data
+     }
+ 
+     @Override
+@@ -260,7 +263,7 @@ public class CraftPlayerProfile implements PlayerProfile, SharedPlayerProfile {
+         MinecraftServer server = MinecraftServer.getServer();
+         boolean isCompleteFromCache = this.completeFromCache(true, onlineMode);
+         if (onlineMode && (!isCompleteFromCache || (textures && !hasTextures()))) {
+-            ProfileResult result = server.getSessionService().fetchProfile(this.profile.getId(), true);
++            ProfileResult result = this.fetchProfile(server); // Leaf - cache profile data
+             if (result != null && result.profile() != null) {
+                 copyProfileProperties(result.profile(), this.profile, true);
+             }
+@@ -271,6 +274,80 @@ public class CraftPlayerProfile implements PlayerProfile, SharedPlayerProfile {
+         return this.isComplete() && (!onlineMode || !textures || hasTextures());
+     }
+ 
++    // Leaf start - cache profile data
++    // com.destroystokyo.paper.profile.CraftPlayerProfile#update is never used in server internal
++    // Probably only very rare plugins may use this. So here is just for cache update consistency.
++    // getNewProfile originally copied from org.bukkit.craftbukkit.profile.CraftPlayerProfile#getUpdatedProfile
++    private CraftPlayerProfile getNewProfile() {
++        MinecraftServer server = MinecraftServer.getServer();
++        GameProfile currentProfile = this.buildGameProfile();
++
++        // Try to get profile from cache if UUID is not set
++        if (currentProfile.getId().equals(Util.NIL_UUID) && server.getProfileCache() != null) {
++            currentProfile = server.getProfileCache().get(currentProfile.getName()).orElse(currentProfile);
++        }
++
++        // Fetch profile data if we have a valid UUID
++        if (!currentProfile.getId().equals(Util.NIL_UUID)) {
++            if (org.dreeam.leaf.config.modules.misc.CacheProfileLookup.enabled &&
++                PROFILE_DATA_CACHE.asMap().containsKey(currentProfile.getId())) {
++
++                ProfileResult cachedData = PROFILE_DATA_CACHE.getIfPresent(currentProfile.getId());
++                if (cachedData != null) {
++                    currentProfile = cachedData.profile();
++                }
++            } else {
++                ProfileResult fetchedData = server.getSessionService().fetchProfile(currentProfile.getId(), true);
++                if (org.dreeam.leaf.config.modules.misc.CacheProfileLookup.enabled && fetchedData != null) {
++                    PROFILE_DATA_CACHE.put(currentProfile.getId(), fetchedData);
++                }
++                if (fetchedData != null) {
++                    currentProfile = fetchedData.profile();
++                }
++            }
++        }
++
++        return new CraftPlayerProfile(currentProfile);
++    }
++
++    private ProfileResult fetchProfile(MinecraftServer server) {
++        GameProfile targetProfile = this.buildGameProfile();
++
++        // Resolve UUID from name cache if needed
++        if (targetProfile.getId().equals(Util.NIL_UUID) && server.getProfileCache() != null) {
++            targetProfile = server.getProfileCache().get(targetProfile.getName()).orElse(targetProfile);
++        }
++
++        // Skip if still no valid UUID
++        if (targetProfile.getId().equals(Util.NIL_UUID)) {
++            return null;
++        }
++
++        // Check cache first if enabled
++        if (org.dreeam.leaf.config.modules.misc.CacheProfileLookup.enabled) {
++            ProfileResult cachedResult = PROFILE_DATA_CACHE.getIfPresent(targetProfile.getId());
++            if (cachedResult != null) {
++                return cachedResult;
++            }
++        }
++
++        // Fetch fresh data from Mojang
++        ProfileResult fetchedResult = server.getSessionService().fetchProfile(targetProfile.getId(), true);
++
++        // Cache the result if caching is enabled and data was fetched successfully
++        if (org.dreeam.leaf.config.modules.misc.CacheProfileLookup.enabled && fetchedResult != null) {
++            PROFILE_DATA_CACHE.put(targetProfile.getId(), fetchedResult);
++        }
++
++        return fetchedResult;
++    }
++
++    @Override
++    public boolean hasTextures() {
++        return this.profile.getProperties().containsKey("textures");
++    }
++    // Leaf end - cache profile data
++
+     private static void copyProfileProperties(GameProfile source, GameProfile target) {
+         copyProfileProperties(source, target, false);
+     }

@@ -1,31 +1,32 @@
 <img src="public/image/leaf_banner.png" alt="Leaf">
 <div align="center">
- 
-[![Github Releases](https://img.shields.io/badge/Download-Releases-blue?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/releases)⠀
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1214.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
-[![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
-[![Docs](https://img.shields.io/badge/Docs-leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs/)
 
-**Leaf** is a [Paper](https://papermc.io/) fork designed to customized and high-performance, built on top of [Gale](https://github.com/Dreeam-qwq/Gale) with optimizations and fixes from other forks.
+[![Download](https://img.shields.io/badge/releases-blue?label=download&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/download)⠀
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1218.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
+[![Docs](https://img.shields.io/badge/leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs)
+
+**Leaf** is a [Paper](https://papermc.io/) fork designed to be customizable and high-performance.
 </div>
 
-> [!WARNING]  
-> Leaf is a performance-oriented fork. Make sure to take backups **before** switching to it. Everyone is welcome to contribute by optimizing or reporting issues.
+> [!WARNING]
+> Leaf is a performance-oriented fork. Make sure to take backups **before** switching to it. Everyone is welcome to contribute optimizations or report issues to help us improve.
+
+**English** | [中文](public/readme/README_CN.md)
 
 ## 🍃 Features
- - **Based on [Gale](https://github.com/Dreeam-qwq/Gale)** for better performance
- - **Async** pathfinding, mob spawning and entity tracker
- - **Various optimizations** blending from [other forks](https://github.com/Winds-Studio/Leaf#-credits)
- - **Fully compatible** with Bukkit, Spigot and Paper plugins 
- - **Latest dependencies**, keeping all dependencies in the newest version
- - **Allows all characters in usernames**, including Chinese and other characters
- - **Fixes** some Minecraft bugs
- - **Configurable UseItem distance** for anarchy servers
- - **Mod Protocols** support
- - **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
- - Support for **Linear region file format**
- - **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easy track all errors coming from your server in excruciating detail
- - And more...
+- **Based on [Paper](https://papermc.io/)** for generic performance and flexible API
+- **Async** pathfinding, mob spawning and entity tracker
+- **Various optimizations** blending from [other forks](#-credits) and our own
+- **Fully compatible** with Spigot and Paper plugins
+- **Latest dependencies**, keeping all dependencies up-to-date
+- **Allows all characters in usernames**, including Chinese and other characters
+- **Fixes** some Minecraft bugs
+- **Mod Protocols** support
+- **More customized** relying on features of [Purpur](https://github.com/PurpurMC/Purpur)
+- **Linear region file format**, to save disk space
+- **Maintenance friendly**, integrating with [Sentry](https://sentry.io/welcome/) of [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) to easily track all errors coming from your server in extreme detail
+- And more...
 
 ## 📈 bStats
 [![bStats Graph Data](https://bstats.org/signatures/server-implementation/Leaf.svg)](https://bstats.org/plugin/server-implementation/Leaf)
@@ -38,12 +39,10 @@
 If you love our work, feel free to donate via our [Open Collective](https://opencollective.com/Winds-Studio) or [Dreeam's AFDIAN](https://afdian.com/a/Dreeam) :)
 
 ## 📥 Download
-You can find the latest successful build in [GitHub Action](https://github.com/Winds-Studio/Leaf/actions) or [Releases](https://github.com/Winds-Studio/Leaf/releases)
-
-**Please note Java >= 21 is required.**
+Download Leaf from our [Website](https://www.leafmc.one/download) or get latest build in [GitHub Releases](https://github.com/Winds-Studio/Leaf/releases)
 
 ## 📄 Documentation
-Documentation on how to use/configure Leaf: [www.leafmc.one/docs](https://www.leafmc.one/docs)
+Documentation about how to use/configure Leaf: [www.leafmc.one/docs](https://www.leafmc.one/docs)
 
 ## 📦 Building
 Building a Paperclip JAR for distribution:
@@ -51,20 +50,23 @@ Building a Paperclip JAR for distribution:
 ./gradlew applyAllPatches && ./gradlew createMojmapPaperclipJar
 ```
 
-## 🧪 API
+
+## 📦 API
+<details>
+<summary>Click to expand</summary>
 
 ### Maven
 ```xml
 <repository>
     <id>leafmc</id>
-    <url>https://maven.nostal.ink/repository/maven-snapshots/</url>
+    <url>https://maven.leafmc.one/snapshots/</url>
 </repository>
 ```
 ```xml
 <dependency>
     <groupId>cn.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>1.21.4-R0.1-SNAPSHOT</version>
+    <version>1.21.8-R0.1-SNAPSHOT</version>
     <scope>provided</scope>
 </dependency>
 ```
@@ -72,29 +74,26 @@ Building a Paperclip JAR for distribution:
 ```kotlin
 repositories {
   maven {
-    url = uri("https://maven.nostal.ink/repository/maven-snapshots/")
+    url = uri("https://maven.leafmc.one/snapshots/")
   }
 }
 
 dependencies {
-    compileOnly("cn.dreeam.leaf:leaf-api:1.21.4-R0.1-SNAPSHOT")
+    compileOnly("cn.dreeam.leaf:leaf-api:1.21.8-R0.1-SNAPSHOT")
 }
 
 java {
   toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 ```
+</details>
 
 ## ⚖️ License
-Paperweight files are licensed under [MIT](licenses/MIT.txt).
-Patches are licensed under [MIT](licenses/MIT.txt), unless indicated differently in their header.
-Binaries are licensed under [GPL-3.0](licenses/GPL-3.0.txt).
-
-Also see [PaperMC/Paper](https://github.com/PaperMC/Paper) and [PaperMC/Paperweight](https://github.com/PaperMC/paperweight) for the license of some material used by this project.
+Leaf is licensed under various open source licenses from its upstream projects. See [LICENSE.md](LICENSE.md) for full details.
 
 ## 📜 Credits
 Thanks to these projects below. Leaf includes some patches taken from them.<br>
-If these excellent projects hadn't appeared, Leaf wouldn't have become great.
+If these excellent projects hadn't existed, Leaf wouldn't have become great.
 
 - [Gale](https://github.com/Dreeam-qwq/Gale) ([Original Repo](https://github.com/GaleMC/Gale))
 - [Pufferfish](https://github.com/pufferfish-gg/Pufferfish)
@@ -124,18 +123,34 @@ If these excellent projects hadn't appeared, Leaf wouldn't have become great.
 </details>
 
 ## 🔥 Special Thanks
-<a href="https://cloud.swordsman.com.cn/"><img src="public/image/JiankeServer.jpg" alt="Jianke Cloud Host" align="left" hspace="8"></a>
-cloud of swordsman | 剑客云
 
-If you want to find a cheaper, high performance, stable with lower latency, then cloud of swordsman is a good choice! Registers and purchases in [here](https://cloud.swordsman.com.cn/?i8ab42c).
-
-如果你想找一个低价高性能, 低延迟的云服务商，剑客云是个不错的选择! 你可以在[这里](https://cloud.swordsman.com.cn/?i8ab42c)注册.
-
----
-![YourKit](https://www.yourkit.com/images/yklogo.png)
-
-YourKit supports open source projects with innovative and intelligent tools 
-for monitoring and profiling Java and .NET applications.
-YourKit is the creator of [YourKit Java Profiler](https://www.yourkit.com/java/profiler/),
-[YourKit .NET Profiler](https://www.yourkit.com/dotnet-profiler/),
-and [YourKit YouMonitor](https://www.yourkit.com/youmonitor/).
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="https://cloud.swordsman.com.cn/?i8ab42c">
+        <img src="public/image/JiankeServer.jpg" alt="Jianke Cloud Host" width="250">
+      </a>
+      <br>
+      <b>cloud of swordsman | 剑客云</b>
+      <p>If you want to find a cheaper, high performance, stable, lower latency host, then cloud of swordsman is a good choice! Registers and purchases in <a href="https://cloud.swordsman.com.cn/?i8ab42c">here</a>.</p>
+      <p>如果你想找一个低价高性能、低延迟的云服务商，剑客云是个不错的选择！你可以在 <a href="https://cloud.swordsman.com.cn/?i8ab42c">这里</a> 注册。</p>
+    </td>
+    <td width="50%" align="center">
+      <a href="https://www.rainyun.com/NzE2NTc1_">
+        <img src="public/image/RainYun.jpg" alt="雨云" width="250">
+      </a>
+      <br>
+      <b>RainYun | 雨云</b>
+      <p>Global multi-line routing with cloud storage. Refund available within 7 days. Reliable uptime and expert support. RainYun — stable, cost-effective, and ready for fast cloud deployment. Visit <a href="https://www.rainyun.com/NzE2NTc1_">RainYun</a>.</p>
+      <p>国际多线路选择，配套云存储 — 购买服务后七天内不满意可以申请退订，强大的技术支持团队和高在线率客服。雨云云服务器，用稳定和性价比，助力您快速上云。点击前往 <a href="https://www.rainyun.com/NzE2NTc1_">雨云</a>。</p>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <a href="https://www.yourkit.com/">
+        <img src="https://www.yourkit.com/images/yklogo.png" alt="YourKit" width="300">
+      </a>
+      <p>YourKit supports open source projects with innovative and intelligent tools for monitoring and profiling Java and .NET applications. YourKit is the creator of <a href="https://www.yourkit.com/java/profiler/">YourKit Java Profiler</a>, <a href="https://www.yourkit.com/dotnet-profiler/">YourKit .NET Profiler</a>, and <a href="https://www.yourkit.com/youmonitor/">YourKit YouMonitor</a>.</p>
+    </td>
+  </tr>
+</table>

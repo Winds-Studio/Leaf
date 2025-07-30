@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sun, 9 Mar 2025 00:36:26 +0100
+Subject: [PATCH] Spawner Configurations
+
+
+diff --git a/net/minecraft/world/level/BaseSpawner.java b/net/minecraft/world/level/BaseSpawner.java
+index b23283779c85c0afb230872b2794640fd9719ec2..bf4289420b1f433c07c0c5244d58a0e39d7839c0 100644
+--- a/net/minecraft/world/level/BaseSpawner.java
++++ b/net/minecraft/world/level/BaseSpawner.java
+@@ -62,6 +62,12 @@ public abstract class BaseSpawner {
+ 
+     public boolean isNearPlayer(Level level, BlockPos pos) {
+         if (level.purpurConfig.spawnerDeactivateByRedstone && level.hasNeighborSignal(pos)) return false; // Purpur - Redstone deactivates spawners
++        // Leaf start - Spawner Configurations
++        // Skip player proximity check if disabled in config
++        if (org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled && !org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.checkForNearbyPlayers) {
++            return true; // Always act as if players are nearby
++        }
++        // Leaf end - Spawner Configurations
+         return level.hasNearbyAlivePlayerThatAffectsSpawningForSpawner(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, this.requiredPlayerRange); // Paper - Affects Spawning API // Leaf - Optimize nearby alive players for spawning
+     }
+ 
+@@ -84,6 +90,20 @@ public abstract class BaseSpawner {
+         }
+     }
+ 
++    // Leaf start - Spawner Configurations
++    private int maxAllowedLight(EntityType<?> entityType) {
++        if (entityType.getCategory().isFriendly()) {
++            return 15; // No light restriction for passive mobs
++        } else if (entityType == EntityType.SPIDER || entityType == EntityType.CAVE_SPIDER) {
++            return 7; // Spiders can spawn in light level 7 or lower
++        } else if (entityType == EntityType.ENDERMAN) {
++            return 7; // Endermen can spawn in light level 7 or lower
++        }
++
++        return 0; // Complete darkness for other hostile mobs
++    }
++    // Leaf end - Spawner Configurations
++
+     public void serverTick(ServerLevel serverLevel, BlockPos pos) {
+         if (spawnCount <= 0 || maxNearbyEntities <= 0) return; // Paper - Ignore impossible spawn tick
+         // Paper start - Configurable mob spawner tick rate
+@@ -91,6 +111,15 @@ public abstract class BaseSpawner {
+         tickDelay = serverLevel.paperConfig().tickRates.mobSpawner;
+         if (tickDelay == -1) { return; } // If disabled
+         // Paper end - Configurable mob spawner tick rate
++
++        // Leaf start - Spawner Configurations
++        // Apply custom min/max spawn delays if enabled
++        if (org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled) {
++            this.minSpawnDelay = org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.minSpawnDelay;
++            this.maxSpawnDelay = org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.maxSpawnDelay;
++        }
++        // Leaf end - Spawner Configurations
++
+         if (this.isNearPlayer(serverLevel, pos)) {
+             if (this.spawnDelay < -tickDelay) { // Paper - Configurable mob spawner tick rate
+                 this.delay(serverLevel, pos);
+@@ -120,20 +149,50 @@ public abstract class BaseSpawner {
+                                     pos.getZ() + (random.nextDouble() - random.nextDouble()) * this.spawnRange + 0.5
+                                 )
+                             );
+-                        if (serverLevel.noCollision(optional.get().getSpawnAABB(vec3.x, vec3.y, vec3.z))) {
++                        // Leaf start - Spawner Configurations
++                        // Skip collision check if block checks are disabled
++                        boolean skipBlockChecks = org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled &&
++                            !org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.spawnerBlockChecks;
++                        if (skipBlockChecks || serverLevel.noCollision(optional.get().getSpawnAABB(vec3.x, vec3.y, vec3.z))) {
++                            // 'skipBlockChecks' is true if SpawnerSettings.spawnerBlockChecks is false.
++                            // It means we skip physical block checks like collision and custom rule isValidPosition.
++
+                             BlockPos blockPos = BlockPos.containing(vec3);
++
++                            // Add light level check if enabled
++                            if (org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled &&
++                                org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.lightLevelCheck) {
++                                int lightLevel = serverLevel.getMaxLocalRawBrightness(blockPos);
++                                if (lightLevel > maxAllowedLight(optional.get())) {
++                                    continue;
++                                }
++                            }
++
++                            // Add water check if enabled
++                            if (org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled &&
++                                org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.waterPreventSpawnCheck &&
++                                serverLevel.getBlockState(blockPos).getFluidState().is(net.minecraft.tags.FluidTags.WATER)) {
++                                continue;
++                            }
++
++                            // Determine if mob-specific spawn rules (like block types, biome requirements) should be skipped
++                            boolean skipMobSpecificRules = org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled &&
++                                org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.ignoreSpawnRules;
++                            // Leaf end - Spawner Configurations
+                             if (nextSpawnData.getCustomSpawnRules().isPresent()) {
+                                 if (!optional.get().getCategory().isFriendly() && serverLevel.getDifficulty() == Difficulty.PEACEFUL) {
+                                     continue;
+                                 }
+ 
+                                 SpawnData.CustomSpawnRules customSpawnRules = nextSpawnData.getCustomSpawnRules().get();
+-                                if (!customSpawnRules.isValidPosition(blockPos, serverLevel)) {
++                                // customSpawnRules.isValidPosition is controlled by spawnerBlockChecks (via !skipBlockChecks)
++                                if (!skipBlockChecks && !customSpawnRules.isValidPosition(blockPos, serverLevel)) { // Leaf - Spawner Configurations
+                                     continue;
+                                 }
+-                            } else if (!SpawnPlacements.checkSpawnRules(
++                            } else if (!skipMobSpecificRules && !SpawnPlacements.checkSpawnRules( // Leaf - Spawner Configurations
+                                 optional.get(), serverLevel, EntitySpawnReason.SPAWNER, blockPos, serverLevel.getRandom()
+                             )) {
++                                // If not skipping mob-specific rules AND standard spawn rules fail, continue.
+                                 continue;
+                             }
+ 
+@@ -161,6 +220,7 @@ public abstract class BaseSpawner {
+                                 return;
+                             }
+ 
++                            if (!org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled || org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.spawnerMaxNearbyCheck) { // Leaf - Spawner Configurations - Skip max nearby entity check if disabled
+                             int size = serverLevel.getEntities(
+                                     EntityTypeTest.forExactClass(entity.getClass()),
+                                     new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1).inflate(this.spawnRange),
+@@ -171,12 +231,29 @@ public abstract class BaseSpawner {
+                                 this.delay(serverLevel, pos);
+                                 return;
+                             }
++                            } // Leaf - Spawner Configurations
+ 
+                             entity.preserveMotion = true; // Paper - Fix Entity Teleportation and cancel velocity if teleported; preserve entity motion from tag
+                             entity.snapTo(entity.getX(), entity.getY(), entity.getZ(), random.nextFloat() * 360.0F, 0.0F);
+                             if (entity instanceof Mob mob) {
+-                                if (nextSpawnData.getCustomSpawnRules().isEmpty() && !mob.checkSpawnRules(serverLevel, EntitySpawnReason.SPAWNER)
+-                                    || !mob.checkSpawnObstruction(serverLevel)) {
++                                // Leaf start - Spawner Configurations
++                                // mob.checkSpawnRules is controlled by ignoreSpawnRules (via !skipMobSpecificRules)
++                                // mob.checkSpawnObstruction is controlled by spawnerBlockChecks (via !skipBlockChecks)
++
++                                boolean mobSpecificRulesFailed = false;
++                                if (nextSpawnData.getCustomSpawnRules().isEmpty() && !skipMobSpecificRules) {
++                                    if (!mob.checkSpawnRules(serverLevel, EntitySpawnReason.SPAWNER)) {
++                                        mobSpecificRulesFailed = true;
++                                    }
++                                }
++
++                                boolean obstructionFailed = false;
++                                if (!skipBlockChecks && !mob.checkSpawnObstruction(serverLevel)) { // If not skipping physical checks and obstruction fails
++                                    obstructionFailed = true;
++                                }
++
++                                if (mobSpecificRulesFailed || obstructionFailed) {
++                                    // Leaf end - Spawner Configurations
+                                     continue;
+                                 }
+ 
+@@ -244,10 +321,16 @@ public abstract class BaseSpawner {
+         input.read("SpawnData", SpawnData.CODEC).ifPresent(spawnData -> this.setNextSpawnData(level, pos, spawnData));
+         this.spawnPotentials = input.read("SpawnPotentials", SpawnData.LIST_CODEC)
+             .orElseGet(() -> WeightedList.of(this.nextSpawnData != null ? this.nextSpawnData : new SpawnData()));
++        // Leaf start - Spawner Configurations
++        if (org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.enabled) {
++            this.minSpawnDelay = org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.minSpawnDelay;
++            this.maxSpawnDelay = org.dreeam.leaf.config.modules.gameplay.SpawnerSettings.maxSpawnDelay;
++        } else {
+         // Paper start - use int if set
+         this.minSpawnDelay = input.getIntOr("Paper.MinSpawnDelay", input.getIntOr("MinSpawnDelay", 200));
+         this.maxSpawnDelay = input.getIntOr("Paper.MaxSpawnDelay", input.getIntOr("MaxSpawnDelay", 800));
+         // Paper end - use int if set
++        } // Leaf end - Spawner Configurations
+         this.spawnCount = input.getIntOr("SpawnCount", 4);
+         this.maxNearbyEntities = input.getIntOr("MaxNearbyEntities", 6);
+         this.requiredPlayerRange = input.getIntOr("RequiredPlayerRange", 16);

@@ -50,6 +50,25 @@ public class LootTableMineableCollector {
         return list;
     }
 
+    public static boolean isCorrectConditions(@NotNull List<LootItemCondition> conditions, ItemStack toolItem) {
+        if (conditions.size() != 1) {
+            return false;
+        }
+
+        LootItemCondition condition = conditions.getFirst();
+        if (condition instanceof MatchTool(Optional<ItemPredicate> predicate)) {
+            ItemPredicate itemPredicate = predicate.orElse(null);
+            return itemPredicate != null && itemPredicate.test(toolItem);
+        } else if (condition instanceof AnyOfCondition anyOfCondition) {
+            for (LootItemCondition child : anyOfCondition.terms) {
+                if (isCorrectConditions(List.of(child), toolItem)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean doLootTable(LootTable lootTable) {
         if (lootTable == null || lootTable == LootTable.EMPTY) {
             return false;
@@ -84,25 +103,6 @@ public class LootTableMineableCollector {
             return doLootTable(lootTable);
         } else {
             return isCorrectConditions(entry.conditions, toolItem);
-        }
-        return false;
-    }
-
-    public static boolean isCorrectConditions(@NotNull List<LootItemCondition> conditions, ItemStack toolItem) {
-        if (conditions.size() != 1) {
-            return false;
-        }
-
-        LootItemCondition condition = conditions.getFirst();
-        if (condition instanceof MatchTool(Optional<ItemPredicate> predicate)) {
-            ItemPredicate itemPredicate = predicate.orElse(null);
-            return itemPredicate != null && itemPredicate.test(toolItem);
-        } else if (condition instanceof AnyOfCondition anyOfCondition) {
-            for (LootItemCondition child : anyOfCondition.terms) {
-                if (isCorrectConditions(List.of(child), toolItem)) {
-                    return true;
-                }
-            }
         }
         return false;
     }

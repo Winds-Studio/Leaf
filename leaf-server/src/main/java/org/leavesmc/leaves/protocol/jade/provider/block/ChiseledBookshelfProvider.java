@@ -10,6 +10,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.leavesmc.leaves.protocol.jade.JadeProtocol;
 import org.leavesmc.leaves.protocol.jade.accessor.BlockAccessor;
+import org.leavesmc.leaves.protocol.jade.provider.ItemStorageProvider;
 import org.leavesmc.leaves.protocol.jade.provider.StreamServerDataProvider;
 
 public enum ChiseledBookshelfProvider implements StreamServerDataProvider<BlockAccessor, ItemStack> {
@@ -31,9 +32,13 @@ public enum ChiseledBookshelfProvider implements StreamServerDataProvider<BlockA
         return ItemStack.OPTIONAL_STREAM_CODEC;
     }
 
-
     @Override
     public ResourceLocation getUid() {
         return MC_CHISELED_BOOKSHELF;
+    }
+
+    @Override
+    public int getDefaultPriority() {
+        return ItemStorageProvider.getBlock().getDefaultPriority() + 1;
     }
 }

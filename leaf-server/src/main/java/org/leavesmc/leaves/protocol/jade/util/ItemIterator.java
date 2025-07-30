@@ -10,12 +10,12 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public abstract class ItemIterator<T> {
-
     public static final AtomicLong version = new AtomicLong();
     protected final Function<Object, @Nullable T> containerFinder;
     protected final int fromIndex;
     protected boolean finished;
     protected int currentIndex;
+    protected float progress;
 
     protected ItemIterator(Function<Object, @Nullable T> containerFinder, int fromIndex) {
         this.containerFinder = containerFinder;
@@ -36,16 +36,19 @@ public abstract class ItemIterator<T> {
 
     public abstract Stream<ItemStack> populate(T container);
 
+    protected abstract int getSlotCount(T container);
+
     public void reset() {
         currentIndex = fromIndex;
         finished = false;
     }
 
-    public void afterPopulate(int count) {
+    public void afterPopulate(T container, int count) {
         currentIndex += count;
         if (count == 0 || currentIndex >= 10000) {
             finished = true;
         }
+        progress = (float) (currentIndex - fromIndex) / (getSlotCount(container) - fromIndex);
     }
 
     public float getCollectingProgress() {
@@ -53,13 +56,10 @@ public abstract class ItemIterator<T> {
     }
 
     public static abstract class SlottedItemIterator<T> extends ItemIterator<T> {
-        protected float progress;
 
         public SlottedItemIterator(Function<Object, @Nullable T> containerFinder, int fromIndex) {
             super(containerFinder, fromIndex);
         }
-
-        protected abstract int getSlotCount(T container);
 
         protected abstract ItemStack getItemInSlot(T container, int slot);
 
@@ -71,7 +71,6 @@ public abstract class ItemIterator<T> {
                 toIndex = slotCount;
                 finished = true;
             }
-            progress = (float) (currentIndex - fromIndex) / (slotCount - fromIndex);
             return IntStream.range(currentIndex, toIndex).mapToObj(slot -> getItemInSlot(container, slot));
         }
 

@@ -15,6 +15,21 @@ public class ServerPosition {
         dimensionId = dim;
     }
 
+    public static ServerPosition fromJson(final JsonObject obj) {
+        if (obj.has("position") && obj.has("dimension")) {
+            final int x;
+            final int y;
+            final int z;
+            final JsonArray arr = obj.get("position").getAsJsonArray();
+            x = arr.get(0).getAsInt();
+            y = arr.get(1).getAsInt();
+            z = arr.get(2).getAsInt();
+            final BlockPos pos = new BlockPos(x, y, z);
+            return new ServerPosition(pos, obj.get("dimension").getAsString());
+        }
+        return null;
+    }
+
     public BlockPos getBlockPosition() {
         return position;
     }
@@ -32,20 +47,5 @@ public class ServerPosition {
         obj.add("position", arr);
         obj.add("dimension", new JsonPrimitive(dimensionId));
         return obj;
-    }
-
-    public static ServerPosition fromJson(final JsonObject obj) {
-        if (obj.has("position") && obj.has("dimension")) {
-            final int x;
-            final int y;
-            final int z;
-            final JsonArray arr = obj.get("position").getAsJsonArray();
-            x = arr.get(0).getAsInt();
-            y = arr.get(1).getAsInt();
-            z = arr.get(2).getAsInt();
-            final BlockPos pos = new BlockPos(x, y, z);
-            return new ServerPosition(pos, obj.get("dimension").getAsString());
-        }
-        return null;
     }
 }

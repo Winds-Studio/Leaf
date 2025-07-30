@@ -1,13 +1,10 @@
 package org.leavesmc.leaves.protocol.jade.provider;
 
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.Tag;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import org.jetbrains.annotations.Nullable;
 import org.leavesmc.leaves.protocol.jade.accessor.Accessor;
-
-import java.util.Optional;
 
 public interface StreamServerDataProvider<T extends Accessor<?>, D> extends IServerDataProvider<T> {
 

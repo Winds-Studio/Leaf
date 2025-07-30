@@ -24,6 +24,19 @@ public class SubRegionData {
         this.modificationData = modificationData;
     }
 
+    @NotNull
+    public static SubRegionData fromJson(final @NotNull JsonElement obj) {
+        final SubRegionData newSubRegionData = new SubRegionData();
+
+        newSubRegionData.isModified = true;
+
+        for (final JsonElement modification : obj.getAsJsonArray()) {
+            newSubRegionData.modify(SubRegionPlacementModification.fromJson(modification.getAsJsonObject()));
+        }
+
+        return newSubRegionData;
+    }
+
     public void reset() {
         isModified = false;
         modificationData = null;
@@ -65,19 +78,6 @@ public class SubRegionData {
         }
 
         return arr;
-    }
-
-    @NotNull
-    public static SubRegionData fromJson(final @NotNull JsonElement obj) {
-        final SubRegionData newSubRegionData = new SubRegionData();
-
-        newSubRegionData.isModified = true;
-
-        for (final JsonElement modification : obj.getAsJsonArray()) {
-            newSubRegionData.modify(SubRegionPlacementModification.fromJson(modification.getAsJsonObject()));
-        }
-
-        return newSubRegionData;
     }
 
     @Override

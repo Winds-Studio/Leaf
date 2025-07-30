@@ -4,15 +4,19 @@ import com.google.common.collect.Streams;
 import net.minecraft.core.IdMapper;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
+import org.leavesmc.leaves.protocol.jade.JadeProtocol;
 import org.leavesmc.leaves.protocol.jade.provider.IJadeProvider;
 
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
 
 public interface IHierarchyLookup<T extends IJadeProvider> {
+
+    Comparator<IJadeProvider> COMPARATOR = Comparator.comparingInt(provider -> JadeProtocol.priorities.byValue(provider));
 
     default IHierarchyLookup<? extends T> cast() {
         return this;

@@ -26,7 +26,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
 public class HierarchyLookup<T extends IJadeProvider> implements IHierarchyLookup<T> {
-
     private final Class<?> baseClass;
     private final Cache<Class<?>, List<T>> resultCache = CacheBuilder.newBuilder().build();
     private final boolean singleton;
@@ -74,7 +73,7 @@ public class HierarchyLookup<T extends IJadeProvider> implements IHierarchyLooku
             return resultCache.get(clazz, () -> {
                 List<T> list = Lists.newArrayList();
                 getInternal(clazz, list);
-                list = ImmutableList.sortedCopyOf(Comparator.comparingInt(JadeProtocol.priorities::byValue), list);
+                list = ImmutableList.sortedCopyOf(COMPARATOR, list);
                 if (singleton && !list.isEmpty()) {
                     return ImmutableList.of(list.getFirst());
                 }
@@ -136,5 +135,4 @@ public class HierarchyLookup<T extends IJadeProvider> implements IHierarchyLooku
             idMapper = createIdMapper();
         }
     }
-
 }

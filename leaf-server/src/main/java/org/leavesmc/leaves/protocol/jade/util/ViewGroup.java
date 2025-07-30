@@ -12,6 +12,22 @@ import java.util.Map;
 import java.util.Optional;
 
 public class ViewGroup<T> {
+    public List<T> views;
+    @Nullable
+    public String id;
+    @Nullable
+    protected CompoundTag extraData;
+
+    public ViewGroup(List<T> views) {
+        this(views, Optional.empty(), Optional.empty());
+    }
+
+    @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
+    public ViewGroup(List<T> views, Optional<String> id, Optional<CompoundTag> extraData) {
+        this.views = views;
+        this.id = id.orElse(null);
+        this.extraData = extraData.orElse(null);
+    }
 
     public static <B extends ByteBuf, T> StreamCodec<B, ViewGroup<T>> codec(StreamCodec<B, T> viewCodec) {
         return StreamCodec.composite(
@@ -33,31 +49,10 @@ public class ViewGroup<T> {
             Map::entry);
     }
 
-    public List<T> views;
-    @Nullable
-    public String id;
-    @Nullable
-    protected CompoundTag extraData;
-
-    public ViewGroup(List<T> views) {
-        this(views, Optional.empty(), Optional.empty());
-    }
-
-    @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
-    public ViewGroup(List<T> views, Optional<String> id, Optional<CompoundTag> extraData) {
-        this.views = views;
-        this.id = id.orElse(null);
-        this.extraData = extraData.orElse(null);
-    }
-
     public CompoundTag getExtraData() {
         if (extraData == null) {
             extraData = new CompoundTag();
         }
         return extraData;
-    }
-
-    public void setProgress(float progress) {
-        getExtraData().putFloat("Progress", progress);
     }
 }

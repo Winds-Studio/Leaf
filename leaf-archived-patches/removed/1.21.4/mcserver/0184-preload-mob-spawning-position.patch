@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Wed, 4 Jun 2025 20:54:32 +0900
+Subject: [PATCH] preload mob spawning position
+
+Removed since Leaf 1.21.4, No need
+
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index 458b17dca84c87591b030679c5aac6259c0f8308..c69922ac2b831d8af35c9e98a34825e6b8a268da 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -257,9 +257,57 @@ public final class NaturalSpawner {
+         // Paper end - Optional per player mob spawns
+         // Leaf start - optimize mob spawning
+         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+-        mutableRandomPosWithin(pos, level, chunk);
+-        if (pos.getY() < level.getMinY() + 1) {
+-            return 0;
++        // Leaf start - preload mob spawning position
++        if (org.dreeam.leaf.config.modules.opt.PreloadNaturalMobSpawning.enabled) {
++            if (chunk.cacheSpawnPosIndex == 16 || chunk.cacheSpawnPosIndex == -1) {
++                if (chunk.cacheSpawnPos == null) {
++                    chunk.cacheSpawnPos = new long[16];
++                }
++                // cache friendly
++                for (int i = 0; i < 16; i++) {
++                    mutableRandomPosWithin(pos, level, chunk);
++                    if (pos.getY() >= level.getMinY() + 1
++                        && level.getWorldBorder().isWithinBounds(pos)
++                        && !level.isOutsideBuildHeight(pos)) {
++                        LevelChunk chunk1 = chunk.getPos().longKey == ChunkPos.asLong(pos)
++                            ? chunk
++                            : level.chunkSource.getChunkAtIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4);
++                        if (chunk1 != null) {
++                            BlockState bs = chunk1.getBlockStateFinal(pos.getX(), pos.getY(), pos.getZ());
++                            if (bs != null && !bs.isRedstoneConductor(level, pos)) {
++                                chunk.cacheSpawnPos[i] = BlockPos.asLong(pos.getX(), pos.getY(), pos.getZ());
++                                continue;
++                            }
++                        }
++                    }
++                    chunk.cacheSpawnPos[i] = -1;
++                }
++                chunk.cacheSpawnPosIndex = 0;
++            }
++            long cachePos = chunk.cacheSpawnPos[chunk.cacheSpawnPosIndex];
++            chunk.cacheSpawnPosIndex++;
++            if (cachePos == -1) {
++                return 0;
++            }
++            pos.set(cachePos);
++        } else {
++            mutableRandomPosWithin(pos, level, chunk);
++            if (pos.getY() < level.getMinY() + 1
++                || !level.getWorldBorder().isWithinBounds(pos)
++                || level.isOutsideBuildHeight(pos)) {
++                return 0;
++            }
++            LevelChunk chunk1 = chunk.getPos().longKey == ChunkPos.asLong(pos)
++                ? chunk
++                : level.chunkSource.getChunkAtIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4);
++            if (chunk1 == null) {
++                return 0;
++            }
++            BlockState bs = chunk1.getBlockStateFinal(pos.getX(), pos.getY(), pos.getZ());
++            if (bs == null || bs.isRedstoneConductor(level, pos)) {
++                return 0;
++            }
++            // Leaf end - preload mob spawning position
+         }
+         return spawnCategoryForPosition(category, level, chunk, pos, filter, callback, maxSpawns, trackEntity, false); // Paper - Optional per player mob spawns // Paper - throttle failed spawn attempts
+         // Leaf end - optimize mob spawning
+@@ -284,7 +332,12 @@ public final class NaturalSpawner {
+         MobCategory category, ServerLevel level, ChunkAccess chunk, BlockPos pos, NaturalSpawner.SpawnPredicate filter, NaturalSpawner.AfterSpawnCallback callback, final int maxSpawns, final @Nullable Consumer<Entity> trackEntity
+         // Paper start - throttle failed spawn attempts
+     ) {
+-        spawnCategoryForPosition(category, level, chunk, pos, filter, callback, maxSpawns, trackEntity, false);
++        // Leaf start - preload mob spawning position
++        BlockState blockState = level.getBlockStateIfLoadedAndInBounds(pos);
++        if (blockState != null && !blockState.isRedstoneConductor(chunk, pos)) {
++            spawnCategoryForPosition(category, level, chunk, pos, filter, callback, maxSpawns, trackEntity, false);
++        }
++        // Leaf end - preload mob spawning position
+     }
+     public static int spawnCategoryForPosition(
+         MobCategory category, ServerLevel level, ChunkAccess chunk, BlockPos pos, NaturalSpawner.SpawnPredicate filter, NaturalSpawner.AfterSpawnCallback callback, final int maxSpawns, final @Nullable Consumer<Entity> trackEntity, final boolean nothing
+@@ -297,8 +350,8 @@ public final class NaturalSpawner {
+         int posX = pos.getX(); // Leaf - optimize mob spawning
+         int posZ = pos.getZ(); // Leaf - optimize mob spawning
+         int i = 0; // Paper - throttle failed spawn attempts
+-        BlockState blockState = level.getBlockStateIfLoadedAndInBounds(pos); // Paper - don't load chunks for mob spawn
+-        if (blockState != null && !blockState.isRedstoneConductor(chunk, pos)) { // Paper - don't load chunks for mob spawn
++        //BlockState blockState = level.getBlockStateIfLoadedAndInBounds(pos); // Paper - don't load chunks for mob spawn // Leaf - preload mob spawning position
++        if (true /*blockState != null && !blockState.isRedstoneConductor(chunk, pos)*/) { // Paper - don't load chunks for mob spawn // Leaf - preload mob spawning position
+             BlockPos.MutableBlockPos mutableBlockPos = pos instanceof BlockPos.MutableBlockPos pos2 ? pos2 : new BlockPos.MutableBlockPos(); // Leaf - optimize mob spawning
+             //int i = 0; // Paper - throttle failed spawn attempts - move up
+ 
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index a90bf0d80ae4dac9b19b8e467b402917cc19a271..804f2118167b1607c50ca8378119254e8760427a 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -106,6 +106,8 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+     // Paper start - rewrite chunk system
+     private boolean postProcessingDone;
+     private net.minecraft.server.level.ServerChunkCache.ChunkAndHolder chunkAndHolder;
++    public long[] cacheSpawnPos = null; // Leaf - preload mob spawning position
++    public int cacheSpawnPosIndex = -1; // Leaf - preload mob spawning position
+ 
+     @Override
+     public final boolean moonrise$isPostProcessingDone() {

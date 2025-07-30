@@ -1,0 +1,305 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martijn Muijsers <martijnmuijsers@live.nl>
+Date: Sun, 25 Dec 2022 11:20:37 +0100
+Subject: [PATCH] Optimize villager data storage
+
+Removed since Gale 1.21.1, imcompatible with RealisticVillagers
+
+License: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.html)
+Gale - https://galemc.org
+
+diff --git a/src/main/java/net/minecraft/world/Container.java b/src/main/java/net/minecraft/world/Container.java
+index 5db5ba026462ca642dcee718af732f80fadabef5..cd380ceb40d38acc7eef289ded11259388becabd 100644
+--- a/src/main/java/net/minecraft/world/Container.java
++++ b/src/main/java/net/minecraft/world/Container.java
+@@ -71,6 +71,20 @@ public interface Container extends Clearable {
+         });
+     }
+ 
++    // Gale start - optimize villager data storage
++    default boolean hasAnyOf(Item[] items) {
++        for (int i = 0; i < this.getContainerSize(); ++i) {
++            ItemStack itemstack = this.getItem(i);
++            for (Item item : items) {
++                if (itemstack.is(item)) {
++                    return true;
++                }
++            }
++        }
++        return false;
++    }
++    // Gale end - optimize villager data storage
++
+     default boolean hasAnyMatching(Predicate<ItemStack> predicate) {
+         for (int i = 0; i < this.getContainerSize(); ++i) {
+             ItemStack itemstack = this.getItem(i);
+diff --git a/src/main/java/net/minecraft/world/entity/ai/behavior/TradeWithVillager.java b/src/main/java/net/minecraft/world/entity/ai/behavior/TradeWithVillager.java
+index 8508ac7de8cda3127b73e11ff4aee62502e65ead..90ae43979e05839d676ab51feb489955ecbee50e 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/behavior/TradeWithVillager.java
++++ b/src/main/java/net/minecraft/world/entity/ai/behavior/TradeWithVillager.java
+@@ -17,7 +17,10 @@ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.item.Items;
+ 
+ public class TradeWithVillager extends Behavior<Villager> {
+-    private Set<Item> trades = ImmutableSet.of();
++    // Gale start - optimize villager data storage
++    private static final Item[] WHEAT_SINGLETON_ARRAY = {Items.WHEAT};
++    private @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] trades = null;
++    // Gale end - optimize villager data storage
+ 
+     public TradeWithVillager() {
+         super(
+@@ -51,16 +54,18 @@ public class TradeWithVillager extends Behavior<Villager> {
+             BehaviorUtils.lockGazeAndWalkToEachOther(entity, villager, 0.5F, 2);
+             entity.gossip(world, villager, time);
+             if (entity.hasExcessFood() && (entity.getVillagerData().getProfession() == VillagerProfession.FARMER || villager.wantsMoreFood())) {
+-                throwHalfStack(entity, Villager.FOOD_POINTS.keySet(), villager);
++                throwHalfStack(entity, Villager.FOOD_POINTS_KEY_ARRAY, villager); // Gale - optimize villager data storage
+             }
+ 
+             if (villager.getVillagerData().getProfession() == VillagerProfession.FARMER
+                 && entity.getInventory().countItem(Items.WHEAT) > Items.WHEAT.getDefaultMaxStackSize() / 2) {
+-                throwHalfStack(entity, ImmutableSet.of(Items.WHEAT), villager);
++                throwHalfStack(entity, WHEAT_SINGLETON_ARRAY, villager); // Gale - optimize villager data storage
+             }
+ 
+-            if (!this.trades.isEmpty() && entity.getInventory().hasAnyOf(this.trades)) {
++            // Gale start - optimize villager data storage
++            if (this.trades != null && entity.getInventory().hasAnyOf(this.trades)) {
+                 throwHalfStack(entity, this.trades, villager);
++                // Gale end - optimize villager data storage
+             }
+         }
+     }
+@@ -70,13 +75,36 @@ public class TradeWithVillager extends Behavior<Villager> {
+         villager.getBrain().eraseMemory(MemoryModuleType.INTERACTION_TARGET);
+     }
+ 
+-    private static Set<Item> figureOutWhatIAmWillingToTrade(Villager entity, Villager target) {
+-        ImmutableSet<Item> immutableSet = target.getVillagerData().getProfession().requestedItems();
+-        ImmutableSet<Item> immutableSet2 = entity.getVillagerData().getProfession().requestedItems();
+-        return immutableSet.stream().filter(item -> !immutableSet2.contains(item)).collect(Collectors.toSet());
++    // Gale start - optimize villager data storage
++    private static @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] figureOutWhatIAmWillingToTrade(Villager entity, Villager target) {
++        @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] immutableSet = target.getVillagerData().getProfession().requestedItems();
++        if (immutableSet == null) {
++            return null;
++        }
++        @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] immutableSet2 = entity.getVillagerData().getProfession().requestedItems();
++        if (immutableSet2 == null) {
++            return immutableSet;
++        }
++        if (immutableSet == immutableSet2) {
++            return null;
++        }
++        Item[] willingToTrade = new Item[immutableSet.length];
++        int willingToTradeSize = 0;
++        forImmutableSet:
++        for (Item item : immutableSet) {
++            for (Item item2 : immutableSet2) {
++                if (item == item2) {
++                    continue forImmutableSet;
++                }
++            }
++            willingToTrade[willingToTradeSize] = item;
++            willingToTradeSize++;
++        }
++        return java.util.Arrays.copyOf(willingToTrade, willingToTradeSize);
++        // Gale end - optimize villager data storage
+     }
+ 
+-    private static void throwHalfStack(Villager villager, Set<Item> validItems, LivingEntity target) {
++    private static void throwHalfStack(Villager villager, @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.NotNull [] validItems, LivingEntity target) { // Gale - optimize villager data storage
+         SimpleContainer simpleContainer = villager.getInventory();
+         ItemStack itemStack = ItemStack.EMPTY;
+         int i = 0;
+@@ -89,7 +117,16 @@ public class TradeWithVillager extends Behavior<Villager> {
+                 itemStack2 = simpleContainer.getItem(i);
+                 if (!itemStack2.isEmpty()) {
+                     item = itemStack2.getItem();
+-                    if (validItems.contains(item)) {
++                    // Gale start - optimize villager data storage
++                    boolean inValidItems = false;
++                    for (Item validItem : validItems) {
++                        if (validItem == item) {
++                            inValidItems = true;
++                            break;
++                        }
++                    }
++                    if (inValidItems) {
++                        // Gale end - optimize villager data storage
+                         if (itemStack2.getCount() > itemStack2.getMaxStackSize() / 2) {
+                             j = itemStack2.getCount() / 2;
+                             break label28;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/SecondaryPoiSensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/SecondaryPoiSensor.java
+index 1595568f3140a62b0f2236644ac2da11db12af05..8bed5992f639f805ccdec56a90101004570dc265 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/SecondaryPoiSensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/SecondaryPoiSensor.java
+@@ -24,21 +24,26 @@ public class SecondaryPoiSensor extends Sensor<Villager> {
+     protected void doTick(ServerLevel world, Villager entity) {
+         // Gale start - Lithium - skip secondary POI sensor if absent
+         var secondaryPoi = entity.getVillagerData().getProfession().secondaryPoi();
+-        if (secondaryPoi.isEmpty()) {
++        if (secondaryPoi == null) { // Gale - optimize villager data storage
+             entity.getBrain().eraseMemory(MemoryModuleType.SECONDARY_JOB_SITE);
+             return;
+         }
+         // Gale end - Lithium - skip secondary POI sensor if absent
+         ResourceKey<Level> resourceKey = world.dimension();
+         BlockPos blockPos = entity.blockPosition();
+-        List<GlobalPos> list = Lists.newArrayList();
++        @org.jetbrains.annotations.Nullable java.util.ArrayList<GlobalPos> list = null; // Gale - optimize villager data storage
+         int i = 4;
+ 
+         for (int j = -4; j <= 4; j++) {
+             for (int k = -2; k <= 2; k++) {
+                 for (int l = -4; l <= 4; l++) {
+                     BlockPos blockPos2 = blockPos.offset(j, k, l);
+-                    if (entity.getVillagerData().getProfession().secondaryPoi().contains(world.getBlockState(blockPos2).getBlock())) {
++                    // Gale start - optimize villager data storage
++                    if (secondaryPoi == world.getBlockState(blockPos2).getBlock()) {
++                        if (list == null) {
++                            list = Lists.newArrayList();
++                        }
++                        // Gale end - optimize villager data storage
+                         list.add(GlobalPos.of(resourceKey, blockPos2));
+                     }
+                 }
+@@ -46,7 +51,10 @@ public class SecondaryPoiSensor extends Sensor<Villager> {
+         }
+ 
+         Brain<?> brain = entity.getBrain();
+-        if (!list.isEmpty()) {
++        // Gale start - optimize villager data storage
++        if (list != null) {
++            list.trimToSize();
++            // Gale end - optimize villager data storage
+             brain.setMemory(MemoryModuleType.SECONDARY_JOB_SITE, list);
+         } else {
+             brain.eraseMemory(MemoryModuleType.SECONDARY_JOB_SITE);
+diff --git a/src/main/java/net/minecraft/world/entity/npc/Villager.java b/src/main/java/net/minecraft/world/entity/npc/Villager.java
+index 08c780e9e1e167b84f70dce691bb564c8420b286..de542de264d2a4ffa84699c34d3c576578c3d2a5 100644
+--- a/src/main/java/net/minecraft/world/entity/npc/Villager.java
++++ b/src/main/java/net/minecraft/world/entity/npc/Villager.java
+@@ -105,7 +105,9 @@ public class Villager extends AbstractVillager implements ReputationEventHandler
+     private static final EntityDataAccessor<VillagerData> DATA_VILLAGER_DATA = SynchedEntityData.defineId(Villager.class, EntityDataSerializers.VILLAGER_DATA);
+     public static final int BREEDING_FOOD_THRESHOLD = 12;
+     public static final Map<Item, Integer> FOOD_POINTS = ImmutableMap.of(Items.BREAD, 4, Items.POTATO, 1, Items.CARROT, 1, Items.BEETROOT, 1);
++    public static final Item[] FOOD_POINTS_KEY_ARRAY = FOOD_POINTS.keySet().toArray(Item[]::new); // Gale - optimize villager data storage
+     private static final int TRADES_PER_LEVEL = 2;
++    private static final Item[] WANTED_ITEMS = {Items.WHEAT_SEEDS, Items.POTATO, Items.CARROT, Items.BEETROOT_SEEDS, Items.TORCHFLOWER_SEEDS, Items.PITCHER_POD, Items.BREAD, Items.WHEAT, Items.BEETROOT}; // Gale - optimize villager data storage
+     private static final int MAX_GOSSIP_TOPICS = 10;
+     private static final int GOSSIP_COOLDOWN = 1200;
+     private static final int GOSSIP_DECAY_INTERVAL = 24000;
+@@ -878,7 +880,30 @@ public class Villager extends AbstractVillager implements ReputationEventHandler
+     public boolean wantsToPickUp(ServerLevel world, ItemStack stack) {
+         Item item = stack.getItem();
+ 
+-        return (stack.is(ItemTags.VILLAGER_PICKS_UP) || this.getVillagerData().getProfession().requestedItems().contains(item)) && this.getInventory().canAddItem(stack);
++        // Gale start - optimize villager data storage
++        boolean isDesired = false;
++        // WANTED_ITEMS same with the items in itemTag ItemTags.VILLAGER_PICKS_UP + ItemTags.VILLAGER_PLANTABLE_SEEDS
++        // Also Equal to `stack.is(ItemTags.VILLAGER_PICKS_UP)`
++        for (Item wantedItem : WANTED_ITEMS) {
++            if (wantedItem == item) {
++                isDesired = true;
++                break;
++            }
++        }
++        if (!isDesired) {
++            var requestedItems = this.getVillagerData().getProfession().requestedItems();
++            if (requestedItems == null) {
++                return false;
++            }
++            for (Item requestedItem : requestedItems) {
++                if (requestedItem == item) {
++                    isDesired = true;
++                    break;
++                }
++            }
++        }
++        return isDesired && this.getInventory().canAddItem(stack);
++        // Gale end - optimize villager data storage
+     }
+ 
+     public boolean hasExcessFood() {
+diff --git a/src/main/java/net/minecraft/world/entity/npc/VillagerProfession.java b/src/main/java/net/minecraft/world/entity/npc/VillagerProfession.java
+index 8734ab1bd8299bbf43906d81a349c2a13e0981a7..35c4638f5c46310c75b27548223fcaf5f8702113 100644
+--- a/src/main/java/net/minecraft/world/entity/npc/VillagerProfession.java
++++ b/src/main/java/net/minecraft/world/entity/npc/VillagerProfession.java
+@@ -22,9 +22,9 @@ public record VillagerProfession(
+     String name,
+     Predicate<Holder<PoiType>> heldJobSite,
+     Predicate<Holder<PoiType>> acquirableJobSite,
+-    ImmutableSet<Item> requestedItems,
+-    ImmutableSet<Block> secondaryPoi,
+-    @Nullable SoundEvent workSound
++    @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] requestedItems, // Gale - optimize villager data storage
++    @org.jetbrains.annotations.Nullable Block secondaryPoi, // Gale - optimize villager data storage
++    @org.jetbrains.annotations.Nullable SoundEvent workSound // Gale - optimize villager data storage
+ ) {
+     public static final Predicate<Holder<PoiType>> ALL_ACQUIRABLE_JOBS = poiType -> poiType.is(PoiTypeTags.ACQUIRABLE_JOB_SITE);
+     public static final VillagerProfession NONE = register("none", PoiType.NONE, ALL_ACQUIRABLE_JOBS, null);
+@@ -35,8 +35,8 @@ public record VillagerProfession(
+     public static final VillagerProfession FARMER = register(
+         "farmer",
+         PoiTypes.FARMER,
+-        ImmutableSet.of(Items.WHEAT, Items.WHEAT_SEEDS, Items.BEETROOT_SEEDS, Items.BONE_MEAL),
+-        ImmutableSet.of(Blocks.FARMLAND),
++        new Item[] {Items.WHEAT, Items.WHEAT_SEEDS, Items.BEETROOT_SEEDS, Items.BONE_MEAL}, // Gale - optimize villager data storage
++        Blocks.FARMLAND, // Gale - optimize villager data storage
+         SoundEvents.VILLAGER_WORK_FARMER
+     );
+     public static final VillagerProfession FISHERMAN = register("fisherman", PoiTypes.FISHERMAN, SoundEvents.VILLAGER_WORK_FISHERMAN);
+@@ -54,38 +54,40 @@ public record VillagerProfession(
+         return this.name;
+     }
+ 
+-    private static VillagerProfession register(String id, ResourceKey<PoiType> heldWorkstation, @Nullable SoundEvent workSound) {
++    private static VillagerProfession register(String id, ResourceKey<PoiType> heldWorkstation, @org.jetbrains.annotations.Nullable SoundEvent workSound) { // Gale - optimize villager data storage
+         return register(id, entry -> entry.is(heldWorkstation), entry -> entry.is(heldWorkstation), workSound);
+     }
+ 
++    // Gale start - optimize villager data storage
+     private static VillagerProfession register(
+-        String id, Predicate<Holder<PoiType>> heldWorkstation, Predicate<Holder<PoiType>> acquirableWorkstation, @Nullable SoundEvent workSound
++        String id, Predicate<Holder<PoiType>> heldWorkstation, Predicate<Holder<PoiType>> acquirableWorkstation, @org.jetbrains.annotations.Nullable SoundEvent workSound
+     ) {
+-        return register(id, heldWorkstation, acquirableWorkstation, ImmutableSet.of(), ImmutableSet.of(), workSound);
++        return register(id, heldWorkstation, acquirableWorkstation, null, null, workSound);
+     }
+ 
+     private static VillagerProfession register(
+         String id,
+         ResourceKey<PoiType> heldWorkstation,
+-        ImmutableSet<Item> gatherableItems,
+-        ImmutableSet<Block> secondaryJobSites,
+-        @Nullable SoundEvent workSound
++        @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] gatherableItems,
++        @org.jetbrains.annotations.Nullable Block secondaryJobSite,
++        @org.jetbrains.annotations.Nullable SoundEvent workSound
+     ) {
+-        return register(id, entry -> entry.is(heldWorkstation), entry -> entry.is(heldWorkstation), gatherableItems, secondaryJobSites, workSound);
++        return register(id, entry -> entry.is(heldWorkstation), entry -> entry.is(heldWorkstation), gatherableItems, secondaryJobSite, workSound);
+     }
+ 
+     private static VillagerProfession register(
+         String id,
+         Predicate<Holder<PoiType>> heldWorkstation,
+         Predicate<Holder<PoiType>> acquirableWorkstation,
+-        ImmutableSet<Item> gatherableItems,
+-        ImmutableSet<Block> secondaryJobSites,
+-        @Nullable SoundEvent workSound
++        @org.jetbrains.annotations.NotNull Item @org.jetbrains.annotations.Nullable [] gatherableItems,
++        @org.jetbrains.annotations.Nullable Block secondaryJobSite,
++        @org.jetbrains.annotations.Nullable SoundEvent workSound
+     ) {
+         return Registry.register(
+             BuiltInRegistries.VILLAGER_PROFESSION,
+             ResourceLocation.withDefaultNamespace(id),
+-            new VillagerProfession(id, heldWorkstation, acquirableWorkstation, gatherableItems, secondaryJobSites, workSound)
++            new VillagerProfession(id, heldWorkstation, acquirableWorkstation, gatherableItems != null && gatherableItems.length == 0 ? null : gatherableItems, secondaryJobSite, workSound)
+         );
++        // Gale end - optimize villager data storage
+     }
+ }

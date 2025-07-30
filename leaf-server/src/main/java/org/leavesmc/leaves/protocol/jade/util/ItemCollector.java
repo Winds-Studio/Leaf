@@ -7,6 +7,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.component.TooltipDisplay;
 import org.leavesmc.leaves.protocol.jade.accessor.Accessor;
 
 import java.util.List;
@@ -15,18 +16,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 
 public class ItemCollector<T> {
-
     public static final int MAX_SIZE = 54;
     public static final ItemCollector<?> EMPTY = new ItemCollector<>(null);
-    private static final Predicate<ItemStack> NON_EMPTY = stack -> {
+    private static final Predicate<ItemStack> SHOWN = stack -> {
         if (stack.isEmpty()) {
             return false;
         }
-        CustomData customData = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
-        if (customData.contains("CustomModelData")) {
-            CompoundTag tag = customData.copyTag();
-            for (String key : tag.getAllKeys()) {
-                if (key.toLowerCase(Locale.ENGLISH).endsWith("clear") && tag.getBoolean(key)) {
+        if (stack.getOrDefault(DataComponents.TOOLTIP_DISPLAY, TooltipDisplay.DEFAULT).hideTooltip()) {
+            return false;
+        }
+        if (stack.hasNonDefault(DataComponents.CUSTOM_MODEL_DATA) || stack.hasNonDefault(DataComponents.ITEM_MODEL)) {
+            CompoundTag tag = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+            for (String key : tag.keySet()) {
+                if (key.toLowerCase(Locale.ENGLISH).endsWith("clear") && tag.getBooleanOr(key, true)) {
                     return false;
                 }
             }
@@ -53,7 +55,7 @@ public class ItemCollector<T> {
             return null;
         }
         long currentVersion = iterator.getVersion(container);
-        long gameTime = request.getLevel().getGameTime();
+        long gameTime = request.getLevel().getServer().getTickCount();
         if (mergedResult != null && iterator.isFinished()) {
             if (version == currentVersion) {
                 return mergedResult; // content not changed
@@ -66,12 +68,12 @@ public class ItemCollector<T> {
         AtomicInteger count = new AtomicInteger();
         iterator.populate(container).forEach(stack -> {
             count.incrementAndGet();
-            if (NON_EMPTY.test(stack)) {
+            if (SHOWN.test(stack)) {
                 ItemDefinition def = new ItemDefinition(stack);
                 items.addTo(def, stack.getCount());
             }
         });
-        iterator.afterPopulate(count.get());
+        iterator.afterPopulate(container, count.get());
         if (mergedResult != null && !iterator.isFinished()) {
             updateCollectingProgress(mergedResult.getFirst());
             return mergedResult;

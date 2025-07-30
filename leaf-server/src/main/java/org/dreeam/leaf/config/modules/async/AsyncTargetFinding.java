@@ -3,7 +3,7 @@ package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.LeafConfig;
 
 public class AsyncTargetFinding extends ConfigModules {
 
@@ -33,10 +33,15 @@ public class AsyncTargetFinding extends ConfigModules {
         asyncTargetFindingInitialized = true;
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        // Disable if parallel world ticking is enabled, as they are incompatible.
+        if (enabled && SparklyPaperParallelWorldTicking.enabled) {
+            LeafConfig.LOGGER.warn("Async target finding is incompatible with Parallel World Ticking. Disabling Async target finding automatically.");
+            enabled = false;
+        }
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
-        queueSize = config.getInt(getBasePath() + ".queue-size", 4096);
+        queueSize = config.getInt(getBasePath() + ".queue-size", 0);
 
         if (queueSize <= 0) {
             queueSize = 4096;

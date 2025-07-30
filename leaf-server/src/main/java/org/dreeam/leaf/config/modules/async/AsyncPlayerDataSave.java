@@ -2,7 +2,6 @@ package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
 
 public class AsyncPlayerDataSave extends ConfigModules {
 
@@ -20,5 +19,9 @@ public class AsyncPlayerDataSave extends ConfigModules {
                 异步保存玩家数据.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+
+        if (enabled) {
+            org.dreeam.leaf.async.AsyncPlayerDataSaving.init();
+        }
     }
 }
