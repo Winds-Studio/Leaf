@@ -9,7 +9,6 @@ public class Hashing {
 
     // BLAKE3 constants
     private static final int NUMWORDS = 8;
-    private static final int ROUNDS = 7;
     private static final int BLOCKLEN = NUMWORDS * 4 * 2; // 64 bytes
 
     // Flags
@@ -19,13 +18,7 @@ public class Hashing {
     private static final int KEYEDHASH = 16;
 
     // State positions
-    private static final int CHAINING0 = 0, CHAINING1 = 1, CHAINING2 = 2, CHAINING3 = 3;
-    private static final int CHAINING4 = 4, CHAINING5 = 5, CHAINING6 = 6, CHAINING7 = 7;
-    private static final int IV0 = 8, IV1 = 9, IV2 = 10, IV3 = 11;
     private static final int COUNT0 = 12, COUNT1 = 13, DATALEN = 14, FLAGS = 15;
-
-    // Message permutation sigma
-    private static final byte[] SIGMA = {2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8};
 
     // BLAKE3 IV
     private static final int[] IV = {
@@ -178,51 +171,88 @@ public class Hashing {
         }
 
         private void compress() {
-            initIndices();
+            final int[] st = state;
+            final int[] msg = message;
+            final int[] ch = chaining;
 
-            for (int round = 0; round < ROUNDS - 1; round++) {
-                performRound();
-                permuteIndices();
-            }
-            performRound();
-            adjustChaining();
+            mixG(msg[0], msg[1], 0, 4, 8, 12, st);
+            mixG(msg[2], msg[3], 1, 5, 9, 13, st);
+            mixG(msg[4], msg[5], 2, 6, 10, 14, st);
+            mixG(msg[6], msg[7], 3, 7, 11, 15, st);
+            mixG(msg[8], msg[9], 0, 5, 10, 15, st);
+            mixG(msg[10], msg[11], 1, 6, 11, 12, st);
+            mixG(msg[12], msg[13], 2, 7, 8, 13, st);
+            mixG(msg[14], msg[15], 3, 4, 9, 14, st);
+
+            mixG(msg[2], msg[6], 0, 4, 8, 12, st);
+            mixG(msg[3], msg[10], 1, 5, 9, 13, st);
+            mixG(msg[7], msg[0], 2, 6, 10, 14, st);
+            mixG(msg[4], msg[13], 3, 7, 11, 15, st);
+            mixG(msg[1], msg[11], 0, 5, 10, 15, st);
+            mixG(msg[12], msg[5], 1, 6, 11, 12, st);
+            mixG(msg[9], msg[14], 2, 7, 8, 13, st);
+            mixG(msg[15], msg[8], 3, 4, 9, 14, st);
+
+            mixG(msg[3], msg[4], 0, 4, 8, 12, st);
+            mixG(msg[10], msg[12], 1, 5, 9, 13, st);
+            mixG(msg[13], msg[2], 2, 6, 10, 14, st);
+            mixG(msg[7], msg[5], 3, 7, 11, 15, st);
+            mixG(msg[6], msg[14], 0, 5, 10, 15, st);
+            mixG(msg[0], msg[1], 1, 6, 11, 12, st);
+            mixG(msg[15], msg[11], 2, 7, 8, 13, st);
+            mixG(msg[8], msg[9], 3, 4, 9, 14, st);
+
+            mixG(msg[10], msg[7], 0, 4, 8, 12, st);
+            mixG(msg[12], msg[0], 1, 5, 9, 13, st);
+            mixG(msg[5], msg[3], 2, 6, 10, 14, st);
+            mixG(msg[13], msg[1], 3, 7, 11, 15, st);
+            mixG(msg[4], msg[11], 0, 5, 10, 15, st);
+            mixG(msg[2], msg[6], 1, 6, 11, 12, st);
+            mixG(msg[8], msg[14], 2, 7, 8, 13, st);
+            mixG(msg[9], msg[15], 3, 4, 9, 14, st);
+
+            mixG(msg[12], msg[13], 0, 4, 8, 12, st);
+            mixG(msg[0], msg[2], 1, 5, 9, 13, st);
+            mixG(msg[1], msg[10], 2, 6, 10, 14, st);
+            mixG(msg[5], msg[6], 3, 7, 11, 15, st);
+            mixG(msg[7], msg[14], 0, 5, 10, 15, st);
+            mixG(msg[3], msg[4], 1, 6, 11, 12, st);
+            mixG(msg[9], msg[11], 2, 7, 8, 13, st);
+            mixG(msg[15], msg[8], 3, 4, 9, 14, st);
+
+            mixG(msg[0], msg[5], 0, 4, 8, 12, st);
+            mixG(msg[2], msg[3], 1, 5, 9, 13, st);
+            mixG(msg[6], msg[12], 2, 6, 10, 14, st);
+            mixG(msg[1], msg[4], 3, 7, 11, 15, st);
+            mixG(msg[13], msg[11], 0, 5, 10, 15, st);
+            mixG(msg[10], msg[7], 1, 6, 11, 12, st);
+            mixG(msg[15], msg[14], 2, 7, 8, 13, st);
+            mixG(msg[8], msg[9], 3, 4, 9, 14, st);
+
+            mixG(msg[2], msg[1], 0, 4, 8, 12, st);
+            mixG(msg[3], msg[10], 1, 5, 9, 13, st);
+            mixG(msg[4], msg[0], 2, 6, 10, 14, st);
+            mixG(msg[6], msg[7], 3, 7, 11, 15, st);
+            mixG(msg[5], msg[14], 0, 5, 10, 15, st);
+            mixG(msg[12], msg[13], 1, 6, 11, 12, st);
+            mixG(msg[8], msg[11], 2, 7, 8, 13, st);
+            mixG(msg[9], msg[15], 3, 4, 9, 14, st);
+
+            ch[0] = st[0] ^ st[8];  ch[1] = st[1] ^ st[9];
+            ch[2] = st[2] ^ st[10]; ch[3] = st[3] ^ st[11];
+            ch[4] = st[4] ^ st[12]; ch[5] = st[5] ^ st[13];
+            ch[6] = st[6] ^ st[14]; ch[7] = st[7] ^ st[15];
         }
 
-        private void performRound() {
-            mixG(0, CHAINING0, CHAINING4, IV0, COUNT0);
-            mixG(1, CHAINING1, CHAINING5, IV1, COUNT1);
-            mixG(2, CHAINING2, CHAINING6, IV2, DATALEN);
-            mixG(3, CHAINING3, CHAINING7, IV3, FLAGS);
-
-            mixG(4, CHAINING0, CHAINING5, IV2, FLAGS);
-            mixG(5, CHAINING1, CHAINING6, IV3, COUNT0);
-            mixG(6, CHAINING2, CHAINING7, IV0, COUNT1);
-            mixG(7, CHAINING3, CHAINING4, IV1, DATALEN);
-        }
-
-        private void mixG(int msgIdx, int posA, int posB, int posC, int posD) {
-            int msg = msgIdx * 2;
-
-            state[posA] += state[posB] + message[indices[msg++]];
+        private static void mixG(int m1, int m2, int posA, int posB, int posC, int posD, int[] state) {
+            state[posA] += state[posB] + m1;
             state[posD] = Integer.rotateRight(state[posD] ^ state[posA], 16);
             state[posC] += state[posD];
             state[posB] = Integer.rotateRight(state[posB] ^ state[posC], 12);
-            state[posA] += state[posB] + message[indices[msg]];
+            state[posA] += state[posB] + m2;
             state[posD] = Integer.rotateRight(state[posD] ^ state[posA], 8);
             state[posC] += state[posD];
             state[posB] = Integer.rotateRight(state[posB] ^ state[posC], 7);
-        }
-
-        private void initIndices() {
-            for (byte i = 0; i < indices.length; i++) {
-                indices[i] = i;
-            }
-        }
-
-        private void permuteIndices() {
-            for (int i = 0; i < indices.length; i++) {
-                indices[i] = SIGMA[indices[i]];
-            }
         }
 
         private void initMessage(byte[] data, int offset) {
@@ -244,12 +274,6 @@ public class Hashing {
 
             if (isFinal) {
                 state[FLAGS] |= ROOT;
-            }
-        }
-
-        private void adjustChaining() {
-            for (int i = 0; i < NUMWORDS; i++) {
-                chaining[i] = state[i] ^ state[i + NUMWORDS];
             }
         }
     }
