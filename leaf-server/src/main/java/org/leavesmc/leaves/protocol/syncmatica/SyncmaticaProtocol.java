@@ -1,5 +1,6 @@
 package org.leavesmc.leaves.protocol.syncmatica;
 
+import org.apache.commons.io.FilenameUtils;
 import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.NotNull;
 
@@ -81,11 +82,16 @@ public class SyncmaticaProtocol {
 
     @NotNull
     public static String sanitizeFileName(final @NotNull String badFileName) {
+        String input = badFileName;
+        try {
+            input = FilenameUtils.getName(input);
+        } catch (Exception ignored) {
+        }
         final StringBuilder sanitized = new StringBuilder();
-        final int len = badFileName.codePointCount(0, badFileName.length());
+        final int len = input.codePointCount(0, input.length());
 
         for (int i = 0; i < len; i++) {
-            final int c = badFileName.codePointAt(i);
+            final int c = input.codePointAt(i);
             if (Arrays.binarySearch(ILLEGAL_CHARS, c) < 0) {
                 sanitized.appendCodePoint(c);
                 if (sanitized.length() == 255) {

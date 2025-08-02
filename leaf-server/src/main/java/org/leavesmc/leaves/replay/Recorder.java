@@ -26,14 +26,17 @@ import net.minecraft.network.protocol.configuration.ClientboundUpdateEnabledFeat
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerChatPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
+import net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.RegistryLayer;
 import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.tags.TagNetworkSerialization;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.flag.FeatureFlags;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -41,23 +44,26 @@ import org.leavesmc.leaves.LeavesLogger;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Recorder extends Connection {
 
-    public static final Executor saveService = Executors.newVirtualThreadPerTaskExecutor();
     public static final LeavesLogger LOGGER = LeavesLogger.LOGGER;
+    public final ExecutorService saveService = Executors.newSingleThreadExecutor();
 
     private final ReplayFile replayFile;
     private final ServerPhotographer photographer;
     private final RecorderOption recorderOption;
     private final RecordMetaData metaData;
+    private final AtomicBoolean isSaving = new AtomicBoolean(false);
 
     private boolean stopped = false;
     private boolean paused = false;
@@ -68,7 +74,6 @@ public class Recorder extends Connection {
     private long timeShift = 0;
 
     private boolean isSaved;
-    private boolean isSaving;
     private ConnectionProtocol state = ConnectionProtocol.LOGIN;
 
     public Recorder(ServerPhotographer photographer, RecorderOption recorderOption, File replayFile) throws IOException {
@@ -77,7 +82,7 @@ public class Recorder extends Connection {
         this.photographer = photographer;
         this.recorderOption = recorderOption;
         this.metaData = new RecordMetaData();
-        this.replayFile = new ReplayFile(replayFile);
+        this.replayFile = new ReplayFile(replayFile, saveService);
         this.channel = new LocalChannel();
     }
 
@@ -92,6 +97,8 @@ public class Recorder extends Connection {
         // TODO start event
         this.savePacket(new ClientboundLoginFinishedPacket(photographer.getGameProfile()), ConnectionProtocol.LOGIN);
         this.startConfiguration();
+
+        savePacket(ClientboundPlayerPositionPacket.of(photographer.getId(), PositionMoveRotation.of(photographer), Collections.emptySet()));
 
         if (recorderOption.forceWeather != null) {
             setWeather(recorderOption.forceWeather);
@@ -170,40 +177,46 @@ public class Recorder extends Connection {
 
     @Override
     public void send(@NotNull Packet<?> packet, @Nullable ChannelFutureListener callbacks, boolean flush) {
-        if (!stopped) {
-            if (packet instanceof BundlePacket<?> packet1) {
+        if (stopped) {
+            return;
+        }
+        switch (packet) {
+            case BundlePacket<?> packet1 -> {
                 packet1.subPackets().forEach(subPacket -> send(subPacket, null));
                 return;
             }
-
-            if (packet instanceof ClientboundAddEntityPacket packet1) {
+            case ClientboundAddEntityPacket packet1 -> {
                 if (packet1.getType() == EntityType.PLAYER) {
                     metaData.players.add(packet1.getUUID());
                     saveMetadata();
                 }
             }
-
-            if (packet instanceof ClientboundDisconnectPacket) {
+            case ClientboundDisconnectPacket ignored -> {
                 return;
             }
-
-            if (recorderOption.forceDayTime != -1 && packet instanceof ClientboundSetTimePacket packet1) {
-                packet = new ClientboundSetTimePacket(packet1.dayTime(), recorderOption.forceDayTime, false);
-            }
-
-            if (recorderOption.forceWeather != null && packet instanceof ClientboundGameEventPacket packet1) {
-                ClientboundGameEventPacket.Type type = packet1.getEvent();
-                if (type == ClientboundGameEventPacket.START_RAINING || type == ClientboundGameEventPacket.STOP_RAINING || type == ClientboundGameEventPacket.RAIN_LEVEL_CHANGE || type == ClientboundGameEventPacket.THUNDER_LEVEL_CHANGE) {
-                    return;
-                }
-            }
-
-            if (recorderOption.ignoreChat && (packet instanceof ClientboundSystemChatPacket || packet instanceof ClientboundPlayerChatPacket)) {
+            case ClientboundTrackedWaypointPacket ignored -> {
                 return;
             }
-
-            savePacket(packet);
+            default -> {
+            }
         }
+
+        if (recorderOption.forceDayTime != -1 && packet instanceof ClientboundSetTimePacket packet1) {
+            packet = new ClientboundSetTimePacket(packet1.dayTime(), recorderOption.forceDayTime, false);
+        }
+
+        if (recorderOption.forceWeather != null && packet instanceof ClientboundGameEventPacket packet1) {
+            ClientboundGameEventPacket.Type type = packet1.getEvent();
+            if (type == ClientboundGameEventPacket.START_RAINING || type == ClientboundGameEventPacket.STOP_RAINING || type == ClientboundGameEventPacket.RAIN_LEVEL_CHANGE || type == ClientboundGameEventPacket.THUNDER_LEVEL_CHANGE) {
+                return;
+            }
+        }
+
+        if (recorderOption.ignoreChat && (packet instanceof ClientboundSystemChatPacket || packet instanceof ClientboundPlayerChatPacket)) {
+            return;
+        }
+
+        savePacket(packet);
     }
 
     private void saveMetadata() {
@@ -235,36 +248,23 @@ public class Recorder extends Connection {
     }
 
     public CompletableFuture<Void> saveRecording(File dest, boolean save) {
-        isSaved = true;
-        if (!isSaving) {
-            isSaving = true;
-            metaData.duration = (int) lastPacket;
-            return CompletableFuture.runAsync(() -> {
-                saveMetadata();
-                boolean interrupted = false;
-                try {
-                    if (save) {
-                        replayFile.closeAndSave(dest);
-                    } else {
-                        replayFile.closeNotSave();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    throw new CompletionException(e);
-                } finally {
-                    if (interrupted) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }, runnable -> {
-                final Thread thread = new Thread(runnable, "Recording file save thread");
-                thread.start();
-            });
-        } else {
+        if (!isSaving.compareAndSet(false, true)) {
             LOGGER.warning("saveRecording() called twice");
-            return CompletableFuture.supplyAsync(() -> {
-                throw new IllegalStateException("saveRecording() called twice");
-            });
+            return CompletableFuture.failedFuture(new IllegalStateException("saveRecording() called twice"));
         }
+        isSaved = true;
+        metaData.duration = (int) lastPacket;
+        return CompletableFuture.runAsync(() -> {
+            try {
+                replayFile.saveMetaData(metaData);
+                if (save) {
+                    replayFile.closeAndSave(dest);
+                } else {
+                    replayFile.closeNotSave();
+                }
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        }, saveService);
     }
 }

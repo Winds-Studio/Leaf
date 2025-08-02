@@ -9,7 +9,7 @@ public class RemoveVanillaUsernameCheck extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".remove-vanilla-username-check";
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
 
     @Override
     public void onLoaded() {

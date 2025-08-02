@@ -8,6 +8,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -17,13 +18,19 @@ public class DynamicActivationofBrain extends ConfigModules {
         return EnumConfigCategory.PERF.getBaseKeyName() + ".dab";
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
     public static int startDistance = 12;
     public static int startDistanceSquared;
     public static int maximumActivationPrio = 20;
     public static int activationDistanceMod = 8;
     public static boolean dontEnableIfInWater = false;
-    public static List<String> blackedEntities = new ArrayList<>();
+    public static List<String> blackedEntities = new ArrayList<>(Arrays.asList(
+        "villager",
+        "axolotl",
+        "hoglin",
+        "zombified_piglin",
+        "goat"
+    ));
 
     @Override
     public void onLoaded() {

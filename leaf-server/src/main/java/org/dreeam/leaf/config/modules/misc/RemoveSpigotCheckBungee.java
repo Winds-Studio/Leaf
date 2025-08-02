@@ -9,7 +9,7 @@ public class RemoveSpigotCheckBungee extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".remove-spigot-check-bungee-config";
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
 
     @Override
     public void onLoaded() {

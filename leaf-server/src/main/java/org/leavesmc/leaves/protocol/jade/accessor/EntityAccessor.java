@@ -1,8 +1,8 @@
 package org.leavesmc.leaves.protocol.jade.accessor;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.EntityHitResult;
 import org.jetbrains.annotations.ApiStatus;
 
@@ -19,7 +19,7 @@ public interface EntityAccessor extends Accessor<EntityHitResult> {
 
     @ApiStatus.NonExtendable
     interface Builder {
-        Builder level(Level level);
+        Builder level(ServerLevel level);
 
         Builder player(Player player);
 

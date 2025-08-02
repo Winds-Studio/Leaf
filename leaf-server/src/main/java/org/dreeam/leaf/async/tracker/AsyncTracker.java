@@ -62,26 +62,26 @@ public final class AsyncTracker {
                 return;
             }
         }
-        handle(world, task);
+        handle(world, task, false);
     }
 
     public static void onTickEnd(MinecraftServer server) {
         for (ServerLevel world : server.getAllLevels()) {
             Future<TrackerCtx>[] task = world.trackerTask;
             if (task != null) {
-                handle(world, task);
+                handle(world, task, false);
             }
         }
     }
 
-    private static void handle(ServerLevel world, Future<TrackerCtx>[] futures) {
+    private static void handle(ServerLevel world, Future<TrackerCtx>[] futures, boolean flush) {
         try {
             TrackerCtx ctx = futures[0].get();
             for (int i = 1; i < futures.length; i++) {
                 ctx.join(futures[i].get());
             }
             world.trackerTask = null;
-            ctx.handle();
+            ctx.handle(flush);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (ExecutionException e) {

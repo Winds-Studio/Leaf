@@ -14,8 +14,8 @@ import org.bukkit.craftbukkit.CraftWorld;
 import org.jetbrains.annotations.NotNull;
 import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.bot.BotStatsCounter;
-import org.leavesmc.leaves.entity.CraftPhotographer;
-import org.leavesmc.leaves.entity.Photographer;
+import org.leavesmc.leaves.entity.photographer.CraftPhotographer;
+import org.leavesmc.leaves.entity.photographer.Photographer;
 
 import java.io.File;
 import java.io.IOException;
@@ -55,6 +55,8 @@ public class ServerPhotographer extends ServerPlayer {
         GameProfile profile = new GameProfile(UUID.randomUUID(), state.id);
 
         ServerPhotographer photographer = new ServerPhotographer(server, world, profile);
+        photographer.absSnapTo(state.loc.x(), state.loc.y(), state.loc.z(), state.loc.getYaw(), state.loc.getPitch());
+
         photographer.recorder = new Recorder(photographer, state.option, new File("replay", state.id));
         photographer.saveFile = new File("replay", state.id + ".mcpr");
         photographer.createState = state;
@@ -77,7 +79,7 @@ public class ServerPhotographer extends ServerPlayer {
         super.tick();
         super.doTick();
 
-        if (this.server.getTickCount() % 10 == 0) {
+        if (this.getServer().getTickCount() % 10 == 0) {
             connection.resetPosition();
             this.level().chunkSource.move(this);
         }
@@ -129,7 +131,7 @@ public class ServerPhotographer extends ServerPlayer {
         super.remove(RemovalReason.KILLED);
         photographers.remove(this);
         this.recorder.stop();
-        this.server.getPlayerList().removePhotographer(this);
+        this.getServer().getPlayerList().removePhotographer(this);
 
         LeavesLogger.LOGGER.info("Photographer " + createState.id + " removed");
 
@@ -144,6 +146,10 @@ public class ServerPhotographer extends ServerPlayer {
     public void setFollowPlayer(ServerPlayer followPlayer) {
         this.setCamera(followPlayer);
         this.followPlayer = followPlayer;
+    }
+
+    public ServerPlayer getFollowPlayer() {
+        return followPlayer;
     }
 
     public void setSaveFile(File saveFile) {

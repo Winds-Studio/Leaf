@@ -34,12 +34,12 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.leavesmc.leaves.replay.Recorder.LOGGER;
-import static org.leavesmc.leaves.replay.Recorder.saveService;
 
 public class ReplayFile {
 
@@ -59,8 +59,10 @@ public class ReplayFile {
     private final File metaFile;
 
     private final Map<ConnectionProtocol, ProtocolInfo<?>> protocols;
+    private final ExecutorService saveService;
 
-    public ReplayFile(@NotNull File name) throws IOException {
+    public ReplayFile(@NotNull File name, ExecutorService saveService) throws IOException {
+        this.saveService = saveService;
         this.tmpDir = new File(name.getParentFile(), name.getName() + ".tmp");
         if (tmpDir.exists()) {
             if (!ReplayFile.deleteDir(tmpDir)) {
