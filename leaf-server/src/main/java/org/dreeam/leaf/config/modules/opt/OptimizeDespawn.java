@@ -1,7 +1,6 @@
 package org.dreeam.leaf.config.modules.opt;
 
 import gg.pufferfish.pufferfish.simd.SIMDDetection;
-import org.dreeam.leaf.LeafBootstrap;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;
@@ -19,7 +18,7 @@ public class OptimizeDespawn extends ConfigModules {
         enabled = config.getBoolean(getBasePath(), enabled);
         if (enabled) {
             gg.pufferfish.pufferfish.simd.SIMDDetection.initialize();
-            if (!LeafBootstrap.enableFMA || !SIMDDetection.isEnabled()) {
+            if (!Boolean.getBoolean("Leaf.enableFMA") || !SIMDDetection.isEnabled()) {
                 LOGGER.info("NOTE: Recommend enabling FMA and Vector API to work with optimize-mob-despawn.");
             }
         }

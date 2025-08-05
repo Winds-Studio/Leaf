@@ -12,7 +12,6 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.entity.EntityTickList;
 import org.bukkit.event.entity.EntityRemoveEvent;
-import org.dreeam.leaf.LeafBootstrap;
 
 import java.util.Map;
 import java.util.OptionalInt;
@@ -22,7 +21,7 @@ public final class DespawnMap {
     private static final double[] EMPTY_DOUBLES = {};
     private static final long[] EMPTY_LONGS = {};
     private static final int[] EMPTY_INTS = {};
-    static final boolean FMA = LeafBootstrap.enableFMA;
+    static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
     private static final boolean SIMD = SIMDDetection.isEnabled();
     private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.DOUBLE_VECTOR_LENGTH : 4;
     private static final int INITIAL_CAP = 8;
