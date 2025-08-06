@@ -5,7 +5,7 @@
 [![下载](https://img.shields.io/badge/releases-blue?label=%e4%b8%8b%e8%bd%bd&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/zh/download)⠀
 [![Github Actions 构建](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1218.yml?label=%e6%9e%84%e5%bb%ba&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 ![QQ](https://img.shields.io/badge/619278377-blue?label=QQ%e7%be%a4&style=for-the-badge&colorA=19201a&colorB=298046)
-[![文档](https://img.shields.io/badge/leafmc.one/zh/docs-blue?label=%e6%96%87%e6%a1%a3&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/zh/docs)
+[![文档](https://img.shields.io/badge/leafmc.one/zh/docs-blue?label=%e6%96%87%e6%a1%a3&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/zh/docs/getting-started)
 
 **Leaf** 是一个基于 [Paper](https://papermc.io/) 的分支，专为高自定义和高性能而设计。
 </div>
@@ -43,7 +43,7 @@
 从我们的 [官网](https://www.leafmc.one/zh/download) 下载 Leaf，或在 [GitHub Releases](https://github.com/Winds-Studio/Leaf/releases) 获取最新构建版本
 
 ## 📄 文档
-关于如何使用/配置 Leaf 的文档：[www.leafmc.one/zh/docs](https://www.leafmc.one/zh/docs)
+关于如何使用/配置 Leaf 的文档：[Leaf 文档](https://www.leafmc.one/zh/docs/getting-started)
 
 ## 📦 构建
 构建用于分发的 Paperclip JAR：

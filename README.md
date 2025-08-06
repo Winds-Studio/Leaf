@@ -4,7 +4,7 @@
 [![Download](https://img.shields.io/badge/releases-blue?label=download&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/download)⠀
 [![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-1218.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
-[![Docs](https://img.shields.io/badge/leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs)
+[![Docs](https://img.shields.io/badge/leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs/getting-started)
 
 **Leaf** is a [Paper](https://papermc.io/) fork designed to be customizable and high-performance.
 </div>
@@ -42,7 +42,7 @@ If you love our work, feel free to donate via our [Open Collective](https://open
 Download Leaf from our [Website](https://www.leafmc.one/download) or get latest build in [GitHub Releases](https://github.com/Winds-Studio/Leaf/releases)
 
 ## 📄 Documentation
-Documentation about how to use/configure Leaf: [www.leafmc.one/docs](https://www.leafmc.one/docs)
+Documentation about how to use/configure Leaf: [Leaf Docs](https://www.leafmc.one/docs/getting-started)
 
 ## 📦 Building
 Building a Paperclip JAR for distribution:
