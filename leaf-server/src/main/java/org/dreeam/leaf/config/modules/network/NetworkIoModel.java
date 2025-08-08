@@ -20,11 +20,13 @@ public class NetworkIoModel extends ConfigModules {
                 Available I/O model: IO_URING, EPOLL, NIO.
                 It will fallback to another if the one selected is not available,
                 IO_URING -> EPOLL -> NIO.
+                (This config overrides use-native-transport in server.properties)
                 """,
             """           
                 可用 I/O 模型: IO_URING, EPOLL, NIO.
-                如何选择的模型不可用, 将会自动切换到可用的模型,
+                如果所选的模型不可用, 将会自动切换到可用的模型,
                 IO_URING -> EPOLL -> NIO.
+                (此选项会覆盖 server.properties 内的 use-native-transport)
                 """));
 
         // Let the system choose suitable model
