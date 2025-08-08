@@ -3,6 +3,8 @@ package org.dreeam.leaf.config.modules.network;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 
+import java.util.Locale;
+
 public class NetworkIoModel extends ConfigModules {
 
     public String getBasePath() {
@@ -31,7 +33,7 @@ public class NetworkIoModel extends ConfigModules {
 
         // Let the system choose suitable model
         // And fallback to Nio if non-match
-        switch (model) {
+        switch (model.toUpperCase(Locale.ROOT)) {
             case "AUTO", "IO_URING" -> {
                 useIoUring = true;
                 useEpoll = true;
