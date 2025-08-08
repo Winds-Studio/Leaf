@@ -12,6 +12,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.entity.EntityTickList;
 import org.bukkit.event.entity.EntityRemoveEvent;
+import org.dreeam.leaf.util.PartialSort;
 
 import java.util.Map;
 import java.util.OptionalInt;
@@ -25,7 +26,6 @@ public final class DespawnMap {
     private static final boolean SIMD = SIMDDetection.isEnabled();
     private static final int LEAF_THRESHOLD = SIMD ? DespawnVectorAPI.DOUBLE_VECTOR_LENGTH : 4;
     private static final int INITIAL_CAP = 8;
-    private static final int INSERTION_SORT = 16;
     static final long LEAF = -1L;
     static final long AXIS_X = 0L;
     static final long AXIS_Y = 1L;
@@ -36,7 +36,7 @@ public final class DespawnMap {
     static final long SIGN_BIT = 0x8000_0000_0000_0000L;
 
     /// Stack for tree construction
-    private final Stack stack = new Stack(INITIAL_CAP);
+    private final Stack stack = new Stack();
     /// Stack for tree traversal
     private int[] search = EMPTY_INTS;
 
@@ -89,13 +89,9 @@ public final class DespawnMap {
         }
     }
 
-    private void build(double[] coordX, double[] coordY, double[] coordZ) {
+    private void build(double[] coordX, double[] coordY, double[] coordZ, int[] indices) {
         final double[][] map = {coordX, coordY, coordZ};
-        final int[] data = new int[coordX.length];
-        for (int i = 0; i < coordX.length; i++) {
-            data[i] = i;
-        }
-        stack.push(new Node(-1, false, 0, data.length, 0));
+        stack.push(new Node(-1, false, 0, indices.length, 0));
         while (!stack.isEmpty()) {
             grow();
 
@@ -111,17 +107,17 @@ public final class DespawnMap {
 
                 growBucket(len);
                 for (int i = offset, end = offset + len; i < end; i++) {
-                    bxl[bucketLen] = coordX[data[i]];
-                    byl[bucketLen] = coordY[data[i]];
-                    bzl[bucketLen] = coordZ[data[i]];
+                    bxl[bucketLen] = coordX[indices[i]];
+                    byl[bucketLen] = coordY[indices[i]];
+                    bzl[bucketLen] = coordZ[indices[i]];
                     bucketLen++;
                 }
             } else {
 
                 final int axis = depth % 3 == 0 ? (int) AXIS_X : depth % 3 == 1 ? (int) AXIS_Z : (int) AXIS_Y;
                 final int median = (len - 1) / 2;
-                quickSelect(data, map[axis], offset, offset + len - 1, offset + median);
-                final int pivot = data[offset + median];
+                PartialSort.nthElement(indices, map[axis], offset, offset + len - 1, offset + median);
+                final int pivot = indices[offset + median];
                 nsl[curr] = axis == AXIS_X ? coordX[pivot] : axis == AXIS_Y ? coordY[pivot] : coordZ[pivot];
                 nll[curr] = LEFT_MASK | RIGHT_MASK | (long) axis;
 
@@ -138,63 +134,10 @@ public final class DespawnMap {
                 }
             }
         }
-    }
 
-    private void insertionSort(int[] indices, double[] coord, int left, int right) {
-        for (int i = left + 1; i <= right; i++) {
-            int key = indices[i];
-            double val = coord[key];
-            int j = i - 1;
-
-            while (j >= left && coord[indices[j]] > val) {
-                indices[j + 1] = indices[j];
-                j--;
-            }
-            indices[j + 1] = key;
+        if (search.length < Math.max(64, nodeLen * 2)) {
+            search = new int[Math.max(64, nodeLen * 2)];
         }
-    }
-
-    private void quickSelect(int[] indices, double[] coord, int left, int right, int k) {
-        while (left < right) {
-            if (right - left < INSERTION_SORT) {
-                insertionSort(indices, coord, left, right);
-                return;
-            }
-            int mid = left + (right - left) / 2;
-            int a = indices[left], b = indices[mid], c = indices[right];
-            double va = coord[a], vb = coord[b], vc = coord[c];
-            int pivotIdx = (va < vb)
-                ? (vb < vc ? mid : (va < vc ? right : left))
-                : (va < vc ? left : (vb < vc ? right : mid));
-            swap(indices, pivotIdx, left);
-            double pivot = coord[indices[left]];
-
-            int i = left;
-            int j = right + 1;
-
-            while (true) {
-                while (++i <= right && coord[indices[i]] < pivot) ;
-                while (--j > left && coord[indices[j]] > pivot) ;
-                if (i >= j) break;
-                swap(indices, i, j);
-            }
-
-            swap(indices, left, j);
-            int p = j;
-            if (p == k) {
-                return;
-            } else if (k < p) {
-                right = p - 1;
-            } else {
-                left = p + 1;
-            }
-        }
-    }
-
-    private void swap(int[] a, int i, int j) {
-        int tmp = a[i];
-        a[i] = a[j];
-        a[j] = tmp;
     }
 
     private void reset() {
@@ -233,9 +176,6 @@ public final class DespawnMap {
     private double nearest(final double tx, final double ty, final double tz, double dist) {
         if (nodeLen == 0) {
             return Double.POSITIVE_INFINITY;
-        }
-        if (search.length < Math.max(64, nodeLen * 4)) {
-            search = new int[Math.max(64, nodeLen * 4)];
         }
         if (SIMD) {
             return DespawnVectorAPI.nearest(search, nsl, nll, nbl, bxl, byl, bzl, tx, ty, tz, dist);
@@ -289,12 +229,13 @@ public final class DespawnMap {
     }
 
     private static final class Stack {
+        private static final Node[] EMPTY = {};
 
         private Node[] a;
         private int i;
 
-        private Stack(int capacity) {
-            a = new Node[capacity];
+        private Stack() {
+            a = EMPTY;
             i = 0;
         }
 
@@ -314,30 +255,32 @@ public final class DespawnMap {
         }
 
         private void grow() {
-            Node[] b = new Node[a.length << 1];
+            int cap = a.length + 1;
+            Node[] b = new Node[Math.max(INITIAL_CAP, cap + (cap >> 1))];
             System.arraycopy(a, 0, b, 0, i);
             a = b;
         }
     }
 
     public void tick(ServerLevel world, EntityTickList entityTickList) {
-        final ServerPlayer[] playerArr = world.players().toArray(EMPTY_PLAYERS);
-        final ServerPlayer[] list = new ServerPlayer[playerArr.length];
-        int newSize = 0;
-        for (ServerPlayer player1 : playerArr) {
-            if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(player1)) {
-                list[newSize++] = player1;
+        final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
+        double[] pxl = new double[players.length];
+        double[] pyl = new double[players.length];
+        double[] pzl = new double[players.length];
+        int i = 0;
+        for (ServerPlayer p : players) {
+            if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(p)) {
+                pxl[i] = p.getX();
+                pyl[i] = p.getY();
+                pzl[i] = p.getZ();
+                i++;
             }
         }
-        double[] pxl = new double[newSize];
-        double[] pyl = new double[newSize];
-        double[] pzl = new double[newSize];
-        for (int i = 0; i < newSize; i++) {
-            pxl[i] = list[i].getX();
-            pyl[i] = list[i].getY();
-            pzl[i] = list[i].getZ();
+        final int[] indices = new int[i];
+        for (int j = 0; j < i; j++) {
+            indices[j] = j;
         }
-        build(pxl, pyl, pzl);
+        build(pxl, pyl, pzl, indices);
         entityTickList.forEach(Entity::leafCheckDespawn);
         reset();
     }
