@@ -1,5 +1,3 @@
-// Leaf - Bump netty to 4.2.x
-
 package org.dreeam.leaf;
 
 import java.util.Locale;
@@ -7,7 +5,7 @@ import java.util.Locale;
 public enum NetworkIoModel {
 
     IO_URING("io_uring"),
-    //KQUEUE("kqueue"),
+    KQUEUE("kqueue"),
     EPOLL("epoll"),
     NIO("nio");
 
@@ -25,7 +23,7 @@ public enum NetworkIoModel {
         if (name == null) return EPOLL;
         return switch (name.toLowerCase(Locale.ROOT)) {
             case "io_uring" -> IO_URING;
-            //case "kqueue" -> KQUEUE;
+            case "kqueue" -> KQUEUE;
             case "epoll" -> EPOLL;
             default -> NIO;
         };
@@ -36,7 +34,7 @@ public enum NetworkIoModel {
         if (name == null) return EPOLL;
         return switch (name.toLowerCase(Locale.ROOT)) {
             case "io_uring" -> IO_URING;
-            //case "kqueue" -> KQUEUE;
+            case "kqueue" -> KQUEUE;
             case "epoll" -> EPOLL;
             default -> NIO;
         };
