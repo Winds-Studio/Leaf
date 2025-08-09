@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Sat, 9 Aug 2025 18:12:11 +0900
+Subject: [PATCH] optimize checkInsideBlocks
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index e30b75166696b7dfe4f14cd660945136db42d927..64c69ce0e85f7dfbe9f0ad549260fdbd18cb8d78 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1743,8 +1743,6 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     private void checkInsideBlocks(Vec3 vec3, Vec3 vec31, InsideBlockEffectApplier.StepBasedCollector stepBasedCollector, LongSet set) {
+         final Level level = this.level();
+         AABB aabb = this.getBoundingBox().move(vec31.subtract(this.position())).deflate(1.0E-5F);
+-        final net.minecraft.world.level.chunk.ChunkAccess[] cachedChunk = { null };
+-        final long[] cachedChunkPos = { Long.MIN_VALUE };
+ 
+         BlockGetter.forEachBlockIntersectedBetween(
+             vec3,
+@@ -1754,30 +1752,20 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                 if (!this.isAlive()) {
+                     return false;
+                 } else {
+-                    final int chunkX = pos.getX() >> 4;
+-                    final int chunkZ = pos.getZ() >> 4;
+-                    final long currentChunkPos = ChunkPos.asLong(chunkX, chunkZ);
+-                    BlockState blockState;
+-
+-                    if (cachedChunkPos[0] != currentChunkPos) {cachedChunk[0] = level.getChunkIfLoaded(chunkX, chunkZ);cachedChunkPos[0] = currentChunkPos;}
+-
+-                    if (cachedChunk[0] != null) {blockState = cachedChunk[0].getBlockState(pos);
+-                    } else {
+-                        blockState = level.getBlockStateIfLoaded(pos);
+-                        if (blockState == null) {blockState = Blocks.AIR.defaultBlockState();}
+-                    }
+-
+-                    final long posLong = pos.asLong();
++                    final int posX = pos.getX();
++                    final int posY = pos.getY();
++                    final int posZ = pos.getZ();
++                    BlockState blockState = level.getBlockStateIfLoadedUnchecked(posX, posY, posZ);
++                    if (blockState == null) { blockState = level.getBlockState(pos); }
+                     if (blockState.isAir()) {
+                         this.debugBlockIntersection(pos, false, false);
+                         return true;
+-                    } else if (!set.add(posLong)) {
++                    } else if (!set.add(BlockPos.asLong(posX, posY, posZ))) {
+                         return true;
+                     } else {
+                         VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
+                         boolean flag = entityInsideCollisionShape == Shapes.block()
+                             || this.collidedWithShapeMovingFrom(vec3, vec31, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
+-
+                         if (flag) {
+                             try {
+                                 stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+@@ -1786,19 +1774,23 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                             } catch (Throwable var14) {
+                                 CrashReport crashReport = CrashReport.forThrowable(var14, "Colliding entity with block");
+                                 CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
+-                                CrashReportCategory.populateBlockDetails(crashReportCategory, level, pos, blockState);
++                                CrashReportCategory.populateBlockDetails(crashReportCategory, this.level(), pos, blockState);
+                                 CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
+                                 this.fillCrashReportCategory(crashReportCategory1);
+                                 throw new ReportedException(crashReport);
+                             }
+                         }
+ 
+-                        final FluidState fluidState = blockState.getFluidState();
+-                        boolean flag1 = !fluidState.isEmpty() && this.collidedWithFluid(fluidState, pos, vec3, vec31);
+-
+-                        if (flag1) {
+-                            stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                            fluidState.entityInside(level, pos, this, stepBasedCollector);
++                        boolean flag1;
++                        if ((blockState.tagFlag & org.dreeam.leaf.util.BlockMasks.FLUID) != 0) {
++                            FluidState fluidState = blockState.getFluidState();
++                            flag1 = this.collidedWithFluid(fluidState, pos, vec3, vec31);
++                            if (flag1) {
++                                stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
++                                fluidState.entityInside(level, pos, this, stepBasedCollector);
++                            }
++                        } else {
++                            flag1 = false;
+                         }
+ 
+                         this.debugBlockIntersection(pos, flag, flag1);
