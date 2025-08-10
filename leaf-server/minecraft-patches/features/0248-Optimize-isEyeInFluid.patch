@@ -5,19 +5,10 @@ Subject: [PATCH] Optimize isEyeInFluid
 
 
 diff --git a/net/minecraft/core/Holder.java b/net/minecraft/core/Holder.java
-index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32ca294673 100644
+index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..f50e9d26edeec7d8571eea012f8afaad60f03b26 100644
 --- a/net/minecraft/core/Holder.java
 +++ b/net/minecraft/core/Holder.java
-@@ -29,6 +29,8 @@ public interface Holder<T> {
- 
-     Stream<TagKey<T>> tags();
- 
-+    TagKey<T>[] tagArray(); // Leaf - Optimize isEyeInFluid
-+
-     Either<ResourceKey<T>, T> unwrap();
- 
-     Optional<ResourceKey<T>> unwrapKey();
-@@ -105,6 +107,13 @@ public interface Holder<T> {
+@@ -105,6 +105,13 @@ public interface Holder<T> {
          public Stream<TagKey<T>> tags() {
              return Stream.of();
          }
@@ -31,7 +22,7 @@ index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32
      }
  
      public static enum Kind {
-@@ -116,6 +125,7 @@ public interface Holder<T> {
+@@ -116,6 +123,7 @@ public interface Holder<T> {
          private final HolderOwner<T> owner;
          @Nullable
          private Set<TagKey<T>> tags;
@@ -39,7 +30,7 @@ index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32
          private final Holder.Reference.Type type;
          @Nullable
          private ResourceKey<T> key;
-@@ -173,6 +183,16 @@ public interface Holder<T> {
+@@ -173,6 +181,16 @@ public interface Holder<T> {
              }
          }
  
@@ -56,7 +47,7 @@ index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32
          @Override
          public boolean is(TagKey<T> tagKey) {
              return this.boundTags().contains(tagKey);
-@@ -231,6 +251,7 @@ public interface Holder<T> {
+@@ -231,6 +249,7 @@ public interface Holder<T> {
  
          void bindTags(Collection<TagKey<T>> tags) {
              this.tags = it.unimi.dsi.fastutil.objects.ReferenceSets.unmodifiable(new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(tags)); // Paper - use reference set because TagKey are interned
@@ -64,7 +55,7 @@ index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32
          }
  
          @Override
-@@ -238,6 +259,13 @@ public interface Holder<T> {
+@@ -238,6 +257,13 @@ public interface Holder<T> {
              return this.boundTags().stream();
          }
  
@@ -92,7 +83,7 @@ index f2ec8dafb133999bed21eb48b118ab5d382bc962..a26943a7c70ac8b8eb3be5cd1f9838e4
                  if (rounded > 0) {
                      this.awardStat(Stats.WALK_UNDER_WATER_ONE_CM, rounded);
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 078b194a3e916edabc577debd425298dd7f8d75c..09dfc36c4491ad6b7e959be678e1d15c48969d04 100644
+index 078b194a3e916edabc577debd425298dd7f8d75c..eb5e51a7d9aa270f55fdfbff5eb16fa05c80b284 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -288,7 +288,14 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
@@ -122,19 +113,18 @@ index 078b194a3e916edabc577debd425298dd7f8d75c..09dfc36c4491ad6b7e959be678e1d15c
          double eyeY = this.getEyeY();
          if (!(
              this.getVehicle() instanceof AbstractBoat abstractBoat
-@@ -2084,7 +2091,10 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -2084,7 +2091,9 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
              FluidState fluidState = this.level().getFluidState(blockPos);
              double d = blockPos.getY() + fluidState.getHeight(this.level(), blockPos);
              if (d > eyeY) {
 -                fluidState.getTags().forEach(this.fluidOnEyes::add);
 +                // Leaf start - Optimize isEyeInFluid
-+                TagKey<Fluid>[] tags = fluidState.getTagArray();
-+                this.isInWaterOrLava = tags.length == 0 ? 0 : tags[0] == FluidTags.WATER ? 1 : 2;
++                this.isInWaterOrLava = fluidState.isEmpty() ? 0 : fluidState.is(FluidTags.WATER) ? 1 : 2;
 +                // Leaf end - Optimize isEyeInFluid
              }
          }
      }
-@@ -2164,9 +2174,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -2164,9 +2173,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
          }
      }
  
@@ -297,20 +287,3 @@ index d947801b616af5b5dcdcc8bb70b36f97d6a69fdd..678badf7622b81e94c973bed2082fbfa
      }
  
      protected int getMaxPassengers() {
-diff --git a/net/minecraft/world/level/material/FluidState.java b/net/minecraft/world/level/material/FluidState.java
-index 0a5ae623a636923f3bbd3c01974497f39b7c4b62..cc6f2f756c407630aa4e99be329f643c9994af29 100644
---- a/net/minecraft/world/level/material/FluidState.java
-+++ b/net/minecraft/world/level/material/FluidState.java
-@@ -167,6 +167,12 @@ public final class FluidState extends StateHolder<Fluid, FluidState> implements
-         return this.owner.builtInRegistryHolder().tags();
-     }
- 
-+    // Leaf start - Optimize isEyeInFluid
-+    public TagKey<Fluid>[] getTagArray() {
-+        return this.owner.builtInRegistryHolder().tagArray();
-+    }
-+    // Leaf end - Optimize isEyeInFluid
-+
-     public void entityInside(Level level, BlockPos pos, Entity entity, InsideBlockEffectApplier effectApplier) {
-         this.getType().entityInside(level, pos, entity, effectApplier);
-     }
