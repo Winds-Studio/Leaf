@@ -286,9 +286,10 @@ public final class DespawnMap {
     }
 
     public void checkDespawn(Mob mob) {
-        final double x = mob.getX();
-        final double y = mob.getY();
-        final double z = mob.getZ();
+        net.minecraft.world.phys.Vec3 vec3 = mob.position();
+        final double x = vec3.x;
+        final double y = vec3.y;
+        final double z = vec3.z;
         final int i = mob.getType().getCategory().ordinal();
         final double dist = nearest(x, y, z, hard[i]);
         if (dist == Double.POSITIVE_INFINITY) {
