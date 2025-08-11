@@ -1,0 +1,212 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Tue, 3 Jun 2025 15:20:40 +0900
+Subject: [PATCH] cache getBiome
+
+
+diff --git a/net/minecraft/advancements/critereon/LocationPredicate.java b/net/minecraft/advancements/critereon/LocationPredicate.java
+index a26a5311f87873e0d4d26fda9cb8956a32ee81e8..7ba5c85bbce8528a4df072e63948673300630a9d 100644
+--- a/net/minecraft/advancements/critereon/LocationPredicate.java
++++ b/net/minecraft/advancements/critereon/LocationPredicate.java
+@@ -49,7 +49,7 @@ public record LocationPredicate(
+         } else {
+             BlockPos blockPos = BlockPos.containing(x, y, z);
+             boolean isLoaded = level.isLoaded(blockPos);
+-            return (!this.biomes.isPresent() || isLoaded && this.biomes.get().contains(level.getBiome(blockPos)))
++            return (!this.biomes.isPresent() || isLoaded && this.biomes.get().contains(org.dreeam.leaf.config.modules.opt.OptimizeBiome.advancement ? level.getBiomeCached(null, blockPos) : level.getBiome(blockPos))) // Leaf - cache getBiome
+                 && (!this.structures.isPresent() || isLoaded && level.structureManager().getStructureWithPieceAt(blockPos, this.structures.get()).isValid())
+                 && (!this.smokey.isPresent() || isLoaded && this.smokey.get() == CampfireBlock.isSmokeyPos(level, blockPos))
+                 && (!this.light.isPresent() || this.light.get().matches(level, blockPos))
+diff --git a/net/minecraft/world/level/LevelReader.java b/net/minecraft/world/level/LevelReader.java
+index 0842fd6488c8b27d98c4344e1244996b4c0e9912..55c7f7486c293d4434b7e3facdbef034d105aa19 100644
+--- a/net/minecraft/world/level/LevelReader.java
++++ b/net/minecraft/world/level/LevelReader.java
+@@ -57,6 +57,12 @@ public interface LevelReader extends ca.spottedleaf.moonrise.patches.chunk_syste
+         return this.getBiomeManager().getBiome(pos);
+     }
+ 
++    // Leaf start - cache getBiome
++    default Holder<Biome> getBiomeCached(@Nullable net.minecraft.world.level.chunk.LevelChunk chunk, BlockPos pos) {
++        return this.getBiomeManager().getBiomeCached(chunk, pos);
++    }
++    // Leaf end - cache getBiome
++
+     default Stream<BlockState> getBlockStatesIfLoaded(AABB aabb) {
+         int floor = Mth.floor(aabb.minX);
+         int floor1 = Mth.floor(aabb.maxX);
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index 838146e997a2033c3d2a96602a252178093d263e..bb655318f49242858e2c25d5469705c0c314ed85 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -443,7 +443,7 @@ public final class NaturalSpawner {
+     private static Optional<MobSpawnSettings.SpawnerData> getRandomSpawnMobAt(
+         ServerLevel level, StructureManager structureManager, ChunkGenerator generator, MobCategory category, RandomSource random, BlockPos pos
+     ) {
+-        Holder<Biome> biome = level.getBiome(pos);
++        Holder<Biome> biome = org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(null, pos) : level.getBiome(pos); // Leaf - cache getBiome
+         return category == MobCategory.WATER_AMBIENT && biome.is(BiomeTags.REDUCED_WATER_AMBIENT_SPAWNS) && random.nextFloat() < 0.98F
+             ? Optional.empty()
+             : mobsAt(level, structureManager, generator, category, pos, biome).getRandom(random);
+@@ -460,7 +460,7 @@ public final class NaturalSpawner {
+     ) {
+         return isInNetherFortressBounds(pos, level, cetagory, structureManager)
+             ? NetherFortressStructure.FORTRESS_ENEMIES
+-            : generator.getMobsAt(biome != null ? biome : level.getBiome(pos), structureManager, cetagory, pos);
++            : generator.getMobsAt(biome != null ? biome : (org.dreeam.leaf.config.modules.opt.OptimizeBiome.mobSpawn ? level.getBiomeCached(null, pos) : level.getBiome(pos)), structureManager, cetagory, pos); // Leaf - cache getBiome
+     }
+ 
+     public static boolean isInNetherFortressBounds(BlockPos pos, ServerLevel level, MobCategory category, StructureManager structureManager) {
+diff --git a/net/minecraft/world/level/biome/BiomeManager.java b/net/minecraft/world/level/biome/BiomeManager.java
+index a48175a7ebb1788ace46395621ed78d910178a53..b8a0fa20101fa3831e34494fd56690343ff8d57e 100644
+--- a/net/minecraft/world/level/biome/BiomeManager.java
++++ b/net/minecraft/world/level/biome/BiomeManager.java
+@@ -15,10 +15,23 @@ public class BiomeManager {
+     private final BiomeManager.NoiseBiomeSource noiseBiomeSource;
+     private final long biomeZoomSeed;
+     private static final double maxOffset = 0.4500000001D; // Leaf - Carpet-Fixes - Optimized getBiome method
++    // Leaf start - cache getBiome
++    private final Holder<Biome>[] biomeCache;
++    private final long[] biomeCachePos;
++    // Leaf end - cache getBiome
+ 
+     public BiomeManager(BiomeManager.NoiseBiomeSource noiseBiomeSource, long biomeZoomSeed) {
+         this.noiseBiomeSource = noiseBiomeSource;
+         this.biomeZoomSeed = biomeZoomSeed;
++        // Leaf start - cache getBiome
++        if (org.dreeam.leaf.config.modules.opt.OptimizeBiome.enabled && noiseBiomeSource instanceof net.minecraft.world.level.Level) {
++            biomeCache = new Holder[65536];
++            biomeCachePos = new long[65536];
++        } else {
++            biomeCache = null;
++            biomeCachePos = null;
++        }
++        // Leaf end - cache getBiome
+     }
+ 
+     public static long obfuscateSeed(long seed) {
+@@ -29,6 +42,105 @@ public class BiomeManager {
+         return new BiomeManager(newSource, this.biomeZoomSeed);
+     }
+ 
++    // Leaf start - cache getBiome
++    public Holder<Biome> getBiomeCached(@org.jetbrains.annotations.Nullable net.minecraft.world.level.chunk.LevelChunk chunk, BlockPos pos) {
++        if (biomeCache == null) {
++            return getBiome(pos);
++        }
++        int xMinus2 = pos.getX() - 2;
++        int yMinus2 = pos.getY() - 2;
++        int zMinus2 = pos.getZ() - 2;
++        int x = xMinus2 >> 2;
++        int y = yMinus2 >> 2;
++        int z = zMinus2 >> 2;
++        long packedPos = BlockPos.asLong(x, y, z);
++        long hash = packedPos;
++        hash = (hash ^ (hash >>> 32)) * 0xff51afd7ed558ccdL;
++        hash = (hash ^ (hash >>> 32)) * 0xc4ceb9fe1a85ec53L;
++        hash = (hash ^ (hash >>> 32)) & 65535L;
++
++        long pos1 = biomeCachePos[(int) hash];
++        if (pos1 == packedPos) {
++            Holder<Biome> biome = biomeCache[(int) hash];
++            if (biome != null) {
++                return biome;
++            }
++        }
++
++        Holder<Biome> biome = getBiomeCachedChunk(chunk, pos);
++
++        biomeCache[(int) hash] = biome;
++        biomeCachePos[(int) hash] = packedPos;
++
++        return biome;
++    }
++    private Holder<Biome> getBiomeCachedChunk(@org.jetbrains.annotations.Nullable net.minecraft.world.level.chunk.LevelChunk chunk, BlockPos pos) {
++        // Leaf start - Carpet-Fixes - Optimized getBiome method
++        int xMinus2 = pos.getX() - 2;
++        int yMinus2 = pos.getY() - 2;
++        int zMinus2 = pos.getZ() - 2;
++        int x = xMinus2 >> 2; // BlockPos to BiomePos
++        int y = yMinus2 >> 2;
++        int z = zMinus2 >> 2;
++        double quartX = (double) (xMinus2 & 3) / 4.0; // quartLocal divided by 4
++        double quartY = (double) (yMinus2 & 3) / 4.0; // 0/4, 1/4, 2/4, 3/4
++        double quartZ = (double) (zMinus2 & 3) / 4.0; // [0, 0.25, 0.5, 0.75]
++        int smallestX = 0;
++        double smallestDist = Double.POSITIVE_INFINITY;
++        for (int biomeX = 0; biomeX < 8; ++biomeX) {
++            boolean everyOtherQuad = (biomeX & 4) == 0; // 1 1 1 1 0 0 0 0
++            boolean everyOtherPair = (biomeX & 2) == 0; // 1 1 0 0 1 1 0 0
++            boolean everyOther = (biomeX & 1) == 0; // 1 0 1 0 1 0 1 0
++            double quartXX = everyOtherQuad ? quartX : quartX - 1.0; //[-1.0,-0.75,-0.5,-0.25,0.0,0.25,0.5,0.75]
++            double quartYY = everyOtherPair ? quartY : quartY - 1.0;
++            double quartZZ = everyOther ? quartZ : quartZ - 1.0;
++
++            //This code block is new
++            double maxQuartYY = 0.0, maxQuartZZ = 0.0;
++            if (biomeX != 0) {
++                maxQuartYY = Mth.square(Math.max(quartYY + maxOffset, Math.abs(quartYY - maxOffset)));
++                maxQuartZZ = Mth.square(Math.max(quartZZ + maxOffset, Math.abs(quartZZ - maxOffset)));
++                double maxQuartXX = Mth.square(Math.max(quartXX + maxOffset, Math.abs(quartXX - maxOffset)));
++                if (smallestDist < maxQuartXX + maxQuartYY + maxQuartZZ) continue;
++            }
++            int xx = everyOtherQuad ? x : x + 1;
++            int yy = everyOtherPair ? y : y + 1;
++            int zz = everyOther ? z : z + 1;
++
++            //I transferred the code from method_38106 to here, so I could call continue halfway through
++            long seed = LinearCongruentialGenerator.next(this.biomeZoomSeed, xx);
++            seed = LinearCongruentialGenerator.next(seed, yy);
++            seed = LinearCongruentialGenerator.next(seed, zz);
++            seed = LinearCongruentialGenerator.next(seed, xx);
++            seed = LinearCongruentialGenerator.next(seed, yy);
++            seed = LinearCongruentialGenerator.next(seed, zz);
++            double offsetX = getFiddle(seed);
++            double sqrX = Mth.square(quartXX + offsetX);
++            if (biomeX != 0 && smallestDist < sqrX + maxQuartYY + maxQuartZZ) continue; //skip the rest of the loop
++            seed = LinearCongruentialGenerator.next(seed, this.biomeZoomSeed);
++            double offsetY = getFiddle(seed);
++            double sqrY = Mth.square(quartYY + offsetY);
++            if (biomeX != 0 && smallestDist < sqrX + sqrY + maxQuartZZ) continue; // skip the rest of the loop
++            seed = LinearCongruentialGenerator.next(seed, this.biomeZoomSeed);
++            double offsetZ = getFiddle(seed);
++            double biomeDist = sqrX + sqrY + Mth.square(quartZZ + offsetZ);
++
++            if (smallestDist > biomeDist) {
++                smallestX = biomeX;
++                smallestDist = biomeDist;
++            }
++        }
++        int x1 = (smallestX & 4) == 0 ? x : x + 1;
++        int y1 = (smallestX & 2) == 0 ? y : y + 1;
++        int z1 =  (smallestX & 1) == 0 ? z : z + 1;
++        if (chunk != null && chunk.locX == x >> 2 && chunk.locZ == z >> 2) {
++            return chunk.getNoiseBiome(x1, y1, z1);
++        }
++        return this.noiseBiomeSource.getNoiseBiome(x1, y1, z1);
++        // Leaf end - Carpet-Fixes - Optimized getBiome method
++    }
++    // Leaf end - cache getBiome
++
+     public Holder<Biome> getBiome(BlockPos pos) {
+         // Leaf start - Carpet-Fixes - Optimized getBiome method
+         int xMinus2 = pos.getX() - 2;
+@@ -126,9 +238,18 @@ public class BiomeManager {
+         return Mth.square(zNoise + fiddle2) + Mth.square(yNoise + fiddle1) + Mth.square(xNoise + fiddle);
+     }
+ 
++    // Leaf start - optimise getBiome
++    private static final double[] FIDDLE_TABLE = new double[1024];
++    static {
++        for (int i = 0; i < 1024; i++) {
++            FIDDLE_TABLE[i] = (i - 512) * (0.9 / 1024.0);
++        }
++    }
+     private static double getFiddle(long seed) {
+-        return (double)(((seed >> 24) & (1024 - 1)) - (1024/2)) * (0.9 / 1024.0); // Paper - avoid floorMod, fp division, and fp subtraction
++        return FIDDLE_TABLE[(int)(seed >>> 24) & 1023];
++        //return (double)(((seed >> 24) & (1024 - 1)) - (1024/2)) * (0.9 / 1024.0); // Paper - avoid floorMod, fp division, and fp subtraction
+     }
++    // Leaf end - optimise getBiome
+ 
+     public interface NoiseBiomeSource {
+         Holder<Biome> getNoiseBiome(int x, int y, int z);
