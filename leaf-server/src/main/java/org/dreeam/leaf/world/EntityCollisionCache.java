@@ -17,8 +17,5 @@ public record EntityCollisionCache(
         potentialCollisionsVoxel.clear();
         potentialCollisionsBB.clear();
         entityAABBs.clear();
-        potentialCollisionsVoxel.trim(32);
-        potentialCollisionsBB.trim(32);
-        entityAABBs.trim(32);
     }
 }

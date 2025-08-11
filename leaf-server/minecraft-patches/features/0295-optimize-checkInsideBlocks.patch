@@ -5,10 +5,10 @@ Subject: [PATCH] optimize checkInsideBlocks
 
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index ee19b94b894c5098c0452edd8fa3dccc428813cb..80987057a52011146c80df14a51f001ceb31956b 100644
+index ee19b94b894c5098c0452edd8fa3dccc428813cb..5e2011a8ad6a91e30d02d74781af1e38a235567e 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -1788,10 +1788,9 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -1788,68 +1788,53 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
      private void checkInsideBlocks(Vec3 vec3, Vec3 vec31, InsideBlockEffectApplier.StepBasedCollector stepBasedCollector, LongSet set) {
          final Level level = this.level();
          AABB aabb = this.getBoundingBox().move(vec31.subtract(this.position())).deflate(1.0E-5F);
@@ -21,10 +21,21 @@ index ee19b94b894c5098c0452edd8fa3dccc428813cb..80987057a52011146c80df14a51f001c
              vec3,
              vec31,
              aabb,
-@@ -1799,30 +1798,18 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+             (pos, index) -> {
++                final int posX = pos.getX();
++                final int posY = pos.getY();
++                final int posZ = pos.getZ();
++                BlockState blockState = level.getBlockStateIfLoadedUnchecked(posX, posY, posZ);
++                if (blockState == null) {
++                    blockState = level.getBlockState(pos);
++                }
++                if (blockState.isAir()) {
++                    this.debugBlockIntersection(pos, false, false);
++                    return true;
++                }
                  if (!this.isAlive()) {
                      return false;
-                 } else {
+-                } else {
 -                    final int chunkX = pos.getX() >> 4;
 -                    final int chunkZ = pos.getZ() >> 4;
 -                    final long currentChunkPos = ChunkPos.asLong(chunkX, chunkZ);
@@ -36,72 +47,184 @@ index ee19b94b894c5098c0452edd8fa3dccc428813cb..80987057a52011146c80df14a51f001c
 -                    } else {
 -                        blockState = level.getBlockStateIfLoaded(pos);
 -                        if (blockState == null) {blockState = Blocks.AIR.defaultBlockState();}
--                    }
--
++                }
++                VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
++                boolean flag = entityInsideCollisionShape == Shapes.block()
++                    || this.collidedWithShapeMovingFrom(vec3, vec31, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
++                if (flag) {
++                    try {
++                        stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
++                        blockState.entityInside(level, pos, this, stepBasedCollector);
++                        this.onInsideBlock(blockState);
++                    } catch (Throwable var14) {
++                        CrashReport crashReport = CrashReport.forThrowable(var14, "Colliding entity with block");
++                        CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
++                        CrashReportCategory.populateBlockDetails(crashReportCategory, level, pos, blockState);
++                        CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
++                        this.fillCrashReportCategory(crashReportCategory1);
++                        throw new ReportedException(crashReport);
+                     }
++                }
+ 
 -                    final long posLong = pos.asLong();
-+                    final int posX = pos.getX();
-+                    final int posY = pos.getY();
-+                    final int posZ = pos.getZ();
-+                    BlockState blockState = level.getBlockStateIfLoadedUnchecked(posX, posY, posZ);
-+                    if (blockState == null) { blockState = level.getBlockState(pos); }
-                     if (blockState.isAir()) {
-                         this.debugBlockIntersection(pos, false, false);
-                         return true;
+-                    if (blockState.isAir()) {
+-                        this.debugBlockIntersection(pos, false, false);
+-                        return true;
 -                    } else if (!set.add(posLong)) {
 -                        return true;
-                     } else {
-                         VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
-                         boolean flag = entityInsideCollisionShape == Shapes.block()
-                             || this.collidedWithShapeMovingFrom(vec3, vec31, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
+-                    } else {
+-                        VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
+-                        boolean flag = entityInsideCollisionShape == Shapes.block()
+-                            || this.collidedWithShapeMovingFrom(vec3, vec31, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
 -
-                         if (flag) {
-                             try {
-                                 stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
-@@ -1831,19 +1818,23 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
-                             } catch (Throwable var14) {
-                                 CrashReport crashReport = CrashReport.forThrowable(var14, "Colliding entity with block");
-                                 CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
+-                        if (flag) {
+-                            try {
+-                                stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                                blockState.entityInside(level, pos, this, stepBasedCollector);
+-                                this.onInsideBlock(blockState);
+-                            } catch (Throwable var14) {
+-                                CrashReport crashReport = CrashReport.forThrowable(var14, "Colliding entity with block");
+-                                CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
 -                                CrashReportCategory.populateBlockDetails(crashReportCategory, level, pos, blockState);
-+                                CrashReportCategory.populateBlockDetails(crashReportCategory, this.level(), pos, blockState);
-                                 CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
-                                 this.fillCrashReportCategory(crashReportCategory1);
-                                 throw new ReportedException(crashReport);
-                             }
-                         }
- 
+-                                CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
+-                                this.fillCrashReportCategory(crashReportCategory1);
+-                                throw new ReportedException(crashReport);
+-                            }
+-                        }
+-
 -                        final FluidState fluidState = blockState.getFluidState();
 -                        boolean flag1 = !fluidState.isEmpty() && this.collidedWithFluid(fluidState, pos, vec3, vec31);
 -
 -                        if (flag1) {
 -                            stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
 -                            fluidState.entityInside(level, pos, this, stepBasedCollector);
-+                        boolean flag1;
-+                        if ((blockState.tagFlag & org.dreeam.leaf.util.BlockMasks.FLUID) != 0) {
-+                            FluidState fluidState = blockState.getFluidState();
-+                            flag1 = this.collidedWithFluid(fluidState, pos, vec3, vec31);
-+                            if (flag1) {
-+                                stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
-+                                fluidState.entityInside(level, pos, this, stepBasedCollector);
-+                            }
-+                        } else {
-+                            flag1 = false;
-                         }
+-                        }
+-
+-                        this.debugBlockIntersection(pos, flag, flag1);
+-                        return true;
+-                    }
++                boolean flag1 = (blockState.tagFlag & org.dreeam.leaf.util.BlockMasks.FLUID) != 0
++                    && this.collidedWithFluid(blockState.getFluidState(), pos, vec3, vec31);
++                if (flag1) {
++                    stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
++                    blockState.getFluidState().entityInside(level, pos, this, stepBasedCollector);
+                 }
++                this.debugBlockIntersection(pos, flag, flag1);
++                return true;
+             }
+         );
+     }
+diff --git a/net/minecraft/world/entity/InsideBlockEffectApplier.java b/net/minecraft/world/entity/InsideBlockEffectApplier.java
+index 92b9c324cb6aab415abe2e77c5844b74c251a42f..43543c87c34413a11d44bb83d89794773d7cdc6a 100644
+--- a/net/minecraft/world/entity/InsideBlockEffectApplier.java
++++ b/net/minecraft/world/entity/InsideBlockEffectApplier.java
+@@ -33,6 +33,7 @@ public interface InsideBlockEffectApplier {
+         // Leaf start - optimize checkInsideBlocks calls
+         private static final InsideBlockEffectType[] APPLY_ORDER = InsideBlockEffectType.values();
+         private static final int NO_STEP = -1;
++        private int flags = 0;
  
-                         this.debugBlockIntersection(pos, flag, flag1);
+         private final Consumer<Entity>[] effectsInStep = new Consumer[APPLY_ORDER.length];
+         private final List<Consumer<Entity>>[] beforeEffectsInStep = new List[APPLY_ORDER.length];
+@@ -40,13 +41,13 @@ public interface InsideBlockEffectApplier {
+ 
+         private static final List<Consumer<Entity>> EMPTY_LIST = List.of();
+ 
+-        private final List<Consumer<Entity>> finalEffects = new ArrayList<>();
++        private final List<Consumer<Entity>> finalEffects = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
+         private int lastStep = -1;
+ 
+         public StepBasedCollector() {
+             for (int i = 0; i < APPLY_ORDER.length; i++) {
+-                beforeEffectsInStep[i] = new ArrayList<>(2);
+-                afterEffectsInStep[i] = new ArrayList<>(2);
++                beforeEffectsInStep[i] = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(2);
++                afterEffectsInStep[i] = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(2);
+             }
+         }
+ 
+@@ -105,8 +106,12 @@ public interface InsideBlockEffectApplier {
+             final Consumer<Entity>[] effectArr = this.effectsInStep;
+             final List<Consumer<Entity>>[] afterArr = this.afterEffectsInStep;
+             final List<Consumer<Entity>> finalList = this.finalEffects;
++            final int flags = this.flags;
+ 
+             for (int i = 0; i < len; i++) {
++                if (((1 << i) & flags) == 0) {
++                    continue;
++                }
+                 // Process before effects
+                 List<Consumer<Entity>> beforeList = beforeArr[i];
+                 if (!beforeList.isEmpty()) {
+@@ -128,21 +133,28 @@ public interface InsideBlockEffectApplier {
+                     afterList.clear();
+                 }
+             }
++            this.flags = 0;
+         }
+ 
+         @Override
+         public void apply(InsideBlockEffectType type) {
+-            effectsInStep[type.ordinal()] = recorded(type);
++            int i = type.ordinal();
++            effectsInStep[i] = recorded(type);
++            this.flags |= 1 << i;
+         }
+ 
+         @Override
+         public void runBefore(InsideBlockEffectType type, Consumer<Entity> effect) {
+-            beforeEffectsInStep[type.ordinal()].add(effect);
++            int i = type.ordinal();
++            beforeEffectsInStep[i].add(effect);
++            this.flags |= 1 << i;
+         }
+ 
+         @Override
+         public void runAfter(InsideBlockEffectType type, Consumer<Entity> effect) {
+-            afterEffectsInStep[type.ordinal()].add(effect);
++            int i = type.ordinal();
++            afterEffectsInStep[i].add(effect);
++            this.flags |= 1 << i;
+         }
+ 
+         // Paper start - track position inside effect was triggered on
 diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
-index 2146efa860d8323a88f3ad365c0cdb66de42154a..74e460e09e88bbe5c15583332ea3f505e550c459 100644
+index 2146efa860d8323a88f3ad365c0cdb66de42154a..ad6e061b17279791be4accf2e10e5b5a723d9fa8 100644
 --- a/net/minecraft/world/level/BlockGetter.java
 +++ b/net/minecraft/world/level/BlockGetter.java
-@@ -241,6 +241,36 @@ public interface BlockGetter extends LevelHeightAccessor {
+@@ -241,6 +241,81 @@ public interface BlockGetter extends LevelHeightAccessor {
          }
      }
  
 +    // Leaf start
 +    static boolean leaf$forEachBlockIntersectedBetween(it.unimi.dsi.fastutil.longs.LongSet set, Vec3 from, Vec3 to, AABB boundingBox, BlockGetter.BlockStepVisitor visitor) {
 +        Vec3 vec3 = to.subtract(from);
++        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 +        if (vec3.lengthSqr() < Mth.square(0.99999F)) {
-+            for (BlockPos blockPos : BlockPos.betweenClosed(boundingBox)) {
-+                if (set.add(blockPos.asLong()) && !visitor.visit(blockPos, 0)) {
++            int pos1x = Mth.floor(boundingBox.minX);
++            int pos1y = Mth.floor(boundingBox.minY);
++            int pos1z = Mth.floor(boundingBox.minZ);
++            int pos2x = Mth.floor(boundingBox.maxX);
++            int pos2y = Mth.floor(boundingBox.maxY);
++            int pos2z = Mth.floor(boundingBox.maxZ);
++            int x1 = Math.min(pos1x, pos2x);
++            int y1 = Math.min(pos1y, pos2y);
++            int z1 = Math.min(pos1z, pos2z);
++            int i = Math.max(pos1x, pos2x) - x1 + 1;
++            int i1 = Math.max(pos1y, pos2y) - y1 + 1;
++            int i2 = Math.max(pos1z, pos2z) - z1 + 1;
++            int i3 = i * i1 * i2;
++            int index = 0;
++            while (index != i3) {
++                int i4 = index % i;
++                int i5 = index / i;
++                int i6 = i5 % i1;
++                int i7 = i5 / i1;
++                index++;
++                int x0 = x1 + i4;
++                int y0 = y1 + i6;
++                int z0 = z1 + i7;
++                if (set.add(BlockPos.asLong(x0, y0, z0)) && !visitor.visit(cursor.set(x0, y0, z0), 0)) {
 +                    return false;
 +                }
 +            }
@@ -114,8 +237,30 @@ index 2146efa860d8323a88f3ad365c0cdb66de42154a..74e460e09e88bbe5c15583332ea3f505
 +            if (i < 0) {
 +                return false;
 +            } else {
-+                for (BlockPos blockPos1 : BlockPos.betweenClosed(boundingBox)) {
-+                    if (set.add(blockPos1.asLong()) && !visitor.visit(blockPos1, i + 1)) {
++                int pos1x = Mth.floor(boundingBox.minX);
++                int pos1y = Mth.floor(boundingBox.minY);
++                int pos1z = Mth.floor(boundingBox.minZ);
++                int pos2x = Mth.floor(boundingBox.maxX);
++                int pos2y = Mth.floor(boundingBox.maxY);
++                int pos2z = Mth.floor(boundingBox.maxZ);
++                int x1 = Math.min(pos1x, pos2x);
++                int y1 = Math.min(pos1y, pos2y);
++                int z1 = Math.min(pos1z, pos2z);
++                int j = Math.max(pos1x, pos2x) - x1 + 1;
++                int i1 = Math.max(pos1y, pos2y) - y1 + 1;
++                int i2 = Math.max(pos1z, pos2z) - z1 + 1;
++                int i3 = j * i1 * i2;
++                int index = 0;
++                while (index != i3) {
++                    int i4 = index % j;
++                    int i5 = index / j;
++                    int i6 = i5 % i1;
++                    int i7 = i5 / i1;
++                    index++;
++                    int x0 = x1 + i4;
++                    int y0 = y1 + i6;
++                    int z0 = z1 + i7;
++                    if (set.add(BlockPos.asLong(x0, y0, z0)) && !visitor.visit(cursor.set(x0, y0, z0), i + 1)) {
 +                        return false;
 +                    }
 +                }
