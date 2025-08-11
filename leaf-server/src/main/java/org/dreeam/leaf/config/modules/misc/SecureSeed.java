@@ -10,6 +10,7 @@ public class SecureSeed extends ConfigModules {
     }
 
     public static boolean enabled = false;
+    public static int type = 2;
 
     @Override
     public void onLoaded() {
@@ -20,5 +21,14 @@ public class SecureSeed extends ConfigModules {
                 安全种子开启后, 所有矿物与结构都将使用1024位的种子进行生成, 无法被破解.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        int loadedType = config.getInt(getBasePath() + ".type", type, config.pickStringRegionBased(
+            "Type of hashing: Blake2b - 2, Blake3 - 3",
+            "哈希的类型：blake2b - 2，blake3 - 3"
+        ));
+        if (loadedType != 2 && loadedType != 3) {
+            type = 2;
+        } else {
+            type = loadedType;
+        }
     }
 }
