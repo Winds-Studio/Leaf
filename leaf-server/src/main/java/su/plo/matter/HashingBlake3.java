@@ -2,7 +2,7 @@ package su.plo.matter;
 
 import java.util.Arrays;
 
-public class Hashing {
+public class HashingBlake3 {
 
     // https://en.wikipedia.org/wiki/BLAKE_(hash_function)
     // https://github.com/bcgit/bc-java/blob/main/core/src/main/java/org/bouncycastle/crypto/digests/Blake3Digest.java
