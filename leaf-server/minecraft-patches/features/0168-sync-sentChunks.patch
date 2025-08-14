@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Thu, 14 Aug 2025 14:46:02 +0900
+Subject: [PATCH] sync sentChunks
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+index bdc1200ef5317fdaf58973bf580b0a672aee800f..019a4542cfe634cc5b6c47e987ad45e583e1857d 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+@@ -282,8 +282,17 @@ public final class RegionizedPlayerChunkLoader {
+         if (loader == null) {
+             return false;
+         }
+-
+-        return loader.sentChunks.contains(CoordinateUtils.getChunkKey(chunkX, chunkZ));
++        // Leaf start - sync sentChunks
++        long k = CoordinateUtils.getChunkKey(chunkX, chunkZ);
++        LongOpenHashSet l = loader.sentChunks;
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            synchronized (l) {
++                return l.contains(k);
++            }
++        } else {
++            return l.contains(k);
++        }
++        // Leaf end - sync sentChunks
+     }
+ 
+     public boolean isChunkSentBorderOnly(final ServerPlayer player, final int chunkX, final int chunkZ) {
+@@ -292,13 +301,28 @@ public final class RegionizedPlayerChunkLoader {
+             return false;
+         }
+ 
+-        for (int dz = -1; dz <= 1; ++dz) {
+-            for (int dx = -1; dx <= 1; ++dx) {
+-                if (!loader.sentChunks.contains(CoordinateUtils.getChunkKey(dx + chunkX, dz + chunkZ))) {
+-                    return true;
++        // Leaf start - sync sentChunks
++        LongOpenHashSet l = loader.sentChunks;
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            synchronized (l) {
++                for (int dz = -1; dz <= 1; ++dz) {
++                    for (int dx = -1; dx <= 1; ++dx) {
++                        if (!l.contains(CoordinateUtils.getChunkKey(dx + chunkX, dz + chunkZ))) {
++                            return true;
++                        }
++                    }
++                }
++            }
++        } else {
++            for (int dz = -1; dz <= 1; ++dz) {
++                for (int dx = -1; dx <= 1; ++dx) {
++                    if (!l.contains(CoordinateUtils.getChunkKey(dx + chunkX, dz + chunkZ))) {
++                        return true;
++                    }
+                 }
+             }
+         }
++        // Leaf end - sync sentChunks
+ 
+         return false;
+     }
+@@ -414,7 +438,19 @@ public final class RegionizedPlayerChunkLoader {
+         }
+ 
+         private void sendChunk(final int chunkX, final int chunkZ) {
+-            if (this.sentChunks.add(CoordinateUtils.getChunkKey(chunkX, chunkZ))) {
++            // Leaf start - sync sentChunks
++            long k = CoordinateUtils.getChunkKey(chunkX, chunkZ);
++            LongOpenHashSet l = this.sentChunks;
++            boolean flag;
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                synchronized (l) {
++                    flag = l.add(k);
++                }
++            } else {
++                flag = l.add(k);
++            }
++            if (flag) {
++            // Leaf end - sync sentChunks
+                 ((ChunkSystemChunkHolder)((ChunkSystemServerLevel)this.world).moonrise$getChunkTaskScheduler().chunkHolderManager
+                         .getChunkHolder(chunkX, chunkZ).vanillaChunkHolder).moonrise$addReceivedChunk(this.player);
+ 
+@@ -428,9 +464,21 @@ public final class RegionizedPlayerChunkLoader {
+         }
+ 
+         private void sendUnloadChunk(final int chunkX, final int chunkZ) {
+-            if (!this.sentChunks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ))) {
+-                return;
++            // Leaf start - sync sentChunks
++            long k = CoordinateUtils.getChunkKey(chunkX, chunkZ);
++            LongOpenHashSet l = this.sentChunks;
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                synchronized (l) {
++                    if (!l.remove(k)) {
++                        return;
++                    }
++                }
++            } else {
++                if (!l.remove(k)) {
++                    return;
++                }
+             }
++            // Leaf end - sync sentChunks
+             this.sendUnloadChunkRaw(chunkX, chunkZ);
+         }
+ 
+@@ -1000,8 +1048,17 @@ public final class RegionizedPlayerChunkLoader {
+                 // the dist <= view check
+                 final boolean sendChunk = (squareDistance <= (sendViewDistance + 1))
+                     && wantChunkLoaded(currentChunkX, currentChunkZ, chunkX, chunkZ, sendViewDistance);
+-                final boolean sentChunk = sendChunk ? this.sentChunks.contains(chunk) : this.sentChunks.remove(chunk);
+-
++                final boolean sentChunk;
++                // Leaf start - sync sentChunks
++                LongOpenHashSet l = this.sentChunks;
++                if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                    synchronized (l) {
++                        sentChunk = sendChunk ? l.contains(chunk) : l.remove(chunk);
++                    }
++                } else {
++                    sentChunk = sendChunk ? l.contains(chunk) : l.remove(chunk);
++                }
++                // Leaf end - sync sentChunks
+                 if (!sendChunk && sentChunk) {
+                     // have sent the chunk, but don't want it anymore
+                     // unload it now
+diff --git a/io/papermc/paper/FeatureHooks.java b/io/papermc/paper/FeatureHooks.java
+index df6fbb35e5023b42de0b97434712e04a6b3e66a3..cf7dc9e5302c389afe316c16e4d0d28a001379b3 100644
+--- a/io/papermc/paper/FeatureHooks.java
++++ b/io/papermc/paper/FeatureHooks.java
+@@ -74,7 +74,16 @@ public final class FeatureHooks {
+     }
+ 
+     public static Set<Long> getSentChunkKeys(final ServerPlayer player) {
+-        return LongSets.unmodifiable(player.moonrise$getChunkLoader().getSentChunksRaw().clone()); // Paper - rewrite chunk system
++        // Leaf start - sync sentChunks
++        LongOpenHashSet sent = player.moonrise$getChunkLoader().getSentChunksRaw();
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            synchronized (sent) {
++                return LongSets.unmodifiable(sent.clone()); // Paper - rewrite chunk system
++            }
++        } else {
++            return LongSets.unmodifiable(sent.clone()); // Paper - rewrite chunk system
++        }
++        // Leaf end - sync sentChunks
+     }
+ 
+     public static Set<Chunk> getSentChunks(final ServerPlayer player) {
+@@ -82,20 +91,47 @@ public final class FeatureHooks {
+         if (player.moonrise$getChunkLoader() == null) {
+             return ObjectSets.EMPTY_SET;
+         }
++        // Leaf start - sync sentChunks
+         final LongOpenHashSet rawChunkKeys = player.moonrise$getChunkLoader().getSentChunksRaw();
+-        final ObjectSet<org.bukkit.Chunk> chunks = new ObjectOpenHashSet<>(rawChunkKeys.size());
+-        final World world = player.level().getWorld();
+-        final LongIterator iter = player.moonrise$getChunkLoader().getSentChunksRaw().longIterator();
+-        while (iter.hasNext()) {
+-            chunks.add(world.getChunkAt(iter.nextLong(), false));
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            synchronized (rawChunkKeys) {
++                final ObjectSet<org.bukkit.Chunk> chunks = new ObjectOpenHashSet<>(rawChunkKeys.size());
++                final World world = player.level().getWorld();
++                final LongIterator iter = rawChunkKeys.longIterator();
++                while (iter.hasNext()) {
++                    chunks.add(world.getChunkAt(iter.nextLong(), false));
++                }
++                return ObjectSets.unmodifiable(chunks);
++            }
++        } else {
++            final ObjectSet<org.bukkit.Chunk> chunks = new ObjectOpenHashSet<>(rawChunkKeys.size());
++            final World world = player.level().getWorld();
++            final LongIterator iter = rawChunkKeys.longIterator();
++            while (iter.hasNext()) {
++                chunks.add(world.getChunkAt(iter.nextLong(), false));
++            }
++            return ObjectSets.unmodifiable(chunks);
+         }
+         // Paper end - rewrite chunk system
+-        return ObjectSets.unmodifiable(chunks);
++        // Leaf end - sync sentChunks
+     }
+ 
+     public static boolean isChunkSent(final ServerPlayer player, final long chunkKey) {
+         // Paper start - rewrite chunk system
+-        return player.moonrise$getChunkLoader() != null && player.moonrise$getChunkLoader().getSentChunksRaw().contains(chunkKey);
++        // Leaf start - sync sentChunks
++        ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.PlayerChunkLoaderData l = player.moonrise$getChunkLoader();
++        if (l != null) {
++            LongOpenHashSet s = l.getSentChunksRaw();
++            if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                synchronized (s) {
++                    return s.contains(chunkKey);
++                }
++            } else {
++                return s.contains(chunkKey);
++            }
++        }
++        return false;
++        // Leaf end - sync sentChunks
+         // Paper end - rewrite chunk system
+     }
+ 
