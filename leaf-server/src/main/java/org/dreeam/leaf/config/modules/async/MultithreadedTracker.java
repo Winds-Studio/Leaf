@@ -39,7 +39,7 @@ public class MultithreadedTracker extends ConfigModules {
         if (threads < 0) {
             threads = aval + threads;
         } else if (threads == 0) {
-            threads = Math.min(aval, 8);
+            threads = Math.min(aval, 4);
         }
         threads = Math.max(threads, 1);
         if (enabled) {
