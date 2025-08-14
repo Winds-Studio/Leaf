@@ -319,4 +319,8 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
         }
         return -1;
     }
+
+    public AttributeInstance[] elements() {
+        return a;
+    }
 }
