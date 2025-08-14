@@ -1,10 +1,10 @@
 package org.dreeam.leaf.util.map;
 
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.schedule.Activity;
+import org.dreeam.leaf.util.RegistryTypeManager;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
-import java.util.AbstractMap.SimpleEntry;
 
 public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
@@ -26,7 +26,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
         if ((bitset & mask) == 0) {
             return -1;
         }
-        for (int i = 0; i < size; i++) {
+        for (int i = 0, j = size; i < j; i++) {
             if (k[i] == activity) {
                 return i;
             }
@@ -56,8 +56,9 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     @Override
     public V put(Activity key, V value) {
-        int index = findIndex(key.id);
-        if (index >= 0) {
+        int raw = key.id;
+        int index = findIndex(raw);
+        if (index != -1) {
             final V oldValue = v[index];
             if (value == null) {
                 removeAtIndex(index);
@@ -67,9 +68,9 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
             return oldValue;
         } else if (value != null) {
             ensureCap();
-            k[size] = key.id;
+            k[size] = raw;
             v[size] = value;
-            bitset |= (1 << key.id);
+            bitset |= (1 << raw);
             size++;
         }
         return null;
@@ -79,7 +80,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     public V get(Object key) {
         if (key instanceof Activity activity) {
             int index = findIndex(activity.id);
-            if (index >= 0) {
+            if (index != -1) {
                 return v[index];
             }
         }
@@ -88,7 +89,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     public V getValue(int key) {
         int index = findIndex(key);
-        if (index >= 0) {
+        if (index != -1) {
             return v[index];
         }
         return null;
@@ -106,7 +107,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     public V remove(Object key) {
         if (key instanceof Activity activity) {
             int index = findIndex(activity.id);
-            if (index >= 0) {
+            if (index != -1) {
                 V oldValue = v[index];
                 removeAtIndex(index);
                 return oldValue;
@@ -150,6 +151,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
+    @NotNull
     public Set<Activity> keySet() {
         if (keySet == null) {
             keySet = new KeySet();
@@ -158,6 +160,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
+    @NotNull
     public Collection<V> values() {
         if (values == null) {
             values = new Values();
@@ -166,6 +169,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
+    @NotNull
     public Set<Entry<Activity, V>> entrySet() {
         if (entrySet == null) {
             entrySet = new EntrySet();
@@ -175,6 +179,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     private final class KeySet extends AbstractSet<Activity> {
         @Override
+        @NotNull
         public Iterator<Activity> iterator() {
             return new Iterator<>() {
                 private int index = 0;
@@ -189,7 +194,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
                 public Activity next() {
                     if (!hasNext()) throw new NoSuchElementException();
                     lastReturned = index;
-                    return BuiltInRegistries.ACTIVITY.byIdOrThrow(k[index++]);
+                    return RegistryTypeManager.ACTIVITIES_UNWRAP[k[index++]];
                 }
 
                 @Override
@@ -220,9 +225,11 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     private final class Values extends AbstractCollection<V> {
         @Override
+        @NotNull
         public Iterator<V> iterator() {
             return new Iterator<>() {
                 private int index = 0;
+                private int lastReturned = -1;
 
                 @Override
                 public boolean hasNext() {
@@ -232,7 +239,16 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
                 @Override
                 public V next() {
                     if (!hasNext()) throw new NoSuchElementException();
+                    lastReturned = index;
                     return v[index++];
+                }
+
+                @Override
+                public void remove() {
+                    if (lastReturned < 0) throw new IllegalStateException();
+                    ActivityArrayMap.this.removeAtIndex(lastReturned);
+                    index = lastReturned;
+                    lastReturned = -1;
                 }
             };
         }
@@ -255,6 +271,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     private final class EntrySet extends AbstractSet<Entry<Activity, V>> {
         @Override
+        @NotNull
         public Iterator<Entry<Activity, V>> iterator() {
             return new Iterator<>() {
                 private int index = 0;
@@ -272,7 +289,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
                     int key = k[index];
                     V value = v[index];
                     index++;
-                    return new SimpleEntry<>(BuiltInRegistries.ACTIVITY.byIdOrThrow(key), value);
+                    return new MapEntry(key, value);
                 }
 
                 @Override
@@ -294,7 +311,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
         public boolean contains(Object o) {
             if (o instanceof Entry<?, ?> entry && entry.getKey() instanceof Activity activity) {
                 int index = findIndex(activity.id);
-                if (index >= 0) {
+                if (index != -1) {
                     return Objects.equals(v[index], entry.getValue());
                 }
             }
@@ -304,6 +321,51 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
         @Override
         public void clear() {
             ActivityArrayMap.this.clear();
+        }
+    }
+
+    private final class MapEntry implements Entry<Activity, V> {
+        private final int key;
+        private V value;
+
+        MapEntry(int key, V value) {
+            this.key = key;
+            this.value = value;
+        }
+
+        @Override
+        public Activity getKey() {
+            return RegistryTypeManager.ACTIVITIES_UNWRAP[key];
+        }
+
+        @Override
+        public V getValue() {
+            return value;
+        }
+
+        @Override
+        public V setValue(V value) {
+            V oldValue = this.value;
+            this.value = value;
+            ActivityArrayMap.this.put(RegistryTypeManager.ACTIVITIES_UNWRAP[key], value);
+            return oldValue;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof Entry<?, ?> entry)) return false;
+            return Objects.equals(RegistryTypeManager.ACTIVITIES_UNWRAP[key], entry.getKey()) && Objects.equals(value, entry.getValue());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hashCode(key) ^ Objects.hashCode(value);
+        }
+
+        @Override
+        public String toString() {
+            return key + "=" + value;
         }
     }
 

@@ -1,6 +1,9 @@
 package org.dreeam.leaf.util;
 
+import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.schedule.Activity;
 
 public final class RegistryTypeManager {
 
@@ -9,6 +12,9 @@ public final class RegistryTypeManager {
      */
     public static final int ATTRIBUTE_SIZE;
     public static final int ACTIVITY_SIZE;
+    public static final Holder<Attribute>[] ATTRIBUTES;
+
+    public static final Activity[] ACTIVITIES_UNWRAP;
 
     static {
         ATTRIBUTE_SIZE = BuiltInRegistries.ATTRIBUTE.size();
@@ -18,6 +24,20 @@ public final class RegistryTypeManager {
         }
         if (ACTIVITY_SIZE > 32) {
             throw new ExceptionInInitializerError("minecraft:activity out of range int bitset (>32)");
+        }
+        ATTRIBUTES = new Holder[ATTRIBUTE_SIZE];
+        for (int i = 0; i < ATTRIBUTE_SIZE; i++) {
+            ATTRIBUTES[i] = BuiltInRegistries.ATTRIBUTE.get(i).orElseThrow();
+            if (ATTRIBUTES[i].value().uid != i) {
+                throw new ExceptionInInitializerError();
+            }
+        }
+        ACTIVITIES_UNWRAP = new Activity[ACTIVITY_SIZE];
+        for (int i = 0; i < ACTIVITY_SIZE; i++) {
+            ACTIVITIES_UNWRAP[i] = BuiltInRegistries.ACTIVITY.byIdOrThrow(i);
+            if (ACTIVITIES_UNWRAP[i].id != i) {
+                throw new ExceptionInInitializerError();
+            }
         }
     }
 
