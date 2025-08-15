@@ -6,6 +6,7 @@ import it.unimi.dsi.fastutil.doubles.DoubleArrays;
 import it.unimi.dsi.fastutil.longs.LongArrays;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.Mob;
@@ -16,6 +17,7 @@ import org.dreeam.leaf.util.PartialSort;
 
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.function.Consumer;
 
 public final class DespawnMap {
     private static final ServerPlayer[] EMPTY_PLAYERS = {};
@@ -56,8 +58,11 @@ public final class DespawnMap {
     /// Nested player Z coordinates of leaf nodes
     private double[] bzl = EMPTY_DOUBLES;
 
+
     private final double[] hard;
     private final double[] sort;
+    public boolean difficultyIsPeaceful = true;
+    Consumer<Entity> consumer = entity -> entity.leafCheckDespawn(DespawnMap.this);
 
     public DespawnMap(WorldConfiguration worldConfiguration) {
         MobCategory[] caps = MobCategory.values();
@@ -281,7 +286,8 @@ public final class DespawnMap {
             indices[j] = j;
         }
         build(pxl, pyl, pzl, indices);
-        entityTickList.forEach(Entity::leafCheckDespawn);
+        this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
+        entityTickList.forEach(this.consumer);
         reset();
     }
 
