@@ -1,6 +1,7 @@
 package org.dreeam.leaf.async.tracker;
 
-import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
+import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
+import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
 import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import io.papermc.paper.event.player.PlayerUntrackEntityEvent;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -119,31 +120,34 @@ public final class TrackerCtx {
     }
 
     void handle(boolean flush) {
-        handlePackets(world, packets, flush);
-
         if (!pluginEntity.isEmpty()) {
             for (final Entity entity : pluginEntity) {
-                final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity)entity).moonrise$getTrackedEntity();
+                final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
                 if (tracker == null) {
                     continue;
                 }
-                NearbyPlayers.TrackedChunk trackedChunk = world.moonrise$getNearbyPlayers().getChunk(entity.chunkPosition());
-                tracker.leafTick(this, trackedChunk);
+                ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData chunk = ((ChunkSystemEntity) entity).moonrise$getChunkData();
+                if (chunk == null) {
+                    continue;
+                }
+                tracker.moonrise$tick(chunk.nearbyPlayers);
                 boolean flag = false;
                 if (tracker.moonrise$hasPlayers()) {
                     flag = true;
                 } else {
-                    FullChunkStatus status = ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity) entity).moonrise$getChunkStatus();
+                    FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
                     if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
                         flag = true;
                     }
                 }
                 if (flag) {
-                    tracker.serverEntity.leafSendChanges(this, tracker);
+                    tracker.serverEntity.sendChanges();
                 }
             }
             pluginEntity.clear();
         }
+
+        handlePackets(world, packets, flush);
         if (!bukkitVelocityEvent.isEmpty()) {
             for (ServerPlayer player : bukkitVelocityEvent) {
                 if (!world.equals(player.level())) {
