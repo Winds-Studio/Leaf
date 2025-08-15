@@ -15,7 +15,6 @@ import java.util.concurrent.Future;
 /// All mutating operations will throw [IllegalStateException]
 /// if the current thread is not the owning thread.
 ///
-/// @author hayanesuru
 /// @see it.unimi.dsi.fastutil.longs.Long2ReferenceOpenHashMap
 public final class ChunkCache<V> {
     private static final long EMPTY_KEY = Long.MIN_VALUE;
@@ -57,8 +56,8 @@ public final class ChunkCache<V> {
     ///
     /// The caller must ensure that the current thread is the owning thread.
     ///
-    /// @param k the key whose associated value is to be returned
-    /// @return the value associated with the key, or `null` if no mapping exists
+    /// @param k The key whose associated value is to be returned
+    /// @return The value associated with the key, or `null` if no mapping exists
     /// @implNote This method updates the single-entry cache on successful lookups
     /// @see #isSameThread()
     public V get(long k) {
@@ -101,9 +100,9 @@ public final class ChunkCache<V> {
     ///
     /// If the removed key matches the cached key, the single-entry cache is invalidated.
     ///
-    /// @param k the key whose mapping is to be removed
-    /// @return the previous value associated with the key, or `null` if no mapping existed
-    /// @throws IllegalStateException if the current thread is not the owning thread
+    /// @param k The key whose mapping is to be removed
+    /// @return The previous value associated with the key, or `null` if no mapping existed
+    /// @throws IllegalStateException If the current thread is not the owning thread
     public V remove(long k) {
         // Safety: throws IllegalStateException for all non-owning threads
         ensureSameThread();
@@ -130,10 +129,10 @@ public final class ChunkCache<V> {
     ///
     /// If the key matches the cached key, the single-entry cache is invalidated.
     ///
-    /// @param k the key with which the specified value is to be associated
-    /// @param levelChunk the value to be associated with the specified key
-    /// @return the previous value associated with the key, or null if no mapping existed
-    /// @throws IllegalStateException if the current thread is not the owning thread
+    /// @param k The key with which the specified value is to be associated
+    /// @param levelChunk The value to be associated with the specified key
+    /// @return The previous value associated with the key, or null if no mapping existed
+    /// @throws IllegalStateException If the current thread is not the owning thread
     public V put(long k, V levelChunk) {
         // Safety: throws IllegalStateException for all non-owning threads
         ensureSameThread();
@@ -155,7 +154,7 @@ public final class ChunkCache<V> {
     ///
     /// This method also clears the single-entry cache.
     ///
-    /// @throws IllegalStateException if the current thread is not the owning thread
+    /// @throws IllegalStateException If the current thread is not the owning thread
     public void clear() {
         // Safety: throws IllegalStateException for all non-owning threads
         ensureSameThread();
@@ -185,7 +184,7 @@ public final class ChunkCache<V> {
 
     /// Checks if the current thread is the same as the owning thread.
     ///
-    /// @return the current thread owns this map
+    /// @return The current thread owns this map
     public boolean isSameThread() {
         return Thread.currentThread() == this.thread;
     }
@@ -196,7 +195,7 @@ public final class ChunkCache<V> {
 
     /// Ensure that the current thread is the owning thread.
     ///
-    /// @throws IllegalStateException if the current thread is not the owning thread
+    /// @throws IllegalStateException If the current thread is not the owning thread
     /// @see #isSameThread()
     /// @see #setThread()
     public void ensureSameThread() {
