@@ -3,7 +3,6 @@ package org.dreeam.leaf.async;
 import net.minecraft.server.MinecraftServer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.dreeam.leaf.async.ai.AsyncGoalThread;
 import org.dreeam.leaf.async.locate.AsyncLocator;
 import org.dreeam.leaf.async.path.AsyncPathProcessor;
 import org.dreeam.leaf.async.tracker.AsyncTracker;
@@ -28,15 +27,6 @@ public class ShutdownExecutors {
             AsyncPlayerDataSaving.IO_POOL.shutdown();
             try {
                 AsyncPlayerDataSaving.IO_POOL.awaitTermination(60L, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-            }
-        }
-
-        if (server.asyncGoalThread != null) {
-            LOGGER.info("Waiting for mob target finding thread to shutdown...");
-            AsyncGoalThread.RUNNING = false;
-            try {
-                server.asyncGoalThread.join(3000L);
             } catch (InterruptedException ignored) {
             }
         }

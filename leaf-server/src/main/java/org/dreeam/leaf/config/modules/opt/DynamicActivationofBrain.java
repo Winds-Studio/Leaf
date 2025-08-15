@@ -18,7 +18,7 @@ public class DynamicActivationofBrain extends ConfigModules {
         return EnumConfigCategory.PERF.getBaseKeyName() + ".dab";
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
     public static int startDistance = 12;
     public static int startDistanceSquared;
     public static int maximumActivationPrio = 20;

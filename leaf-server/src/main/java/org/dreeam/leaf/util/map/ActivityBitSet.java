@@ -2,7 +2,6 @@ package org.dreeam.leaf.util.map;
 
 import it.unimi.dsi.fastutil.objects.AbstractObjectSet;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.schedule.Activity;
 import org.dreeam.leaf.util.RegistryTypeManager;
 import org.jetbrains.annotations.NotNull;
@@ -25,10 +24,6 @@ public final class ActivityBitSet extends AbstractObjectSet<Activity> {
 
     public int bitSet() {
         return bitset;
-    }
-
-    private static Activity map(int i) {
-        return BuiltInRegistries.ACTIVITY.byIdOrThrow(i);
     }
 
     @Override
@@ -76,7 +71,7 @@ public final class ActivityBitSet extends AbstractObjectSet<Activity> {
             @Override
             public Activity next() {
                 if (!hasNext()) throw new NoSuchElementException();
-                Activity act = map(index++);
+                Activity act = RegistryTypeManager.ACTIVITY_DIRECT[index++];
                 while (index < RegistryTypeManager.ACTIVITY_SIZE && (bitset & (1 << index)) == 0) {
                     index++;
                 }
@@ -109,7 +104,7 @@ public final class ActivityBitSet extends AbstractObjectSet<Activity> {
         int hash = 0;
         for (int i = 0; i < RegistryTypeManager.ACTIVITY_SIZE; i++) {
             if ((bitset & (1 << i)) != 0) {
-                hash += map(i).hashCode();
+                hash += RegistryTypeManager.ACTIVITY_DIRECT[i].hashCode();
             }
         }
         return hash;

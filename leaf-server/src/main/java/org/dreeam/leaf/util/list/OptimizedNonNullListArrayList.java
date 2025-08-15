@@ -26,11 +26,12 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     private static final int DEFAULT_INITIAL_CAPACITY = 10;
     private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8; // JVM limit
-    private static final int GROWTH_SHIFT = 1; // equivalent to /2 but faster
-    private static final int CAPACITY_THRESHOLD = 1 << 30;
 
     private static final int HASH_VALID_FLAG = 1;
     private static final int HAS_DEFAULT_FLAG = 2;
+
+    private static final IndexOutOfBoundsException BOUNDS_EXCEPTION =
+        new IndexOutOfBoundsException();
 
     /** Packed flags for various boolean states */
     private int flags;
@@ -96,13 +97,6 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
         return ++n;
     }
 
-    /**
-     * Check if number is power of 2
-     */
-    private static boolean isPowerOfTwo(int n) {
-        return n > 0 && (n & (n - 1)) == 0;
-    }
-
     // === FLAG UTILITIES ===
 
     private boolean hasFlag(int flag) {
@@ -124,26 +118,20 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
         if (minCapacity <= oldCapacity) return;
 
         int newCapacity;
-
         if (a == ObjectArrays.DEFAULT_EMPTY_ARRAY) {
             newCapacity = Math.max(DEFAULT_INITIAL_CAPACITY, minCapacity);
         } else {
-            // use shifts instead of division/multiplication
-            if (oldCapacity < CAPACITY_THRESHOLD) {
-                // For smaller arrays, use 1.5x growth
-                newCapacity = oldCapacity + (oldCapacity >>> GROWTH_SHIFT);
+            // Only use power-of-2 for small arrays (better cache behavior)
+            if (oldCapacity < 256) {
+                newCapacity = nextPowerOfTwo(Math.max(oldCapacity + (oldCapacity >>> 1), minCapacity));
             } else {
-                // For larger arrays, use more conservative growth to avoid OOM
-                newCapacity = oldCapacity + (oldCapacity >>> 2); // 1.25x growth
+                // Standard ArrayList growth for larger arrays
+                newCapacity = oldCapacity + (oldCapacity >>> 1);  // 1.5x growth
+                newCapacity = Math.max(newCapacity, minCapacity);
             }
-
-            newCapacity = Math.max(newCapacity, minCapacity);
 
             if (newCapacity > MAX_ARRAY_SIZE) {
                 newCapacity = hugeCapacity(minCapacity);
-            }
-            if (newCapacity < 1024) {
-                newCapacity = nextPowerOfTwo(newCapacity);
             }
         }
 
@@ -189,8 +177,8 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
 
     @Override
     public E get(final int index) {
-        if ((index | (size - 1 - index)) < 0) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+        if (index >= size || index < 0) {
+            throw BOUNDS_EXCEPTION;
         }
         return a[index];
     }
@@ -217,8 +205,8 @@ public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>
     public E set(final int index, final E k) {
         Objects.requireNonNull(k, "Cannot set null element in this list");
 
-        if ((index | (size - 1 - index)) < 0) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+        if (index >= size || index < 0) {
+            throw BOUNDS_EXCEPTION;
         }
 
         final E old = a[index];

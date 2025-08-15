@@ -4,6 +4,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.leavesmc.leaves.protocol.core.LeavesProtocol;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
@@ -65,6 +66,8 @@ public abstract class AbstractInvokerHolder<T> {
             } else {
                 return invoker.invoke(owner, args);
             }
+        } catch (InvocationTargetException e) {
+            throw new RuntimeException(e.getCause());
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
