@@ -1,36 +1,26 @@
 package org.dreeam.leaf.async.tracker;
 
-import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
+import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
+import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.ChunkPos;
 import org.dreeam.leaf.util.EntitySlice;
 
 import java.util.concurrent.Callable;
 
-public final class TrackerTask implements Callable<TrackerCtx> {
-    public final ServerLevel world;
-    private final EntitySlice entities;
-
-    public TrackerTask(ServerLevel world, EntitySlice trackerEntities) {
-        this.world = world;
-        this.entities = trackerEntities;
-    }
+public record TrackerTask(ServerLevel world, EntitySlice entities) implements Callable<TrackerCtx> {
 
     @Override
     public TrackerCtx call() throws Exception {
-        NearbyPlayers nearbyPlayers = world.moonrise$getNearbyPlayers();
-        TrackerCtx ctx = new TrackerCtx(this.world);
+        final TrackerCtx ctx = new TrackerCtx(this.world);
         final Entity[] raw = entities.array();
-        Long2ObjectMap<NearbyPlayers.TrackedChunk> chunkCache = new Long2ObjectOpenHashMap<>();
         for (int i = entities.start(); i < entities.end(); i++) {
             final Entity entity = raw[i];
-            final ChunkMap.TrackedEntity tracker = ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity)entity).moonrise$getTrackedEntity();
-            long chunkPos = entity.chunkPosition().toLong();
+            final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
+            // removed in world if null
             if (tracker == null) {
                 continue;
             }
@@ -38,16 +28,18 @@ public final class TrackerTask implements Callable<TrackerCtx> {
                 ctx.citizensEntity(entity);
                 continue;
             }
-            NearbyPlayers.TrackedChunk trackedChunk = chunkCache.computeIfAbsent(chunkPos, k -> nearbyPlayers.getChunk(ChunkPos.getX(k), ChunkPos.getZ(k)));
-
-            tracker.leafTick(ctx, trackedChunk);
+            ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
+            // removed in world if null
+            if (chunkData == null) {
+                continue;
+            }
+            tracker.leafTick(ctx, chunkData.nearbyPlayers);
             boolean flag = false;
             if (tracker.moonrise$hasPlayers()) {
                 flag = true;
             } else {
-                // may read old value
-                FullChunkStatus status = ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity) entity).moonrise$getChunkStatus();
-                // removed in world
+                FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
+                // removed in world if null
                 if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
                     flag = true;
                 }
