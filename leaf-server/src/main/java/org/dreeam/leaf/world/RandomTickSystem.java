@@ -23,7 +23,7 @@ public final class RandomTickSystem {
     private static final int BITS_STEP = 2;
     private static final int BITS_MAX = 62;
     private static final long BLOCKS_COUNT = 4096L;
-    private static final long BLOCKS_SCALED = SCALE / BLOCKS_COUNT / (FILTER_MASK + 1L);
+    private static final long BLOCKS_SCALED = SCALE / BLOCKS_COUNT * (FILTER_MASK + 1L);
     private static final long CHUNK_OFFSET_1 = 0x10000L;
     private static final long CHUNK_OFFSET_2 = 0x20000L;
     private static final long CHUNK_OFFSET_3 = 0x30000L;
