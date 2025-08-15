@@ -29,7 +29,6 @@ import org.bukkit.event.player.PlayerVelocityEvent;
 public final class TrackerCtx {
     private final Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> packets;
     private final ServerLevel world;
-    private final ObjectArrayList<ServerPlayer> bukkitVelocityEvent = new ObjectArrayList<>();
     private final ObjectArrayList<ItemFrame> bukkitItemFrames = new ObjectArrayList<>();
     private final ObjectArrayList<BossEvent> witherBosses = new ObjectArrayList<>();
     private final ObjectArrayList<PaperStopSeen> paperStopSeen = new ObjectArrayList<>();
@@ -91,20 +90,15 @@ public final class TrackerCtx {
         bukkitItemFrames.add(itemFrame);
     }
 
-    public void playerVelocity(ServerPlayer player) {
-        bukkitVelocityEvent.add(player);
-    }
-
     public void citizensEntity(Entity entity) {
         pluginEntity.add(entity);
     }
 
     public void send(ServerPlayerConnection connection, Packet<? super ClientGamePacketListener> packet) {
-        packets.computeIfAbsent(connection, x -> ReferenceArrayList.wrap(new Packet[16])).add(packet);
+        packets.computeIfAbsent(connection, x -> ReferenceArrayList.wrap(new Packet[16], 0)).add(packet);
     }
 
     void join(TrackerCtx other) {
-        bukkitVelocityEvent.addAll(other.bukkitVelocityEvent);
         bukkitItemFrames.addAll(other.bukkitItemFrames);
         paperStopSeen.addAll(other.paperStopSeen);
         paperStartSeen.addAll(other.paperStartSeen);
@@ -148,30 +142,6 @@ public final class TrackerCtx {
         }
 
         handlePackets(world, packets, flush);
-        if (!bukkitVelocityEvent.isEmpty()) {
-            for (ServerPlayer player : bukkitVelocityEvent) {
-                if (!world.equals(player.level())) {
-                    continue;
-                }
-                boolean cancelled = false;
-
-                org.bukkit.entity.Player player1 = player.getBukkitEntity();
-                org.bukkit.util.Vector velocity = player1.getVelocity();
-
-                PlayerVelocityEvent event = new PlayerVelocityEvent(player1, velocity.clone());
-                if (!event.callEvent()) {
-                    cancelled = true;
-                } else if (!velocity.equals(event.getVelocity())) {
-                    player1.setVelocity(event.getVelocity());
-                }
-                if (!cancelled) {
-                    player.hurtMarked = false;
-                    ChunkMap.TrackedEntity trackedEntity = player.moonrise$getTrackedEntity();
-                    trackedEntity.leafBroadcastAndSend(this, new ClientboundSetEntityMotionPacket(player));
-                }
-            }
-            bukkitVelocityEvent.clear();
-        }
         if (!bukkitItemFrames.isEmpty()) {
             for (ItemFrame itemFrame : bukkitItemFrames) {
                 MapId mapId = itemFrame.cachedMapId; // Paper - Perf: Cache map ids on item frames
