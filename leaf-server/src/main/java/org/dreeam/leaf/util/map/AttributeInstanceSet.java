@@ -1,7 +1,7 @@
 package org.dreeam.leaf.util.map;
 
 import it.unimi.dsi.fastutil.ints.IntArraySet;
-import it.unimi.dsi.fastutil.ints.IntSet;
+import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import org.jetbrains.annotations.NotNull;
 
@@ -9,7 +9,7 @@ import java.lang.reflect.Array;
 import java.util.*;
 
 public final class AttributeInstanceSet extends AbstractCollection<AttributeInstance> implements Set<AttributeInstance> {
-    public final IntSet inner;
+    public final IntArraySet inner;
     public final AttributeInstanceArrayMap map;
 
     public AttributeInstanceSet(AttributeInstanceArrayMap map) {
@@ -20,6 +20,10 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
     @Override
     public boolean add(AttributeInstance instance) {
         return inner.add(instance.getAttribute().value().uid);
+    }
+
+    public boolean addAttribute(Attribute attribute) {
+        return inner.add(attribute.uid);
     }
 
     @Override
@@ -81,7 +85,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
         return a;
     }
 
-    static class CloneIterator implements Iterator<AttributeInstance> {
+    private static final class CloneIterator implements Iterator<AttributeInstance> {
         private final int[] array;
         private int index = 0;
         private final AttributeInstanceArrayMap map;
