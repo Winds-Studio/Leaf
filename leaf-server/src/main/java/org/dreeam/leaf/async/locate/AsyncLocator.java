@@ -1,8 +1,8 @@
 package org.dreeam.leaf.async.locate;
 
-import ca.spottedleaf.moonrise.common.util.TickThread;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.mojang.datafixers.util.Pair;
+import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
@@ -20,7 +20,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 // Original project: https://github.com/thebrightspark/AsyncLocator
@@ -32,19 +31,6 @@ public class AsyncLocator {
     private AsyncLocator() {
     }
 
-    public static class AsyncLocatorThread extends TickThread {
-        private static final AtomicInteger THREAD_COUNTER = new AtomicInteger(0);
-
-        public AsyncLocatorThread(Runnable run, String name) {
-            super(run, name, THREAD_COUNTER.incrementAndGet());
-        }
-
-        @Override
-        public void run() {
-            super.run();
-        }
-    }
-
     static {
         LOCATING_EXECUTOR_SERVICE = !org.dreeam.leaf.config.modules.async.AsyncLocator.enabled ? null : new ThreadPoolExecutor(
             1,
@@ -53,16 +39,9 @@ public class AsyncLocator {
             TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(),
             new ThreadFactoryBuilder()
-                .setThreadFactory(
-                    r -> new AsyncLocatorThread(r, "Leaf Async Locator Thread") {
-                        @Override
-                        public void run() {
-                            r.run();
-                        }
-                    }
-                )
                 .setNameFormat("Leaf Async Locator Thread - %d")
                 .setPriority(Thread.NORM_PRIORITY - 2)
+                .setUncaughtExceptionHandler(Util::onThreadException)
                 .build()
         );
     }
