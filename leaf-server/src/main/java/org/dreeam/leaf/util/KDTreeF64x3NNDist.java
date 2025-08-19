@@ -158,8 +158,8 @@ public final class KDTreeF64x3NNDist {
                 final boolean negative = Double.doubleToRawLongBits(delta) < 0L;
                 final boolean hasLeft = (n & LEFT_MASK) != LEFT_MASK;
                 final boolean hasRight = n >= 0L;
-                final long left = (data & LEFT_MASK) >>> LEFT_CHILD_OFFSET;
-                final long right = data >>> RIGHT_CHILD_OFFSET;
+                final long left = (n & LEFT_MASK) >>> LEFT_CHILD_OFFSET;
+                final long right = n >>> RIGHT_CHILD_OFFSET;
                 if (negative) {
                     if (hasRight && delta * delta < dist) {
                         stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
