@@ -1,0 +1,350 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Sat, 9 Aug 2025 15:43:17 +0900
+Subject: [PATCH] optimize getOnPos
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 3aec52d72cd5ffd2ef61b1f6c37c6b7f1203d06f..8c01317e1aa5cc588eb2d9e4d47de1da93d5146a 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -895,6 +895,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     // CraftBukkit end
+ 
+     public void baseTick() {
++        this.leaf$onBlockState = null; // Leaf
++        this.leaf$cacheOnBlock = true; // Leaf
+         if (firstTick && this instanceof net.minecraft.world.entity.NeutralMob neutralMob) neutralMob.tickInitialPersistentAnger(level); // Paper - Prevent entity loading causing async lookups
+         this.inBlockState = null;
+         if (this.isPassenger() && this.getVehicle().isRemoved()) {
+@@ -954,6 +956,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         if (this.level() instanceof ServerLevel serverLevelx && this instanceof Leashable) {
+             Leashable.tickLeash(serverLevelx, (Entity & Leashable)this);
+         }
++        this.leaf$cacheOnBlock = false; // Leaf
+     }
+ 
+     public void setSharedFlagOnFire(boolean isOnFire) {
+@@ -1118,11 +1121,19 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+             AABB aabb = new AABB(boundingBox.minX, boundingBox.minY - 1.0E-6, boundingBox.minZ, boundingBox.maxX, boundingBox.minY, boundingBox.maxZ);
+             Optional<BlockPos> optional = this.level.findSupportingBlock(this, aabb);
+             if (optional.isPresent() || this.onGroundNoBlocks) {
+-                this.mainSupportingBlockPos = optional;
++                // Leaf start
++                if (mainSupportingBlockPos.isEmpty() || optional.isEmpty() || !mainSupportingBlockPos.get().equals(optional.get())) {
++                    this.mainSupportingBlockPos = optional;
++                }
++                // Leaf end
+             } else if (movement != null) {
+                 AABB aabb1 = aabb.move(-movement.x, 0.0, -movement.z);
+                 optional = this.level.findSupportingBlock(this, aabb1);
+-                this.mainSupportingBlockPos = optional;
++                // Leaf start
++                if (mainSupportingBlockPos.isEmpty() || optional.isEmpty() || !mainSupportingBlockPos.get().equals(optional.get())) {
++                    this.mainSupportingBlockPos = optional;
++                }
++                // Leaf end
+             }
+ 
+             this.onGroundNoBlocks = optional.isEmpty();
+@@ -1207,8 +1218,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                 this.minorHorizontalCollision = false;
+             }
+ 
+-            BlockPos onPosLegacy = this.getOnPosLegacy();
+-            BlockState blockState = this.level().getBlockState(onPosLegacy);
++            BlockState blockState = this.leaf$getOnBlockLegacy(); // Leaf
++            BlockPos onPosLegacy = this.leaf$getOnBlockPos(); // Leaf
+             if (this.isLocalInstanceAuthoritative()) {
+                 this.checkFallDamage(vec3.y, this.onGround(), blockState, onPosLegacy);
+             }
+@@ -1275,9 +1286,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         float f = 0.6F;
+         float f1 = (float)(movement.length() * 0.6F);
+         float f2 = (float)(movement.horizontalDistance() * 0.6F);
+-        BlockPos onPos = this.getOnPos();
+-        BlockState blockState = this.level.getBlockStateIfLoadedUnchecked(onPos.getX(), onPos.getY(), onPos.getZ());
+-        if (blockState == null) { blockState = this.level.getBlockState(onPos); }
++        BlockState blockState = this.leaf$getOnBlock0(); // Leaf
++        BlockPos onPos = this.leaf$getOnBlockPos(); // Leaf
+         boolean isStateClimbable = this.isStateClimbable(blockState);
+         this.moveDist += isStateClimbable ? f1 : f2;
+         this.flyDist += f1;
+@@ -1346,8 +1356,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     private void applyEffectsFromBlocks(List<Entity.Movement> movements) {
+         if (this.isAffectedByBlocks()) {
+             if (this.onGround()) {
+-                BlockPos onPosLegacy = this.getOnPosLegacy();
+-                BlockState blockState = this.level().getBlockState(onPosLegacy);
++                BlockState blockState = this.leaf$getOnBlockLegacy(); // Leaf
++                BlockPos onPosLegacy = this.leaf$getOnBlockPos(); // Leaf
+                 blockState.getBlock().stepOn(this.level(), onPosLegacy, blockState, this);
+             }
+ 
+@@ -1443,34 +1453,124 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         return this.getOnPos(0.2F);
+     }
+ 
++    // Leaf start
++    @Deprecated
++    public BlockState leaf$getOnBlockLegacy() {
++        return this.leaf$getOnBlock(0.2F);
++    }
++    // Leaf end
++
+     public BlockPos getBlockPosBelowThatAffectsMyMovement() {
+         return this.getOnPos(0.500001F);
+     }
+ 
++    // Leaf start
++    public net.minecraft.world.level.block.state.BlockState leaf$getBlockBelow() {
++        return this.leaf$getOnBlock(0.500001F);
++    }
++    // Leaf end
++
+     public BlockPos getOnPos() {
+         return this.getOnPos(1.0E-5F);
+     }
+ 
++    // Leaf start
++    public BlockState leaf$getOnBlock0() {
++        return this.leaf$getOnBlock(1.0E-5F);
++    }
++    // Leaf end
++
+     protected BlockPos getOnPos(float yOffset) {
+-        if (this.mainSupportingBlockPos.isPresent() && this.level().getChunkIfLoadedImmediately(this.mainSupportingBlockPos.get()) != null) { // Paper - ensure no loads
++        // Leaf start - optimize get chunk
++        if (this.mainSupportingBlockPos.isPresent()) {
+             BlockPos blockPos = this.mainSupportingBlockPos.get();
++            int x = blockPos.getX();
++            int y = blockPos.getY();
++            int z = blockPos.getZ();
++            net.minecraft.world.level.chunk.LevelChunk chunk = this.level.getChunkAtIfLoadedUnchecked(x >> 4, z >> 4);
++            if (chunk == null) { chunk = this.level.getChunk(x >> 4, z >> 4); }
++            BlockState blockState = chunk.getBlockStateFinal(x, y, z);
+             if (!(yOffset > 1.0E-5F)) {
+                 return blockPos;
+-            } else {
+-                BlockState blockState = this.level().getBlockState(blockPos);
+-                return (!(yOffset <= 0.5) || !blockState.is(BlockTags.FENCES))
+-                        && !blockState.is(BlockTags.WALLS)
+-                        && !(blockState.getBlock() instanceof FenceGateBlock)
+-                    ? blockPos.atY(Mth.floor(this.position.y - yOffset))
+-                    : blockPos;
+             }
++            final int flags = blockState.tagFlag;
++            return (!(yOffset <= 0.5) || ((flags & org.dreeam.leaf.util.BlockMasks.FENCE_TAG) == 0))
++                && ((flags & org.dreeam.leaf.util.BlockMasks.WALL_TAG) == 0)
++                && ((flags & org.dreeam.leaf.util.BlockMasks.FENCE_GATE_CL) == 0)
++                ? blockPos.atY(Mth.floor(this.position.y - yOffset))
++                : blockPos;
+         } else {
+             int floor = Mth.floor(this.position.x);
+             int floor1 = Mth.floor(this.position.y - yOffset);
+             int floor2 = Mth.floor(this.position.z);
+             return new BlockPos(floor, floor1, floor2);
+         }
++        // Leaf end - optimize get chunk
++    }
++
++    // Leaf start
++    @Nullable private BlockState leaf$onBlockState = null;
++    private BlockPos leaf$onBlockPos = BlockPos.ZERO;
++    public boolean leaf$cacheOnBlock = false;
++
++    protected final BlockPos leaf$getOnBlockPos() {
++        return leaf$onBlockPos;
++    }
++
++    protected final BlockState leaf$getOnBlock(float yOffset) {
++        if (this.mainSupportingBlockPos.isPresent()) {
++            BlockPos blockPos = this.mainSupportingBlockPos.get();
++            int x = blockPos.getX();
++            int y = blockPos.getY();
++            int z = blockPos.getZ();
++            net.minecraft.world.level.chunk.LevelChunk chunk = null;
++            if (leaf$onBlockPos != blockPos || leaf$onBlockState == null || !leaf$cacheOnBlock) {
++                chunk = this.level.getChunkAtIfLoadedUnchecked(x >> 4, z >> 4);
++                if (chunk == null) {
++                    chunk = this.level.getChunk(x >> 4, z >> 4);
++                }
++                leaf$onBlockState = chunk.getBlockStateFinal(x, y, z);
++                leaf$onBlockPos = blockPos;
++            }
++            if (!(yOffset > 1.0E-5F)) {
++                return leaf$onBlockState;
++            }
++            final int flags = leaf$onBlockState.tagFlag;
++            if ((!(yOffset <= 0.5) || ((flags & org.dreeam.leaf.util.BlockMasks.FENCE_TAG) == 0))
++                && ((flags & org.dreeam.leaf.util.BlockMasks.WALL_TAG) == 0)
++                && ((flags & org.dreeam.leaf.util.BlockMasks.FENCE_GATE_CL) == 0)) {
++                int y1 = Mth.floor(this.position.y - yOffset);
++                if (y1 != y) {
++                    if (chunk == null) {
++                        chunk = this.level.getChunk(x >> 4, z >> 4);
++                    }
++                    leaf$onBlockPos = new BlockPos(x, y1, z);
++                    return leaf$onBlockState = chunk.getBlockStateFinal(x, y1, z);
++                } else {
++                    return leaf$onBlockState;
++                }
++            } else {
++                return leaf$onBlockState;
++            }
++        } else {
++            int x = Mth.floor(this.position.x);
++            int y = Mth.floor(this.position.y - yOffset);
++            int z = Mth.floor(this.position.z);
++            boolean flag = leaf$onBlockPos.getX() != x || leaf$onBlockPos.getY() != y || leaf$onBlockPos.getZ() != z;
++            if (flag) {
++                leaf$onBlockPos = new BlockPos(x, y, z);
++            }
++            if (flag || leaf$onBlockState == null || !leaf$cacheOnBlock) {
++                net.minecraft.world.level.chunk.LevelChunk chunk = this.level.getChunkAtIfLoadedUnchecked(x >> 4, z >> 4);
++                if (chunk == null) {
++                    chunk = this.level.getChunk(x >> 4, z >> 4);
++                }
++                leaf$onBlockState = chunk.getBlockStateFinal(x, y, z);
++            }
++            return leaf$onBlockState;
++        }
+     }
++    // Leaf end
+ 
+     protected float getBlockJumpFactor() {
+         float jumpFactor = this.level().getBlockState(this.blockPosition()).getBlock().getJumpFactor();
+@@ -1482,7 +1582,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         BlockState blockState = this.level().getBlockState(this.blockPosition());
+         float speedFactor = blockState.getBlock().getSpeedFactor();
+         if (!blockState.is(Blocks.WATER) && !blockState.is(Blocks.BUBBLE_COLUMN)) {
+-            return speedFactor == 1.0 ? this.level().getBlockState(this.getBlockPosBelowThatAffectsMyMovement()).getBlock().getSpeedFactor() : speedFactor;
++            return speedFactor == 1.0 ? this.leaf$getBlockBelow().getBlock().getSpeedFactor() : speedFactor; // Leaf
+         } else {
+             return speedFactor;
+         }
+@@ -2104,7 +2204,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+ 
+     @Deprecated
+     protected BlockState getBlockStateOnLegacy() {
+-        return this.level().getBlockState(this.getOnPosLegacy());
++        return this.leaf$getOnBlockLegacy(); // Leaf
+     }
+ 
+     public BlockState getBlockStateOn() {
+@@ -2116,8 +2216,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     protected void spawnSprintParticle() {
+-        BlockPos onPosLegacy = this.getOnPosLegacy();
+-        BlockState blockState = this.level().getBlockState(onPosLegacy);
++        BlockState blockState = this.leaf$getOnBlockLegacy(); // Leaf
++        BlockPos onPosLegacy = this.leaf$getOnBlockPos(); // Leaf
+         if (blockState.getRenderShape() != RenderShape.INVISIBLE) {
+             Vec3 deltaMovement = this.getDeltaMovement();
+             BlockPos blockPos = this.blockPosition();
+diff --git a/net/minecraft/world/entity/ExperienceOrb.java b/net/minecraft/world/entity/ExperienceOrb.java
+index 3ee788b172240ccf38cb31385dff13364ccc4142..f61ccef92c46b13bbe53df1fca8a3b4798b006e4 100644
+--- a/net/minecraft/world/entity/ExperienceOrb.java
++++ b/net/minecraft/world/entity/ExperienceOrb.java
+@@ -243,6 +243,13 @@ public class ExperienceOrb extends Entity {
+         return this.getOnPos(0.999999F);
+     }
+ 
++    // Leaf start
++    @Override
++    public net.minecraft.world.level.block.state.BlockState leaf$getBlockBelow() {
++        return this.leaf$getOnBlock(0.999999F);
++    }
++    // Leaf end
++
+     private void scanForMerges() {
+         if (this.level() instanceof ServerLevel) {
+             for (ExperienceOrb experienceOrb : this.level()
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index f0a0a19e2adff03e73e75c3db831dbf74ebf3861..eb408f9318ce406b22c6dbb575f08329fb286ee0 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3087,7 +3087,11 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     }
+ 
+     public void travel(Vec3 travelVector) {
+-        FluidState fluidState = this.level().getFluidState(this.blockPosition());
++        // Leaf start
++        BlockPos blockPos = this.blockPosition();
++        FluidState fluidState = this.level().getFluidStateIfLoadedUnchecked(blockPos.getX(), blockPos.getY(), blockPos.getZ());
++        if (fluidState == null) { this.level().getFluidState(blockPos); }
++        // Leaf end
+         if ((this.isInWater() || this.isInLava()) && this.isAffectedByFluids() && !this.canStandOnFluid(fluidState)) {
+             this.travelInFluid(travelVector);
+         } else if (this.isFallFlying()) {
+@@ -3115,7 +3119,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             if (this.getRider() != null && this.isControllable()) {
+                 float friction = 0.91F;
+                 if (this.onGround()) {
+-                    friction = this.level().getBlockState(this.getBlockPosBelowThatAffectsMyMovement()).getBlock().getFriction() * 0.91F;
++                    friction = this.leaf$getBlockBelow().getBlock().getFriction() * 0.91F; // Leaf
+                 }
+ 
+                 float frictionCompensation = 0.16277137F / (friction * friction * friction);
+@@ -3133,15 +3137,14 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     }
+ 
+     private void travelInAir(Vec3 travelVector) {
+-        BlockPos blockPosBelowThatAffectsMyMovement = this.getBlockPosBelowThatAffectsMyMovement();
+-        float f = this.onGround() ? this.level().getBlockState(blockPosBelowThatAffectsMyMovement).getBlock().getFriction() : 1.0F;
++        float f = this.onGround() ? leaf$getBlockBelow().getBlock().getFriction() : 1.0F; // Leaf
+         float f1 = f * 0.91F;
+         Vec3 vec3 = this.handleRelativeFrictionAndCalculateMovement(travelVector, f);
+         double d = vec3.y;
+         MobEffectInstance effect = this.getEffect(MobEffects.LEVITATION);
+         if (effect != null) {
+             d += (0.05 * (effect.getAmplifier() + 1) - vec3.y) * 0.2;
+-        } else if (!this.level().isClientSide || this.level().hasChunkAt(blockPosBelowThatAffectsMyMovement)) {
++        } else if (!this.level().isClientSide) { // Leaf
+             d -= this.getEffectiveGravity();
+         } else if (this.getY() > this.level().getMinY()) {
+             d = -0.1;
+@@ -3682,6 +3685,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             this.resetFallDistance();
+         }
+ 
++        this.leaf$cacheOnBlock = true; // Leaf
+         if (this.getControllingPassenger() instanceof Player player && this.isAlive()) {
+             this.travelRidden(player, vec3);
+         } else if (this.canSimulateMovement() && this.isEffectiveAi()) {
+@@ -3691,6 +3695,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+         if (!this.level().isClientSide() || this.isLocalInstanceAuthoritative()) {
+             this.applyEffectsFromBlocks();
+         }
++        this.leaf$cacheOnBlock = false; // Leaf
+ 
+         if (this.level().isClientSide()) {
+             this.calculateEntityAnimation(this instanceof FlyingAnimal);
+diff --git a/net/minecraft/world/entity/item/ItemEntity.java b/net/minecraft/world/entity/item/ItemEntity.java
+index 52314a8fe4188689431f9a1261226859b967f5f1..e93cf31ddb1affcfcdaab380a6614c118a96eaa1 100644
+--- a/net/minecraft/world/entity/item/ItemEntity.java
++++ b/net/minecraft/world/entity/item/ItemEntity.java
+@@ -204,7 +204,7 @@ public class ItemEntity extends Entity implements TraceableEntity {
+                     f = 1F;
+                 } else if (this.onGround()) {
+                     // Paper end - Friction API
+-                    f = this.level().getBlockState(this.getBlockPosBelowThatAffectsMyMovement()).getBlock().getFriction() * 0.98F;
++                    f = this.leaf$getBlockBelow().getBlock().getFriction() * 0.98F; // Leaf
+                 }
+ 
+                 this.setDeltaMovement(this.getDeltaMovement().multiply(f, 0.98, f));
+@@ -279,6 +279,13 @@ public class ItemEntity extends Entity implements TraceableEntity {
+         return this.getOnPos(0.999999F);
+     }
+ 
++    // Leaf start
++    @Override
++    public net.minecraft.world.level.block.state.BlockState leaf$getBlockBelow() {
++        return this.leaf$getOnBlock(0.999999F);
++    }
++    // Leaf end
++
+     private void setUnderwaterMovement() {
+         this.setFluidMovement(0.99F);
+     }

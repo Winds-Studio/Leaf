@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Sat, 9 Aug 2025 15:12:14 +0900
+Subject: [PATCH] optimize fluid
+
+
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 498a9c1590ec3bc4a2b3d5bead899aeb37b56cdf..27a02bbabdb8ddc750a2aeb3901bd6783cbb873a 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1432,6 +1432,14 @@ public abstract class Level implements LevelAccessor, UUIDLookup<Entity>, AutoCl
+         }
+     }
+ 
++    // Leaf start
++    @Nullable
++    public final FluidState getFluidStateIfLoadedUnchecked(final int x, final int y, final int z) {
++        LevelChunk chunkAt = ((ServerLevel) this).chunkSource.fullChunksNonSync.get(ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkKey(x >> 4, z >> 4));
++        return chunkAt == null ? null : chunkAt.getFluidStateFinal(x, y, z);
++    }
++    // Leaf end
++
+     public boolean isBrightOutside() {
+         return !this.dimensionType().hasFixedTime() && this.skyDarken < 4;
+     }
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 6a70665e9b8bc767ba316ada542178634e090afa..0ee94459c1995ddd7e8b469088827b873dab3fe0 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -330,6 +330,21 @@ public class LevelChunk extends ChunkAccess implements ca.spottedleaf.moonrise.p
+         // Leaf end - optimize LevelChunk#getBlockStateFinal
+     }
+ 
++    // Leaf start
++    public FluidState getFluidStateFinal(final int x, final int y, final int z) {
++        final int sectionIndex = (y >> 4) - this.minSection;
++        if (sectionIndex < 0 || sectionIndex >= this.sections.length) {
++            return AIR_FLUIDSTATE;
++        } else {
++            LevelChunkSection section = this.sections[sectionIndex];
++            if (section.waterFluidCount == 0 && section.lavaFluidCount == 0) {
++                return AIR_FLUIDSTATE;
++            }
++            return section.states.get((y & 15) << 8 | (z & 15) << 4 | x & 15).getFluidState();
++        }
++    }
++    // Leaf end
++
+     @Override
+     public BlockState getBlockState(BlockPos pos) {
+         if (true) {
+diff --git a/net/minecraft/world/level/chunk/LevelChunkSection.java b/net/minecraft/world/level/chunk/LevelChunkSection.java
+index abb7c8b4ffc73cedd5e03597fe82c71e51161a1b..315cd21ac80b1bbaef96a039b9567c48ce098027 100644
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -21,6 +21,8 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     short nonEmptyBlockCount; // Paper - package private
+     private short tickingBlockCount;
+     private short tickingFluidCount;
++    public short waterFluidCount; // Leaf
++    public short lavaFluidCount; // Leaf
+     public final PalettedContainer<BlockState> states;
+     private PalettedContainer<Holder<Biome>> biomes; // CraftBukkit - read/write
+     private boolean modified = false; // Leaf - Optimize chunkUnload
+@@ -53,6 +55,8 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         this.nonEmptyBlockCount = section.nonEmptyBlockCount;
+         this.tickingBlockCount = section.tickingBlockCount;
+         this.tickingFluidCount = section.tickingFluidCount;
++        this.waterFluidCount = section.waterFluidCount; // Leaf
++        this.lavaFluidCount = section.lavaFluidCount; // Leaf
+         this.states = section.states.copy();
+         this.biomes = section.biomes.copy();
+     }
+@@ -149,6 +153,15 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+             if (blockState.isRandomlyTicking()) {
+                 this.tickingBlockCount--;
+             }
++            // Leaf start
++            final int flags = blockState.tagFlag;
++            if ((flags & org.dreeam.leaf.util.BlockMasks.WATER) != 0) {
++                this.waterFluidCount--;
++            }
++            if ((flags & org.dreeam.leaf.util.BlockMasks.LAVA) != 0) {
++                this.lavaFluidCount--;
++            }
++            // Leaf end
+         }
+ 
+         if (!!fluidState.isRandomlyTicking()) { // Paper - block counting
+@@ -160,6 +173,15 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+             if (state.isRandomlyTicking()) {
+                 this.tickingBlockCount++;
+             }
++            // Leaf start
++            final int flags = blockState.tagFlag;
++            if ((flags & org.dreeam.leaf.util.BlockMasks.WATER) != 0) {
++                this.waterFluidCount++;
++            }
++            if ((flags & org.dreeam.leaf.util.BlockMasks.LAVA) != 0) {
++                this.lavaFluidCount++;
++            }
++            // Leaf end
+         }
+ 
+         if (!!fluidState1.isRandomlyTicking()) { // Paper - block counting
+@@ -193,6 +215,8 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         this.nonEmptyBlockCount = (short)0;
+         this.tickingBlockCount = (short)0;
+         this.tickingFluidCount = (short)0;
++        this.waterFluidCount = (short)0; // Leaf
++        this.lavaFluidCount = (short)0; // Leaf
+         this.specialCollidingBlocks = (short)0;
+         this.tickingBlocks.clear();
+ 
+@@ -240,6 +264,15 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+                         tickingBlocks.add(raw[i]);
+                     }
+                 }
++                // Leaf start
++                final int flags = state.tagFlag;
++                if ((flags & org.dreeam.leaf.util.BlockMasks.WATER) != 0) {
++                    this.waterFluidCount += (short)paletteCount;
++                }
++                if ((flags & org.dreeam.leaf.util.BlockMasks.LAVA) != 0) {
++                    this.lavaFluidCount += (short)paletteCount;
++                }
++                // Leaf end
+ 
+                 final FluidState fluid = state.getFluidState();
+ 
+@@ -326,11 +359,13 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     }
+ 
+     // Leaf start - Optimize chunkUnload
+-    private LevelChunkSection(short nonEmptyBlockCount, short tickingBlockCount, short tickingFluidCount,
++    private LevelChunkSection(short nonEmptyBlockCount, short tickingBlockCount, short tickingFluidCount, short waterFluidCount, short lavaFluidCount, // Leaf
+                               PalettedContainer<BlockState> states, PalettedContainer<Holder<Biome>> biomes) {
+         this.nonEmptyBlockCount = nonEmptyBlockCount;
+         this.tickingBlockCount = tickingBlockCount;
+         this.tickingFluidCount = tickingFluidCount;
++        this.waterFluidCount = waterFluidCount; // Leaf
++        this.lavaFluidCount = lavaFluidCount; // Leaf
+         this.states = states;
+         this.biomes = biomes;
+     }
+@@ -345,6 +380,8 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+                 this.nonEmptyBlockCount,
+                 this.tickingBlockCount,
+                 this.tickingFluidCount,
++                this.waterFluidCount, // Leaf
++                this.lavaFluidCount, // Leaf
+                 this.states, // Share reference instead of copying
+                 this.biomes  // Share reference instead of copying
+             );

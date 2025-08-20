@@ -121,7 +121,7 @@ public class ReplayFile {
         }
     }
 
-    public void savePacket(long timestamp, Packet<?> packet, ConnectionProtocol protocol) throws Exception {
+    public void savePacket(long timestamp, Packet<?> packet, ConnectionProtocol protocol) {
         byte[] data = getPacketBytes(packet, protocol);
         saveService.execute(() -> {
             try {
@@ -129,8 +129,7 @@ public class ReplayFile {
                 packetStream.writeInt(data.length);
                 packetStream.write(data);
             } catch (Exception e) {
-                LOGGER.severe("Error saving packet");
-                e.printStackTrace();
+                LOGGER.severe("Error saving packet", e);
             }
         });
     }
