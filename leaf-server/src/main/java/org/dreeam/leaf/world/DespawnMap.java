@@ -55,16 +55,10 @@ public final class DespawnMap implements Consumer<Entity> {
 
     public void tick(ServerLevel world, EntityTickList entityTickList) {
         final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
-        double[] pxl = new double[players.length+100000];
-        double[] pyl = new double[players.length+100000];
-        double[] pzl = new double[players.length+100000];
+        final double[] pxl = new double[players.length];
+        final double[] pyl = new double[players.length];
+        final double[] pzl = new double[players.length];
         int i = 0;
-        for (int j = 0; j < 40000; j++) {
-            pxl[i] = world.random.nextDouble() * 10000.0 - 5000.0;
-            pyl[i] = world.random.nextDouble() * 100.0 - 50.0;
-            pzl[i] = world.random.nextDouble() * 10000.0 - 5000.0;
-            i++;
-        }
         for (ServerPlayer p : players) {
             if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(p)) {
                 pxl[i] = p.getX();
@@ -72,12 +66,6 @@ public final class DespawnMap implements Consumer<Entity> {
                 pzl[i] = p.getZ();
                 i++;
             }
-        }
-        for (int j = 0; j < 40000; j++) {
-            pxl[i] = world.random.nextDouble() * 10000.0 - 5000.0;
-            pyl[i] = world.random.nextDouble() * 100.0 - 50.0;
-            pzl[i] = world.random.nextDouble() * 10000.0 - 5000.0;
-            i++;
         }
         final int[] indices = new int[i];
         for (int j = 0; j < i; j++) {

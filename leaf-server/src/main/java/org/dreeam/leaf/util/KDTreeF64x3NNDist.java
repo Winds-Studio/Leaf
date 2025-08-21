@@ -11,7 +11,7 @@ public final class KDTreeF64x3NNDist {
     private static final double[] EMPTY_DOUBLES = {};
     private static final long[] EMPTY_LONGS = {};
     private static final Node[] EMPTY_NODES = {};
-    static final boolean FMA = true;
+    static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
     private static final int LEAF_THRESHOLD = 4;
     private static final int INITIAL_CAP = 8;
     static final long LEAF = -1L;
