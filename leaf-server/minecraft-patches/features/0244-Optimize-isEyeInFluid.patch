@@ -4,80 +4,6 @@ Date: Sat, 17 May 2025 08:25:33 +0800
 Subject: [PATCH] Optimize isEyeInFluid
 
 
-diff --git a/net/minecraft/core/Holder.java b/net/minecraft/core/Holder.java
-index 6c7edbbf3935c40ccb78bee680ea75431718b9bd..fd2f79d976c9587b00380f8b8f784b32ca294673 100644
---- a/net/minecraft/core/Holder.java
-+++ b/net/minecraft/core/Holder.java
-@@ -29,6 +29,8 @@ public interface Holder<T> {
- 
-     Stream<TagKey<T>> tags();
- 
-+    TagKey<T>[] tagArray(); // Leaf - Optimize isEyeInFluid
-+
-     Either<ResourceKey<T>, T> unwrap();
- 
-     Optional<ResourceKey<T>> unwrapKey();
-@@ -105,6 +107,13 @@ public interface Holder<T> {
-         public Stream<TagKey<T>> tags() {
-             return Stream.of();
-         }
-+
-+        // Leaf start - Optimize isEyeInFluid
-+        @Override
-+        public TagKey<T>[] tagArray() {
-+            return me.titaniumtown.ArrayConstants.emptyTagKeyArray;
-+        }
-+        // Leaf end - Optimize isEyeInFluid
-     }
- 
-     public static enum Kind {
-@@ -116,6 +125,7 @@ public interface Holder<T> {
-         private final HolderOwner<T> owner;
-         @Nullable
-         private Set<TagKey<T>> tags;
-+        @Nullable private TagKey<T>[] tagArray; // Leaf - Optimize isEyeInFluid
-         private final Holder.Reference.Type type;
-         @Nullable
-         private ResourceKey<T> key;
-@@ -173,6 +183,16 @@ public interface Holder<T> {
-             }
-         }
- 
-+        // Leaf start - Optimize isEyeInFluid
-+        private TagKey<T>[] boundTagArray() {
-+            if (this.tags == null || this.tagArray == null) {
-+                throw new IllegalStateException("Tags not bound");
-+            } else {
-+                return this.tagArray;
-+            }
-+        }
-+        // Leaf end - Optimize isEyeInFluid
-+
-         @Override
-         public boolean is(TagKey<T> tagKey) {
-             return this.boundTags().contains(tagKey);
-@@ -231,6 +251,7 @@ public interface Holder<T> {
- 
-         void bindTags(Collection<TagKey<T>> tags) {
-             this.tags = it.unimi.dsi.fastutil.objects.ReferenceSets.unmodifiable(new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>(tags)); // Paper - use reference set because TagKey are interned
-+            this.tagArray = this.tags.toArray(new TagKey[0]); // Leaf - Optimize isEyeInFluid
-         }
- 
-         @Override
-@@ -238,6 +259,13 @@ public interface Holder<T> {
-             return this.boundTags().stream();
-         }
- 
-+        // Leaf start - Optimize isEyeInFluid
-+        @Override
-+        public TagKey<T>[] tagArray() {
-+            return this.boundTagArray();
-+        }
-+        // Leaf end - Optimize isEyeInFluid
-+
-         @Override
-         public String toString() {
-             return "Reference{" + this.key + "=" + this.value + "}";
 diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
 index f2ec8dafb133999bed21eb48b118ab5d382bc962..a26943a7c70ac8b8eb3be5cd1f9838e4fcc6e04e 100644
 --- a/net/minecraft/server/level/ServerPlayer.java
@@ -92,7 +18,7 @@ index f2ec8dafb133999bed21eb48b118ab5d382bc962..a26943a7c70ac8b8eb3be5cd1f9838e4
                  if (rounded > 0) {
                      this.awardStat(Stats.WALK_UNDER_WATER_ONE_CM, rounded);
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index b694c7c1837fd4facb16d6bcf93245da9d18a56d..2f9304c4fc7ac9f42493bc19748ee6c0f57208ee 100644
+index b694c7c1837fd4facb16d6bcf93245da9d18a56d..48c2aeee828c1b79d8d6c5f5fd88fae1ef4befc8 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -288,7 +288,14 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
@@ -122,19 +48,18 @@ index b694c7c1837fd4facb16d6bcf93245da9d18a56d..2f9304c4fc7ac9f42493bc19748ee6c0
          double eyeY = this.getEyeY();
          if (!(
              this.getVehicle() instanceof AbstractBoat abstractBoat
-@@ -2051,7 +2058,10 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -2051,7 +2058,9 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
              FluidState fluidState = this.level().getFluidState(blockPos);
              double d = blockPos.getY() + fluidState.getHeight(this.level(), blockPos);
              if (d > eyeY) {
 -                fluidState.getTags().forEach(this.fluidOnEyes::add);
 +                // Leaf start - Optimize isEyeInFluid
-+                TagKey<Fluid>[] tags = fluidState.getTagArray();
-+                this.isInWaterOrLava = tags.length == 0 ? 0 : tags[0] == FluidTags.WATER ? 1 : 2;
++                this.isInWaterOrLava = fluidState.isEmpty() ? 0 : fluidState.is(FluidTags.WATER) ? 1 : 2;
 +                // Leaf end - Optimize isEyeInFluid
              }
          }
      }
-@@ -2131,9 +2141,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -2131,9 +2140,25 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
          }
      }
  
@@ -297,20 +222,3 @@ index d947801b616af5b5dcdcc8bb70b36f97d6a69fdd..678badf7622b81e94c973bed2082fbfa
      }
  
      protected int getMaxPassengers() {
-diff --git a/net/minecraft/world/level/material/FluidState.java b/net/minecraft/world/level/material/FluidState.java
-index 0a5ae623a636923f3bbd3c01974497f39b7c4b62..cc6f2f756c407630aa4e99be329f643c9994af29 100644
---- a/net/minecraft/world/level/material/FluidState.java
-+++ b/net/minecraft/world/level/material/FluidState.java
-@@ -167,6 +167,12 @@ public final class FluidState extends StateHolder<Fluid, FluidState> implements
-         return this.owner.builtInRegistryHolder().tags();
-     }
- 
-+    // Leaf start - Optimize isEyeInFluid
-+    public TagKey<Fluid>[] getTagArray() {
-+        return this.owner.builtInRegistryHolder().tagArray();
-+    }
-+    // Leaf end - Optimize isEyeInFluid
-+
-     public void entityInside(Level level, BlockPos pos, Entity entity, InsideBlockEffectApplier effectApplier) {
-         this.getType().entityInside(level, pos, entity, effectApplier);
-     }

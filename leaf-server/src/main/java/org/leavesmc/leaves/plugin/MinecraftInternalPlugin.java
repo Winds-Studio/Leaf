@@ -1,11 +1,15 @@
 package org.leavesmc.leaves.plugin;
 
+import io.papermc.paper.plugin.configuration.PluginMeta;
+import io.papermc.paper.plugin.lifecycle.event.LifecycleEventManager;
+import org.bukkit.Bukkit;
 import org.bukkit.Server;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.generator.BiomeProvider;
 import org.bukkit.generator.ChunkGenerator;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginBase;
 import org.bukkit.plugin.PluginDescriptionFile;
 import org.bukkit.plugin.PluginLoader;
@@ -24,10 +28,12 @@ public class MinecraftInternalPlugin extends PluginBase {
     private boolean enabled = true;
 
     private final PluginDescriptionFile pdf;
+    private final PluginLogger logger;
 
     public MinecraftInternalPlugin() {
         String pluginName = "Minecraft";
         pdf = new PluginDescriptionFile(pluginName, "1.0", "nms");
+        logger = new PluginLogger(this);
     }
 
     public void setEnabled(boolean enabled) {
@@ -35,27 +41,47 @@ public class MinecraftInternalPlugin extends PluginBase {
     }
 
     @Override
-    public File getDataFolder() {
-        throw new UnsupportedOperationException("Not supported.");
-    }
-
-    @Override
-    public PluginDescriptionFile getDescription() {
+    public @NotNull PluginDescriptionFile getDescription() {
         return pdf;
     }
 
     @Override
-    public io.papermc.paper.plugin.configuration.PluginMeta getPluginMeta() {
+    public @NotNull PluginMeta getPluginMeta() {
         return pdf;
     }
 
     @Override
-    public FileConfiguration getConfig() {
+    public @NotNull PluginLogger getLogger() {
+        return logger;
+    }
+
+    @Override
+    public @NotNull Server getServer() {
+        return Bukkit.getServer();
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    @Override
+    public @NotNull PluginLoader getPluginLoader() {
         throw new UnsupportedOperationException("Not supported.");
     }
 
     @Override
-    public InputStream getResource(String filename) {
+    public @NotNull File getDataFolder() {
+        throw new UnsupportedOperationException("Not supported.");
+    }
+
+    @Override
+    public @NotNull FileConfiguration getConfig() {
+        throw new UnsupportedOperationException("Not supported.");
+    }
+
+    @Override
+    public InputStream getResource(@NotNull String filename) {
         throw new UnsupportedOperationException("Not supported.");
     }
 
@@ -70,33 +96,13 @@ public class MinecraftInternalPlugin extends PluginBase {
     }
 
     @Override
-    public void saveResource(String resourcePath, boolean replace) {
+    public void saveResource(@NotNull String resourcePath, boolean replace) {
         throw new UnsupportedOperationException("Not supported.");
     }
 
     @Override
     public void reloadConfig() {
         throw new UnsupportedOperationException("Not supported.");
-    }
-
-    @Override
-    public PluginLogger getLogger() {
-        throw new UnsupportedOperationException("Not supported.");
-    }
-
-    @Override
-    public PluginLoader getPluginLoader() {
-        throw new UnsupportedOperationException("Not supported.");
-    }
-
-    @Override
-    public Server getServer() {
-        throw new UnsupportedOperationException("Not supported.");
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return enabled;
     }
 
     @Override
@@ -125,7 +131,7 @@ public class MinecraftInternalPlugin extends PluginBase {
     }
 
     @Override
-    public ChunkGenerator getDefaultWorldGenerator(String worldName, String id) {
+    public ChunkGenerator getDefaultWorldGenerator(@NotNull String worldName, String id) {
         throw new UnsupportedOperationException("Not supported.");
     }
 
@@ -135,17 +141,17 @@ public class MinecraftInternalPlugin extends PluginBase {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, String @NotNull [] args) {
         throw new UnsupportedOperationException("Not supported.");
     }
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+    public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, String @NotNull [] args) {
         throw new UnsupportedOperationException("Not supported.");
     }
 
     @Override
-    public @NotNull io.papermc.paper.plugin.lifecycle.event.LifecycleEventManager<org.bukkit.plugin.Plugin> getLifecycleManager() {
+    public @NotNull LifecycleEventManager<@NotNull Plugin> getLifecycleManager() {
         throw new UnsupportedOperationException("Not supported.");
     }
 }
