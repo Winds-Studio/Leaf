@@ -4,8 +4,20 @@ Date: Tue, 3 Jun 2025 15:20:59 +0900
 Subject: [PATCH] optimize mob spawning
 
 
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index f3be481a92b4f5403809c38d3b3431f4096d7a2e..2a5a2b6c28c61fe5cc3c89676472b9695fd3f188 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -280,6 +280,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     }
+     // Paper end - per player mob count backoff
+     public int getMobCountNear(final ServerPlayer player, final net.minecraft.world.entity.MobCategory mobCategory) {
++        // Leaf - diff - async mob spawning - optimize mob spawning
+         return player.mobCounts[mobCategory.ordinal()] + player.mobBackoffCounts[mobCategory.ordinal()]; // Paper - per player mob count backoff
+      }
+     // Paper end - Optional per player mob spawns
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..05df09d5f586c90f3169ddf1fa73a1d3fd734b73 100644
+index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..dd73eb8deda304292dd17f831e41e93849946df4 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
 +++ b/net/minecraft/server/level/ServerChunkCache.java
 @@ -70,7 +70,9 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
@@ -19,7 +31,52 @@ index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..05df09d5f586c90f3169ddf1fa73a1d3
      // Paper start
      public final ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<net.minecraft.world.level.chunk.LevelChunk> fullChunks = new ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<>();
      public int getFullChunksCount() {
-@@ -658,13 +660,37 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -537,28 +539,23 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+                 _pufferfish_spawnCountsReady.set(true);
+             }
+             if (_pufferfish_spawnCountsReady.getAndSet(false)) {
++                final int mapped = distanceManager.getNaturalSpawnChunkCount();
++                final Iterable<Entity> entities = this.level.getAllEntities();
+                 net.minecraft.server.MinecraftServer.getServer().mobSpawnExecutor.submit(() -> {
+-                    int mapped = distanceManager.getNaturalSpawnChunkCount();
+-                    ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet.Iterator<Entity> objectiterator =
+-                        level.entityTickList.entities.iterator(ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet.ITERATOR_FLAG_SEE_ADDITIONS);
+-                    try {
+-                        gg.pufferfish.pufferfish.util.IterableWrapper<Entity> wrappedIterator =
+-                            new gg.pufferfish.pufferfish.util.IterableWrapper<>(objectiterator);
+-                        // Fix: Use proper mob cap calculator based on configuration
+-                        LocalMobCapCalculator mobCapCalculator = !level.paperConfig().entities.spawning.perPlayerMobSpawns ?
+-                            new LocalMobCapCalculator(chunkMap) : null;
+-
+-                        // This ensures the caps are properly enforced by using the correct calculator
+-                        lastSpawnState = NaturalSpawner.createState(
+-                            mapped,
+-                            wrappedIterator,
+-                            ServerChunkCache.this::getFullChunk,
+-                            mobCapCalculator,  // This is the key fix - was previously null
+-                            level.paperConfig().entities.spawning.perPlayerMobSpawns
+-                        );
+-                    } finally {
+-                        objectiterator.finishedIterating();
+-                    }
++                    // Fix: Use proper mob cap calculator based on configuration
++                    LocalMobCapCalculator mobCapCalculator = !level.paperConfig().entities.spawning.perPlayerMobSpawns ?
++                        new LocalMobCapCalculator(chunkMap) : null;
++
++                    // This ensures the caps are properly enforced by using the correct calculator
++                    // Leaf start - optimize mob spawning
++                    lastSpawnState = NaturalSpawner.createState1(
++                        mapped,
++                        entities,
++                        this.level,
++                        mobCapCalculator,  // This is the key fix - was previously null
++                        level.paperConfig().entities.spawning.perPlayerMobSpawns
++                    );
++                    // Leaf end - optimize mob spawning
+                     _pufferfish_spawnCountsReady.set(true);
+                 });
+             }
+@@ -658,13 +655,38 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
              filteredSpawningCategories = List.of();
          }
  
@@ -31,6 +88,7 @@ index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..05df09d5f586c90f3169ddf1fa73a1d3
 +        // Leaf start - optimize mob spawning
 +        var lastSpawnState1 = this.lastSpawnState;
 +        if (lastSpawnState1 != null && (!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled || _pufferfish_spawnCountsReady.get())) {
++            lastSpawnState1.applyPerPlayerMobCount(level); // Leaf - optimize mob spawning
 +            long sumTimeInhabited = timeInhabited + delayTimeInhabited;
 +            long time = level.getGameTime();
 +            for (LevelChunk levelChunk : chunks) {
@@ -39,7 +97,7 @@ index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..05df09d5f586c90f3169ddf1fa73a1d3
 +                if (!filteredSpawningCategories.isEmpty() && this.level.getWorldBorder().isWithinBounds(pos) && this.chunkMap.anyPlayerCloseEnoughForSpawning(pos, true)) { // Spigot
 +                    NaturalSpawner.spawnForChunk(this.level, levelChunk, lastSpawnState1, filteredSpawningCategories, time); // Pufferfish
 +                }
-+            }
+             }
 +            if (delaySpawn != -1L) {
 +                time = delaySpawn;
 +                for (LevelChunk levelChunk : chunks) {
@@ -48,7 +106,7 @@ index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..05df09d5f586c90f3169ddf1fa73a1d3
 +                        NaturalSpawner.spawnForChunk(this.level, levelChunk, lastSpawnState1, filteredSpawningCategories, time); // Pufferfish
 +                    }
 +                }
-             }
++            }
 +            delaySpawn = -1L;
 +            delayTimeInhabited = 0L;
 +        } else {
@@ -63,10 +121,91 @@ index 52a2b993bbd1ad4851b3273af6ecbc069beb5b84..05df09d5f586c90f3169ddf1fa73a1d3
                  this.level.tickChunk(levelChunk, _int);
              }
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854194dd665 100644
+index 9b37b763c6555705f3e256010f508b5a0c2cdb66..b1f3935c5d92048cd47ecdcf6bdd44d6e3737cca 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -155,7 +155,13 @@ public final class NaturalSpawner {
+@@ -74,6 +74,7 @@ public final class NaturalSpawner {
+         return createState(spawnableChunkCount, entities, chunkGetter, calculator, false);
+     }
+ 
++    @Deprecated // Leaf - optimize mob spawning
+     public static NaturalSpawner.SpawnState createState(
+         int spawnableChunkCount, Iterable<Entity> entities, NaturalSpawner.ChunkGetter chunkGetter, LocalMobCapCalculator calculator, final boolean countMobs
+     ) {
+@@ -114,9 +115,71 @@ public final class NaturalSpawner {
+             }
+         }
+ 
+-        return new NaturalSpawner.SpawnState(spawnableChunkCount, map, potentialCalculator, calculator);
++        return new NaturalSpawner.SpawnState(spawnableChunkCount, map, potentialCalculator, calculator, new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>()); // Leaf - optimize mob spawning
+     }
+ 
++    // Leaf start - optimize mob spawning
++    public static NaturalSpawner.SpawnState createState1(
++        int spawnableChunkCount, Iterable<Entity> entities, ServerLevel level, LocalMobCapCalculator calculator, final boolean countMobs
++    ) {
++        // Paper end - Optional per player mob spawns
++        PotentialCalculator potentialCalculator = new PotentialCalculator();
++        Object2IntOpenHashMap<MobCategory> map = new Object2IntOpenHashMap<>();
++        it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<int[]> chunkCap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
++        boolean countAllMobsForSpawning = level.paperConfig().entities.spawning.countAllMobsForSpawning;
++        for (Entity entity : entities) {
++            if (!(entity instanceof Mob mob && (mob.isPersistenceRequired() || mob.requiresCustomPersistence()))) {
++                MobCategory category = entity.getType().getCategory();
++                if (category != MobCategory.MISC) {
++                    // Paper start - Only count natural spawns
++                    if (!countAllMobsForSpawning &&
++                        !(entity.spawnReason == org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.NATURAL ||
++                            entity.spawnReason == org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.CHUNK_GEN)) {
++                        continue;
++                    }
++                    // Paper end - Only count natural spawns
++                    BlockPos blockPos = entity.blockPosition();
++                    LevelChunk chunk = level.getChunkSource().getChunkNow(blockPos.getX() >> 4, blockPos.getZ() >> 4);
++                    if (chunk != null) {
++                        MobSpawnSettings.MobSpawnCost mobSpawnCost = getRoughBiome(blockPos, chunk).getMobSettings().getMobSpawnCost(entity.getType());
++                        if (mobSpawnCost != null) {
++                            potentialCalculator.addCharge(entity.blockPosition(), mobSpawnCost.charge());
++                        }
++
++                        if (calculator != null && entity instanceof Mob) { // Paper - Optional per player mob spawns
++                            calculator.addMob(chunk.getPos(), category);
++                        }
++
++                        map.addTo(category, 1);
++                        // Paper start - Optional per player mob spawns
++                        if (countMobs) {
++                            final int index = entity.getType().getCategory().ordinal();
++                            ++chunkCap.computeIfAbsent(chunk.getPos().toLong(), k -> new int[net.minecraft.server.level.ServerPlayer.MOBCATEGORY_TOTAL_ENUMS])[index];
++                        /*
++                        final int index = entity.getType().getCategory().ordinal();
++                        final var inRange = level.moonrise$getNearbyPlayers().getPlayers(entity.chunkPosition(), NearbyPlayers.NearbyMapType.TICK_VIEW_DISTANCE);
++                        if (inRange == null) {
++                            continue;
++                        }
++
++                        final net.minecraft.server.level.ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
++                        for (int i = 0, len = inRange.size(); i < len; i++) {
++                            final net.minecraft.server.level.ServerPlayer player = backingSet[i];
++                            if (player == null) continue;
++                            ++playerCap.computeIfAbsent(player, k -> new int[net.minecraft.server.level.ServerPlayer.MOBCATEGORY_TOTAL_ENUMS])[index];
++                        }
++                        */
++                        }
++                        // Paper end - Optional per player mob spawns
++                    }
++                }
++            }
++        }
++
++        return new NaturalSpawner.SpawnState(spawnableChunkCount, map, potentialCalculator, calculator, chunkCap);
++    }
++    // Leaf end - optimize mob spawning
++
+     static Biome getRoughBiome(BlockPos pos, ChunkAccess chunk) {
+         return chunk.getNoiseBiome(QuartPos.fromBlock(pos.getX()), QuartPos.fromBlock(pos.getY()), QuartPos.fromBlock(pos.getZ())).value();
+     }
+@@ -155,7 +218,13 @@ public final class NaturalSpawner {
          return list;
      }
  
@@ -80,7 +219,7 @@ index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854
          for (MobCategory mobCategory : categories) {
              // Paper start - Optional per player mob spawns
              final boolean canSpawn;
-@@ -174,7 +180,7 @@ public final class NaturalSpawner {
+@@ -174,7 +243,7 @@ public final class NaturalSpawner {
                  }
                  // Paper end - throttle failed spawn attempts
                  if (CraftSpawnCategory.isValidForLimits(spawnCategory)) {
@@ -89,7 +228,7 @@ index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854
                      limit = level.getWorld().getSpawnLimit(spawnCategory);
                  }
  
-@@ -238,12 +244,14 @@ public final class NaturalSpawner {
+@@ -238,12 +307,14 @@ public final class NaturalSpawner {
          // Paper end - throttle failed spawn attempts
      ) {
          // Paper end - Optional per player mob spawns
@@ -109,7 +248,7 @@ index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854
      }
  
      @VisibleForDebug
-@@ -275,31 +283,59 @@ public final class NaturalSpawner {
+@@ -275,31 +346,59 @@ public final class NaturalSpawner {
          StructureManager structureManager = level.structureManager();
          ChunkGenerator generator = level.getChunkSource().getGenerator();
          int y = pos.getY();
@@ -177,7 +316,7 @@ index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854
                              if (spawnerData == null) {
                                  Optional<MobSpawnSettings.SpawnerData> randomSpawnMobAt = getRandomSpawnMobAt(
                                      level, structureManager, generator, category, level.random, mutableBlockPos
-@@ -368,8 +404,8 @@ public final class NaturalSpawner {
+@@ -368,8 +467,8 @@ public final class NaturalSpawner {
  
      private static boolean isRightDistanceToPlayerAndSpawnPoint(ServerLevel level, ChunkAccess chunk, BlockPos.MutableBlockPos pos, double distance) {
          return !(distance <= 576.0)
@@ -188,7 +327,7 @@ index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854
      }
  
      // Paper start - PreCreatureSpawnEvent
-@@ -474,6 +510,17 @@ public final class NaturalSpawner {
+@@ -474,6 +573,17 @@ public final class NaturalSpawner {
          }
      }
  
@@ -206,3 +345,59 @@ index 9b37b763c6555705f3e256010f508b5a0c2cdb66..8f999b425bce52352a04ee3ca11b6854
      private static BlockPos getRandomPosWithin(Level level, LevelChunk chunk) {
          ChunkPos pos = chunk.getPos();
          int i = pos.getMinBlockX() + level.random.nextInt(16);
+@@ -614,18 +724,21 @@ public final class NaturalSpawner {
+         @Nullable
+         private EntityType<?> lastCheckedType;
+         private double lastCharge;
++        public final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<int[]> chunkCap; // Leaf - optimize mob spawning
+ 
+         SpawnState(
+             int spawnableChunkCount,
+             Object2IntOpenHashMap<MobCategory> mobCategoryCounts,
+             PotentialCalculator spawnPotential,
+-            LocalMobCapCalculator localMobCapCalculator
++            LocalMobCapCalculator localMobCapCalculator,
++            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<int[]> playerCap // Leaf - optimize mob spawning
+         ) {
+             this.spawnableChunkCount = spawnableChunkCount;
+             this.mobCategoryCounts = mobCategoryCounts;
+             this.spawnPotential = spawnPotential;
+             this.localMobCapCalculator = localMobCapCalculator;
+             this.unmodifiableMobCategoryCounts = Object2IntMaps.unmodifiable(mobCategoryCounts);
++            this.chunkCap = playerCap; // Leaf - optimize mob spawning
+         }
+ 
+         private boolean canSpawn(EntityType<?> entityType, BlockPos pos, ChunkAccess chunk) {
+@@ -682,5 +795,32 @@ public final class NaturalSpawner {
+         boolean canSpawnForCategoryLocal(MobCategory category, ChunkPos chunkPos) {
+             return this.localMobCapCalculator.canSpawn(category, chunkPos);
+         }
++
++        // Leaf start - optimize mob spawning
++        public void applyPerPlayerMobCount(ServerLevel level) {
++            if (chunkCap.isEmpty()) {
++                return;
++            }
++            final var iterator = chunkCap.long2ObjectEntrySet().fastIterator();
++            final ca.spottedleaf.moonrise.common.misc.NearbyPlayers nearbyPlayers = level.moonrise$getNearbyPlayers();
++            while (iterator.hasNext()) {
++                var entry = iterator.next();
++                long chunk = entry.getLongKey();
++                int[] cap = entry.getValue();
++                ca.spottedleaf.moonrise.common.list.ReferenceList<net.minecraft.server.level.ServerPlayer> players = nearbyPlayers.getPlayersByChunk(net.minecraft.world.level.ChunkPos.getX(chunk), net.minecraft.world.level.ChunkPos.getZ(chunk), ca.spottedleaf.moonrise.common.misc.NearbyPlayers.NearbyMapType.TICK_VIEW_DISTANCE);
++                if (players == null) {
++                    continue;
++                }
++                int playersSize = players.size();
++                net.minecraft.server.level.ServerPlayer[] playersRawDataUnchecked = players.getRawDataUnchecked();
++                for (int i = 0; i < playersSize; i++) {
++                    int[] p = playersRawDataUnchecked[i].mobCounts;
++                    for (int j = 0; j < net.minecraft.server.level.ServerPlayer.MOBCATEGORY_TOTAL_ENUMS; j++) {
++                        p[j] += cap[j];
++                    }
++                }
++            }
++        }
++        // Leaf end - optimize mob spawning
+     }
+ }
