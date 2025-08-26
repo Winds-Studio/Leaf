@@ -34,10 +34,13 @@ public class AsyncTargetFinding extends ConfigModules {
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         // Disable if parallel world ticking is enabled, as they are incompatible.
+        // TODO: Waiting PWT
+        /*
         if (enabled && SparklyPaperParallelWorldTicking.enabled) {
             LeafConfig.LOGGER.warn("Async target finding is incompatible with Parallel World Ticking. Disabling Async target finding automatically.");
             enabled = false;
         }
+         */
         alertOther = config.getBoolean(getBasePath() + ".async-alert-other", true);
         searchBlock = config.getBoolean(getBasePath() + ".async-search-block", true);
         searchEntity = config.getBoolean(getBasePath() + ".async-search-entity", true);
