@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martijn Muijsers <martijnmuijsers@live.nl>
+Date: Wed, 30 Nov 2022 00:43:42 +0100
+Subject: [PATCH] Send multiple keep-alive packets
+
+License: MIT (https://opensource.org/licenses/MIT)
+Gale - https://galemc.org
+
+This patch is based on the following patch:
+"Alternative Keepalive Handling"
+By: William Blake Galbreath <blake.galbreath@gmail.com>
+As part of: Purpur (https://github.com/PurpurMC/Purpur)
+Licensed under: MIT (https://opensource.org/licenses/MIT)
+
+* Purpur copyright *
+
+MIT License
+
+Copyright (c) 2019-2022 PurpurMC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+index 149660c1196481275ca03830d64cf33b5ce98163..37de0c46b065851ea0f0d01e415980e47cc3cfb5 100644
+--- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+@@ -38,10 +38,11 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     public final Connection connection; // Paper
+     private final boolean transferred;
+     //private long keepAliveTime; // Paper - improve keepalives
+-    //private boolean keepAlivePending; // Paper - improve keepalives
++    private boolean keepAlivePending; // Paper - improve keepalives // Purpur - Alternative Keepalive Handling
+     //private long keepAliveChallenge; // Paper - improve keepalives
+     private long closedListenerTime;
+     private boolean closed = false;
++    private it.unimi.dsi.fastutil.longs.LongList keepAlives = new it.unimi.dsi.fastutil.longs.LongArrayList(); // Gale - Purpur - send multiple keep-alive packets
+     private volatile int latency; // Paper - improve keepalives - make volatile
+     private final io.papermc.paper.util.KeepAlive keepAlive; // Paper - improve keepalives
+     private volatile boolean suspendFlushingOnServerThread = false;
+@@ -50,7 +51,10 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     public boolean processedDisconnect;
+     // CraftBukkit end
+     public final java.util.Map<java.util.UUID, net.kyori.adventure.resource.ResourcePackCallback> packCallbacks = new java.util.concurrent.ConcurrentHashMap<>(); // Paper - adventure resource pack callbacks
+-    private static final long KEEPALIVE_LIMIT = Long.getLong("paper.playerconnection.keepalive", 30) * 1000; // Paper - provide property to set keepalive limit
++    // Gale start - Purpur - send multiple keep-alive packets
++    private static final long KEEPALIVE_LIMIT_IN_SECONDS = Long.getLong("paper.playerconnection.keepalive", 30); // Paper - provide property to set keepalive limit
++    private static final long KEEPALIVE_LIMIT = KEEPALIVE_LIMIT_IN_SECONDS * 1000;
++    // Gale end - Purpur - send multiple keep-alive packets
+     protected static final net.minecraft.resources.ResourceLocation MINECRAFT_BRAND = net.minecraft.resources.ResourceLocation.withDefaultNamespace("brand"); // Paper - Brand support
+     // Paper start - retain certain values
+     public @Nullable String playerBrand;
+@@ -103,6 +107,18 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+         // Paper start - improve keepalives
+         long now = System.nanoTime();
+         io.papermc.paper.util.KeepAlive.PendingKeepAlive pending = this.keepAlive.pendingKeepAlives.peek();
++        // Gale start - Purpur - send multiple keep-alive packets
++        if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().misc.keepalive.sendMultiple) {
++            if (this.keepAlivePending && !keepAlives.isEmpty() && keepAlives.contains(packet.getId())) {
++                int ping = (int) (Util.getMillis() - packet.getId());
++                int updatedLatency = (this.latency * 3 + ping) / 4;
++                this.latency = updatedLatency;
++                this.keepAlivePending = false;
++                this.keepAlives.clear(); // We got a valid response, let's roll with it and forget the rest
++            }
++            return;
++        } else {
++            // Gale end - Purpur - send multiple keep-alive packets
+         if (pending != null && pending.challengeId() == packet.getId()) {
+             this.keepAlive.pendingKeepAlives.remove(pending);
+ 
+@@ -114,6 +130,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+             this.latency = this.keepAlive.pingCalculator5s.getAvgLatencyMS();
+             return;
+         }
++        } // Gale - Purpur - send multiple keep-alive packets
+ 
+         for (java.util.Iterator<io.papermc.paper.util.KeepAlive.PendingKeepAlive> itr = this.keepAlive.pendingKeepAlives.iterator(); itr.hasNext();) {
+             io.papermc.paper.util.KeepAlive.PendingKeepAlive ka = itr.next();
+@@ -261,6 +278,23 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     protected void keepConnectionAlive() {
+         long millis = Util.getMillis();
+         // Paper start - improve keepalives
++        // Gale start - Purpur - send multiple keep-alive packets
++        if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().misc.keepalive.sendMultiple) {
++            if (this.checkIfClosed(millis) && !this.processedDisconnect) {
++                long currTime = System.nanoTime();
++                if ((currTime - this.keepAlive.lastKeepAliveTx) >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1L)) { // 1 second
++                    this.keepAlive.lastKeepAliveTx = currTime;
++                    if (this.keepAlivePending && !this.processedDisconnect && keepAlives.size() * 1000L >= KEEPALIVE_LIMIT) {
++                        this.disconnect(TIMEOUT_DISCONNECTION_MESSAGE, io.papermc.paper.connection.DisconnectionReason.TIMEOUT);
++                    } else if (this.checkIfClosed(millis)) {
++                        this.keepAlivePending = true;
++                        this.keepAlives.add(millis); // currentTime is ID
++                        this.send(new ClientboundKeepAlivePacket(millis));
++                    }
++                }
++            }
++        } else {
++            // Gale end - Purpur - send multiple keep-alive packets
+         if (this.checkIfClosed(millis) && !this.processedDisconnect) {
+             long currTime = System.nanoTime();
+ 
+@@ -279,6 +313,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+                 // Paper end - improve keepalives
+             }
+         }
++        } // Gale - Purpur - send multiple keep-alive packets
+     }
+ 
+     private boolean checkIfClosed(long time) {
