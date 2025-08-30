@@ -24,7 +24,9 @@ public abstract class ConfigModules extends LeafConfig {
     public static void initModules() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
         List<Field> enabledExperimentalModules = new ArrayList<>();
 
-        for (Class<?> clazz : LeafConfig.getClasses(LeafConfig.I_CONFIG_PKG)) {
+        Class<?>[] classes = LeafConfig.getClasses(LeafConfig.I_CONFIG_PKG).toArray(new Class[0]);
+        it.unimi.dsi.fastutil.objects.ObjectArrays.quickSort(classes, java.util.Comparator.comparing(Class::getSimpleName));
+        for (Class<?> clazz : classes) {
             ConfigModules module = (ConfigModules) clazz.getConstructor().newInstance();
             module.onLoaded();
 

@@ -1,9 +1,13 @@
 package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import org.bukkit.event.player.PlayerVelocityEvent;
 import org.dreeam.leaf.async.FixedThreadExecutor;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
 import org.dreeam.leaf.util.EntitySlice;
@@ -32,6 +36,7 @@ public final class AsyncTracker {
     }
 
     public static void tick(ServerLevel world) {
+        handlePlayerVelocity(world);
         ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
         ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         int trackerEntitiesSize = trackerEntities.size();
@@ -50,6 +55,34 @@ public final class AsyncTracker {
         }
         TRACKER_EXECUTOR.unpack();
         world.trackerTask = futures;
+    }
+
+    private static void handlePlayerVelocity(ServerLevel world) {
+        for (ServerPlayer player : world.players()) {
+            if (!player.hurtMarked) {
+                continue;
+            }
+            player.hurtMarked = false;
+            boolean cancelled = false;
+
+            org.bukkit.entity.Player player1 = player.getBukkitEntity();
+            org.bukkit.util.Vector velocity = player1.getVelocity();
+
+            PlayerVelocityEvent event = new PlayerVelocityEvent(player1, velocity.clone());
+            if (!event.callEvent()) {
+                cancelled = true;
+            } else if (velocity != event.getVelocity() && !velocity.equals(event.getVelocity())) {
+                player1.setVelocity(event.getVelocity());
+            }
+            if (cancelled) {
+                continue;
+            }
+            ChunkMap.TrackedEntity trackedEntity = player.moonrise$getTrackedEntity();
+            if (trackedEntity == null) {
+                continue;
+            }
+            trackedEntity.broadcastAndSend(new ClientboundSetEntityMotionPacket(player));
+        }
     }
 
     public static void onEntitiesTickEnd(ServerLevel world) {

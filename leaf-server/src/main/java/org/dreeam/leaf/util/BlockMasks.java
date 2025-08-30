@@ -16,7 +16,9 @@ public final class BlockMasks {
     public static final int TRAP_DOOR_CL = 0x20;
     public static final int WATER = 0x40;
     public static final int LAVA = 0x80;
-    public static final int FLUID = (WATER | LAVA);
+
+    public static final int FLUID = WATER | LAVA;
+    public static final int IS_STATE_CLIMBABLE = org.dreeam.leaf.util.BlockMasks.CLIMBABLE_TAG | org.dreeam.leaf.util.BlockMasks.POWDER_SNOW_CL;
 
     public static int init(final BlockState state) {
         int i = 0;

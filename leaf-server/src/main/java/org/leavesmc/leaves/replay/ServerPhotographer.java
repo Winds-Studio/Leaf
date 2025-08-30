@@ -77,7 +77,6 @@ public class ServerPhotographer extends ServerPlayer {
     @Override
     public void tick() {
         super.tick();
-        super.doTick();
 
         if (this.getServer().getTickCount() % 10 == 0) {
             connection.resetPosition();
