@@ -77,16 +77,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
     }
 
     // Gale start - branding changes - version fetcher
-    protected boolean canFetchDistanceFromSiteApi() {
-        return false;
-    }
-
-    protected int fetchDistanceFromSiteApi(int jenkinsBuild) {
-        return -1;
-    }
-    // Gale end - branding changes - version fetcher
-
-    private Component getUpdateStatusMessage(final String repo, final ServerBuildInfo build) {
+    protected int fetchDistanceFromAPI(final String repo, final ServerBuildInfo build) {
         int distance = DISTANCE_ERROR;
 
         // Gale start - branding changes - version fetcher
@@ -95,7 +86,13 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
         if (gitBranch.isPresent() && gitCommit.isPresent()) {
             distance = fetchDistanceFromGitHub(repo, gitBranch.get(), gitCommit.get());
         }
-        // Gale end - branding changes - version fetcher
+
+        return distance;
+    }
+    // Gale end - branding changes - version fetcher
+
+    private Component getUpdateStatusMessage(final String repo, final ServerBuildInfo build) {
+        int distance = fetchDistanceFromAPI(repo, build); // Gale - branding changes - version fetcher
 
         return switch (distance) {
             case DISTANCE_ERROR -> text("* Error obtaining version information", NamedTextColor.RED); // Purpur - Rebrand

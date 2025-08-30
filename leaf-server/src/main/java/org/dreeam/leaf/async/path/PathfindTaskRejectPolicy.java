@@ -6,8 +6,7 @@ import java.util.Locale;
 
 public enum PathfindTaskRejectPolicy {
     FLUSH_ALL,
-    CALLER_RUNS,
-    DISCARD;
+    CALLER_RUNS;
 
     public static PathfindTaskRejectPolicy fromString(String policy) {
         try {
