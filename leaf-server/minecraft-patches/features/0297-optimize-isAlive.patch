@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Sat, 30 Aug 2025 20:23:45 +0900
+Subject: [PATCH] optimize isAlive
+
+
+diff --git a/io/papermc/paper/entity/activation/ActivationRange.java b/io/papermc/paper/entity/activation/ActivationRange.java
+index f127231587fef0cef6767a259e0e1294650e1330..3fbc0a242578a5a749b21e82272395dde314a227 100644
+--- a/io/papermc/paper/entity/activation/ActivationRange.java
++++ b/io/papermc/paper/entity/activation/ActivationRange.java
+@@ -327,7 +327,7 @@ public final class ActivationRange {
+         }
+         // special case always immunities
+         // immunize brand-new entities, dead entities, and portal scenarios
+-        if (entity.defaultActivationState || entity.tickCount < 20 * 10 || !entity.isAlive() || (entity.portalProcess != null && !entity.portalProcess.hasExpired()) || entity.portalCooldown > 0) {
++        if (entity.defaultActivationState || entity.tickCount < 20 * 10 || !entity.leaf$isAlive || (entity.portalProcess != null && !entity.portalProcess.hasExpired()) || entity.portalCooldown > 0) { // Leaf - optimize isAlive
+             return true;
+         }
+         // immunize leashed entities
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 841c90c20525e34177de271983db4c1c6b96b57f..a97fa1da56fcfe933f8c6587733bb7e9c1338616 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -382,6 +382,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     public boolean isTemporarilyActive;
+     public long activatedImmunityTick = Integer.MIN_VALUE;
+     public @Nullable Boolean immuneToFire = null; // Purpur - Fire immune API
++    public boolean leaf$isAlive = true; // Leaf - optimize isAlive
+ 
+     public void inactiveTick() {
+     }
+@@ -5344,6 +5345,15 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         return this.removalReason != null;
+     }
+ 
++
++    // Leaf start - optimize isAlive
++    public final void leaf$onAliveDirty() {
++        if (!(this instanceof LivingEntity) || !(this instanceof ServerPlayer) || this.getBukkitEntityRaw() != null) {
++            this.leaf$isAlive = isAlive();
++        }
++    }
++    // Leaf end - optimize isAlive
++
+     @Nullable
+     public Entity.RemovalReason getRemovalReason() {
+         return this.removalReason;
+@@ -5362,6 +5372,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         if (this.removalReason == null) {
+             this.removalReason = removalReason;
+         }
++        this.leaf$onAliveDirty(); // Leaf - optimize isAlive
+ 
+         if (this.removalReason.shouldDestroy()) {
+             this.stopRiding();
+@@ -5380,6 +5391,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+ 
+     public void unsetRemoved() {
+         this.removalReason = null;
++        this.leaf$onAliveDirty(); // Leaf - optimize isAlive
+     }
+ 
+     // Paper start - Folia schedulers
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 8baa17d2eadfa83b1fcb36fcd1408e917b883989..1f3607ddd7876a0c132918394800deb292c2ff9a 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -440,7 +440,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             this.clearFire();
+         }
+ 
+-        if (this.isAlive() && this.level() instanceof ServerLevel serverLevel1) {
++        if (this.leaf$isAlive && this.level() instanceof ServerLevel serverLevel1) { // Leaf - optimize isAlive
+             boolean flag = this instanceof Player;
+             // Gale start - Pufferfish - reduce in wall checks
+             long checkStuckInWallInterval = this.level().galeConfig().smallOptimizations.reducedIntervals.checkStuckInWall;
+@@ -1929,6 +1929,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+                 } else {
+                     this.dead = false;
+                     this.setHealth((float) deathEvent.getReviveHealth());
++                    this.leaf$onAliveDirty(); // Leaf - optimize isAlive
+                 }
+                 // Paper end
+                     this.createWitherRose(killCredit);
+@@ -4086,7 +4087,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+ 
+     @Override
+     public boolean isCollidable(boolean ignoreClimbing) {
+-        return this.isAlive() && !this.isSpectator() && (ignoreClimbing || !this.onClimbable()) && this.collides; // CraftBukkit
++        return this.leaf$isAlive && !this.isSpectator() && (ignoreClimbing || !this.onClimbable()) && this.collides; // CraftBukkit // Leaf - optimize isAlive
+         // Paper end - Climbing should not bypass cramming gamerule
+     }
+ 
+@@ -4270,6 +4271,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     @Override
+     public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
+         super.onSyncedDataUpdated(key);
++        if (DATA_HEALTH_ID.equals(key)) { this.leaf$onAliveDirty(); } else // Leaf - optimize isAlive
+         if (SLEEPING_POS_ID.equals(key)) {
+             if (this.level().isClientSide) {
+                 this.getSleepingPos().ifPresent(this::setPosToBed);
+diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
+index 28523643d0789c6f472dfa92c3c0a32f0bcfc7b5..542fc85ec7b6ea2a8016e8e695da2c4b0130d734 100644
+--- a/net/minecraft/world/entity/Mob.java
++++ b/net/minecraft/world/entity/Mob.java
+@@ -326,7 +326,7 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
+     @Override
+     public void baseTick() {
+         super.baseTick();
+-        if (this.isAlive() && this.random.nextInt(1000) < this.ambientSoundTime++) {
++        if (this.leaf$isAlive && this.random.nextInt(1000) < this.ambientSoundTime++) { // Leaf - optimize isAlive
+             this.resetAmbientSoundTime();
+             this.playAmbientSound();
+         }
+@@ -535,7 +535,7 @@ public abstract class Mob extends LivingEntity implements EquipmentUser, Leashab
+         super.aiStep();
+         if (this.level() instanceof ServerLevel serverLevel
+             && this.canPickUpLoot()
+-            && this.isAlive()
++            && this.leaf$isAlive // Leaf - optimize isAlive
+             && !this.dead
+             && serverLevel.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING, serverLevel.purpurConfig.entitiesPickUpLootMobGriefingOverride)) { // Purpur - Add mobGriefing override to everything affected
+             Vec3i pickupReach = this.getPickupReach();
+diff --git a/net/minecraft/world/entity/monster/Creeper.java b/net/minecraft/world/entity/monster/Creeper.java
+index 9bcfd34ab0de8f3c12d01a9f26a97311384e3e72..a5f9b44802af3771738d4e33739403c39ac1b816 100644
+--- a/net/minecraft/world/entity/monster/Creeper.java
++++ b/net/minecraft/world/entity/monster/Creeper.java
+@@ -370,6 +370,7 @@ public class Creeper extends Monster {
+             if (!event.isCancelled()) {
+             // CraftBukkit end
+             this.dead = true;
++            this.leaf$onAliveDirty(); // Leaf - optimize isAlive
+             serverLevel.explode(this, this.getX(), this.getY(), this.getZ(), event.getRadius(), event.getFire(), serverLevel.getGameRules().getBoolean(net.minecraft.world.level.GameRules.RULE_MOBGRIEFING) && level().purpurConfig.creeperAllowGriefing ? Level.ExplosionInteraction.MOB : Level.ExplosionInteraction.NONE); // CraftBukkit // Paper - fix DamageSource API (revert to vanilla, no, just no, don't change this) // Purpur - Add enderman and creeper griefing controls
+             this.spawnLingeringCloud();
+             this.triggerOnDeathMobEffects(serverLevel, Entity.RemovalReason.KILLED);
