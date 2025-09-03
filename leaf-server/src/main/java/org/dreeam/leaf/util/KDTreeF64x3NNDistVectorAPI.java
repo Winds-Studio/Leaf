@@ -1,6 +1,8 @@
 package org.dreeam.leaf.util;
 
-import jdk.incubator.vector.*;
+import jdk.incubator.vector.DoubleVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
 
 import static org.dreeam.leaf.util.KDTreeF64x3NNDist.*;
 
@@ -46,30 +48,7 @@ public final class KDTreeF64x3NNDistVectorAPI {
                     dist = Math.min(dist, d2);
                 }
             } else {
-                final int idx = (int) (data >>> INDEX_OFFSET);
-                final long n = nll[idx];
-                final long axis = n & AXIS_MASK;
-                final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
-                final boolean negative = Double.doubleToRawLongBits(delta) < 0L;
-                final boolean hasLeft = (n & LEFT_MASK) != LEFT_MASK;
-                final boolean hasRight = n >= 0L;
-                final long left = (n & LEFT_MASK) >>> LEFT_CHILD_OFFSET;
-                final long right = n >>> RIGHT_CHILD_OFFSET;
-                if (negative) {
-                    if (hasRight && delta * delta < dist) {
-                        stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
-                    }
-                    if (hasLeft) {
-                        stack[i++] = nbl[(int) left] | (left << INDEX_OFFSET);
-                    }
-                } else {
-                    if (hasLeft && delta * delta < dist) {
-                        stack[i++] = nbl[(int) left] | (left << INDEX_OFFSET);
-                    }
-                    if (hasRight) {
-                        stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
-                    }
-                }
+                i = nnInternal(tx, ty, tz, dist, data, nsl, nll, stack, i, nbl);
             }
         }
         return dist;

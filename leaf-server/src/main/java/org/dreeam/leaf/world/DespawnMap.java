@@ -9,6 +9,7 @@ import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.entity.EntityTickList;
+import net.minecraft.world.phys.Vec3;
 import org.bukkit.event.entity.EntityRemoveEvent;
 import org.dreeam.leaf.util.KDTreeF64x3NNDist;
 
@@ -53,13 +54,13 @@ public final class DespawnMap implements Consumer<Entity> {
         }
     }
 
-    public void tick(ServerLevel world, EntityTickList entityTickList) {
+    public void tick(final ServerLevel world, final EntityTickList entityTickList) {
         final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
         final double[] pxl = new double[players.length];
         final double[] pyl = new double[players.length];
         final double[] pzl = new double[players.length];
         int i = 0;
-        for (ServerPlayer p : players) {
+        for (final ServerPlayer p : players) {
             if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(p)) {
                 pxl[i] = p.getX();
                 pyl[i] = p.getY();
@@ -71,25 +72,23 @@ public final class DespawnMap implements Consumer<Entity> {
         for (int j = 0; j < i; j++) {
             indices[j] = j;
         }
-        tree.build(pxl, pyl, pzl, indices);
+        tree.build(new double[][]{pxl, pyl, pzl}, indices);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
         entityTickList.forEach(this);
     }
 
-    public void checkDespawn(Mob mob) {
-        net.minecraft.world.phys.Vec3 vec3 = mob.position();
-        final double x = vec3.x;
-        final double y = vec3.y;
-        final double z = vec3.z;
+    public void checkDespawn(final Mob mob) {
+        final Vec3 vec3 = mob.position();
         final int i = mob.getType().getCategory().ordinal();
-        final double dist = tree.nearest(x, y, z, hard[i]);
+        final double hardDist = this.hard[i];
+        final double dist = this.tree.nearest(vec3.x, vec3.y, vec3.z, hardDist);
         if (dist == Double.POSITIVE_INFINITY) {
             return;
         }
 
-        if (dist >= hard[i] && mob.removeWhenFarAway(dist)) {
+        if (dist >= hardDist && mob.removeWhenFarAway(dist)) {
             mob.discard(EntityRemoveEvent.Cause.DESPAWN);
-        } else if (dist > sort[i]) {
+        } else if (dist > this.sort[i]) {
             if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist)) {
                 mob.discard(EntityRemoveEvent.Cause.DESPAWN);
             }

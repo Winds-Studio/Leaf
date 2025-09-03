@@ -8,29 +8,32 @@ import org.jspecify.annotations.NullMarked;
 @NullMarked
 public final class KDTreeF64x3NNDist {
 
+    static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
     private static final double[] EMPTY_DOUBLES = {};
     private static final long[] EMPTY_LONGS = {};
     private static final Node[] EMPTY_NODES = {};
-    static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
     private static final int LEAF_THRESHOLD = 4;
     private static final int INITIAL_CAP = 8;
-    static final long LEAF = -1L;
-    static final long AXIS_X = 0L;
-    static final long AXIS_Y = 1L;
-    static final long AXIS_Z = 2L;
-    static final long LEFT_MASK = 0xfffffffcL;
-    static final long RIGHT_MASK = 0x3fffffff00000000L;
+    private static final int ROOT = -1;
+    private static final long NIL = -1L;
+    private static final long LEAF = -1L;
+    private static final long AXIS_X = 0L;
+    private static final long AXIS_Y = 1L;
+    private static final long AXIS_Z = 2L;
+    private static final long LEFT_MASK = 0xfffffffcL;
+    private static final long RIGHT_MASK = 0x3fffffff00000000L;
     static final long OFFSET_MASK = 0x7fffffffL;
     static final long LEN_MASK = 0xF80000000L;
     static final long LEN_4_MASK = 0x200000000L;
     static final int LEN_OFFSET = 31;
-    static final int INDEX_OFFSET = 36;
-    static final int LEFT_CHILD_OFFSET = 2;
-    static final int RIGHT_CHILD_OFFSET = 32;
-    static final long AXIS_MASK = 0b11L;
+    private static final int INDEX_OFFSET = 36;
+    private static final int LEFT_CHILD_OFFSET = 2;
+    private static final int RIGHT_CHILD_OFFSET = 32;
+    private static final long AXIS_MASK = 0b11L;
     private static final boolean SIMD = SIMDDetection.isEnabled();
     private Node[] stack = EMPTY_NODES;
     private long[] search = EMPTY_LONGS;
+    /// Split
     private double[] nsl = EMPTY_DOUBLES;
     /// Lengths(5) Offsets(31) for each player list of leaf nodes
     private long[] nbl = EMPTY_LONGS;
@@ -43,83 +46,111 @@ public final class KDTreeF64x3NNDist {
     /// Nested player Z coordinates of leaf nodes
     private double[] bzl = EMPTY_DOUBLES;
 
-    public void build(final double[] coordinateX, final double[] coordinateY, final double[] coordinateZ, final int[] indices) {
+    public void build(final double[][] coords, final int[] indices) {
+        int st = 0;
+        growCon(st);
+        stack[st++] = new Node(ROOT, false, 0, indices.length, 0);
         int nodeLen = 0;
         int bucketLen = 0;
-        final double[][] map = {coordinateX, coordinateY, coordinateZ};
-        int st = 0;
-        if (st == stack.length) {
-            stack = new Node[INITIAL_CAP];
-        }
-        stack[st++] = new Node(-1, false, 0, indices.length, 0);
         while (st != 0) {
-            {
-                int newLen = nodeLen + 1;
-                if (newLen >= nsl.length) {
-                    newLen += newLen >> 1;
-                    if (newLen < INITIAL_CAP) {
-                        newLen = INITIAL_CAP;
-                    }
-                    nsl = DoubleArrays.forceCapacity(nsl, newLen, nodeLen);
-                    nll = LongArrays.forceCapacity(nll, newLen, nodeLen);
-                    nbl = LongArrays.forceCapacity(nbl, newLen, nodeLen);
-                }
-            }
+            growNode(nodeLen);
             final Node n = stack[--st];
-            final int depth = n.depth;
-            final int offset = n.offset;
-            final int len = n.length;
             final int curr = nodeLen++;
-            if (len <= LEAF_THRESHOLD) {
+            if (n.length() <= LEAF_THRESHOLD) {
                 nll[curr] = LEAF;
-                nbl[curr] = (long) len << LEN_OFFSET | (long) bucketLen;
+                nbl[curr] = (long) n.length() << LEN_OFFSET | bucketLen;
 
-                int newLen = bucketLen + len;
-                if (newLen >= bxl.length) {
-                    newLen = Math.max(INITIAL_CAP, newLen + (newLen >> 1));
-                    bxl = DoubleArrays.forceCapacity(bxl, newLen, bucketLen);
-                    byl = DoubleArrays.forceCapacity(byl, newLen, bucketLen);
-                    bzl = DoubleArrays.forceCapacity(bzl, newLen, bucketLen);
-                }
-                for (int i = offset, end = offset + len; i < end; i++) {
-                    bxl[bucketLen] = coordinateX[indices[i]];
-                    byl[bucketLen] = coordinateY[indices[i]];
-                    bzl[bucketLen] = coordinateZ[indices[i]];
-                    bucketLen++;
-                }
+                growBk(bucketLen, n.length());
+                bucketLen = copyCoords(coords, indices, n.offset(), n.length(), bucketLen);
             } else {
-                final int axis = depth % 3 == 0 ? (int) AXIS_X : depth % 3 == 1 ? (int) AXIS_Z : (int) AXIS_Y;
-                final int median = (len - 1) / 2;
-                PartialSort.nthElement(indices, map[axis], offset, offset + len - 1, offset + median);
-                final int pivot = indices[offset + median];
-                nsl[curr] = axis == AXIS_X ? coordinateX[pivot] : axis == AXIS_Y ? coordinateY[pivot] : coordinateZ[pivot];
-                nll[curr] = RIGHT_MASK | LEFT_MASK | (long) axis;
+                final int axis = reorderAxis(n.depth());
+                final int med = (n.length() - 1) / 2;
+                PartialSort.nthElement(indices, coords[axis], n.offset(), n.offset() + n.length() - 1, n.offset() + med);
+                nsl[curr] = coords[axis][indices[n.offset() + med]];
+                nll[curr] = RIGHT_MASK | LEFT_MASK | axis;
                 nbl[curr] = 0L;
 
-                if (st == stack.length || st + 1 == stack.length) {
-                    final int newLen = stack.length + 2;
-                    final Node[] b = new Node[Math.max(INITIAL_CAP, newLen + (newLen >> 1))];
-                    System.arraycopy(stack, 0, b, 0, st);
-                    stack = b;
-                }
-                stack[st++] = new Node(curr, false, offset + median + 1, len - median - 1, depth + 1);
-                stack[st++] = new Node(curr, true, offset, median + 1, depth + 1);
+                growCon(st);
+                stack[st++] = new Node(curr, false, n.offset() + med + 1, n.length() - med - 1, n.depth() + 1);
+                stack[st++] = new Node(curr, true, n.offset(), med + 1, n.depth() + 1);
             }
-            if (n.parent >= 0) {
-                if (n.left) {
-                    nll[n.parent] &= AXIS_MASK | RIGHT_MASK;
-                    nll[n.parent] |= (long) curr << LEFT_CHILD_OFFSET;
-                } else {
-                    nll[n.parent] &= AXIS_MASK | LEFT_MASK;
-                    nll[n.parent] |= (long) curr << RIGHT_CHILD_OFFSET;
-                }
-            }
+            setParent(n.parent(), n.left(), curr);
         }
 
+        setSearch(indices, nodeLen);
+    }
+
+    private void setParent(final int parent, final boolean left, final long curr) {
+        if (parent == ROOT) {
+            return;
+        }
+        if (left) {
+            nll[parent] &= AXIS_MASK | RIGHT_MASK;
+            nll[parent] |= curr << LEFT_CHILD_OFFSET;
+        } else {
+            nll[parent] &= AXIS_MASK | LEFT_MASK;
+            nll[parent] |= curr << RIGHT_CHILD_OFFSET;
+        }
+    }
+
+    private static int reorderAxis(final int depth) {
+        return depth % 3 == 0 ? (int) AXIS_X : depth % 3 == 1 ? (int) AXIS_Z : (int) AXIS_Y;
+    }
+
+    private int copyCoords(final double[][] coords, final int[] indices, final int offset, final int len, int bucketLen) {
+        final double[] x = coords[(int) AXIS_X];
+        final double[] y = coords[(int) AXIS_Y];
+        final double[] z = coords[(int) AXIS_Z];
+        for (int i = offset, end = offset + len; i < end; i++) {
+            final int j = indices[i];
+            bxl[bucketLen] = x[j];
+            byl[bucketLen] = y[j];
+            bzl[bucketLen] = z[j];
+            bucketLen++;
+        }
+        return bucketLen;
+    }
+
+    private void setSearch(final int[] indices, final int nodeLen) {
         if (search.length < Math.max(64, nodeLen * 2)) {
             search = new long[Math.max(64, nodeLen * 2)];
         }
-        search[0] = indices.length == 0 ? -1 : 0;
+        search[0] = indices.length == 0 ? NIL : 0L;
+    }
+
+    private void growCon(final int st) {
+        if (st != stack.length && st + 1 != stack.length) {
+            return;
+        }
+        final int newLen = stack.length + 2;
+        final Node[] b = new Node[Math.max(INITIAL_CAP, newLen + (newLen >> 1))];
+        System.arraycopy(stack, 0, b, 0, st);
+        stack = b;
+    }
+
+    private void growBk(final int bucketLen, final int len) {
+        int newLen = bucketLen + len;
+        if (newLen < bxl.length) {
+            return;
+        }
+        newLen = Math.max(INITIAL_CAP, newLen + (newLen >> 1));
+        bxl = DoubleArrays.forceCapacity(bxl, newLen, bucketLen);
+        byl = DoubleArrays.forceCapacity(byl, newLen, bucketLen);
+        bzl = DoubleArrays.forceCapacity(bzl, newLen, bucketLen);
+    }
+
+    private void growNode(final int nodeLen) {
+        int newLen = nodeLen + 1;
+        if (newLen < nsl.length) {
+            return;
+        }
+        newLen += newLen >> 1;
+        if (newLen < INITIAL_CAP) {
+            newLen = INITIAL_CAP;
+        }
+        nsl = DoubleArrays.forceCapacity(nsl, newLen, nodeLen);
+        nll = LongArrays.forceCapacity(nll, newLen, nodeLen);
+        nbl = LongArrays.forceCapacity(nbl, newLen, nodeLen);
     }
 
     public double nearest(final double tx, final double ty, final double tz, double dist) {
@@ -130,7 +161,7 @@ public final class KDTreeF64x3NNDist {
         final double[] bxl = this.bxl;
         final double[] byl = this.byl;
         final double[] bzl = this.bzl;
-        if (stack[0] == -1L) {
+        if (stack[0] == NIL) {
             return Double.POSITIVE_INFINITY;
         }
         if (SIMD) {
@@ -151,33 +182,38 @@ public final class KDTreeF64x3NNDist {
                     dist = Math.min(dist, d2);
                 }
             } else {
-                final int idx = (int) (data >>> INDEX_OFFSET);
-                final long axis = data & AXIS_MASK;
-                final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
-                final long n = nll[idx];
-                final boolean negative = Double.doubleToRawLongBits(delta) < 0L;
-                final boolean hasLeft = (n & LEFT_MASK) != LEFT_MASK;
-                final boolean hasRight = n >= 0L;
-                final long left = (n & LEFT_MASK) >>> LEFT_CHILD_OFFSET;
-                final long right = n >>> RIGHT_CHILD_OFFSET;
-                if (negative) {
-                    if (hasRight && delta * delta < dist) {
-                        stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
-                    }
-                    if (hasLeft) {
-                        stack[i++] = nbl[(int) left] | (left << INDEX_OFFSET);
-                    }
-                } else {
-                    if (hasLeft && delta * delta < dist) {
-                        stack[i++] = nbl[(int) left] | (left << INDEX_OFFSET);
-                    }
-                    if (hasRight) {
-                        stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
-                    }
-                }
+                i = nnInternal(tx, ty, tz, dist, data, nsl, nll, stack, i, nbl);
             }
         }
         return dist;
+    }
+
+    static int nnInternal(final double tx, final double ty, final double tz, final double dist, final long data, final double[] nsl, final long[] nll, final long[] stack, int i, final long[] nbl) {
+        final int idx = (int) (data >>> INDEX_OFFSET);
+        final long axis = data & AXIS_MASK;
+        final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
+        final long n = nll[idx];
+        final boolean negative = Double.doubleToRawLongBits(delta) < 0L;
+        final boolean hasLeft = (n & LEFT_MASK) != LEFT_MASK;
+        final boolean hasRight = n >= 0L;
+        final long left = (n & LEFT_MASK) >>> LEFT_CHILD_OFFSET;
+        final long right = n >>> RIGHT_CHILD_OFFSET;
+        if (negative) {
+            if (hasRight && delta * delta < dist) {
+                stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
+            }
+            if (hasLeft) {
+                stack[i++] = nbl[(int) left] | (left << INDEX_OFFSET);
+            }
+        } else {
+            if (hasLeft && delta * delta < dist) {
+                stack[i++] = nbl[(int) left] | (left << INDEX_OFFSET);
+            }
+            if (hasRight) {
+                stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
+            }
+        }
+        return i;
     }
 
     private record Node(int parent, boolean left, int offset, int length, int depth) {
