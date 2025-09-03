@@ -193,12 +193,11 @@ public final class KDTreeF64x3NNDist {
         final long axis = data & AXIS_MASK;
         final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
         final long n = nll[idx];
-        final boolean negative = Double.doubleToRawLongBits(delta) < 0L;
         final boolean hasLeft = (n & LEFT_MASK) != LEFT_MASK;
         final boolean hasRight = n >= 0L;
         final long left = (n & LEFT_MASK) >>> LEFT_CHILD_OFFSET;
         final long right = n >>> RIGHT_CHILD_OFFSET;
-        if (negative) {
+        if (delta < 0.0) {
             if (hasRight && delta * delta < dist) {
                 stack[i++] = nbl[(int) right] | (right << INDEX_OFFSET);
             }
