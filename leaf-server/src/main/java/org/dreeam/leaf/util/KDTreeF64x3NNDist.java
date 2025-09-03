@@ -8,42 +8,48 @@ import org.jspecify.annotations.NullMarked;
 @NullMarked
 public final class KDTreeF64x3NNDist {
 
+    private static final boolean SIMD = SIMDDetection.isEnabled();
     static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
+
     private static final double[] EMPTY_DOUBLES = {};
     private static final long[] EMPTY_LONGS = {};
     private static final Node[] EMPTY_NODES = {};
-    private static final int LEAF_THRESHOLD = 4;
-    private static final int INITIAL_CAP = 8;
-    private static final int ROOT = -1;
-    private static final long NIL = -1L;
-    private static final long LEAF = -1L;
+
     private static final long AXIS_X = 0L;
     private static final long AXIS_Y = 1L;
     private static final long AXIS_Z = 2L;
-    private static final long LEFT_MASK = 0xfffffffcL;
-    private static final long RIGHT_MASK = 0x3fffffff00000000L;
-    static final long OFFSET_MASK = 0x7fffffffL;
-    static final long LEN_MASK = 0xF80000000L;
-    static final long LEN_4_MASK = 0x200000000L;
+
+    private static final int LEAF_THRESHOLD = 4;
+    private static final int INITIAL_CAP = 8;
+    private static final int ROOT = -1;
+    /// sentinel value for empty on search
+    private static final long NIL = -1L;
+
+    private static final long AXIS_MASK = 0b11L;
+    private static final int LEFT_CHILD_OFFSET = 2;
+    private static final long LEFT_MASK = 0xffff_fffcL;
+    private static final long RIGHT_MASK = 0x3fff_ffff_0000_0000L;
+    private static final int RIGHT_CHILD_OFFSET = LEFT_CHILD_OFFSET + 30;
+
+    static final long OFFSET_MASK = 0x7fff_ffffL;
+    static final long LEN_MASK = 0xf_8000_0000L;
+    static final long LEN_4_MASK = 0x2_0000_0000L;
     static final int LEN_OFFSET = 31;
     private static final int INDEX_OFFSET = 36;
-    private static final int LEFT_CHILD_OFFSET = 2;
-    private static final int RIGHT_CHILD_OFFSET = 32;
-    private static final long AXIS_MASK = 0b11L;
-    private static final boolean SIMD = SIMDDetection.isEnabled();
+
     private Node[] stack = EMPTY_NODES;
     private long[] search = EMPTY_LONGS;
-    /// Split
+    /// Split value for each internal node
     private double[] nsl = EMPTY_DOUBLES;
-    /// Lengths(5) Offsets(31) for each player list of leaf nodes
+    /// Lengths(5) Offsets(31) for each leaf node
     private long[] nbl = EMPTY_LONGS;
     /// Right(30) Left(30) Axis(2) for each internal node
     private long[] nll = EMPTY_LONGS;
-    /// Nested player X coordinates of leaf nodes
+    /// Nested X of leaf nodes
     private double[] bxl = EMPTY_DOUBLES;
-    /// Nested player Y coordinates of leaf nodes
+    /// Nested Y of leaf nodes
     private double[] byl = EMPTY_DOUBLES;
-    /// Nested player Z coordinates of leaf nodes
+    /// Nested Z of leaf nodes
     private double[] bzl = EMPTY_DOUBLES;
 
     public void build(final double[][] coords, final int[] indices) {
@@ -56,31 +62,31 @@ public final class KDTreeF64x3NNDist {
             growNode(nodeLen);
             final Node n = stack[--st];
             final int curr = nodeLen++;
-            if (n.length() <= LEAF_THRESHOLD) {
-                nll[curr] = LEAF;
-                nbl[curr] = (long) n.length() << LEN_OFFSET | bucketLen;
+            if (n.len() <= LEAF_THRESHOLD) {
+                nll[curr] = RIGHT_MASK | LEFT_MASK;
+                nbl[curr] = (long) n.len() << LEN_OFFSET | bucketLen;
 
-                growBk(bucketLen, n.length());
-                bucketLen = copyCoords(coords, indices, n.offset(), n.length(), bucketLen);
+                growBk(bucketLen, n.len());
+                bucketLen = copyCoords(coords, indices, n.offset(), n.len(), bucketLen);
             } else {
                 final int axis = reorderAxis(n.depth());
-                final int med = (n.length() - 1) / 2;
-                PartialSort.nthElement(indices, coords[axis], n.offset(), n.offset() + n.length() - 1, n.offset() + med);
+                final int med = (n.len() - 1) / 2;
+                PartialSort.nthElement(indices, coords[axis], n.offset(), n.offset() + n.len() - 1, n.offset() + med);
                 nsl[curr] = coords[axis][indices[n.offset() + med]];
                 nll[curr] = RIGHT_MASK | LEFT_MASK | axis;
                 nbl[curr] = 0L;
 
                 growCon(st);
-                stack[st++] = new Node(curr, false, n.offset() + med + 1, n.length() - med - 1, n.depth() + 1);
+                stack[st++] = new Node(curr, false, n.offset() + med + 1, n.len() - med - 1, n.depth() + 1);
                 stack[st++] = new Node(curr, true, n.offset(), med + 1, n.depth() + 1);
             }
-            setParent(n.parent(), n.left(), curr);
+            setChild(n.parent(), n.left(), curr);
         }
 
         setSearch(indices, nodeLen);
     }
 
-    private void setParent(final int parent, final boolean left, final long curr) {
+    private void setChild(final int parent, final boolean left, final long curr) {
         if (parent == ROOT) {
             return;
         }
@@ -94,7 +100,8 @@ public final class KDTreeF64x3NNDist {
     }
 
     private static int reorderAxis(final int depth) {
-        return depth % 3 == 0 ? (int) AXIS_X : depth % 3 == 1 ? (int) AXIS_Z : (int) AXIS_Y;
+        final int r = depth % 3;
+        return r == 0 ? (int) AXIS_X : r == 1 ? (int) AXIS_Z : (int) AXIS_Y;
     }
 
     private int copyCoords(final double[][] coords, final int[] indices, final int offset, final int len, int bucketLen) {
@@ -161,7 +168,7 @@ public final class KDTreeF64x3NNDist {
         final double[] bxl = this.bxl;
         final double[] byl = this.byl;
         final double[] bzl = this.bzl;
-        if (stack[0] == NIL) {
+        if (stack.length == 0 || stack[0] == NIL) {
             return Double.POSITIVE_INFINITY;
         }
         if (SIMD) {
@@ -188,7 +195,16 @@ public final class KDTreeF64x3NNDist {
         return dist;
     }
 
-    static int nnInternal(final double tx, final double ty, final double tz, final double dist, final long data, final double[] nsl, final long[] nll, final long[] stack, int i, final long[] nbl) {
+    static int nnInternal(final double tx,
+                          final double ty,
+                          final double tz,
+                          final double dist,
+                          final long data,
+                          final double[] nsl,
+                          final long[] nll,
+                          final long[] stack,
+                          int i,
+                          final long[] nbl) {
         final int idx = (int) (data >>> INDEX_OFFSET);
         final long axis = data & AXIS_MASK;
         final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[idx];
@@ -215,6 +231,6 @@ public final class KDTreeF64x3NNDist {
         return i;
     }
 
-    private record Node(int parent, boolean left, int offset, int length, int depth) {
+    private record Node(int parent, boolean left, int offset, int len, int depth) {
     }
 }
