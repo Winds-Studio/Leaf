@@ -6,7 +6,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 public class NoSpawnerCollision extends ConfigModules {
 
     public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".no-spawner-collision";
+        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".disable-mob-collision-from-spawner";
     }
 
     public static boolean enabled = false;
