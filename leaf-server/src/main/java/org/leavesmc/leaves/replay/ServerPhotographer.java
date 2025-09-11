@@ -62,7 +62,14 @@ public class ServerPhotographer extends ServerPlayer {
         photographer.createState = state;
 
         photographer.recorder.start();
-        MinecraftServer.getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && !server.isSameThread()) {
+            server.submit(() -> {
+                MinecraftServer.getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
+            });
+        } else {
+            MinecraftServer.getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
+        }
+
         photographer.level().chunkSource.move(photographer);
         photographer.setInvisible(true);
         photographers.add(photographer);
@@ -85,11 +92,24 @@ public class ServerPhotographer extends ServerPlayer {
 
         if (this.followPlayer != null) {
             if (this.getCamera() == this || this.getCamera().level() != this.level()) {
-                this.getBukkitPlayer().teleport(this.getCamera().getBukkitEntity().getLocation());
-                this.setCamera(followPlayer);
+                if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+                    this.getBukkitEntity().taskScheduler.schedule(entity -> {
+                        ((ServerPhotographer) entity).getBukkitPlayer().teleport(((ServerPhotographer) entity).getCamera().getBukkitEntity().getLocation());
+                        ((ServerPhotographer) entity).setCamera(((ServerPhotographer) entity).followPlayer);
+                    }, entity -> {}, 0);
+                } else {
+                    this.getBukkitPlayer().teleport(this.getCamera().getBukkitEntity().getLocation());
+                    this.setCamera(followPlayer);
+                }
             }
             if (lastPos.distanceToSqr(this.position()) > 1024D) {
-                this.getBukkitPlayer().teleport(this.getCamera().getBukkitEntity().getLocation());
+                if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+                    this.getBukkitEntity().taskScheduler.schedule(entity -> {
+                        ((ServerPhotographer) entity).getBukkitPlayer().teleport(((ServerPhotographer) entity).getCamera().getBukkitEntity().getLocation());
+                    }, entity -> {}, 0);
+                } else {
+                    this.getBukkitPlayer().teleport(this.getCamera().getBukkitEntity().getLocation());
+                }
             }
         }
 
@@ -130,7 +150,14 @@ public class ServerPhotographer extends ServerPlayer {
         super.remove(RemovalReason.KILLED);
         photographers.remove(this);
         this.recorder.stop();
-        this.getServer().getPlayerList().removePhotographer(this);
+
+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+            this.getServer().submit(() -> {
+                this.getServer().getPlayerList().removePhotographer(this);
+            });
+        } else {
+            this.getServer().getPlayerList().removePhotographer(this);
+        }
 
         LeavesLogger.LOGGER.info("Photographer " + createState.id + " removed");
 
