@@ -29,8 +29,6 @@ public final class KDTreeF64x3NNDist {
 
     private Node[] stack = EMPTY_NODES;
     private int[] search = EMPTY_INTS;
-    /// Split value for each internal node
-    private double[] nsl = EMPTY_DOUBLES;
     /// Right(30) Left(30) Axis(2) for each internal node
     private long[] nll = EMPTY_LONGS;
     private double[] nxl = EMPTY_DOUBLES;
@@ -67,7 +65,7 @@ public final class KDTreeF64x3NNDist {
                 PartialSort.nthElement(indices, coord, n.offset(), n.offset() + n.len() - 1, k);
 
                 nll[curr] = RIGHT_MASK | LEFT_MASK | axis;
-                nsl[curr] = coord[indices[k]];
+                nxl[curr] = coord[indices[k]];
 
                 growCon(st);
                 stack[st++] = new Node(curr, false, n.offset() + med + 1, n.len() - med - 1, n.depth() + 1);
@@ -116,14 +114,13 @@ public final class KDTreeF64x3NNDist {
 
     private void growNode(final int preserve) {
         int length = preserve + 1;
-        if (length < nsl.length) {
+        if (length < nll.length) {
             return;
         }
         length += length >> 1;
         if (length < INITIAL_CAPACITY) {
             length = INITIAL_CAPACITY;
         }
-        nsl = it.unimi.dsi.fastutil.doubles.DoubleArrays.forceCapacity(nsl, length, preserve);
         nll = it.unimi.dsi.fastutil.longs.LongArrays.forceCapacity(nll, length, preserve);
         nxl = it.unimi.dsi.fastutil.doubles.DoubleArrays.forceCapacity(nxl, length, preserve);
         nyl = it.unimi.dsi.fastutil.doubles.DoubleArrays.forceCapacity(nyl, length, preserve);
@@ -133,7 +130,6 @@ public final class KDTreeF64x3NNDist {
 
     public double nearest(final double tx, final double ty, final double tz, double dist) {
         final int[] stack = this.search;
-        final double[] nsl = this.nsl;
         final long[] nll = this.nll;
         final double[] nxl = this.nxl;
         final double[] nyl = this.nyl;
@@ -158,7 +154,7 @@ public final class KDTreeF64x3NNDist {
                 final int left = (int) ((data & LEFT_MASK) >>> LEFT_CHILD_OFFSET);
                 final int right = (int) (data >>> RIGHT_CHILD_OFFSET);
                 final long axis = data & AXIS_MASK;
-                final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nsl[j];
+                final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nxl[j];
                 if (delta < 0.0) {
                     if (hasRight && delta * delta < dist) {
                         stack[i++] = right;
