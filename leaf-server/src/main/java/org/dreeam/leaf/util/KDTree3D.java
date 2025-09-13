@@ -1,7 +1,7 @@
 package org.dreeam.leaf.util;
 
 @org.jspecify.annotations.NullMarked
-public final class KDTreeF64x3NNDist {
+public final class KDTree3D {
 
     private static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
 
@@ -128,7 +128,7 @@ public final class KDTreeF64x3NNDist {
         nil = it.unimi.dsi.fastutil.ints.IntArrays.forceCapacity(nil, length, preserve);
     }
 
-    public double nearest(final double tx, final double ty, final double tz, double dist) {
+    public double nearestSqr(final double tx, final double ty, final double tz, double dist) {
         final int[] stack = this.search;
         final long[] nll = this.nll;
         final double[] nxl = this.nxl;
@@ -146,8 +146,7 @@ public final class KDTreeF64x3NNDist {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
                 final double dz = nzl[j] - tz;
-                final double d2 = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
-                dist = Math.min(dist, d2);
+                dist = Math.min(dist, FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz);
             } else {
                 final boolean hasLeft = (data & LEFT_MASK) != LEFT_MASK;
                 final boolean hasRight = (data & RIGHT_MASK) != RIGHT_MASK;
@@ -173,6 +172,57 @@ public final class KDTreeF64x3NNDist {
             }
         }
         return dist;
+    }
+
+    public int nearest(final double tx, final double ty, final double tz, double dist) {
+        final int[] stack = this.search;
+        final long[] nll = this.nll;
+        final double[] nxl = this.nxl;
+        final double[] nyl = this.nyl;
+        final double[] nzl = this.nzl;
+        if (stack.length == 0 || stack[0] == SENTINEL) {
+            return -1;
+        }
+        stack[0] = 0;
+        int i = 1;
+        int nearest = -1;
+        while (i != 0) {
+            final int j = stack[--i];
+            final long data = nll[j];
+            if (data == NIL) {
+                final double dx = nxl[j] - tx;
+                final double dy = nyl[j] - ty;
+                final double dz = nzl[j] - tz;
+                final double candidate = FMA ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx)) : dx * dx + dy * dy + dz * dz;
+                if (candidate < dist) {
+                    dist = candidate;
+                    nearest = nil[j];
+                }
+            } else {
+                final boolean hasLeft = (data & LEFT_MASK) != LEFT_MASK;
+                final boolean hasRight = (data & RIGHT_MASK) != RIGHT_MASK;
+                final int left = (int) ((data & LEFT_MASK) >>> LEFT_CHILD_OFFSET);
+                final int right = (int) (data >>> RIGHT_CHILD_OFFSET);
+                final long axis = data & AXIS_MASK;
+                final double delta = (axis == AXIS_X ? tx : axis == AXIS_Y ? ty : tz) - nxl[j];
+                if (delta < 0.0) {
+                    if (hasRight && delta * delta < dist) {
+                        stack[i++] = right;
+                    }
+                    if (hasLeft) {
+                        stack[i++] = left;
+                    }
+                } else {
+                    if (hasLeft && delta * delta < dist) {
+                        stack[i++] = left;
+                    }
+                    if (hasRight) {
+                        stack[i++] = right;
+                    }
+                }
+            }
+        }
+        return nearest;
     }
 
     private record Node(int parent, boolean left, int offset, int len, int depth) {

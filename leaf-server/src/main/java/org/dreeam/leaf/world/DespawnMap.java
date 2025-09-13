@@ -11,7 +11,7 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.entity.EntityTickList;
 import net.minecraft.world.phys.Vec3;
 import org.bukkit.event.entity.EntityRemoveEvent;
-import org.dreeam.leaf.util.KDTreeF64x3NNDist;
+import org.dreeam.leaf.util.KDTree3D;
 
 import java.util.Map;
 import java.util.OptionalInt;
@@ -19,19 +19,20 @@ import java.util.function.Consumer;
 
 public final class DespawnMap implements Consumer<Entity> {
     private static final ServerPlayer[] EMPTY_PLAYERS = {};
-    private final KDTreeF64x3NNDist tree = new KDTreeF64x3NNDist();
-    private final double[] hard;
-    private final double[] sort;
+    private final KDTree3D tree = new KDTree3D();
+    private static final MobCategory[] CATEGORIES = MobCategory.values();
+    private final double[] hard = new double[CATEGORIES.length];
+    private final double[] sort = new double[CATEGORIES.length];
+    private final boolean fallback;
     public boolean difficultyIsPeaceful = true;
+    private ServerPlayer[] players = EMPTY_PLAYERS;
 
     public DespawnMap(WorldConfiguration worldConfiguration) {
-        MobCategory[] caps = MobCategory.values();
-        hard = new double[caps.length];
-        sort = new double[caps.length];
-        for (int i = 0; i < caps.length; i++) {
-            sort[i] = caps[i].getNoDespawnDistance();
-            hard[i] = caps[i].getDespawnDistance();
+        for (int i = 0; i < CATEGORIES.length; i++) {
+            sort[i] = CATEGORIES[i].getNoDespawnDistance();
+            hard[i] = CATEGORIES[i].getDespawnDistance();
         }
+        boolean fallback = false;
         for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> e : worldConfiguration.entities.spawning.despawnRanges.entrySet()) {
             OptionalInt a = e.getValue().soft().verticalLimit.value();
             OptionalInt b = e.getValue().soft().horizontalLimit.value();
@@ -39,12 +40,16 @@ public final class DespawnMap implements Consumer<Entity> {
             OptionalInt d = e.getValue().hard().horizontalLimit.value();
             if (a.isPresent() && b.isPresent() && a.getAsInt() == b.getAsInt()) {
                 sort[e.getKey().ordinal()] = a.getAsInt();
+            } else {
+                fallback = true;
             }
             if (c.isPresent() && d.isPresent() && c.getAsInt() == d.getAsInt()) {
                 hard[e.getKey().ordinal()] = c.getAsInt();
+            } else {
+                fallback = true;
             }
         }
-        for (int i = 0; i < caps.length; i++) {
+        for (int i = 0; i < CATEGORIES.length; i++) {
             if (sort[i] > 0.0) {
                 sort[i] = sort[i] * sort[i];
             }
@@ -52,10 +57,11 @@ public final class DespawnMap implements Consumer<Entity> {
                 hard[i] = hard[i] * hard[i];
             }
         }
+        this.fallback = fallback;
     }
 
     public void tick(final ServerLevel world, final EntityTickList entityTickList) {
-        final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
+        players = world.players().toArray(EMPTY_PLAYERS);
         final double[] pxl = new double[players.length];
         final double[] pyl = new double[players.length];
         final double[] pzl = new double[players.length];
@@ -74,14 +80,19 @@ public final class DespawnMap implements Consumer<Entity> {
         }
         tree.build(new double[][]{pxl, pyl, pzl}, indices);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
-        entityTickList.forEach(this);
+        if (fallback) {
+            entityTickList.forEach(entity -> entity.leaf$checkDespawnFallback(this));
+        } else {
+            entityTickList.forEach(this);
+        }
+        players = EMPTY_PLAYERS;
     }
 
     public void checkDespawn(final Mob mob) {
-        final Vec3 vec3 = mob.position();
         final int i = mob.getType().getCategory().ordinal();
         final double hardDist = this.hard[i];
-        final double dist = this.tree.nearest(vec3.x, vec3.y, vec3.z, hardDist);
+        final Vec3 vec3 = mob.position;
+        final double dist = this.tree.nearestSqr(vec3.x, vec3.y, vec3.z, hardDist);
         if (dist == Double.POSITIVE_INFINITY) {
             return;
         }
@@ -97,8 +108,14 @@ public final class DespawnMap implements Consumer<Entity> {
         }
     }
 
+    public ServerPlayer checkDespawnFallback(final Mob mob) {
+        final Vec3 vec3 = mob.position;
+        final int i = tree.nearest(vec3.x, vec3.y, vec3.z, Double.POSITIVE_INFINITY);
+        return i == -1 ? null : this.players[i];
+    }
+
     @Override
     public void accept(final Entity entity) {
-        entity.leafCheckDespawn(this);
+        entity.leaf$checkDespawn(this);
     }
 }
