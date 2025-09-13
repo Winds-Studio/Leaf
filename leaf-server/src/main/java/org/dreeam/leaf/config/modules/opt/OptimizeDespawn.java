@@ -17,9 +17,8 @@ public class OptimizeDespawn extends ConfigModules {
     public void onLoaded() {
         enabled = config.getBoolean(getBasePath(), enabled);
         if (enabled) {
-            gg.pufferfish.pufferfish.simd.SIMDDetection.initialize();
-            if (!Boolean.getBoolean("Leaf.enableFMA") || !SIMDDetection.isEnabled()) {
-                LOGGER.info("NOTE: Recommend enabling FMA and Vector API to work with optimize-mob-despawn.");
+            if (!Boolean.getBoolean("Leaf.enableFMA")) {
+                LOGGER.info("NOTE: Recommend enabling FMA to work with optimize-mob-despawn.");
             }
         }
     }
