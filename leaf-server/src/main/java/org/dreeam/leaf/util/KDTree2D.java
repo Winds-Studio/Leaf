@@ -1,7 +1,7 @@
 package org.dreeam.leaf.util;
 
 @org.jspecify.annotations.NullMarked
-public final class KDTree3D {
+public final class KDTree2D {
 
     private static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
 
@@ -22,13 +22,11 @@ public final class KDTree3D {
     private double[] nxl = EMPTY_DOUBLES;
     // y coordinate for leaf
     private double[] nyl = EMPTY_DOUBLES;
-    // z coordinate for leaf
-    private double[] nzl = EMPTY_DOUBLES;
     // index for leaf
     private int[] nil = EMPTY_INTS;
 
     public void build(final double[][] coords, final int[] indices) {
-        if (indices.length == 0 || coords.length != 3) {
+        if (indices.length == 0 || coords.length != 2) {
             ensureSearch(0, 0);
             return;
         }
@@ -46,10 +44,9 @@ public final class KDTree3D {
                 nrl[curr] = SENTINEL;
                 nxl[curr] = coords[0][p];
                 nyl[curr] = coords[1][p];
-                nzl[curr] = coords[2][p];
                 nil[curr] = p;
             } else {
-                final int axis = (n.depth()) % 3;
+                final int axis = (n.depth()) % 2;
                 final int med = (n.len() - 1) / 2;
                 final int k = n.offset() + med;
                 final double[] coord = coords[axis];
@@ -98,16 +95,14 @@ public final class KDTree3D {
         nrl = it.unimi.dsi.fastutil.ints.IntArrays.forceCapacity(nrl, length, preserve);
         nxl = it.unimi.dsi.fastutil.doubles.DoubleArrays.forceCapacity(nxl, length, preserve);
         nyl = it.unimi.dsi.fastutil.doubles.DoubleArrays.forceCapacity(nyl, length, preserve);
-        nzl = it.unimi.dsi.fastutil.doubles.DoubleArrays.forceCapacity(nzl, length, preserve);
         nil = it.unimi.dsi.fastutil.ints.IntArrays.forceCapacity(nil, length, preserve);
     }
 
-    public double nearestSqr(final double tx, final double ty, final double tz, double dist) {
+    public double nearestSqr(final double tx, final double ty, double dist) {
         final int[] stack = this.search;
         final int[] nrl = this.nrl;
         final double[] nxl = this.nxl;
         final double[] nyl = this.nyl;
-        final double[] nzl = this.nzl;
         if (stack.length == 0 || stack[0] == SENTINEL) {
             return Double.POSITIVE_INFINITY;
         }
@@ -117,91 +112,14 @@ public final class KDTree3D {
             if (right == SENTINEL) {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
-                final double dz = nzl[j] - tz;
                 dist = Math.min(dist, FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz);
+                    ? Math.fma(dy, dy, dx * dx)
+                    : dx * dx + dy * dy);
                 break;
             } else {
-                final int next = ((curr + 1) % 3) << 30;
+                final int next = ((curr + 1) % 2) << 31;
                 final int left = j + 1;
-                final double delta = (curr == 0 ? tx : curr == 1 ? ty : tz) - nxl[j];
-                if (delta < 0.0) {
-                    if (delta * delta < dist) {
-                        stack[i++] = right | next;
-                    }
-                    j = left;
-                } else {
-                    if (delta * delta < dist) {
-                        stack[i++] = left | next;
-                    }
-                    j = right;
-                }
-                curr = ((curr + 1) % 3);
-            }
-        }
-        while (i != 0) {
-            j = stack[--i];
-            final int k = j & 0x3FFF_FFFF;
-            final int right = nrl[k];
-            if (right == SENTINEL) {
-                final double dx = nxl[k] - tx;
-                final double dy = nyl[k] - ty;
-                final double dz = nzl[k] - tz;
-                dist = Math.min(dist, FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz);
-            } else {
-                final int axis = j >>> 30;
-                final int next = ((axis + 1) % 3) << 30;
-                final int left = (k + 1) | next;
-                final double delta = (axis == 0 ? tx : axis == 1 ? ty : tz) - nxl[k];
-                if (delta < 0.0) {
-                    // near = left, far = right, left first
-                    if (delta * delta < dist) {
-                        stack[i++] = right | next;
-                    }
-                    stack[i++] = left;
-                } else {
-                    // near = right, far = left, right first
-                    if (delta * delta < dist) {
-                        stack[i++] = left;
-                    }
-                    stack[i++] = right | next;
-                }
-            }
-        }
-        return dist;
-    }
-
-    public int nearestIdx(final double tx, final double ty, final double tz, double dist) {
-        final int[] stack = this.search;
-        final int[] nrl = this.nrl;
-        final double[] nxl = this.nxl;
-        final double[] nyl = this.nyl;
-        final double[] nzl = this.nzl;
-        if (stack.length == 0 || stack[0] == SENTINEL) {
-            return -1;
-        }
-        int i = 0, j = 0, curr = 0, nearest = -1;
-        while (true) {
-            final int right = nrl[j];
-            if (right == SENTINEL) {
-                final double dx = nxl[j] - tx;
-                final double dy = nyl[j] - ty;
-                final double dz = nzl[j] - tz;
-                final double candidate = FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz;
-                if (candidate < dist) {
-                    dist = candidate;
-                    nearest = nil[j];
-                }
-                break;
-            } else {
-                final int next = ((curr + 1) % 3) << 30;
-                final int left = j + 1;
-                final double delta = (curr == 0 ? tx : curr == 1 ? ty : tz) - nxl[j];
+                final double delta = (curr == 0 ? tx : ty) - nxl[j];
                 final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     if (push) {
@@ -214,29 +132,103 @@ public final class KDTree3D {
                     }
                     j = right;
                 }
-                curr = ((curr + 1) % 3);
+                curr = ((curr + 1) % 2);
             }
         }
         while (i != 0) {
             j = stack[--i];
-            final int k = j & 0x3FFF_FFFF;
+            final int k = j & 0x7FFF_FFFF;
             final int right = nrl[k];
             if (right == SENTINEL) {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
-                final double dz = nzl[k] - tz;
+                dist = Math.min(dist, FMA
+                    ? Math.fma(dy, dy, dx * dx)
+                    : dx * dx + dy * dy);
+            } else {
+                final int axis = j >>> 31;
+                final int next = ((axis + 1) % 2) << 31;
+                final int left = (k + 1) | next;
+                final double delta = (axis == 0 ? tx : ty) - nxl[k];
+                final boolean push = delta * delta < dist;
+                if (delta < 0.0) {
+                    // near = left, far = right, left first
+                    if (push) {
+                        stack[i++] = right | next;
+                    }
+                    stack[i++] = left;
+                } else {
+                    // near = right, far = left, right first
+                    if (push) {
+                        stack[i++] = left;
+                    }
+                    stack[i++] = right | next;
+                }
+            }
+        }
+        return dist;
+    }
+
+    public int nearestIdx(final double tx, final double ty, double dist) {
+        final int[] stack = this.search;
+        final int[] nrl = this.nrl;
+        final double[] nxl = this.nxl;
+        final double[] nyl = this.nyl;
+        if (stack.length == 0 || stack[0] == SENTINEL) {
+            return -1;
+        }
+        int i = 0, j = 0, curr = 0, nearest = -1;
+        while (true) {
+            final int right = nrl[j];
+            if (right == SENTINEL) {
+                final double dx = nxl[j] - tx;
+                final double dy = nyl[j] - ty;
                 final double candidate = FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz;
+                    ? Math.fma(dy, dy, dx * dx)
+                    : dx * dx + dy * dy;
+                if (candidate < dist) {
+                    dist = candidate;
+                    nearest = nil[j];
+                }
+                break;
+            } else {
+                final int next = ((curr + 1) % 2) << 31;
+                final int left = j + 1;
+                final double delta = (curr == 0 ? tx : ty) - nxl[j];
+                final boolean push = delta * delta < dist;
+                if (delta < 0.0) {
+                    if (push) {
+                        stack[i++] = right | next;
+                    }
+                    j = left;
+                } else {
+                    if (push) {
+                        stack[i++] = left | next;
+                    }
+                    j = right;
+                }
+                curr = ((curr + 1) % 2);
+            }
+        }
+        while (i != 0) {
+            j = stack[--i];
+            final int k = j & 0x7FFF_FFFF;
+            final int right = nrl[k];
+            if (right == SENTINEL) {
+                final double dx = nxl[k] - tx;
+                final double dy = nyl[k] - ty;
+                final double candidate = FMA
+                    ? Math.fma(dy, dy, dx * dx)
+                    : dx * dx + dy * dy;
                 if (candidate < dist) {
                     dist = candidate;
                     nearest = nil[k];
                 }
             } else {
-                final int axis = j >>> 30;
-                final int next = ((axis + 1) % 3) << 30;
+                final int axis = j >>> 31;
+                final int next = ((axis + 1) % 2) << 31;
                 final int left = (k + 1) | next;
-                final double delta = (axis == 0 ? tx : axis == 1 ? ty : tz) - nxl[k];
+                final double delta = (axis == 0 ? tx : ty) - nxl[k];
                 final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     // near = left, far = right, left first
