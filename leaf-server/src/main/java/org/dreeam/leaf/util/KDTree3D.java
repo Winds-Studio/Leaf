@@ -126,13 +126,14 @@ public final class KDTree3D {
                 final int next = ((curr + 1) % 3) << 30;
                 final int left = j + 1;
                 final double delta = (curr == 0 ? tx : curr == 1 ? ty : tz) - nxl[j];
+                final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
-                    if (delta * delta < dist) {
+                    if (push) {
                         stack[i++] = right | next;
                     }
                     j = left;
                 } else {
-                    if (delta * delta < dist) {
+                    if (push) {
                         stack[i++] = left | next;
                     }
                     j = right;
@@ -156,15 +157,16 @@ public final class KDTree3D {
                 final int next = ((axis + 1) % 3) << 30;
                 final int left = (k + 1) | next;
                 final double delta = (axis == 0 ? tx : axis == 1 ? ty : tz) - nxl[k];
+                final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     // near = left, far = right, left first
-                    if (delta * delta < dist) {
+                    if (push) {
                         stack[i++] = right | next;
                     }
                     stack[i++] = left;
                 } else {
                     // near = right, far = left, right first
-                    if (delta * delta < dist) {
+                    if (push) {
                         stack[i++] = left;
                     }
                     stack[i++] = right | next;
