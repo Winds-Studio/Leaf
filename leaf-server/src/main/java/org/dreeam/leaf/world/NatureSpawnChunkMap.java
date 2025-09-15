@@ -1,12 +1,15 @@
 package org.dreeam.leaf.world;
 
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
+import ca.spottedleaf.moonrise.common.util.CoordinateUtils;
 import com.destroystokyo.paper.event.entity.PlayerNaturallySpawnCreaturesEvent;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import org.dreeam.leaf.util.KDTree3D;
 
 import java.util.List;
 
@@ -14,7 +17,7 @@ public final class NatureSpawnChunkMap {
     /// breadth-first search
     ///
     /// 0 4 12 28 48 80 112 148 196
-    private static final long[][] TABLE_BFS = new long[][]{
+    private static final long[][] TABLE_BFS = {
         {0L},
         {0L, 4294967295L, -4294967296L, 4294967296L, 1L},
         {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, 4294967294L, -8589934592L, 8589934592L, 2L},
@@ -32,6 +35,8 @@ public final class NatureSpawnChunkMap {
 
     private final LongArrayList[] centersByRadius;
     private final Long2LongOpenHashMap regionBitSets;
+    private final ObjectArrayList<ServerPlayer> players;
+    private final KDTree3D tree = new KDTree3D();
 
     public NatureSpawnChunkMap() {
         this.centersByRadius = new LongArrayList[SIZE_RADIUS];
@@ -39,6 +44,7 @@ public final class NatureSpawnChunkMap {
             this.centersByRadius[i] = new LongArrayList();
         }
         this.regionBitSets = new Long2LongOpenHashMap();
+        this.players = new ObjectArrayList<>();
     }
 
     public void clear() {
@@ -46,29 +52,56 @@ public final class NatureSpawnChunkMap {
             chunkPosition.clear();
         }
         this.regionBitSets.clear();
+        this.players.clear();
     }
 
     public void addPlayer(ServerPlayer player) {
         if (player.isSpectator()) {
             return;
         }
-        PlayerNaturallySpawnCreaturesEvent event = player.playerNaturallySpawnedEvent;
-        if (event == null || event.isCancelled()) {
-            return;
-        }
-        int range = event.getSpawnRadius();
-        if (range > MAX_RADIUS) {
-            range = MAX_RADIUS;
-        } else if (range < 0) {
-            return;
-        }
-        this.centersByRadius[range].add(player.chunkPosition().longKey);
+        players.add(player);
     }
 
-    public void build() {
+    public void build(ServerLevel world) {
+        for (ServerPlayer player : players) {
+            PlayerNaturallySpawnCreaturesEvent event = player.playerNaturallySpawnedEvent;
+            if (event == null || event.isCancelled()) {
+                continue;
+            }
+            int range = event.getSpawnRadius();
+            if (range > MAX_RADIUS) {
+                range = MAX_RADIUS;
+            } else if (range < 0) {
+                continue;
+            }
+            this.centersByRadius[range].add(player.chunkPosition().longKey);
+        }
         for (int index = 0; index < SIZE_RADIUS; index++) {
             buildBy(index);
         }
+
+        double[] pxl = new double[players.size()];
+        double[] pyl = new double[players.size()];
+        double[] pzl = new double[players.size()];
+        boolean ignoreCreativePlayers = world.purpurConfig.mobSpawningIgnoreCreativePlayers;
+        int i = 0;
+        for (final ServerPlayer p : players) {
+            if (!ignoreCreativePlayers || !p.isCreative()) {
+                pxl[i] = p.getX();
+                pyl[i] = p.getY();
+                pzl[i] = p.getZ();
+                i++;
+            }
+        }
+        final int[] indices = new int[i];
+        for (int j = 0; j < i; j++) {
+            indices[j] = j;
+        }
+        tree.build(new double[][]{pxl, pzl, pyl}, indices);
+    }
+
+    public double nearest(double x, double y, double z) {
+        return tree.nearestSqr(x, z, y, 16384.0);
     }
 
     private void buildBy(int index) {
@@ -78,36 +111,32 @@ public final class NatureSpawnChunkMap {
             return;
         }
         long[] centersRaw = list.elements();
-        long cachedKey = ChunkPos.asLong(ChunkPos.getX(centersRaw[0]) >> REGION_SHIFT, ChunkPos.getZ(centersRaw[0]) >> REGION_SHIFT);
+        long packed = centersRaw[0];
+        long cachedKey = CoordinateUtils.getChunkKey(CoordinateUtils.getChunkX(packed) >> REGION_SHIFT, CoordinateUtils.getChunkZ(packed) >> REGION_SHIFT);
         long cachedVal = this.regionBitSets.get(cachedKey);
         long[] offsets = TABLE_BFS[index];
         for (int i = 0; i < centersSize; i++) {
             long center = centersRaw[i];
-            int cx = ChunkPos.getX(center);
-            int cz = ChunkPos.getZ(center);
+            int cx = CoordinateUtils.getChunkX(center);
+            int cz = CoordinateUtils.getChunkZ(center);
 
             for (long packedOffset : offsets) {
-                int dx = ChunkPos.getX(packedOffset);
-                int dz = ChunkPos.getZ(packedOffset);
+                int dx = CoordinateUtils.getChunkX(packedOffset);
+                int dz = CoordinateUtils.getChunkZ(packedOffset);
                 int chunkX = cx + dx;
                 int chunkZ = cz + dz;
-
-                int regionX = chunkX >> REGION_SHIFT;
-                int regionZ = chunkZ >> REGION_SHIFT;
-                long regionKey = ChunkPos.asLong(regionX, regionZ);
-
-                int localX = chunkX & REGION_MASK;
-                int localZ = chunkZ & REGION_MASK;
-                int bitIndex = (localZ << REGION_SHIFT) | localX;
-                long bitMask = 1L << bitIndex;
-
+                long regionKey = CoordinateUtils.getChunkKey(chunkX >> REGION_SHIFT, chunkZ >> REGION_SHIFT);
                 if (regionKey != cachedKey) {
                     this.regionBitSets.put(cachedKey, cachedVal);
                     cachedKey = regionKey;
                     cachedVal = this.regionBitSets.get(regionKey);
                 }
 
-                cachedVal |= bitMask;
+                int localZ = chunkZ & REGION_MASK;
+                int localX = chunkX & REGION_MASK;
+                int bitIndex = (localZ << REGION_SHIFT) | localX;
+                long bit = 1L << bitIndex;
+                cachedVal |= bit;
             }
         }
 
@@ -116,7 +145,7 @@ public final class NatureSpawnChunkMap {
         }
     }
 
-    private int deduplicate(LongArrayList list) {
+    private static int deduplicate(LongArrayList list) {
         int n = list.size();
         if (n == 0) {
             return 0;
@@ -137,7 +166,9 @@ public final class NatureSpawnChunkMap {
 
     public void collectSpawningChunks(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
         LevelChunk[] raw = chunks.getRawDataUnchecked();
-        for (int i = 0, length = chunks.size(); i < length; i++) {
+        int size = chunks.size();
+        java.util.Objects.checkFromToIndex(0, size, raw.length);
+        for (int i = 0; i < size; i++) {
             LevelChunk chunk = raw[i];
             if (contains(chunk.locX, chunk.locZ)) {
                 out.add(chunk);
@@ -145,10 +176,9 @@ public final class NatureSpawnChunkMap {
         }
     }
 
-    public boolean contains(int chunkX, int chunkZ) {
-        int regionX = chunkX >> REGION_SHIFT;
-        int regionZ = chunkZ >> REGION_SHIFT;
-        long bitset = this.regionBitSets.get(ChunkPos.asLong(regionX, regionZ));
-        return bitset != 0 && (bitset & (1L << (((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK)))) != 0L;
+    private boolean contains(int chunkX, int chunkZ) {
+        long bitset = this.regionBitSets.get(CoordinateUtils.getChunkKey(chunkX >> REGION_SHIFT, chunkZ >> REGION_SHIFT));
+        int local = ((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK);
+        return (bitset & (1L << local)) != 0L;
     }
 }
