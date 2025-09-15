@@ -30,7 +30,7 @@ index 5c369b3d94e369c3f240821ad90b9d96223f24ca..9803c395fce103cb7bc746f43a017ff9
       }
      // Paper end - Optional per player mob spawns
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf4634bdc724 100644
+index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..ed267cb678206e3ced43e1aafbac203ff87bee74 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
 +++ b/net/minecraft/server/level/ServerChunkCache.java
 @@ -70,11 +70,11 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
@@ -133,8 +133,8 @@ index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf46
 -            } // Pufferfish - (endif) moved down when async processing
 +            // Leaf start - optimize mob spawning
 +            if (!org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled) {
-+                state.set(2);
 +                lastSpawnState = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, null, true); // Pufferfish - async mob spawning
++                state.set(2);
 +            }
 +            // Leaf end - optimize mob spawning
          } else {
@@ -142,8 +142,8 @@ index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf46
 -            lastSpawnState = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, !this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new LocalMobCapCalculator(this.chunkMap) : null, false);
 -            _pufferfish_spawnCountsReady.set(true);
 -            // Pufferfish end
-+            state.set(2); // Leaf - optimize mob spawning
 +            lastSpawnState = NaturalSpawner.createState(naturalSpawnChunkCount, this.level.getAllEntities(), this::getFullChunk, !this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new LocalMobCapCalculator(this.chunkMap) : null, false); // Leaf - optimize mob spawning
++            state.set(2); // Leaf - optimize mob spawning
          }
          // Paper end - Optional per player mob spawns
          //this.lastSpawnState = spawnState; // Pufferfish - this is managed asynchronously
@@ -154,7 +154,7 @@ index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf46
          if (_boolean && (this.spawnEnemies || this.spawnFriendlies)) {
              // Paper start - PlayerNaturallySpawnCreaturesEvent
              for (ServerPlayer entityPlayer : this.level.players()) {
-@@ -611,27 +565,61 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -611,27 +565,62 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
                  chunkRange = Math.min(chunkRange, 8);
                  entityPlayer.playerNaturallySpawnedEvent = new com.destroystokyo.paper.event.entity.PlayerNaturallySpawnCreaturesEvent(entityPlayer.getBukkitEntity(), (byte) chunkRange);
                  entityPlayer.playerNaturallySpawnedEvent.callEvent();
@@ -187,22 +187,22 @@ index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf46
 +            boolean enqueue = org.dreeam.leaf.config.modules.async.AsyncMobSpawning.enabled
 +                && (this.spawnFriendlies || this.spawnEnemies)
 +                && this.level.paperConfig().entities.spawning.perPlayerMobSpawns;
-+            if (!enqueue || state.compareAndSet(2, 0)) {
-+                NaturalSpawner.SpawnState currentState = lastSpawnState;
-+                lastSpawnState = null;
-+                if (currentState != null) {
-+                    currentState.applyPerPlayerMobCount(this.level);
++            boolean cas = state.compareAndSet(2, 0);
++            if (!enqueue || cas) {
++                NaturalSpawner.SpawnState spawnState = cas ? lastSpawnState : null;
++                if (spawnState != null) {
++                    spawnState.applyPerPlayerMobCount(this.level);
 +                }
-+                MobCategory[] categories = currentState == null ? EMPTY_MOB_CATEGORIES : filteredSpawningCategories;
++                MobCategory[] categories = spawnState == null ? EMPTY_MOB_CATEGORIES : filteredSpawningCategories;
 +                ChunkGenerator generator = this.getGenerator();
 +                if (list instanceof it.unimi.dsi.fastutil.objects.ReferenceArrayList<LevelChunk> list1) {
 +                    LevelChunk[] raw = list1.elements();
 +                    for (int i = 0, j = list1.size(); i < j; i++) {
-+                        this.tickSpawningChunk(raw[i], timeInhabited, categories, currentState, generator);
++                        this.tickSpawningChunk(raw[i], timeInhabited, categories, spawnState, generator);
 +                    }
 +                } else {
 +                    for (LevelChunk levelChunk : list) {
-+                        this.tickSpawningChunk(levelChunk, timeInhabited, categories, currentState, generator);
++                        this.tickSpawningChunk(levelChunk, timeInhabited, categories, spawnState, generator);
 +                    }
 +                }
              }
@@ -212,7 +212,8 @@ index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf46
 +                Iterable<Entity> entities = this.level.getAllEntities();
 +                level.getServer().mobSpawnExecutor.submit(() -> {
 +                    NaturalSpawner.SpawnState newState = NaturalSpawner.createStateAsync(mapped, entities, level);
-+                    ServerChunkCache.this.lastSpawnState = !state.compareAndSet(1, 2) ? null : newState;
++                    ServerChunkCache.this.lastSpawnState = state.get() != 1 ? null : newState;
++                    state.set(2);
 +                });
 +            }
 +            // Leaf end - optimize mob spawning
@@ -221,7 +222,7 @@ index 3a6c894178829cec8daa08ea9f0294f7f39a8efe..f0d4b7414030f99a2ef0e257d531bf46
              list.clear();
          }
  
-@@ -641,16 +629,21 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -641,16 +630,21 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
          }
      }
  
