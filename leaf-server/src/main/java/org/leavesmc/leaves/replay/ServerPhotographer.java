@@ -62,6 +62,7 @@ public class ServerPhotographer extends ServerPlayer {
         photographer.createState = state;
 
         photographer.recorder.start();
+        // Leaf start - SparklyPaper - parallel world ticking mod (make configurable)
         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && !server.isSameThread()) {
             server.submit(() -> {
                 MinecraftServer.getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
@@ -69,6 +70,7 @@ public class ServerPhotographer extends ServerPlayer {
         } else {
             MinecraftServer.getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
         }
+        // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
 
         photographer.level().chunkSource.move(photographer);
         photographer.setInvisible(true);
@@ -92,6 +94,7 @@ public class ServerPhotographer extends ServerPlayer {
 
         if (this.followPlayer != null) {
             if (this.getCamera() == this || this.getCamera().level() != this.level()) {
+                // Leaf start - SparklyPaper - parallel world ticking mod (make configurable)
                 if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
                     this.getBukkitEntity().taskScheduler.schedule(entity -> {
                         ((ServerPhotographer) entity).getBukkitPlayer().teleport(((ServerPhotographer) entity).getCamera().getBukkitEntity().getLocation());
@@ -101,8 +104,10 @@ public class ServerPhotographer extends ServerPlayer {
                     this.getBukkitPlayer().teleport(this.getCamera().getBukkitEntity().getLocation());
                     this.setCamera(followPlayer);
                 }
+                // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
             }
             if (lastPos.distanceToSqr(this.position()) > 1024D) {
+                // Leaf start - SparklyPaper - parallel world ticking mod (make configurable)
                 if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
                     this.getBukkitEntity().taskScheduler.schedule(entity -> {
                         ((ServerPhotographer) entity).getBukkitPlayer().teleport(((ServerPhotographer) entity).getCamera().getBukkitEntity().getLocation());
@@ -110,6 +115,7 @@ public class ServerPhotographer extends ServerPlayer {
                 } else {
                     this.getBukkitPlayer().teleport(this.getCamera().getBukkitEntity().getLocation());
                 }
+                // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
             }
         }
 
@@ -151,6 +157,7 @@ public class ServerPhotographer extends ServerPlayer {
         photographers.remove(this);
         this.recorder.stop();
 
+        // Leaf start - SparklyPaper - parallel world ticking mod (make configurable)
         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
             this.getServer().submit(() -> {
                 this.getServer().getPlayerList().removePhotographer(this);
@@ -158,6 +165,7 @@ public class ServerPhotographer extends ServerPlayer {
         } else {
             this.getServer().getPlayerList().removePhotographer(this);
         }
+        // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
 
         LeavesLogger.LOGGER.info("Photographer " + createState.id + " removed");
 
