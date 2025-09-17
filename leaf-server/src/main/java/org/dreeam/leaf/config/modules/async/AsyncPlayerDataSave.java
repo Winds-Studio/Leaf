@@ -10,18 +10,23 @@ public class AsyncPlayerDataSave extends ConfigModules {
     }
 
     public static boolean enabled = false;
+    public static boolean playerdata = false;
+    public static boolean advancements = false;
+    public static boolean stats = false;
 
     @Override
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
-                Make PlayerData saving asynchronously.""",
+                Asynchronously save player.""",
             """
                 异步保存玩家数据.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-
-        if (enabled) {
-            org.dreeam.leaf.async.AsyncPlayerDataSaving.init();
-        }
+        boolean advancements = config.getBoolean(getBasePath() + ".advancements", false);
+        boolean playerdata = config.getBoolean(getBasePath() + ".playerdata", false);
+        boolean stats = config.getBoolean(getBasePath() + ".stats", false);
+        AsyncPlayerDataSave.advancements = enabled && advancements;
+        AsyncPlayerDataSave.playerdata = enabled && playerdata;
+        AsyncPlayerDataSave.stats = enabled && stats;
     }
 }

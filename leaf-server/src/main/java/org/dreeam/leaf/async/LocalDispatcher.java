@@ -3,8 +3,10 @@ package org.dreeam.leaf.async;
 import org.jetbrains.annotations.Nullable;
 import org.jspecify.annotations.NullMarked;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -27,8 +29,16 @@ public final class LocalDispatcher implements Executor, Runnable {
         }
     }
 
-    public boolean isRunning() {
-        return runner.get() != null;
+    public <V> FutureTask<V> submit(Runnable task, @Nullable V result) {
+        FutureTask<V> t = new FutureTask<>(task, result);
+        execute(t);
+        return t;
+    }
+
+    public <V> FutureTask<V> submit(Callable<V> task) {
+        FutureTask<V> t = new FutureTask<>(task);
+        execute(t);
+        return t;
     }
 
     public boolean isSameThread() {

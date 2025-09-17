@@ -58,14 +58,14 @@ public final class ThreadPool implements Executor {
     }
 
     public <V> FutureTask<V> submit(Runnable task, @Nullable V result) {
-        return submit(Executors.callable(task, result));
+        final FutureTask<V> t = new FutureTask<>(Executors.callable(task, result));
+        execute(t);
+        return t;
     }
 
     public <V> FutureTask<V> submit(Callable<V> task) {
         final FutureTask<V> t = new FutureTask<>(task);
-        if (shutdown || !channel.send(t)) {
-            t.run();
-        }
+        execute(t);
         return t;
     }
 
@@ -144,27 +144,25 @@ public final class ThreadPool implements Executor {
             final MpmcQueue<Runnable> channel = executor.channel;
             final MpmcQueue<Thread> park = executor.parkChannel;
             int backoff = 0;
-            while (!executor.shutdown) {
+            while (true) {
                 final int len = channel.length();
-                if (len == 0) {
-                    if (backoff < 8) {
-                        backoff++;
-                        Thread.yield();
-                    } else {
-                        LockSupport.parkNanos(200000L);
-                        if (Thread.interrupted()) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-                } else if (threads - park.length() < len) {
+                if (len != 0 && threads - park.length() < len) {
                     backoff = 0;
                     final Thread thread = park.recv();
                     if (thread != null) {
                         LockSupport.unpark(thread);
                     }
-                } else {
+                } else if (executor.shutdown) {
+                    break;
+                } else if (backoff < 8) {
+                    backoff++;
                     Thread.yield();
+                } else {
+                    LockSupport.parkNanos(200_000L); // 0.2ms
+                    if (Thread.interrupted()) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
             }
             Thread left;
