@@ -84,10 +84,11 @@ public final class AsyncPath extends Path implements Callable<Void> {
         this.target = bestPath.getTarget();
         this.distToTarget = bestPath.getDistToTarget();
         this.canReach = bestPath.canReach();
-        if (!TickThread.isTickThread()) {
-            MinecraftServer.getServer().executeIfPossible(this::runAllPostProcessing);
-        } else {
+        MinecraftServer server = MinecraftServer.getServer();
+        if (TickThread.isTickThread()) {
             this.runAllPostProcessing();
+        } else if (!server.isStopped()) {
+            server.execute(this::runAllPostProcessing);
         }
         return null;
     }
@@ -122,11 +123,9 @@ public final class AsyncPath extends Path implements Callable<Void> {
     }
 
     private void runAllPostProcessing() {
-        if (TickThread.isTickThread()) {
-            PostProcess runnable;
-            while ((runnable = this.postProcessing.poll()) != null) {
-                runnable.run(this);
-            }
+        PostProcess runnable;
+        while ((runnable = this.postProcessing.poll()) != null) {
+            runnable.run(this);
         }
     }
 
