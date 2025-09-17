@@ -5,173 +5,192 @@
 
 package org.dreeam.leaf.util.queue;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+/// ```text
+/// counter layout
+/// +63------------------------------------------------16+15-----8+7------0+
+/// |                        index                       |  done  |  pend  |
+/// +----------------------------------------------------+--------+--------+
+/// ```
+///
+/// - index (48bits): current read/write position in the ring buffer (head/tail)
+/// - pend (8bits): number of pending concurrent read/writes
+/// - done (8bits): number of completed read/writes
+///
+/// For reading reads_pend is incremented first, then the content of the ring buffer is read from memory.
+/// After reading is done reads_done is incremented. reads_index is only incremented if reads_done is equal to reads_pend.
+///
+/// For writing first writes_pend is incremented, then the content of the ring buffer is updated.
+/// After writing writes_done is incremented. If writes_done is equal to writes_pend then both are set to 0 and writes_index is incremented.
+///
+/// In rare cases this can result in a race where multiple threads increment reads_pend in turn and reads_done never quite reaches reads_pend.
+/// If reads_pend == 16 or writes_pend == 16 a spin loop waits it to be <16 to continue.
 public final class MpmcQueue<T> {
     private static final long DONE_MASK = 0x0000_0000_0000_FF00L;
     private static final long PENDING_MASK = 0x0000_0000_0000_00FFL;
+    private static final long INDEX_MASK = 0x00FF_FFFF_FFFF_0000L;
     private static final long DONE_PENDING_MASK = DONE_MASK | PENDING_MASK;
+    private static final long FAST_PATH_MASK = INDEX_MASK | DONE_MASK;
     private static final int INDEX_SHIFT = 16;
     private static final int DONE_SHIFT = 8;
     private static final long MAX_IN_PROGRESS = 16;
     private static final int MAX_CAPACITY = 1 << 30;
-    private static final int PARALLELISM = Runtime.getRuntime().availableProcessors();
 
-    private static final VarHandle READ;
-    private static final VarHandle WRITE;
+    private static final VarHandle V;
+    private static final VarHandle A;
 
     private final long mask;
-    private final long capacity;
-    @Nullable
-    private final T[] buffer;
+    private final T[] a;
 
-    private final ReadCounter reads = new ReadCounter();
-    private final WriteCounter writes = new WriteCounter();
+    private final Counter reads = new Counter();
+    private final Counter writes = new Counter();
 
     static {
         try {
             MethodHandles.Lookup l = MethodHandles.lookup();
-            READ = l.findVarHandle(ReadCounter.class, "reads", long.class);
-            WRITE = l.findVarHandle(WriteCounter.class, "writes", long.class);
+            V = l.findVarHandle(Counter.class, "v", long.class);
+            A = MethodHandles.arrayElementVarHandle(Object[].class);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
-    public MpmcQueue(Class<T> clazz, int capacity) {
+    public MpmcQueue(int capacity) {
         if (capacity <= 0 || capacity > MAX_CAPACITY) {
             throw new IllegalArgumentException();
         }
 
-        this.capacity = Math.max(2, (1L << (Integer.SIZE - Integer.numberOfLeadingZeros(capacity - 1))));
-        this.mask = this.capacity - 1L;
+        this.mask = Math.max(2, (1L << (Integer.SIZE - Integer.numberOfLeadingZeros(capacity - 1)))) - 1L;
         //noinspection unchecked
-        this.buffer = (clazz == Object.class)
-            ? (T[]) new Object[(int) this.capacity]
-            : (T[]) java.lang.reflect.Array.newInstance(clazz, (int) this.capacity);
+        this.a = (T[]) new Object[(int) (this.mask + 1L)];
     }
 
-    private void spinWait(final int attempts) {
-        //noinspection StatementWithEmptyBody
-        if (attempts == 0) {
-        } else if (PARALLELISM != 1 && (attempts & 31) != 31) {
-            Thread.onSpinWait();
-        } else {
-            Thread.yield();
-        }
-    }
-
-    public boolean send(@NotNull final T item) {
-        long write = (long) WRITE.getAcquire(this.writes);
-        boolean success;
-        long newWrite = 0L;
-        long index = 0L;
-        int attempts = 0;
+    public boolean send(final T item) {
+        java.util.Objects.requireNonNull(item);
+        long write = (long) V.getAcquire(this.writes);
+        long idx;
         while (true) {
-            spinWait(attempts++);
-            final long inProgressCnt = (write & PENDING_MASK);
-            if ((((write >>> INDEX_SHIFT) + 1L) & mask) == ((long) READ.getVolatile(this.reads) >>> INDEX_SHIFT)) {
-                success = false;
-                break;
+            final long wPend = (write & PENDING_MASK);
+            if (writeErr(write >>> INDEX_SHIFT, (long) V.getVolatile(this.reads), mask)) {
+                return false;
             }
-
-            if (inProgressCnt == MAX_IN_PROGRESS) {
-                write = (long) WRITE.getAcquire(this.writes);
+            if (wPend == MAX_IN_PROGRESS) {
+                Thread.onSpinWait();
+                write = (long) V.getAcquire(this.writes);
                 continue;
             }
-            index = ((write >>> INDEX_SHIFT) + inProgressCnt) & mask;
-            if (((index + 1L) & mask) == ((long) READ.getVolatile(this.reads) >>> INDEX_SHIFT)) {
-                success = false;
+            idx = ((write >>> INDEX_SHIFT) + wPend) & mask;
+            if (writeErr(idx, (long) V.getVolatile(this.reads), mask)) {
+                return false;
+            }
+            final long n = write + 1L;
+            final long prev = (long) V.compareAndExchangeAcquire(this.writes, write, n);
+            if (prev == write) {
+                write = n;
                 break;
             }
-            newWrite = write + 1L;
-            if (WRITE.weakCompareAndSetAcquire(this.writes, write, newWrite)) {
-                success = true;
-                break;
-            }
-            write = (long) WRITE.getVolatile(this.writes);
+            write = prev;
         }
-        if (!success) {
-            return false;
-        }
-        buffer[(int) index] = item;
-        write = newWrite;
-        while (true) {
-            final long n = ((write & DONE_MASK) >>> DONE_SHIFT) + 1L == (write & PENDING_MASK)
-                ? ((write >>> INDEX_SHIFT) + (write & PENDING_MASK) & mask) << INDEX_SHIFT
-                : write >>> INDEX_SHIFT == index
-                ? write + (1L << INDEX_SHIFT) - 1L & (mask << INDEX_SHIFT | DONE_PENDING_MASK)
-                : write + (1L << DONE_SHIFT);
-            if (WRITE.weakCompareAndSetRelease(this.writes, write, n)) {
+        A.setRelease(this.a, (int) idx, item);
+        if (incDoneFast(mask, write, idx)) {
+            V.getAndAddRelease(this.writes, DONE_PENDING_MASK);
+        } else while (true) {
+            final long prev = (long) V.compareAndExchangeRelease(this.writes, write, incDone(mask, write, idx));
+            if (prev == write) {
                 break;
             }
-            write = (long) WRITE.getVolatile(this.writes);
-            spinWait(attempts++);
+            write = prev;
         }
         return true;
     }
 
-    public @Nullable T recv() {
-        long read = (long) READ.getAcquire(this.reads);
-        boolean success;
-        long index = 0;
-        long newRead = 0L;
-        int attempts = 0;
+    public T recv() {
+        long read = (long) V.getAcquire(this.reads);
+        long idx;
         while (true) {
-            spinWait(attempts++);
-            final long inProgressCnt = (read & PENDING_MASK);
-            if ((read >>> INDEX_SHIFT) == ((long) WRITE.getVolatile(this.writes) >>> INDEX_SHIFT)) {
-                success = false;
-                break;
+            final long rPend = (read & PENDING_MASK);
+            if (readErr((read >>> INDEX_SHIFT), (long) V.getVolatile(this.writes), mask)) {
+                return null;
             }
-            if (inProgressCnt == MAX_IN_PROGRESS) {
-                read = (long) READ.getAcquire(this.reads);
+            if (rPend == MAX_IN_PROGRESS) {
+                Thread.onSpinWait();
+                read = (long) V.getAcquire(this.reads);
                 continue;
             }
-            index = ((read >>> INDEX_SHIFT) + inProgressCnt) & mask;
-            if ((index & mask) == ((long) WRITE.getVolatile(this.writes) >>> INDEX_SHIFT)) {
-                success = false;
+            idx = ((read >>> INDEX_SHIFT) + rPend) & mask;
+            if (readErr(idx, (long) V.getVolatile(this.writes), mask)) {
+                return null;
+            }
+            final long n = read + 1L;
+            final long prev = (long) V.compareAndExchangeAcquire(this.reads, read, n);
+            if (prev == read) {
+                read = n;
                 break;
             }
-            newRead = read + 1L;
-            if (READ.weakCompareAndSetAcquire(this.reads, read, newRead)) {
-                success = true;
-                break;
-            }
-            read = (long) READ.getVolatile(this.reads);
+            read = prev;
         }
-        if (!success) {
-            return null;
-        }
-        final T result = buffer[(int) index];
-        buffer[(int) index] = null;
-        read = newRead;
-        while (true) {
-            final long n = ((read & DONE_MASK) >>> DONE_SHIFT) + 1L == (read & PENDING_MASK)
-                ? ((read >>> INDEX_SHIFT) + (read & PENDING_MASK) & mask) << INDEX_SHIFT
-                : read >>> INDEX_SHIFT == index
-                ? read + (1L << INDEX_SHIFT) - 1L & (mask << INDEX_SHIFT | DONE_PENDING_MASK)
-                : read + (1L << DONE_SHIFT);
-            if (READ.weakCompareAndSetRelease(this.reads, read, n)) {
+        @SuppressWarnings("unchecked")
+        final T result = (T) A.getAndSetAcquire(this.a, (int) idx, null);
+        if (incDoneFast(mask, read, idx)) {
+            V.getAndAddRelease(this.reads, DONE_PENDING_MASK);
+        } else while (true) {
+            final long prev = (long) V.compareAndExchangeRelease(this.reads, read, incDone(mask, read, idx));
+            if (prev == read) {
                 break;
             }
-            read = (long) READ.getVolatile(this.reads);
-            spinWait(attempts++);
+            read = prev;
         }
         return result;
     }
 
+    /// directly increment the index and zero pending and done when:
+    ///
+    /// - first pending operation (index == idx)
+    /// - no operations have completed yet (done == 0)
+    /// - don't need to wrap around the buffer (index < mask)
+    private static boolean incDoneFast(final long m, final long c, final long idx) {
+        return (c & FAST_PATH_MASK) == (idx << INDEX_SHIFT) && idx < m;
+    }
+
+    /// incrementing the done count and potentially advancing the index
+    ///
+    /// if done + 1 == pending (all operations complete)
+    /// increment index by pending, zero pending and done
+    ///
+    /// if index == idx (completing in order)
+    /// increment index by 1, decrement pending, preserve done
+    ///
+    /// else (skip index increment)
+    /// increment done
+    private static long incDone(final long m, final long c, final long idx) {
+        return (((c & DONE_MASK) >>> DONE_SHIFT) + 1L) == (c & PENDING_MASK)
+            ? (((c >>> INDEX_SHIFT) + (c & PENDING_MASK)) & m) << INDEX_SHIFT
+            : (c >>> INDEX_SHIFT) == idx
+            ? (c + DONE_PENDING_MASK) & ((m << INDEX_SHIFT) | DONE_PENDING_MASK)
+            : c + (1L << DONE_SHIFT);
+    }
+
+    /// write would cause the queue to become full
+    private static boolean writeErr(long wIdx, long r, long mask) {
+        return ((wIdx + 1L) & mask) == r >>> INDEX_SHIFT;
+    }
+
+    /// read would read an empty position
+    private static boolean readErr(long rIdx, long w, long mask) {
+        return (rIdx & mask) == (w >>> INDEX_SHIFT);
+    }
+
     public int length() {
-        final long reads = (long) READ.getVolatile(this.reads);
-        final long writes = (long) WRITE.getVolatile(this.writes);
+        final long reads = (long) V.getVolatile(this.reads);
+        final long writes = (long) V.getVolatile(this.writes);
         final long readIndex = (reads >>> INDEX_SHIFT);
         final long writeIndex = (writes >>> INDEX_SHIFT);
-        return (int) (readIndex <= writeIndex ? writeIndex - readIndex : writeIndex + capacity - readIndex);
-        // (readIndex <= writeIndex ? writeIndex - readIndex : writeIndex + capacity - readIndex) - (reads & PENDING_MASK)
+        final long len = (readIndex <= writeIndex
+            ? writeIndex - readIndex
+            : writeIndex + this.mask + 1 - readIndex);
+        return (int) (len - (reads & PENDING_MASK));
     }
 
     public boolean isEmpty() {
@@ -179,35 +198,30 @@ public final class MpmcQueue<T> {
     }
 
     public int remaining() {
-        final long reads = (long) READ.getVolatile(this.reads);
-        final long writes = (long) WRITE.getVolatile(this.writes);
+        final long reads = (long) V.getVolatile(this.reads);
+        final long writes = (long) V.getVolatile(this.writes);
         final long readIndex = (reads >>> INDEX_SHIFT);
         final long writeIndex = (writes >>> INDEX_SHIFT);
-        final long len = readIndex <= writeIndex ?
-            writeIndex - readIndex :
-            writeIndex + capacity - readIndex;
+        final long len = readIndex <= writeIndex
+            ? writeIndex - readIndex
+            : writeIndex + this.mask + 1 - readIndex;
         return (int) (mask - len - (writes & PENDING_MASK));
     }
 
     @SuppressWarnings("unused")
-    public abstract static sealed class CachePadded permits ReadCounter, WriteCounter {
-        public final byte i0 = 0, i1 = 0, i2 = 0, i3 = 0, i4 = 0, i5 = 0, i6 = 0, i7 = 0, i8 = 0, i9 = 0, i10 = 0, i11 = 0, i12 = 0, i13 = 0, i14 = 0, i15 = 0;
-        public final byte j0 = 0, j1 = 0, j2 = 0, j3 = 0, j4 = 0, j5 = 0, j6 = 0, j7 = 0, j8 = 0, j9 = 0, j10 = 0, j11 = 0, j12 = 0, j13 = 0, j14 = 0, j15 = 0;
-        public final byte k0 = 0, k1 = 0, k2 = 0, k3 = 0, k4 = 0, k5 = 0, k6 = 0, k7 = 0, k8 = 0, k9 = 0, k10 = 0, k11 = 0, k12 = 0, k13 = 0, k14 = 0, k15 = 0;
-        public final byte l0 = 0, l1 = 0, l2 = 0, l3 = 0, l4 = 0, l5 = 0, l6 = 0, l7 = 0, l8 = 0, l9 = 0, l10 = 0, l11 = 0, l12 = 0, l13 = 0, l14 = 0, l15 = 0;
-        public final byte m0 = 0, m1 = 0, m2 = 0, m3 = 0, m4 = 0, m5 = 0, m6 = 0, m7 = 0, m8 = 0, m9 = 0, m10 = 0, m11 = 0, m12 = 0, m13 = 0, m14 = 0, m15 = 0;
-        public final byte n0 = 0, n1 = 0, n2 = 0, n3 = 0, n4 = 0, n5 = 0, n6 = 0, n7 = 0, n8 = 0, n9 = 0, n10 = 0, n11 = 0, n12 = 0, n13 = 0, n14 = 0, n15 = 0;
-        public final byte o0 = 0, o1 = 0, o2 = 0, o3 = 0, o4 = 0, o5 = 0, o6 = 0, o7 = 0, o8 = 0, o9 = 0, o10 = 0, o11 = 0, o12 = 0, o13 = 0, o14 = 0, o15 = 0;
-        public final byte p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0, p8 = 0, p9 = 0, p10 = 0, p11 = 0, p12 = 0, p13 = 0, p14 = 0, p15 = 0;
+    private abstract static sealed class CachePadded permits Counter {
+        byte i0, i1, i2, i3, i4, i5, i6, i7, j0, j1, j2, j3, j4, j5, j6, j7;
+        byte k0, k1, k2, k3, k4, k5, k6, k7, l0, l1, l2, l3, l4, l5, l6, l7;
+        byte m0, m1, m2, m3, m4, m5, m6, m7, n0, n1, n2, n3, n4, n5, n6, n7;
+        byte o0, o1, o2, o3, o4, o5, o6, o7, p0, p1, p2, p3, p4, p5, p6, p7;
+        byte q0, q1, q2, q3, q4, q5, q6, q7, r0, r1, r2, r3, r4, r5, r6, r7;
+        byte s0, s1, s2, s3, s4, s5, s6, s7, t0, t1, t2, t3, t4, t5, t6, t7;
+        byte u0, u1, u2, u3, u4, u5, u6, u7, v0, v1, v2, v3, v4, v5, v6, v7;
+        byte w0, w1, w2, w3, w4, w5, w6, w7;
     }
 
-    private static final class ReadCounter extends CachePadded {
+    private static final class Counter extends CachePadded {
         @SuppressWarnings("unused")
-        private volatile long reads;
-    }
-
-    private static final class WriteCounter extends CachePadded {
-        @SuppressWarnings("unused")
-        private volatile long writes;
+        private volatile long v;
     }
 }

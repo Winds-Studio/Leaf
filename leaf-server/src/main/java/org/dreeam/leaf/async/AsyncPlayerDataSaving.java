@@ -39,10 +39,14 @@ public class AsyncPlayerDataSaving {
 
     public static Optional<Future<?>> submit(Runnable runnable) {
         if (!AsyncPlayerDataSave.enabled) {
-            runnable.run();
+            runDirectly(runnable);
             return Optional.empty();
         } else {
             return Optional.of(IO_POOL.submit(runnable));
         }
+    }
+
+    private static void runDirectly(Runnable runnable) {
+        runnable.run();
     }
 }

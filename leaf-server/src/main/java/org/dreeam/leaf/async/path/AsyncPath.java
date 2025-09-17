@@ -7,24 +7,21 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.pathfinder.Node;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.phys.Vec3;
+import org.dreeam.leaf.async.GlobalDispatcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.FutureTask;
 import java.util.function.Supplier;
 
 /**
  * I'll be using this to represent a path that not be processed yet!
  */
-public class AsyncPath extends Path {
-
-    /**
-     * Instead of three states, only one is actually required
-     * This will update when any thread is done with the path
-     */
-    private volatile boolean ready = false;
+public final class AsyncPath extends Path implements Callable<Void> {
 
     /**
      * Runnable waiting for this to be processed
@@ -40,16 +37,8 @@ public class AsyncPath extends Path {
     /**
      * The supplier of the real processed path
      */
-    private final Supplier<Path> pathSupplier;
+    private Supplier<Path> innerTask;
 
-    /*
-     * Processed values
-     */
-
-    /**
-     * This is a reference to the nodes list in the parent `Path` object
-     */
-    private final List<Node> nodes;
     /**
      * The block we're trying to path to
      * <p>
@@ -69,31 +58,44 @@ public class AsyncPath extends Path {
      */
     private boolean canReach = true;
 
+    private final FutureTask<Void> task;
+
     @SuppressWarnings("ConstantConditions")
     public AsyncPath(@NotNull List<Node> emptyNodeList, @NotNull Set<BlockPos> positions, @NotNull Supplier<Path> pathSupplier) {
         super(emptyNodeList, null, false);
 
-        this.nodes = emptyNodeList;
         this.positions = positions;
-        this.pathSupplier = pathSupplier;
+        this.innerTask = pathSupplier;
 
-        AsyncPathProcessor.queue(this);
+        task = GlobalDispatcher.INSTANCE.submit(this);
+    }
+
+    @Override
+    public Void call() {
+        final Path bestPath = this.innerTask.get();
+        this.innerTask = null;
+        this.nodes.addAll(bestPath.nodes);
+        this.target = bestPath.getTarget();
+        this.distToTarget = bestPath.getDistToTarget();
+        this.canReach = bestPath.canReach();
+        this.runAllPostProcessing(TickThread.isTickThread());
+        return null;
     }
 
     @Override
     public boolean isProcessed() {
-        return this.ready;
+        return this.task.isDone();
     }
 
     /**
      * Returns the future representing the processing state of this path
      */
-    public final void schedulePostProcessing(@NotNull Runnable runnable) {
-        if (this.ready) {
+    public void schedulePostProcessing(@NotNull Runnable runnable) {
+        if (this.task.isDone()) {
             runnable.run();
         } else {
             this.postProcessing.offer(runnable);
-            if (this.ready) {
+            if (this.task.isDone()) {
                 this.runAllPostProcessing(true);
             }
         }
@@ -105,37 +107,8 @@ public class AsyncPath extends Path {
      * @param positions - the positions to compare against
      * @return true if we are processing the same positions
      */
-    public final boolean hasSameProcessingPositions(final Set<BlockPos> positions) {
-        if (this.positions.size() != positions.size()) {
-            return false;
-        }
-
-        // For single position (common case), do direct comparison
-        if (positions.size() == 1) { // Both have the same size at this point
-            return this.positions.iterator().next().equals(positions.iterator().next());
-        }
-
-        return this.positions.containsAll(positions);
-    }
-
-    /**
-     * Starts processing this path
-     * Since this is no longer a synchronized function, checkProcessed is no longer required
-     */
-    public final void process() {
-        if (this.ready) return;
-
-        synchronized (this) {
-            if (this.ready) return; // In the worst case, the main thread only waits until any async thread is done and returns immediately
-            final Path bestPath = this.pathSupplier.get();
-            this.nodes.addAll(bestPath.nodes); // We mutate this list to reuse the logic in Path
-            this.target = bestPath.getTarget();
-            this.distToTarget = bestPath.getDistToTarget();
-            this.canReach = bestPath.canReach();
-            this.ready = true;
-        }
-
-        this.runAllPostProcessing(TickThread.isTickThread());
+    public boolean hasSameProcessingPositions(final Set<BlockPos> positions) {
+        return this.positions.equals(positions);
     }
 
     private void runAllPostProcessing(boolean isTickThread) {
@@ -155,19 +128,19 @@ public class AsyncPath extends Path {
 
     @Override
     public @NotNull BlockPos getTarget() {
-        this.process();
+        this.task.run();
         return this.target;
     }
 
     @Override
     public float getDistToTarget() {
-        this.process();
+        this.task.run();
         return this.distToTarget;
     }
 
     @Override
     public boolean canReach() {
-        this.process();
+        this.task.run();
         return this.canReach;
     }
 
@@ -177,96 +150,96 @@ public class AsyncPath extends Path {
 
     @Override
     public boolean isDone() {
-        return this.ready && super.isDone();
+        return this.task.isDone() && super.isDone();
     }
 
     @Override
     public void advance() {
-        this.process();
+        this.task.run();
         super.advance();
     }
 
     @Override
     public boolean notStarted() {
-        this.process();
+        this.task.run();
         return super.notStarted();
     }
 
     @Override
     public @Nullable Node getEndNode() {
-        this.process();
+        this.task.run();
         return super.getEndNode();
     }
 
     @Override
     public @NotNull Node getNode(int index) {
-        this.process();
+        this.task.run();
         return super.getNode(index);
     }
 
     @Override
     public void truncateNodes(int length) {
-        this.process();
+        this.task.run();
         super.truncateNodes(length);
     }
 
     @Override
     public void replaceNode(int index, @NotNull Node node) {
-        this.process();
+        this.task.run();
         super.replaceNode(index, node);
     }
 
     @Override
     public int getNodeCount() {
-        this.process();
+        this.task.run();
         return super.getNodeCount();
     }
 
     @Override
     public int getNextNodeIndex() {
-        this.process();
+        this.task.run();
         return super.getNextNodeIndex();
     }
 
     @Override
     public void setNextNodeIndex(int nodeIndex) {
-        this.process();
+        this.task.run();
         super.setNextNodeIndex(nodeIndex);
     }
 
     @Override
     public @NotNull Vec3 getEntityPosAtNode(@NotNull Entity entity, int index) {
-        this.process();
+        this.task.run();
         return super.getEntityPosAtNode(entity, index);
     }
 
     @Override
     public @NotNull BlockPos getNodePos(int index) {
-        this.process();
+        this.task.run();
         return super.getNodePos(index);
     }
 
     @Override
     public @NotNull Vec3 getNextEntityPos(@NotNull Entity entity) {
-        this.process();
+        this.task.run();
         return super.getNextEntityPos(entity);
     }
 
     @Override
     public @NotNull BlockPos getNextNodePos() {
-        this.process();
+        this.task.run();
         return super.getNextNodePos();
     }
 
     @Override
     public @NotNull Node getNextNode() {
-        this.process();
+        this.task.run();
         return super.getNextNode();
     }
 
     @Override
     public @Nullable Node getPreviousNode() {
-        this.process();
+        this.task.run();
         return super.getPreviousNode();
     }
 

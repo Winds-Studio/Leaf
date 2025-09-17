@@ -26,7 +26,7 @@ index f34b8012d48ce1b69c1a1529d7ae46b624785ffa..525f29f3ecd7eb12e3d7447898005d3a
              if (io.papermc.paper.event.packet.PlayerChunkUnloadEvent.getHandlerList().getRegisteredListeners().length > 0) {
                  new io.papermc.paper.event.packet.PlayerChunkUnloadEvent(player.getBukkitEntity().getWorld().getChunkAt(new ChunkPos(chunkX, chunkZ).longKey), player.getBukkitEntity()).callEvent();
 diff --git a/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java b/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java
-index 9f6d7c5dc0e591488a8a3763d8a1f1b3671d5299..8af4c964ce67373f9b911ce13164f48c29a07d85 100644
+index 9f6d7c5dc0e591488a8a3763d8a1f1b3671d5299..5446feecdc4274d3dedd948a93ec7668d9861bdc 100644
 --- a/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java
 +++ b/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java
 @@ -75,6 +75,52 @@ public class ClientboundLevelChunkPacketData {
@@ -37,7 +37,7 @@ index 9f6d7c5dc0e591488a8a3763d8a1f1b3671d5299..8af4c964ce67373f9b911ce13164f48c
 +    public ClientboundLevelChunkPacketData(LevelChunk levelChunk, io.papermc.paper.antixray.ChunkPacketInfo<net.minecraft.world.level.block.state.BlockState> chunkPacketInfo, BlockEntity[] blockEntities, Map<Heightmap.Types, long[]> heightmaps) {
 +        this.heightmaps = heightmaps;
 +
-+        if (Thread.currentThread() instanceof org.dreeam.leaf.async.chunk.AsyncChunkSendThread) {
++        if (org.dreeam.leaf.async.chunk.AsyncChunkSend.POOL.isSameThread()) {
 +            int size = calculateChunkSize(levelChunk);
 +            ByteBuf buffer = Unpooled.buffer(size);
 +            extractChunkData(new FriendlyByteBuf(buffer), levelChunk, chunkPacketInfo);
@@ -86,7 +86,7 @@ index 9f6d7c5dc0e591488a8a3763d8a1f1b3671d5299..8af4c964ce67373f9b911ce13164f48c
              // Paper end  - Anti-Xray - Add chunk packet info
          }
  
-+        if (Thread.currentThread() instanceof org.dreeam.leaf.async.chunk.AsyncChunkSendThread) return; // Leaf - Async chunk sending
++        if (org.dreeam.leaf.async.chunk.AsyncChunkSend.POOL.isSameThread()) return; // Leaf - Async chunk sending
          if (buffer.writerIndex() != buffer.capacity()) {
              throw new IllegalStateException("Didn't fill chunk buffer: expected " + buffer.capacity() + " bytes, got " + buffer.writerIndex());
          }
@@ -113,10 +113,10 @@ index 8578d1f78ddd1bb75f3230f04bfaa35af9f5f822..d8e938abf5123b092cec80feb6468e3d
      private ClientboundLevelChunkWithLightPacket(RegistryFriendlyByteBuf buffer) {
          this.x = buffer.readInt();
 diff --git a/net/minecraft/server/network/PlayerChunkSender.java b/net/minecraft/server/network/PlayerChunkSender.java
-index 0376a10ee0544b13e8fd629a7b13f78811e57a30..aa6b900347635857b84460fa8435b81f794f0747 100644
+index 0376a10ee0544b13e8fd629a7b13f78811e57a30..da059becd4ba31422e6145bfa55594ae68875a33 100644
 --- a/net/minecraft/server/network/PlayerChunkSender.java
 +++ b/net/minecraft/server/network/PlayerChunkSender.java
-@@ -64,13 +64,29 @@ public class PlayerChunkSender {
+@@ -64,13 +64,30 @@ public class PlayerChunkSender {
                      if (!list.isEmpty()) {
                          ServerGamePacketListenerImpl serverGamePacketListenerImpl = player.connection;
                          this.unacknowledgedBatches++;
@@ -138,8 +138,9 @@ index 0376a10ee0544b13e8fd629a7b13f78811e57a30..aa6b900347635857b84460fa8435b81f
 -                        serverGamePacketListenerImpl.send(new ClientboundChunkBatchFinishedPacket(list.size()));
 +                        // Leaf start - Async chunk sending
 +                        if (org.dreeam.leaf.config.modules.async.AsyncChunkSend.enabled) {
++                            int size = list.size();
 +                            org.dreeam.leaf.async.chunk.AsyncChunkSend.POOL.execute(
-+                                () -> serverGamePacketListenerImpl.send(new ClientboundChunkBatchFinishedPacket(list.size()))
++                                () -> serverGamePacketListenerImpl.send(new ClientboundChunkBatchFinishedPacket(size))
 +                            );
 +                        } else {
 +                            serverGamePacketListenerImpl.send(new ClientboundChunkBatchFinishedPacket(list.size()));
@@ -148,19 +149,18 @@ index 0376a10ee0544b13e8fd629a7b13f78811e57a30..aa6b900347635857b84460fa8435b81f
                          this.batchQuota = this.batchQuota - list.size();
                      }
                  }
-@@ -81,7 +97,23 @@ public class PlayerChunkSender {
+@@ -81,7 +98,22 @@ public class PlayerChunkSender {
      // Paper start - Anti-Xray
      public static void sendChunk(ServerGamePacketListenerImpl packetListener, ServerLevel level, LevelChunk chunk) {
          final boolean shouldModify = level.chunkPacketBlockController.shouldModify(packetListener.player, chunk);
 -        packetListener.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
 +        // Leaf start - Async chunk sending
 +        if (org.dreeam.leaf.config.modules.async.AsyncChunkSend.enabled) {
-+            var blockEntities = chunk.blockEntities.values().toArray(new net.minecraft.world.level.block.entity.BlockEntity[0]);
-+            java.util.Map<net.minecraft.world.level.levelgen.Heightmap.Types, long[]> heightmaps = new java.util.concurrent.ConcurrentHashMap<>();
-+
-+            for (var entry : chunk.getHeightmaps()) {
-+                if (entry.getKey().sendToClient()) {
-+                    heightmaps.put(entry.getKey(), entry.getValue().getRawData());
++            net.minecraft.world.level.block.entity.BlockEntity[] blockEntities = chunk.blockEntities.values().toArray(new net.minecraft.world.level.block.entity.BlockEntity[0]);
++            java.util.Map<net.minecraft.world.level.levelgen.Heightmap.Types, long[]> heightmaps = new java.util.EnumMap<>(net.minecraft.world.level.levelgen.Heightmap.Types.class);
++            for (java.util.Map.Entry<net.minecraft.world.level.levelgen.Heightmap.Types, net.minecraft.world.level.levelgen.Heightmap> entry1 : chunk.getHeightmaps()) {
++                if (entry1.getKey().sendToClient()) {
++                    heightmaps.put(entry1.getKey(), entry1.getValue().getRawData().clone());
 +                }
 +            }
 +            org.dreeam.leaf.async.chunk.AsyncChunkSend.POOL.execute(

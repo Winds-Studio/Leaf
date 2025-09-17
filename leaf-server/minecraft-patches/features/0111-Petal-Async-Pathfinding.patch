@@ -721,6 +721,34 @@ index 49bac7af90b0a7c490141be6357563447783c6ca..8aedb5497ea52ae59e477162cb808969
      }
  
      @Override
+diff --git a/net/minecraft/world/level/pathfinder/NodeEvaluator.java b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
+index 0f307a399a1be63480b03cd35dc011a2faf8f7c7..81a07db3094580f67eceaaf982703ff4b99551e4 100644
+--- a/net/minecraft/world/level/pathfinder/NodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
+@@ -14,7 +14,7 @@ import net.minecraft.world.level.block.state.BlockState;
+ public abstract class NodeEvaluator {
+     protected PathfindingContext currentContext;
+     protected Mob mob;
+-    protected final Int2ObjectMap<Node> nodes = new Int2ObjectOpenHashMap<>();
++    public final Int2ObjectMap<Node> nodes = new Int2ObjectOpenHashMap<>(); // Leaf
+     protected int entityWidth;
+     protected int entityHeight;
+     protected int entityDepth;
+@@ -32,6 +32,14 @@ public abstract class NodeEvaluator {
+         this.entityDepth = Mth.floor(mob.getBbWidth() + 1.0F);
+     }
+ 
++    // Leaf start
++    public void disableCache() {
++        if (this.currentContext != null) {
++            this.currentContext.cache = null;
++        }
++    }
++    // Leaf end
++
+     public void done() {
+         this.currentContext = null;
+         this.mob = null;
 diff --git a/net/minecraft/world/level/pathfinder/Path.java b/net/minecraft/world/level/pathfinder/Path.java
 index d6d3c8f5e5dd4a8cab0d3fcc131c3a59f06130c6..add5b8b98e4d09617cbd4e7dd2710dc50781613a 100644
 --- a/net/minecraft/world/level/pathfinder/Path.java
@@ -752,7 +780,7 @@ index d6d3c8f5e5dd4a8cab0d3fcc131c3a59f06130c6..add5b8b98e4d09617cbd4e7dd2710dc5
              return false;
          } else if (pathentity.nodes.size() != this.nodes.size()) {
 diff --git a/net/minecraft/world/level/pathfinder/PathFinder.java b/net/minecraft/world/level/pathfinder/PathFinder.java
-index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..61912c67611ded5a8f34e0c55d3d3017f144f970 100644
+index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..1a4ab039093a00701a765bd84ea05a9a55121571 100644
 --- a/net/minecraft/world/level/pathfinder/PathFinder.java
 +++ b/net/minecraft/world/level/pathfinder/PathFinder.java
 @@ -22,10 +22,18 @@ public class PathFinder {
@@ -775,7 +803,7 @@ index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..61912c67611ded5a8f34e0c55d3d3017
      }
  
      public void setMaxVisitedNodes(int maxVisitedNodes) {
-@@ -34,26 +42,63 @@ public class PathFinder {
+@@ -34,26 +42,67 @@ public class PathFinder {
  
      @Nullable
      public Path findPath(PathNavigationRegion region, Mob mob, Set<BlockPos> targetPositions, float maxRange, int accuracy, float searchDepthMultiplier) {
@@ -813,14 +841,18 @@ index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..61912c67611ded5a8f34e0c55d3d3017
 +            }
 +
 +            return new org.dreeam.leaf.async.path.AsyncPath(Lists.newArrayList(), targetPositions, () -> {
-+                try {
-+                    return this.processPath(nodeEvaluator, start, map, maxRange, accuracy, searchDepthMultiplier);
-+                } catch (Exception e) {
-+                    e.printStackTrace();
-+                    return null;
-+                } finally {
-+                    nodeEvaluator.done();
-+                    org.dreeam.leaf.async.path.NodeEvaluatorCache.returnNodeEvaluator(nodeEvaluator);
++                synchronized (PathFinder.this) {
++                    try {
++                        nodeEvaluator.disableCache();
++                        return this.processPath(nodeEvaluator, start, map, maxRange, accuracy, searchDepthMultiplier);
++                    } catch (Exception e) {
++                        org.dreeam.leaf.async.path.AsyncPathProcessor.LOGGER.error("error", e);
++                        throw e;
++                    } finally {
++                        nodeEvaluator.done();
++                        nodeEvaluator.nodes.clear();
++                        org.dreeam.leaf.async.path.NodeEvaluatorCache.returnNodeEvaluator(nodeEvaluator);
++                    }
 +                }
 +            });
 +            // Kaiiju end
@@ -840,13 +872,13 @@ index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..61912c67611ded5a8f34e0c55d3d3017
 +        }
 +    }
 +
-+    private synchronized @org.jetbrains.annotations.NotNull Path processPath(NodeEvaluator nodeEvaluator, Node node, List<Map.Entry<Target, BlockPos>> positions, float maxRange, int accuracy, float searchDepthMultiplier) { // sync to only use the caching functions in this class on a single thread
++    private Path processPath(NodeEvaluator nodeEvaluator, Node node, List<Map.Entry<Target, BlockPos>> positions, float maxRange, int accuracy, float searchDepthMultiplier) { // sync to only use the caching functions in this class on a single thread
 +        org.apache.commons.lang3.Validate.isTrue(!positions.isEmpty()); // ensure that we have at least one position, which means we'll always return a path
 +        // Kaiiju end
          // Set<Target> set = targetPositions.keySet(); // Paper
          node.g = 0.0F;
          node.h = this.getBestH(node, positions); // Paper - optimize collection
-@@ -89,7 +134,7 @@ public class PathFinder {
+@@ -89,7 +138,7 @@ public class PathFinder {
              }
  
              if (!(node1.distanceTo(node) >= maxRange)) {
@@ -855,7 +887,7 @@ index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..61912c67611ded5a8f34e0c55d3d3017
  
                  for (int i2 = 0; i2 < neighbors; i2++) {
                      Node node2 = this.neighbors[i2];
-@@ -123,6 +168,7 @@ public class PathFinder {
+@@ -123,6 +172,7 @@ public class PathFinder {
                  best = path;
              }
          }
@@ -863,3 +895,16 @@ index c2baadcdceb1df6a881d6f73aa4eb4dd264bcdfe..61912c67611ded5a8f34e0c55d3d3017
          return best;
          // Paper end - Perf: remove streams and optimize collection
      }
+diff --git a/net/minecraft/world/level/pathfinder/PathfindingContext.java b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+index 4eca1dd0819c7ee7a77e45fc5fa03f4ee5cdceaf..bc5fabd208f3673cbb54bd3df5287d037f5d2635 100644
+--- a/net/minecraft/world/level/pathfinder/PathfindingContext.java
++++ b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+@@ -10,7 +10,7 @@ import net.minecraft.world.level.block.state.BlockState;
+ public class PathfindingContext {
+     private final CollisionGetter level;
+     @Nullable
+-    private final PathTypeCache cache;
++    public PathTypeCache cache; // Leaf
+     private final BlockPos mobPosition;
+     private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+ 

@@ -8,31 +8,16 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import org.bukkit.event.player.PlayerVelocityEvent;
-import org.dreeam.leaf.async.FixedThreadExecutor;
-import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
+import org.dreeam.leaf.async.GlobalDispatcher;
 import org.dreeam.leaf.util.EntitySlice;
 
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 public final class AsyncTracker {
-    private static final String THREAD_NAME = "Leaf Async Tracker Thread";
-    public static final boolean ENABLED = MultithreadedTracker.enabled;
-    public static final int QUEUE = 1024;
     public static final int MIN_CHUNK = 16;
-    public static final int THREADS = MultithreadedTracker.threads;
-    public static final FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
-        THREADS,
-        QUEUE,
-        THREAD_NAME
-    ) : null;
 
     private AsyncTracker() {
-    }
-
-    public static void init() {
-        if (TRACKER_EXECUTOR == null || !ENABLED) {
-            throw new IllegalStateException();
-        }
     }
 
     public static void tick(ServerLevel world) {
@@ -47,13 +32,12 @@ public final class AsyncTracker {
         Entity[] entities = new Entity[trackerEntitiesSize];
         System.arraycopy(trackerEntitiesRaw, 0, entities, 0, trackerEntitiesSize);
         EntitySlice slice = new EntitySlice(entities);
-        EntitySlice[] slices = entities.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
+        EntitySlice[] slices = entities.length <= GlobalDispatcher.INSTANCE.workerCount() * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(GlobalDispatcher.INSTANCE.workerCount());
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i]));
+            futures[i] = GlobalDispatcher.INSTANCE.submit(new TrackerTask(world, slices[i]));
         }
-        TRACKER_EXECUTOR.unpack();
         world.trackerTask = futures;
     }
 
