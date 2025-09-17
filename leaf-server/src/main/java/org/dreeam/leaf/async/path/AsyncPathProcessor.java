@@ -26,11 +26,11 @@ public final class AsyncPathProcessor {
      * @param path            a path to wait on
      * @param afterProcessing a consumer to be called
      */
-    public static void awaitProcessing(@Nullable Path path, Consumer<@Nullable Path> afterProcessing) {
-        if (path instanceof AsyncPath asyncPath && !path.isProcessed()) {
-            asyncPath.schedulePostProcessing(() -> afterProcessing.accept(path)); // Reduce double lambda allocation
+    public static void awaitProcessing(@Nullable Path path, AsyncPath.PostProcess afterProcessing) {
+        if (path instanceof AsyncPath asyncPath) {
+            asyncPath.schedulePostProcessing(afterProcessing);
         } else {
-            afterProcessing.accept(path);
+            afterProcessing.run(path);
         }
     }
 }

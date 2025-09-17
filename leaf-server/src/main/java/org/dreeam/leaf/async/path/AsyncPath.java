@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.function.Supplier;
 
@@ -27,7 +28,7 @@ public final class AsyncPath extends Path implements Callable<Void> {
      * Runnable waiting for this to be processed
      * ConcurrentLinkedQueue is thread-safe, non-blocking and non-synchronized
      */
-    private final ConcurrentLinkedQueue<Runnable> postProcessing = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<PostProcess> postProcessing = new ConcurrentLinkedQueue<>();
 
     /**
      * A list of positions that this path could path towards
@@ -70,6 +71,11 @@ public final class AsyncPath extends Path implements Callable<Void> {
         task = GlobalDispatcher.INSTANCE.submit(this);
     }
 
+    @FunctionalInterface
+    public interface PostProcess {
+        void run(Path path);
+    }
+
     @Override
     public Void call() {
         final Path bestPath = this.innerTask.get();
@@ -78,7 +84,11 @@ public final class AsyncPath extends Path implements Callable<Void> {
         this.target = bestPath.getTarget();
         this.distToTarget = bestPath.getDistToTarget();
         this.canReach = bestPath.canReach();
-        this.runAllPostProcessing(TickThread.isTickThread());
+        if (!TickThread.isTickThread()) {
+            MinecraftServer.getServer().executeIfPossible(this::runAllPostProcessing);
+        } else {
+            this.runAllPostProcessing();
+        }
         return null;
     }
 
@@ -90,13 +100,13 @@ public final class AsyncPath extends Path implements Callable<Void> {
     /**
      * Returns the future representing the processing state of this path
      */
-    public void schedulePostProcessing(@NotNull Runnable runnable) {
+    public void schedulePostProcessing(@NotNull PostProcess runnable) {
         if (this.task.isDone()) {
-            runnable.run();
+            runnable.run(this);
         } else {
             this.postProcessing.offer(runnable);
             if (this.task.isDone()) {
-                this.runAllPostProcessing(true);
+                this.runAllPostProcessing();
             }
         }
     }
@@ -111,13 +121,11 @@ public final class AsyncPath extends Path implements Callable<Void> {
         return this.positions.equals(positions);
     }
 
-    private void runAllPostProcessing(boolean isTickThread) {
-        Runnable runnable;
-        while ((runnable = this.postProcessing.poll()) != null) {
-            if (isTickThread) {
-                runnable.run();
-            } else {
-                MinecraftServer.getServer().scheduleOnMain(runnable);
+    private void runAllPostProcessing() {
+        if (TickThread.isTickThread()) {
+            PostProcess runnable;
+            while ((runnable = this.postProcessing.poll()) != null) {
+                runnable.run(this);
             }
         }
     }
@@ -128,19 +136,19 @@ public final class AsyncPath extends Path implements Callable<Void> {
 
     @Override
     public @NotNull BlockPos getTarget() {
-        this.task.run();
+        await();
         return this.target;
     }
 
     @Override
     public float getDistToTarget() {
-        this.task.run();
+        await();
         return this.distToTarget;
     }
 
     @Override
     public boolean canReach() {
-        this.task.run();
+        await();
         return this.canReach;
     }
 
@@ -155,92 +163,105 @@ public final class AsyncPath extends Path implements Callable<Void> {
 
     @Override
     public void advance() {
-        this.task.run();
+        await();
         super.advance();
     }
 
     @Override
     public boolean notStarted() {
-        this.task.run();
+        await();
         return super.notStarted();
     }
 
     @Override
     public @Nullable Node getEndNode() {
-        this.task.run();
+        await();
         return super.getEndNode();
     }
 
     @Override
     public @NotNull Node getNode(int index) {
-        this.task.run();
+        await();
         return super.getNode(index);
     }
 
     @Override
     public void truncateNodes(int length) {
-        this.task.run();
+        await();
         super.truncateNodes(length);
     }
 
     @Override
     public void replaceNode(int index, @NotNull Node node) {
-        this.task.run();
+        await();
         super.replaceNode(index, node);
     }
 
     @Override
     public int getNodeCount() {
-        this.task.run();
+        await();
         return super.getNodeCount();
     }
 
     @Override
     public int getNextNodeIndex() {
-        this.task.run();
+        await();
         return super.getNextNodeIndex();
     }
 
     @Override
     public void setNextNodeIndex(int nodeIndex) {
-        this.task.run();
+        await();
         super.setNextNodeIndex(nodeIndex);
     }
 
     @Override
     public @NotNull Vec3 getEntityPosAtNode(@NotNull Entity entity, int index) {
-        this.task.run();
+        await();
         return super.getEntityPosAtNode(entity, index);
     }
 
     @Override
     public @NotNull BlockPos getNodePos(int index) {
-        this.task.run();
+        await();
         return super.getNodePos(index);
     }
 
     @Override
     public @NotNull Vec3 getNextEntityPos(@NotNull Entity entity) {
-        this.task.run();
+        await();
         return super.getNextEntityPos(entity);
     }
 
     @Override
     public @NotNull BlockPos getNextNodePos() {
-        this.task.run();
+        await();
         return super.getNextNodePos();
     }
 
     @Override
     public @NotNull Node getNextNode() {
-        this.task.run();
+        await();
         return super.getNextNode();
     }
 
     @Override
     public @Nullable Node getPreviousNode() {
-        this.task.run();
+        await();
         return super.getPreviousNode();
     }
 
+    private void await() {
+        if (this.task.isDone()) {
+            return;
+        }
+        this.task.run();
+        try {
+            this.task.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            AsyncPathProcessor.LOGGER.error("error", e);
+        }
+    }
 }
