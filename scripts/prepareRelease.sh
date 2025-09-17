@@ -3,7 +3,7 @@ set -e
 
 IS_EOL=false
 IS_UNSUPPORTED=false
-IS_DEV=false
+IS_DEV=true
 
 JAR_NAME="leaf-1.21.8"
 CURRENT_TAG="ver-1.21.8"
