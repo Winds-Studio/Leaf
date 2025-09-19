@@ -1,309 +1,187 @@
 package su.plo.matter;
 
-import java.util.Arrays;
-
 public class HashingBlake3 {
 
     // https://en.wikipedia.org/wiki/BLAKE_(hash_function)
     // https://github.com/bcgit/bc-java/blob/main/core/src/main/java/org/bouncycastle/crypto/digests/Blake3Digest.java
 
     // BLAKE3 constants
-    private static final int NUMWORDS = 8;
-    private static final int BLOCKLEN = NUMWORDS * 4 * 2; // 64 bytes
-
-    // Flags
-    private static final int CHUNKSTART = 1;
-    private static final int CHUNKEND = 2;
-    private static final int ROOT = 8;
-    private static final int KEYEDHASH = 16;
-
-    // State positions
-    private static final int COUNT0 = 12, COUNT1 = 13, DATALEN = 14, FLAGS = 15;
-
-    // BLAKE3 IV
     private static final int[] IV = {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
     };
 
+    // Flags
+    private static final int CHUNK_START = 1;
+    private static final int CHUNK_END = 2;
+    private static final int ROOT = 8;
+
+    private static final int[][] SIGMA = {
+        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+        {2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8},
+        {3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1},
+        {10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6},
+        {12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4},
+        {9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7},
+        {11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13}
+    };
+
     public static long[] hashWorldSeed(long[] worldSeed) {
-        byte[] input = longsToBytes(worldSeed);
-
-        Blake3SinglePass hasher = new Blake3SinglePass();
-        int[] hash32 = hasher.hashToWords(input, 64);
-
-        return wordsToLongs(hash32);
+        int[] input32 = longsToInts(worldSeed);
+        int[] result32 = fastHash(input32, input32.length * 4);
+        return intsToLongs(result32);
     }
 
     public static void hash(long[] message, long[] chainValue, long[] internalState, long messageOffset, boolean isFinal) {
-        assert message.length == 16;
-        assert chainValue.length == 8;
-        assert internalState.length == 16;
+        int[] msg32 = longsToInts(message);
+        int[] cv32 = longsToInts(chainValue);
 
-        byte[] messageBytes = longsToBytes(message);
-        byte[] keyBytes = longsToBytes(chainValue);
+        int[] state = new int[16];
+        System.arraycopy(cv32, 0, state, 0, 8);
+        System.arraycopy(IV, 0, state, 8, 4);
 
-        Blake3SinglePass hasher = new Blake3SinglePass();
-        hasher.initWithKey(keyBytes);
+        state[12] = (int) messageOffset;
+        state[13] = (int) (messageOffset >>> 32);
+        state[14] = 64; // block length
+        state[15] = CHUNK_START | CHUNK_END | ROOT | (isFinal ? 0 : 0);
 
-        hasher.setCounter(messageOffset);
-
-        hasher.update(messageBytes);
-
-        int[] result32 = hasher.finalizeToWords(64);
-        long[] result64 = wordsToLongs(result32);
+        fastCompress(msg32, state);
 
         for (int i = 0; i < 8; i++) {
-            chainValue[i] ^= result64[i];
+            cv32[i] ^= state[i] ^ state[i + 8];
+        }
+
+        for (int i = 0; i < 4; i++) {
+            chainValue[i] = ((long) cv32[i * 2 + 1] << 32) | (cv32[i * 2] & 0xFFFFFFFFL);
         }
     }
 
-    private static class Blake3SinglePass {
-        private final int[] key = new int[NUMWORDS];
-        private final int[] chaining = new int[NUMWORDS];
-        private final int[] state = new int[NUMWORDS * 2];
-        private final int[] message = new int[NUMWORDS * 2];
-        private final byte[] indices = new byte[NUMWORDS * 2];
+    private static int[] fastHash(int[] input, int inputBytes) {
+        int[] state = new int[16];
+        int[] result = new int[16];
 
-        private int mode = 0;
-        private long counter = 0;
-        private int currentBytes = 0;
-        private boolean finalized = false;
+        System.arraycopy(IV, 0, state, 0, 8);
+        System.arraycopy(IV, 0, state, 8, 4);
 
-        public Blake3SinglePass() {
-            initNullKey();
-            reset();
-        }
+        state[12] = 0;
+        state[13] = 0;
+        state[14] = inputBytes;
+        state[15] = CHUNK_START | CHUNK_END | ROOT;
 
-        public void initWithKey(byte[] keyBytes) {
-            if (keyBytes.length >= 32) {
-                littleEndianToInt(keyBytes, 0, key);
-                mode = KEYEDHASH;
-            } else {
-                initNullKey();
-            }
-            reset();
-        }
+        int[] paddedInput = new int[16];
+        System.arraycopy(input, 0, paddedInput, 0, Math.min(input.length, 16));
 
-        public void setCounter(long counter) {
-            this.counter = counter;
-        }
+        fastCompress(paddedInput, state);
 
-        private void initNullKey() {
-            System.arraycopy(IV, 0, key, 0, NUMWORDS);
-            mode = 0;
-        }
+        System.arraycopy(state, 0, result, 0, 16);
 
-        private void reset() {
-            currentBytes = 0;
-            finalized = false;
-            System.arraycopy(key, 0, chaining, 0, NUMWORDS);
-        }
-
-        public void update(byte[] data) {
-            if (finalized) {
-                throw new IllegalStateException("Already finalized");
-            }
-
-            if (data.length <= BLOCKLEN) {
-                processSingleBlock(data);
-            } else {
-                for (int offset = 0; offset < data.length; offset += BLOCKLEN) {
-                    int blockSize = Math.min(BLOCKLEN, data.length - offset);
-                    byte[] block = new byte[BLOCKLEN];
-                    System.arraycopy(data, offset, block, 0, blockSize);
-                    processSingleBlock(block);
-                }
-            }
-        }
-
-        private void processSingleBlock(byte[] block) {
-            initChunkBlock(block.length, true);
-            initMessage(block, 0);
-            compress();
-            currentBytes += block.length;
-        }
-
-        public int[] finalizeToWords(int outputBytes) {
-            if (!finalized) {
-                finalized = true;
-            }
-
-            int outputWords = (outputBytes + 3) / 4;
-            int[] result = new int[outputWords];
-
-            generateOutput(result, outputBytes);
-            return result;
-        }
-
-        public int[] hashToWords(byte[] data, int outputBytes) {
-            reset();
-            update(data);
-            return finalizeToWords(outputBytes);
-        }
-
-        private void generateOutput(int[] output, int outputBytes) {
-            int wordsNeeded = (outputBytes + 3) / 4;
-            int outputCounter = 0;
-            int outputPos = 0;
-
-            while (outputPos < wordsNeeded) {
-                System.arraycopy(chaining, 0, state, 0, NUMWORDS);
-                System.arraycopy(IV, 0, state, NUMWORDS, 4);
-
-                state[COUNT0] = (int) outputCounter;
-                state[COUNT1] = (int) (outputCounter >>> 32);
-                state[DATALEN] = outputBytes;
-                state[FLAGS] = mode | ROOT;
-
-                Arrays.fill(message, 0);
-
-                compress();
-
-                int toCopy = Math.min(NUMWORDS, wordsNeeded - outputPos);
-                for (int i = 0; i < toCopy; i++) {
-                    output[outputPos + i] = state[i] ^ state[i + NUMWORDS];
-                }
-
-                outputPos += toCopy;
-                outputCounter++;
-            }
-        }
-
-        private void compress() {
-            final int[] st = state;
-            final int[] msg = message;
-            final int[] ch = chaining;
-
-            mixG(msg[0], msg[1], 0, 4, 8, 12, st);
-            mixG(msg[2], msg[3], 1, 5, 9, 13, st);
-            mixG(msg[4], msg[5], 2, 6, 10, 14, st);
-            mixG(msg[6], msg[7], 3, 7, 11, 15, st);
-            mixG(msg[8], msg[9], 0, 5, 10, 15, st);
-            mixG(msg[10], msg[11], 1, 6, 11, 12, st);
-            mixG(msg[12], msg[13], 2, 7, 8, 13, st);
-            mixG(msg[14], msg[15], 3, 4, 9, 14, st);
-
-            mixG(msg[2], msg[6], 0, 4, 8, 12, st);
-            mixG(msg[3], msg[10], 1, 5, 9, 13, st);
-            mixG(msg[7], msg[0], 2, 6, 10, 14, st);
-            mixG(msg[4], msg[13], 3, 7, 11, 15, st);
-            mixG(msg[1], msg[11], 0, 5, 10, 15, st);
-            mixG(msg[12], msg[5], 1, 6, 11, 12, st);
-            mixG(msg[9], msg[14], 2, 7, 8, 13, st);
-            mixG(msg[15], msg[8], 3, 4, 9, 14, st);
-
-            mixG(msg[3], msg[4], 0, 4, 8, 12, st);
-            mixG(msg[10], msg[12], 1, 5, 9, 13, st);
-            mixG(msg[13], msg[2], 2, 6, 10, 14, st);
-            mixG(msg[7], msg[5], 3, 7, 11, 15, st);
-            mixG(msg[6], msg[14], 0, 5, 10, 15, st);
-            mixG(msg[0], msg[1], 1, 6, 11, 12, st);
-            mixG(msg[15], msg[11], 2, 7, 8, 13, st);
-            mixG(msg[8], msg[9], 3, 4, 9, 14, st);
-
-            mixG(msg[10], msg[7], 0, 4, 8, 12, st);
-            mixG(msg[12], msg[0], 1, 5, 9, 13, st);
-            mixG(msg[5], msg[3], 2, 6, 10, 14, st);
-            mixG(msg[13], msg[1], 3, 7, 11, 15, st);
-            mixG(msg[4], msg[11], 0, 5, 10, 15, st);
-            mixG(msg[2], msg[6], 1, 6, 11, 12, st);
-            mixG(msg[8], msg[14], 2, 7, 8, 13, st);
-            mixG(msg[9], msg[15], 3, 4, 9, 14, st);
-
-            mixG(msg[12], msg[13], 0, 4, 8, 12, st);
-            mixG(msg[0], msg[2], 1, 5, 9, 13, st);
-            mixG(msg[1], msg[10], 2, 6, 10, 14, st);
-            mixG(msg[5], msg[6], 3, 7, 11, 15, st);
-            mixG(msg[7], msg[14], 0, 5, 10, 15, st);
-            mixG(msg[3], msg[4], 1, 6, 11, 12, st);
-            mixG(msg[9], msg[11], 2, 7, 8, 13, st);
-            mixG(msg[15], msg[8], 3, 4, 9, 14, st);
-
-            mixG(msg[0], msg[5], 0, 4, 8, 12, st);
-            mixG(msg[2], msg[3], 1, 5, 9, 13, st);
-            mixG(msg[6], msg[12], 2, 6, 10, 14, st);
-            mixG(msg[1], msg[4], 3, 7, 11, 15, st);
-            mixG(msg[13], msg[11], 0, 5, 10, 15, st);
-            mixG(msg[10], msg[7], 1, 6, 11, 12, st);
-            mixG(msg[15], msg[14], 2, 7, 8, 13, st);
-            mixG(msg[8], msg[9], 3, 4, 9, 14, st);
-
-            mixG(msg[2], msg[1], 0, 4, 8, 12, st);
-            mixG(msg[3], msg[10], 1, 5, 9, 13, st);
-            mixG(msg[4], msg[0], 2, 6, 10, 14, st);
-            mixG(msg[6], msg[7], 3, 7, 11, 15, st);
-            mixG(msg[5], msg[14], 0, 5, 10, 15, st);
-            mixG(msg[12], msg[13], 1, 6, 11, 12, st);
-            mixG(msg[8], msg[11], 2, 7, 8, 13, st);
-            mixG(msg[9], msg[15], 3, 4, 9, 14, st);
-
-            ch[0] = st[0] ^ st[8];  ch[1] = st[1] ^ st[9];
-            ch[2] = st[2] ^ st[10]; ch[3] = st[3] ^ st[11];
-            ch[4] = st[4] ^ st[12]; ch[5] = st[5] ^ st[13];
-            ch[6] = st[6] ^ st[14]; ch[7] = st[7] ^ st[15];
-        }
-
-        private static void mixG(int m1, int m2, int posA, int posB, int posC, int posD, int[] state) {
-            state[posA] += state[posB] + m1;
-            state[posD] = Integer.rotateRight(state[posD] ^ state[posA], 16);
-            state[posC] += state[posD];
-            state[posB] = Integer.rotateRight(state[posB] ^ state[posC], 12);
-            state[posA] += state[posB] + m2;
-            state[posD] = Integer.rotateRight(state[posD] ^ state[posA], 8);
-            state[posC] += state[posD];
-            state[posB] = Integer.rotateRight(state[posB] ^ state[posC], 7);
-        }
-
-        private void initMessage(byte[] data, int offset) {
-            byte[] paddedData = new byte[BLOCKLEN];
-            int copyLen = Math.min(data.length - offset, BLOCKLEN);
-            System.arraycopy(data, offset, paddedData, 0, copyLen);
-
-            littleEndianToInt(paddedData, 0, message);
-        }
-
-        private void initChunkBlock(int dataLen, boolean isFinal) {
-            System.arraycopy(currentBytes == 0 ? key : chaining, 0, state, 0, NUMWORDS);
-            System.arraycopy(IV, 0, state, NUMWORDS, 4);
-
-            state[COUNT0] = (int) counter;
-            state[COUNT1] = (int) (counter >>> 32);
-            state[DATALEN] = dataLen;
-            state[FLAGS] = mode | CHUNKSTART | (isFinal ? CHUNKEND : 0);
-
-            if (isFinal) {
-                state[FLAGS] |= ROOT;
-            }
-        }
+        return result;
     }
 
-    private static void littleEndianToInt(byte[] data, int offset, int[] output) {
-        for (int i = 0; i < output.length && (offset + i * 4 + 3) < data.length; i++) {
-            output[i] = (data[offset + i * 4] & 0xFF) |
-                ((data[offset + i * 4 + 1] & 0xFF) << 8) |
-                ((data[offset + i * 4 + 2] & 0xFF) << 16) |
-                ((data[offset + i * 4 + 3] & 0xFF) << 24);
-        }
+    private static void fastCompress(int[] msg, int[] state) {
+        // Round 0
+        g(state, 0, 4, 8, 12, msg[0], msg[1]);
+        g(state, 1, 5, 9, 13, msg[2], msg[3]);
+        g(state, 2, 6, 10, 14, msg[4], msg[5]);
+        g(state, 3, 7, 11, 15, msg[6], msg[7]);
+        g(state, 0, 5, 10, 15, msg[8], msg[9]);
+        g(state, 1, 6, 11, 12, msg[10], msg[11]);
+        g(state, 2, 7, 8, 13, msg[12], msg[13]);
+        g(state, 3, 4, 9, 14, msg[14], msg[15]);
+
+        // Round 1
+        int[] s1 = SIGMA[1];
+        g(state, 0, 4, 8, 12, msg[s1[0]], msg[s1[1]]);
+        g(state, 1, 5, 9, 13, msg[s1[2]], msg[s1[3]]);
+        g(state, 2, 6, 10, 14, msg[s1[4]], msg[s1[5]]);
+        g(state, 3, 7, 11, 15, msg[s1[6]], msg[s1[7]]);
+        g(state, 0, 5, 10, 15, msg[s1[8]], msg[s1[9]]);
+        g(state, 1, 6, 11, 12, msg[s1[10]], msg[s1[11]]);
+        g(state, 2, 7, 8, 13, msg[s1[12]], msg[s1[13]]);
+        g(state, 3, 4, 9, 14, msg[s1[14]], msg[s1[15]]);
+
+        // Round 2
+        int[] s2 = SIGMA[2];
+        g(state, 0, 4, 8, 12, msg[s2[0]], msg[s2[1]]);
+        g(state, 1, 5, 9, 13, msg[s2[2]], msg[s2[3]]);
+        g(state, 2, 6, 10, 14, msg[s2[4]], msg[s2[5]]);
+        g(state, 3, 7, 11, 15, msg[s2[6]], msg[s2[7]]);
+        g(state, 0, 5, 10, 15, msg[s2[8]], msg[s2[9]]);
+        g(state, 1, 6, 11, 12, msg[s2[10]], msg[s2[11]]);
+        g(state, 2, 7, 8, 13, msg[s2[12]], msg[s2[13]]);
+        g(state, 3, 4, 9, 14, msg[s2[14]], msg[s2[15]]);
+
+        // Round 3
+        int[] s3 = SIGMA[3];
+        g(state, 0, 4, 8, 12, msg[s3[0]], msg[s3[1]]);
+        g(state, 1, 5, 9, 13, msg[s3[2]], msg[s3[3]]);
+        g(state, 2, 6, 10, 14, msg[s3[4]], msg[s3[5]]);
+        g(state, 3, 7, 11, 15, msg[s3[6]], msg[s3[7]]);
+        g(state, 0, 5, 10, 15, msg[s3[8]], msg[s3[9]]);
+        g(state, 1, 6, 11, 12, msg[s3[10]], msg[s3[11]]);
+        g(state, 2, 7, 8, 13, msg[s3[12]], msg[s3[13]]);
+        g(state, 3, 4, 9, 14, msg[s3[14]], msg[s3[15]]);
+
+        // Round 4
+        int[] s4 = SIGMA[4];
+        g(state, 0, 4, 8, 12, msg[s4[0]], msg[s4[1]]);
+        g(state, 1, 5, 9, 13, msg[s4[2]], msg[s4[3]]);
+        g(state, 2, 6, 10, 14, msg[s4[4]], msg[s4[5]]);
+        g(state, 3, 7, 11, 15, msg[s4[6]], msg[s4[7]]);
+        g(state, 0, 5, 10, 15, msg[s4[8]], msg[s4[9]]);
+        g(state, 1, 6, 11, 12, msg[s4[10]], msg[s4[11]]);
+        g(state, 2, 7, 8, 13, msg[s4[12]], msg[s4[13]]);
+        g(state, 3, 4, 9, 14, msg[s4[14]], msg[s4[15]]);
+
+        // Round 5
+        int[] s5 = SIGMA[5];
+        g(state, 0, 4, 8, 12, msg[s5[0]], msg[s5[1]]);
+        g(state, 1, 5, 9, 13, msg[s5[2]], msg[s5[3]]);
+        g(state, 2, 6, 10, 14, msg[s5[4]], msg[s5[5]]);
+        g(state, 3, 7, 11, 15, msg[s5[6]], msg[s5[7]]);
+        g(state, 0, 5, 10, 15, msg[s5[8]], msg[s5[9]]);
+        g(state, 1, 6, 11, 12, msg[s5[10]], msg[s5[11]]);
+        g(state, 2, 7, 8, 13, msg[s5[12]], msg[s5[13]]);
+        g(state, 3, 4, 9, 14, msg[s5[14]], msg[s5[15]]);
+
+        // Round 6
+        int[] s6 = SIGMA[6];
+        g(state, 0, 4, 8, 12, msg[s6[0]], msg[s6[1]]);
+        g(state, 1, 5, 9, 13, msg[s6[2]], msg[s6[3]]);
+        g(state, 2, 6, 10, 14, msg[s6[4]], msg[s6[5]]);
+        g(state, 3, 7, 11, 15, msg[s6[6]], msg[s6[7]]);
+        g(state, 0, 5, 10, 15, msg[s6[8]], msg[s6[9]]);
+        g(state, 1, 6, 11, 12, msg[s6[10]], msg[s6[11]]);
+        g(state, 2, 7, 8, 13, msg[s6[12]], msg[s6[13]]);
+        g(state, 3, 4, 9, 14, msg[s6[14]], msg[s6[15]]);
     }
 
-    private static byte[] longsToBytes(long[] longs) {
-        byte[] bytes = new byte[longs.length * 8];
+    private static void g(int[] state, int a, int b, int c, int d, int mx, int my) {
+        state[a] += state[b] + mx;
+        state[d] = Integer.rotateRight(state[d] ^ state[a], 16);
+        state[c] += state[d];
+        state[b] = Integer.rotateRight(state[b] ^ state[c], 12);
+        state[a] += state[b] + my;
+        state[d] = Integer.rotateRight(state[d] ^ state[a], 8);
+        state[c] += state[d];
+        state[b] = Integer.rotateRight(state[b] ^ state[c], 7);
+    }
+
+    private static int[] longsToInts(long[] longs) {
+        int[] ints = new int[longs.length * 2];
         for (int i = 0; i < longs.length; i++) {
-            long value = longs[i];
-            for (int j = 0; j < 8; j++) {
-                bytes[i * 8 + j] = (byte) (value >>> (j * 8));
-            }
+            ints[i * 2] = (int) longs[i];
+            ints[i * 2 + 1] = (int) (longs[i] >>> 32);
         }
-        return bytes;
+        return ints;
     }
 
-    private static long[] wordsToLongs(int[] words) {
-        long[] longs = new long[(words.length + 1) / 2];
+    private static long[] intsToLongs(int[] ints) {
+        long[] longs = new long[(ints.length + 1) / 2];
         for (int i = 0; i < longs.length; i++) {
-            long low = words[i * 2] & 0xFFFFFFFFL;
-            long high = (i * 2 + 1 < words.length) ?
-                (words[i * 2 + 1] & 0xFFFFFFFFL) << 32 : 0L;
+            long low = ints[i * 2] & 0xFFFFFFFFL;
+            long high = (i * 2 + 1 < ints.length) ?
+                ((long) ints[i * 2 + 1] << 32) : 0L;
             longs[i] = low | high;
         }
         return longs;
