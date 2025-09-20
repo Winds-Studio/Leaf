@@ -43,7 +43,7 @@ public class HashingBlake3 {
         state[12] = (int) messageOffset;
         state[13] = (int) (messageOffset >>> 32);
         state[14] = 64; // block length
-        state[15] = CHUNK_START | CHUNK_END | ROOT | (isFinal ? 0 : 0);
+        state[15] = CHUNK_START | CHUNK_END | ROOT;
 
         fastCompress(msg32, state);
 
