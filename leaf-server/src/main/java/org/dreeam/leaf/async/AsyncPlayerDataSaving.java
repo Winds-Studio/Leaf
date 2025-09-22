@@ -1,39 +1,37 @@
 package org.dreeam.leaf.async;
 
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import net.minecraft.Util;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeFormatterBuilder;
-import java.time.format.SignStyle;
-import java.time.temporal.ChronoField;
 import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
+import java.util.concurrent.*;
 
 public final class AsyncPlayerDataSaving {
 
-    public static final LocalDispatcher IO_POOL = new LocalDispatcher();
-    private static final Map<String, FutureTask<Void>> TASKS_E = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
-    private static final Map<String, FutureTask<Void>> TASKS_A = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
-    private static final Map<String, FutureTask<Void>> TASKS_S = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
-    private static final DateTimeFormatter FORMATTER = new DateTimeFormatterBuilder()
-        .appendValue(ChronoField.YEAR, 4, 10, SignStyle.EXCEEDS_PAD)
-        .appendValue(ChronoField.MONTH_OF_YEAR, 2)
-        .appendValue(ChronoField.DAY_OF_MONTH, 2)
-        .appendValue(ChronoField.HOUR_OF_DAY, 2)
-        .appendValue(ChronoField.MINUTE_OF_HOUR, 2)
-        .appendValue(ChronoField.SECOND_OF_MINUTE, 2)
-        .appendValue(ChronoField.NANO_OF_SECOND, 9)
-        .toFormatter();
+    public static final ThreadPoolExecutor IO_POOL = new ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        new LinkedBlockingQueue<>(),
+        new com.google.common.util.concurrent.ThreadFactoryBuilder()
+            .setPriority(Thread.NORM_PRIORITY - 2)
+            .setNameFormat("Leaf IO Thread")
+            .setUncaughtExceptionHandler(Util::onThreadException)
+            .build(),
+        new ThreadPoolExecutor.DiscardPolicy()
+    );
+    private static final Map<String, Future<Void>> TASKS_E = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
+    private static final Map<String, Future<Void>> TASKS_A = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
+    private static final Map<String, Future<Void>> TASKS_S = it.unimi.dsi.fastutil.objects.Object2ObjectMaps.synchronize(new Object2ObjectOpenHashMap<>());
     private static final Logger LOGGER = LogManager.getLogger("Leaf Async Player Storage");
 
     private AsyncPlayerDataSaving() {
@@ -61,9 +59,9 @@ public final class AsyncPlayerDataSaving {
         }
     }
 
-    private static void submit(Callable<Void> task, String name, Map<String, FutureTask<Void>> tasks, String ty, boolean enabled) {
+    private static void submit(Callable<Void> task, String name, Map<String, Future<Void>> tasks, String ty, boolean enabled) {
         if (enabled) {
-            FutureTask<Void> fut = tasks.get(name);
+            Future<Void> fut = tasks.get(name);
             if (fut != null) {
                 try {
                     fut.get();
@@ -91,7 +89,7 @@ public final class AsyncPlayerDataSaving {
 
     private record SaveTask(String name,
                             Callable<Void> task,
-                            Map<String, FutureTask<Void>> tasks,
+                            Map<String, Future<Void>> tasks,
                             String ty) implements Callable<Void> {
         @Override
         public Void call() {
@@ -115,19 +113,14 @@ public final class AsyncPlayerDataSaving {
         callable.call();
     }
 
-    public static Path tempFileTime(Path file) {
+    public static Path tempFile(Path file) throws IOException {
         String fileName = file.getFileName().toString();
         String prefix = FilenameUtils.getBaseName(fileName);
         String suffix = FilenameUtils.getExtension(fileName);
-        return tempFileTime(file.getParent(), prefix, suffix);
+        return tempFile(file.getParent(), prefix, suffix);
     }
 
-    public static Path tempFileTime(Path dir, String prefix, String suffix) {
-        File file;
-        int attempt = 0;
-        do {
-            file = dir.resolve(prefix + '-' + FORMATTER.format(LocalDateTime.now()) + '.' + suffix).toFile();
-        } while (file.exists() && attempt++ < 10);
-        return file.toPath();
+    public static Path tempFile(Path dir, String prefix, String suffix) throws IOException {
+        return Files.createTempFile(dir, prefix + '-', suffix);
     }
 }

@@ -13,13 +13,18 @@ public final class ShutdownExecutors {
     }
 
     public static void shutdown() {
-        if (GlobalDispatcher.INSTANCE != null) {
-            LOGGER.info("Waiting for async executor to shutdown...");
-            GlobalDispatcher.INSTANCE.shutdown();
-            try {
-                GlobalDispatcher.INSTANCE.awaitTermination(30L, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-            }
+        LOGGER.info("Waiting for player I/O executor to shutdown...");
+        AsyncPlayerDataSaving.IO_POOL.shutdown();
+        try {
+            AsyncPlayerDataSaving.IO_POOL.awaitTermination(60L, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+        }
+
+        LOGGER.info("Waiting for async executor to shutdown...");
+        GlobalDispatcher.INSTANCE.shutdown();
+        try {
+            GlobalDispatcher.INSTANCE.awaitTermination(30L, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
         }
     }
 }
