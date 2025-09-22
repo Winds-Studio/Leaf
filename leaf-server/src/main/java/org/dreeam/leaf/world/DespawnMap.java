@@ -25,7 +25,6 @@ public final class DespawnMap implements Consumer<Entity> {
     private final double[] sort = new double[CATEGORIES.length];
     private final boolean fallback;
     public boolean difficultyIsPeaceful = true;
-    private ServerPlayer[] players = EMPTY_PLAYERS;
 
     public DespawnMap(WorldConfiguration worldConfiguration) {
         for (int i = 0; i < CATEGORIES.length; i++) {
@@ -61,7 +60,7 @@ public final class DespawnMap implements Consumer<Entity> {
     }
 
     public void tick(final ServerLevel world, final EntityTickList entityTickList) {
-        players = world.players().toArray(EMPTY_PLAYERS);
+        ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
         final double[] pxl = new double[players.length];
         final double[] pyl = new double[players.length];
         final double[] pzl = new double[players.length];
@@ -81,11 +80,14 @@ public final class DespawnMap implements Consumer<Entity> {
         tree.build(new double[][]{pxl, pzl, pyl}, indices);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
         if (fallback) {
-            entityTickList.forEach(entity -> entity.leaf$checkDespawnFallback(this));
+            entityTickList.forEach(entity -> {
+                if (!entity.isRemoved()) {
+                    entity.checkDespawn();
+                }
+            });
         } else {
             entityTickList.forEach(this);
         }
-        players = EMPTY_PLAYERS;
     }
 
     public void checkDespawn(final Mob mob) {
@@ -106,12 +108,6 @@ public final class DespawnMap implements Consumer<Entity> {
         } else {
             mob.setNoActionTime(0);
         }
-    }
-
-    public ServerPlayer checkDespawnFallback(final Mob mob) {
-        final Vec3 vec3 = mob.position;
-        final int i = tree.nearestIdx(vec3.x, vec3.z, vec3.y, Double.POSITIVE_INFINITY);
-        return i == -1 ? null : this.players[i];
     }
 
     @Override
