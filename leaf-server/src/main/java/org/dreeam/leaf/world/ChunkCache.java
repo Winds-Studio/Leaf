@@ -3,6 +3,7 @@ package org.dreeam.leaf.world;
 import ca.spottedleaf.moonrise.common.util.TickThread;
 import it.unimi.dsi.fastutil.HashCommon;
 import net.minecraft.server.level.ServerLevel;
+import org.spigotmc.WatchdogThread;
 
 import java.util.Arrays;
 import java.util.concurrent.Future;
@@ -182,11 +183,13 @@ public final class ChunkCache<V> {
         this.thread = Thread.currentThread();
     }
 
-    /// Checks if the current thread is the same as the owning thread.
+    /// Checks if the current thread is the same as the owning thread,
+    /// Or the watchdog thread on crash.
     ///
     /// @return The current thread owns this map
     public boolean isSameThread() {
-        return Thread.currentThread() == this.thread;
+        Thread currThread = Thread.currentThread();
+        return currThread == this.thread || currThread instanceof WatchdogThread;
     }
 
     public boolean isSameThreadFor(ServerLevel serverLevel, int chunkX, int chunkZ) {
