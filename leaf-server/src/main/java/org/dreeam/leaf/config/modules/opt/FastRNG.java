@@ -17,10 +17,10 @@ public class FastRNG extends ConfigModules {
     public static String randomGenerator = "Xoroshiro128PlusPlus";
     public static boolean warnForSlimeChunk = true;
     public static boolean useLegacyForSlimeChunk = false;
-    public static boolean useDirectImpl = false;
 
+    public static boolean worldgen = false;
     public static boolean worldgenEnabled() {
-        return enabled && enableForWorldgen;
+        return worldgen;
     } // Helper function
 
     @Override
@@ -61,15 +61,6 @@ public class FastRNG extends ConfigModules {
                 to follow vanilla behavior.""",
             """
                 是否使用原版随机生成器来生成史莱姆区块."""));
-        useDirectImpl = config.getBoolean(getBasePath() + ".use-direct-implementation", useDirectImpl,
-            config.pickStringRegionBased(
-                """
-                    Use direct random implementation instead of delegating to Java's RandomGenerator.
-                    This may improve performance but potentially changes RNG behavior.""",
-                """
-                    使用直接随机实现而不是委派给 RandomGenerator.
-                    这可能会提高性能, 但可能会改变 RNG 行为."""));
-
         if (enabled) {
             try {
                 RandomGeneratorFactory.of(randomGenerator);
@@ -88,5 +79,7 @@ public class FastRNG extends ConfigModules {
             LeafConfig.LOGGER.warn("Set performance.faster-random-generator.warn-for-slime-chunk to false to " +
                 "disable this warning.");
         }
+
+        worldgen = enableForWorldgen && enabled;
     }
 }
