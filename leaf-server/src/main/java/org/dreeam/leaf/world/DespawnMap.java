@@ -34,18 +34,18 @@ public final class DespawnMap implements Consumer<Entity> {
         }
         boolean fallback = false;
         for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> e : worldConfiguration.entities.spawning.despawnRanges.entrySet()) {
-            OptionalInt a = e.getValue().soft().verticalLimit.value();
-            OptionalInt b = e.getValue().soft().horizontalLimit.value();
-            OptionalInt c = e.getValue().hard().verticalLimit.value();
-            OptionalInt d = e.getValue().hard().horizontalLimit.value();
-            if (a.isPresent() && b.isPresent() && a.getAsInt() == b.getAsInt()) {
-                sort[e.getKey().ordinal()] = a.getAsInt();
-            } else if (a.isPresent() || b.isPresent()) {
+            OptionalInt softVertical = e.getValue().soft().verticalLimit.value();
+            OptionalInt softHorizontal = e.getValue().soft().horizontalLimit.value();
+            OptionalInt hardVertical = e.getValue().hard().verticalLimit.value();
+            OptionalInt hardHorizontal = e.getValue().hard().horizontalLimit.value();
+            if (softVertical.isPresent() && softHorizontal.isPresent() && softVertical.getAsInt() == softHorizontal.getAsInt()) {
+                sort[e.getKey().ordinal()] = softVertical.getAsInt();
+            } else if (softVertical.isPresent() || softHorizontal.isPresent()) {
                 fallback = true;
             }
-            if (c.isPresent() && d.isPresent() && c.getAsInt() == d.getAsInt()) {
-                hard[e.getKey().ordinal()] = c.getAsInt();
-            } else if (c.isPresent() || d.isPresent()) {
+            if (hardVertical.isPresent() && hardHorizontal.isPresent() && hardVertical.getAsInt() == hardHorizontal.getAsInt()) {
+                hard[e.getKey().ordinal()] = hardVertical.getAsInt();
+            } else if (hardVertical.isPresent() || hardHorizontal.isPresent()) {
                 fallback = true;
             }
         }
@@ -78,7 +78,7 @@ public final class DespawnMap implements Consumer<Entity> {
         for (int j = 0; j < i; j++) {
             indices[j] = j;
         }
-        tree.build(new double[][]{pxl, pzl, pyl}, indices);
+        tree.build(new double[][]{pxl, pyl, pzl}, indices);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
         if (fallback) {
             entityTickList.forEach(entity -> entity.leaf$checkDespawnFallback(this));
@@ -92,7 +92,7 @@ public final class DespawnMap implements Consumer<Entity> {
         final int i = mob.getType().getCategory().ordinal();
         final double hardDist = this.hard[i];
         final Vec3 vec3 = mob.position;
-        final double dist = this.tree.nearestSqr(vec3.x, vec3.z, vec3.y, hardDist);
+        final double dist = this.tree.nearestSqr(vec3.x, vec3.y, vec3.z, hardDist);
         if (dist == Double.POSITIVE_INFINITY) {
             return;
         }
@@ -110,7 +110,7 @@ public final class DespawnMap implements Consumer<Entity> {
 
     public ServerPlayer checkDespawnFallback(final Mob mob) {
         final Vec3 vec3 = mob.position;
-        final int i = tree.nearestIdx(vec3.x, vec3.z, vec3.y, Double.POSITIVE_INFINITY);
+        final int i = tree.nearestIdx(vec3.x, vec3.y, vec3.z, Double.POSITIVE_INFINITY);
         return i == -1 ? null : this.players[i];
     }
 
