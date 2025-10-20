@@ -24,12 +24,18 @@ public class LeafGlobalConfig {
 
         configFile.addComments("config-version", pickStringRegionBased("""
                 Leaf Config
+
+                Website: https://www.leafmc.one/
+                Docs: https://www.leafmc.one/docs/getting-started
                 GitHub Repo: https://github.com/Winds-Studio/Leaf
                 Discord: https://discord.com/invite/gfgAwdSEuM""",
             """
-                Leaf Config
-                GitHub Repo: https://github.com/Winds-Studio/Leaf
-                QQ Group: 619278377"""));
+                Leaf 配置
+
+                官网: https://www.leafmc.one/zh/
+                文档: https://www.leafmc.one/zh/docs/getting-started
+                GitHub 仓库: https://github.com/Winds-Studio/Leaf
+                QQ社区群: 619278377"""));
 
         // Pre-structure to force order
         structureConfig();
