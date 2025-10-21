@@ -9,7 +9,7 @@ public class VT4ProfileExecutor extends ConfigModules {
         return EnumConfigCategory.PERF.getBaseKeyName();
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
