@@ -6,6 +6,7 @@ import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.PowderSnowBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FlowingFluid;
 
 public final class BlockMasks {
     public static final int WALL_TAG = 0x01;
@@ -16,6 +17,7 @@ public final class BlockMasks {
     public static final int TRAP_DOOR_CL = 0x20;
     public static final int WATER = 0x40;
     public static final int LAVA = 0x80;
+    public static final int CAN_HOLD_ANY_FLUID = 0x100;
 
     public static final int FLUID = WATER | LAVA;
     public static final int IS_STATE_CLIMBABLE = org.dreeam.leaf.util.BlockMasks.CLIMBABLE_TAG | org.dreeam.leaf.util.BlockMasks.POWDER_SNOW_CL;
@@ -30,6 +32,7 @@ public final class BlockMasks {
         i |= state.getBlock() instanceof TrapDoorBlock ? TRAP_DOOR_CL : 0;
         i |= state.getFluidState().is(FluidTags.WATER) ? WATER : 0;
         i |= state.getFluidState().is(FluidTags.LAVA) ? LAVA : 0;
+        i |= FlowingFluid.canHoldAnyFluid(state) ? CAN_HOLD_ANY_FLUID : 0;
         return i;
     }
 }
