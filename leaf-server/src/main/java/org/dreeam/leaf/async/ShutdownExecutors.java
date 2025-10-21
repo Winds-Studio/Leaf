@@ -4,7 +4,6 @@ import net.minecraft.server.MinecraftServer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.async.path.AsyncPathProcessor;
-import org.dreeam.leaf.async.tracker.AsyncTracker;
 
 import java.util.concurrent.TimeUnit;
 
@@ -26,15 +25,6 @@ public class ShutdownExecutors {
             AsyncPlayerDataSaving.IO_POOL.shutdown();
             try {
                 AsyncPlayerDataSaving.IO_POOL.awaitTermination(60L, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-            }
-        }
-
-        if (AsyncTracker.TRACKER_EXECUTOR != null) {
-            LOGGER.info("Waiting for entity tracker executor to shutdown...");
-            AsyncTracker.TRACKER_EXECUTOR.shutdown();
-            try {
-                AsyncTracker.TRACKER_EXECUTOR.join(10_000L);
             } catch (InterruptedException ignored) {
             }
         }

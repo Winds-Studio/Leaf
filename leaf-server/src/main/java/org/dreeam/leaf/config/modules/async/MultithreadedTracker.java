@@ -1,6 +1,5 @@
 package org.dreeam.leaf.config.modules.async;
 
-import org.dreeam.leaf.async.tracker.AsyncTracker;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
@@ -44,7 +43,6 @@ public class MultithreadedTracker extends ConfigModules {
         threads = Math.max(threads, 1);
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
-            AsyncTracker.init();
         }
     }
 }
