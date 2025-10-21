@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Sat, 9 Aug 2025 15:42:48 +0900
+Subject: [PATCH] optimize onClimbable
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index b4a7281de8e016d059b417dee9aaedc02253a97f..5fbf5e01872834ce4a22fb8bfe25cc1dc4f8cf60 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -4991,7 +4991,8 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     // Gale start - don't load chunks to activate climbing entities
+     public @Nullable BlockState getInBlockStateIfLoaded() {
+         if (this.inBlockState == null) {
+-            this.inBlockState = this.level.getBlockStateIfLoaded(this.blockPosition());
++            BlockPos pos = this.blockPosition(); // Leaf - optimize onClimbable
++            this.inBlockState = this.level.getBlockStateIfLoadedUnchecked(pos.getX(), pos.getY(), pos.getZ()); // Leaf - optimize onClimbable
+         }
+ 
+         return this.inBlockState;
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 904de921ac626bf2f6a82069b02620e899f19d0a..b35ef147ee813778721816e89b95b7a43e6c310e 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -2221,10 +2221,10 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     public boolean onClimbableCached() {
+         if (!this.blockPosition().equals(this.lastClimbingPosition)) {
+             // Gale start - don't load chunks to activate climbing entities
+-            Boolean onClimbableIfLoaded = this.onClimbable(this.level().galeConfig().smallOptimizations.loadChunks.toActivateClimbingEntities);
++            int onClimbableIfLoaded = this.onClimbable1(this.level().galeConfig().smallOptimizations.loadChunks.toActivateClimbingEntities); // Leaf - optimize onClimbable
+ 
+-            if (onClimbableIfLoaded != null) {
+-                this.cachedOnClimbable = onClimbableIfLoaded;
++            if (onClimbableIfLoaded != 2) { // Leaf - optimize onClimbable
++                this.cachedOnClimbable = onClimbableIfLoaded == 1; // Leaf - optimize onClimbable
+                 this.lastClimbingPosition = this.blockPosition();
+             } else {
+                 this.cachedOnClimbable = false;
+@@ -2239,35 +2239,39 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+ 
+     public boolean onClimbable() {
+         // Gale start - don't load chunks to activate climbing entities
+-        return onClimbable(true);
++        return onClimbable1(true) == 1; // Leaf - optimize onClimbable
+     }
+ 
+-    public Boolean onClimbable(boolean loadChunk) {
++    // Leaf start - optimize onClimbable
++    public int onClimbable1(boolean loadChunk) {
+         // Gale end - don't load chunks to activate climbing entities
+         if (this.isSpectator()) {
+-            return false;
++            return 0;
+         } else {
+             BlockPos blockPos = this.blockPosition();
+             // Gale start - don't load chunks to activate climbing
+-            BlockState inBlockState;
++            BlockState inBlockState = this.getInBlockStateIfLoaded();
+             if (loadChunk) {
+-                inBlockState = this.getInBlockState();
+-            } else {
+-                inBlockState = this.getInBlockStateIfLoaded();
+-                if (inBlockState == null) return null;
++                if (inBlockState == null) {
++                    inBlockState = this.getInBlockState();
++                }
++            } else if (inBlockState == null) {
++                return 2;
+             }
+             // Gale end - don't load chunks to activate climbing entities
+-            if (inBlockState.is(BlockTags.CLIMBABLE)) {
++            final int flags = inBlockState.tagFlag;
++            if ((flags & org.dreeam.leaf.util.BlockMasks.CLIMBABLE_TAG) != 0) {
+                 this.lastClimbablePos = Optional.of(blockPos);
+-                return true;
+-            } else if (inBlockState.getBlock() instanceof TrapDoorBlock && this.trapdoorUsableAsLadder(blockPos, inBlockState)) {
++                return 1;
++            } else if ((flags & org.dreeam.leaf.util.BlockMasks.TRAP_DOOR_CL) != 0 && this.trapdoorUsableAsLadder(blockPos, inBlockState)) {
+                 this.lastClimbablePos = Optional.of(blockPos);
+-                return true;
++                return 1;
+             } else {
+-                return false;
++                return 0;
+             }
+         }
+     }
++    // Leaf end - optimize onClimbable
+ 
+     private boolean trapdoorUsableAsLadder(BlockPos pos, BlockState state) {
+         if (!state.getValue(TrapDoorBlock.OPEN)) {
