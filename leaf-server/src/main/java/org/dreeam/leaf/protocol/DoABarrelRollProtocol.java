@@ -155,7 +155,7 @@ public class DoABarrelRollProtocol implements Protocol {
         if (tracked == null) {
             return;
         }
-        for (ServerPlayerConnection seenBy : tracked.seenBy) {
+        for (ServerPlayerConnection seenBy : tracked.seenBy()) {
             if (seenBy instanceof ServerGamePacketListenerImpl conn
                 && getHandshakeState(conn).state == HandshakeState.ACCEPTED) {
                 seenBy.send(packet);
