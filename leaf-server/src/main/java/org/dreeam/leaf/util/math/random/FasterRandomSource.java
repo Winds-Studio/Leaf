@@ -107,11 +107,6 @@ public final class FasterRandomSource implements BitRandomSource, RandomGenerato
 
     @Override
     public int nextInt(int bound) {
-        return delegate.nextInt(bound);
-    }
-
-    @Override
-    public int nextInt(int origin, int bound) {
         if (useDirectImpl && bound > 0) {
             if ((bound & -bound) == bound) {
                 return (int) ((bound * (long) next(31)) >> 31);
@@ -122,6 +117,14 @@ public final class FasterRandomSource implements BitRandomSource, RandomGenerato
                 val = bits % bound;
             } while (bits - val + (bound - 1) < 0);
             return val;
+        }
+        return delegate.nextInt(bound);
+    }
+
+    @Override
+    public int nextInt(int origin, int bound) {
+        if (useDirectImpl && bound > 0) {
+            return origin + this.nextInt(bound - origin);
         }
         return delegate.nextInt(origin, bound);
     }
