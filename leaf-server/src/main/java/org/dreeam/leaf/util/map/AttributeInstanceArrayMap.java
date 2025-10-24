@@ -53,20 +53,20 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     @Override
     public boolean containsKey(Object key) {
         if (key instanceof Holder<?> holder && holder.value() instanceof Attribute attribute) {
-            int uid = attribute.uid;
-            return uid >= 0 && uid < a.length && a[uid] != null;
+            int id = attribute.id;
+            return id >= 0 && id < a.length && a[id] != null;
         }
         return false;
     }
 
     @Override
     public boolean containsValue(Object value) {
-        return value instanceof AttributeInstance val && Objects.equals(getInstance(val.getAttribute().value().uid), val);
+        return value instanceof AttributeInstance val && Objects.equals(getInstance(val.getAttribute().value().id), val);
     }
 
     @Override
     public AttributeInstance get(Object key) {
-        return key instanceof Holder<?> holder && holder.value() instanceof Attribute attribute ? a[attribute.uid] : null;
+        return key instanceof Holder<?> holder && holder.value() instanceof Attribute attribute ? a[attribute.id] : null;
     }
 
     @Nullable
@@ -76,18 +76,18 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     @Override
     public AttributeInstance put(@NotNull Holder<Attribute> key, AttributeInstance value) {
-        int uid = key.value().uid;
-        AttributeInstance prev = a[uid];
-        setByIndex(uid, value);
+        int id = key.value().id;
+        AttributeInstance prev = a[id];
+        setByIndex(id, value);
         return prev;
     }
 
     @Override
     public AttributeInstance remove(Object key) {
         if (!(key instanceof Holder<?> holder) || !(holder.value() instanceof Attribute attribute)) return null;
-        int uid = attribute.uid;
-        AttributeInstance prev = a[uid];
-        setByIndex(uid, null);
+        int id = attribute.id;
+        AttributeInstance prev = a[id];
+        setByIndex(id, null);
         return prev;
     }
 
@@ -95,7 +95,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     public void putAll(@NotNull Map<? extends Holder<Attribute>, ? extends AttributeInstance> m) {
         for (AttributeInstance e : m.values()) {
             if (e != null) {
-                setByIndex(e.getAttribute().value().uid, e);
+                setByIndex(e.getAttribute().value().id, e);
             }
         }
     }
