@@ -30,15 +30,13 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
             }
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
             tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
-            boolean flag = false;
+            boolean flag;
             if (tracker.moonrise$hasPlayers()) {
                 flag = true;
             } else {
                 FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
                 // removed in world if null
-                if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
-                    flag = true;
-                }
+                flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
             }
             if (flag) {
                 tracker.serverEntity.leaf$sendChanges(ctx, tracker);
