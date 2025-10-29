@@ -29,11 +29,7 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
                 continue;
             }
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
-            // removed in world if null
-            if (chunkData == null) {
-                continue;
-            }
-            tracker.leafTick(ctx, chunkData.nearbyPlayers);
+            tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
             boolean flag = false;
             if (tracker.moonrise$hasPlayers()) {
                 flag = true;
@@ -45,7 +41,7 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
                 }
             }
             if (flag) {
-                tracker.serverEntity.leafSendChanges(ctx, tracker);
+                tracker.serverEntity.leaf$sendChanges(ctx, tracker);
             }
         }
         return ctx;

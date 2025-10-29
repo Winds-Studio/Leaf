@@ -4,15 +4,18 @@ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
 import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
 import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import io.papermc.paper.event.player.PlayerUntrackEntityEvent;
+import it.unimi.dsi.fastutil.objects.Object2ObjectFunction;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-import it.unimi.dsi.fastutil.objects.Reference2ReferenceFunction;
-import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
-import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.network.syncher.SynchedEntityData;
-import net.minecraft.server.level.*;
+import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.FullChunkStatus;
+import net.minecraft.server.level.ServerEntity;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerPlayerConnection;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -34,15 +37,15 @@ import java.util.UUID;
 
 public final class TrackerCtx {
     @SuppressWarnings("unchecked")
-    private static final Reference2ReferenceFunction<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> INIT_PACKET_LIST = x -> ReferenceArrayList.wrap(new Packet[16], 0);
-    private final Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> packets = new Reference2ReferenceOpenHashMap<>();
+    private static final Object2ObjectFunction<ServerPlayerConnection, ObjectArrayList<Packet<?>>> INIT_PACKET_LIST = x -> ObjectArrayList.wrap(new Packet[16], 0);
+    private final Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> packets = new Object2ObjectOpenHashMap<>();
     private final ServerLevel world;
     private final ObjectArrayList<ItemFrame> itemFrames = new ObjectArrayList<>();
     private final ObjectArrayList<BossEvent> witherBosses = new ObjectArrayList<>();
     private final ObjectArrayList<PaperStopSeen> paperStopSeen = new ObjectArrayList<>();
     private final ObjectArrayList<StartSeen> startSeen = new ObjectArrayList<>();
     private final ObjectArrayList<Entity> pluginEntity = new ObjectArrayList<>();
-    private final ReferenceArrayList<SyncAttributes> syncAttributes = ReferenceArrayList.wrap(new SyncAttributes[8], 0);
+    private final ObjectArrayList<SyncAttributes> syncAttributes = ObjectArrayList.wrap(new SyncAttributes[8], 0);
 
     private record BossEvent(WitherBoss witherBoss, ObjectArrayList<ServerPlayer> add, ObjectArrayList<ServerPlayer> remove) {}
     private record PaperStopSeen(Entity e, ObjectArrayList<ServerPlayerConnection> q) {}
@@ -107,17 +110,21 @@ public final class TrackerCtx {
         pluginEntity.add(entity);
     }
 
-    public void send(ServerPlayerConnection connection, Packet<? super ClientGamePacketListener> packet) {
+    public void send(ServerPlayerConnection connection, Packet<?> packet) {
         packets.computeIfAbsent(connection, INIT_PACKET_LIST).add(packet);
     }
 
-    public void broadcast(ChunkMap.TrackedEntity entity, Packet<? super net.minecraft.network.protocol.game.ClientGamePacketListener> packet) {
+    public void sendRemove(ServerPlayerConnection connection, int id) {
+        packets.computeIfAbsent(connection, INIT_PACKET_LIST).add(new ClientboundRemoveEntitiesPacket(id));
+    }
+
+    public void broadcast(ChunkMap.TrackedEntity entity, Packet<?> packet) {
         for (ServerPlayerConnection serverPlayerConnection : entity.seenBy()) {
             send(serverPlayerConnection, packet);
         }
     }
 
-    public void broadcastIgnorePlayers(ChunkMap.TrackedEntity entity, Packet<? super net.minecraft.network.protocol.game.ClientGamePacketListener> packet, List<UUID> ignoredPlayers) {
+    public void broadcastIgnorePlayers(ChunkMap.TrackedEntity entity, Packet<?> packet, List<UUID> ignoredPlayers) {
         for (ServerPlayerConnection conn : entity.seenBy()) {
             if (!ignoredPlayers.contains(conn.getPlayer().getUUID())) {
                 send(conn, packet);
@@ -132,7 +139,7 @@ public final class TrackerCtx {
         }
     }
 
-    Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> join(TrackerCtx other) {
+    Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> join(TrackerCtx other) {
         itemFrames.addAll(other.itemFrames);
         paperStopSeen.addAll(other.paperStopSeen);
         startSeen.addAll(other.startSeen);
@@ -140,7 +147,15 @@ public final class TrackerCtx {
         return other.packets;
     }
 
-    void handle(Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>>[] other) {
+    void reset() {
+        itemFrames.clear();
+        paperStopSeen.clear();
+        startSeen.clear();
+        pluginEntity.clear();
+        packets.clear();
+    }
+
+    void handle(Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>>[] other) {
         if (!pluginEntity.isEmpty()) {
             for (final Entity entity : pluginEntity) {
                 final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
@@ -148,11 +163,7 @@ public final class TrackerCtx {
                     continue;
                 }
                 ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData chunk = ((ChunkSystemEntity) entity).moonrise$getChunkData();
-                // unlikely
-                if (chunk == null) {
-                    continue;
-                }
-                tracker.moonrise$tick(chunk.nearbyPlayers);
+                tracker.moonrise$tick(chunk == null ? null : chunk.nearbyPlayers);
                 boolean flag = false;
                 if (tracker.moonrise$hasPlayers()) {
                     flag = true;
@@ -168,7 +179,7 @@ public final class TrackerCtx {
             }
         }
 
-        Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> prior = new Reference2ReferenceOpenHashMap<>();
+        Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> prior = new Object2ObjectOpenHashMap<>();
 
         if (!startSeen.isEmpty()) {
             for (StartSeen startSeen : startSeen) {
@@ -178,7 +189,7 @@ public final class TrackerCtx {
 
         sendPackets(world, prior);
 
-        for (Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> otherPackets : other) {
+        for (Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> otherPackets : other) {
             sendPackets(world, otherPackets);
         }
 
@@ -226,23 +237,25 @@ public final class TrackerCtx {
     private void handleItemFrame(ItemFrame itemFrame) {
         MapId mapId = itemFrame.cachedMapId; // Paper - Perf: Cache map ids on item frames
         MapItemSavedData savedData = MapItem.getSavedData(mapId, world);
-        if (savedData != null) {
-            ChunkMap.TrackedEntity tracker = itemFrame.moonrise$getTrackedEntity();
-            if (tracker != null) {
-                ItemStack item = itemFrame.getItem();
-                for (final ServerPlayerConnection connection : tracker.seenBy()) {
-                    final ServerPlayer serverPlayer = connection.getPlayer(); // Paper
-                    savedData.tickCarriedBy(serverPlayer, item);
-                    Packet<? super ClientGamePacketListener> updatePacket = (Packet<? super ClientGamePacketListener>) savedData.getUpdatePacket(mapId, serverPlayer);
-                    if (updatePacket != null) {
-                        send(serverPlayer.connection, updatePacket);
-                    }
-                }
+        if (savedData == null) {
+            return;
+        }
+        ChunkMap.TrackedEntity tracker = itemFrame.moonrise$getTrackedEntity();
+        if (tracker == null) {
+            return;
+        }
+        ItemStack item = itemFrame.getItem();
+        for (final ServerPlayerConnection connection : tracker.seenBy()) {
+            final ServerPlayer serverPlayer = connection.getPlayer(); // Paper
+            savedData.tickCarriedBy(serverPlayer, item);
+            Packet<?> updatePacket = savedData.getUpdatePacket(mapId, serverPlayer);
+            if (updatePacket != null) {
+                send(serverPlayer.connection, updatePacket);
             }
         }
     }
 
-    private void handleStartTrack(StartSeen startSeen, Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> prior) {
+    private void handleStartTrack(StartSeen startSeen, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> prior) {
         ChunkMap.TrackedEntity tracker = startSeen.e.moonrise$getTrackedEntity();
         ObjectArrayList<Packet<? super ClientGamePacketListener>> list = new ObjectArrayList<>(4);
         if (tracker == null) {
@@ -257,7 +270,7 @@ public final class TrackerCtx {
                 connection.getPlayer().getBukkitEntity(),
                 startSeen.e.getBukkitEntity()
             ).callEvent()) {
-                send(connection, new ClientboundRemoveEntitiesPacket(startSeen.e.getId()));
+                sendRemove(connection, startSeen.e.getId());
             } else {
                 if (flag && connection.getPlayer() == startSeen.e) {
                     var copy = new ObjectArrayList<>(list);
@@ -323,19 +336,19 @@ public final class TrackerCtx {
         }
     }
 
-    private static void sendPackets(ServerLevel world, Reference2ReferenceOpenHashMap<ServerPlayerConnection, ReferenceArrayList<Packet<? super ClientGamePacketListener>>> packets) {
+    private static void sendPackets(ServerLevel world, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> packets) {
         if (packets.isEmpty()) {
             return;
         }
-        var iter = packets.reference2ReferenceEntrySet().fastIterator();
+        var iter = packets.object2ObjectEntrySet().fastIterator();
         while (iter.hasNext()) {
             var entry = iter.next();
             ServerPlayerConnection connection = entry.getKey();
-            ReferenceArrayList<Packet<? super ClientGamePacketListener>> list = entry.getValue();
+            ObjectArrayList<Packet<?>> list = entry.getValue();
             if (!world.equals(connection.getPlayer().level())) {
                 continue;
             }
-            Packet<? super ClientGamePacketListener>[] packetsRaw = list.elements();
+            Packet<?>[] packetsRaw = list.elements();
             for (int i = 0, size = list.size(); i < size; i++) {
                 connection.send(packetsRaw[i]);
             }
