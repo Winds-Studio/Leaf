@@ -142,6 +142,8 @@ public final class TrackerCtx {
         stopSeen.addAll(other.stopSeen);
         startSeen.addAll(other.startSeen);
         pluginEntity.addAll(other.pluginEntity);
+        resync.addAll(other.resync);
+        syncAttributes.addAll(other.syncAttributes);
         return other.packets;
     }
 
@@ -150,6 +152,8 @@ public final class TrackerCtx {
         stopSeen.clear();
         startSeen.clear();
         pluginEntity.clear();
+        resync.clear();
+        syncAttributes.clear();
         packets.clear();
     }
 
