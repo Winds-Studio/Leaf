@@ -1,7 +1,7 @@
 package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
-import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
+import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
 import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import io.papermc.paper.event.player.PlayerUntrackEntityEvent;
 import it.unimi.dsi.fastutil.objects.Object2ObjectFunction;
@@ -17,7 +17,6 @@ import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
-import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerPlayerConnection;
@@ -48,23 +47,20 @@ public final class TrackerCtx {
     private final ObjectArrayList<BossEvent> witherBosses = new ObjectArrayList<>();
     private final ObjectArrayList<StopSeen> stopSeen = new ObjectArrayList<>();
     private final ObjectArrayList<StartSeen> startSeen = new ObjectArrayList<>();
-    private final ObjectArrayList<Entity> pluginEntity = new ObjectArrayList<>();
-    private final ObjectArrayList<SyncAttributes> syncAttributes = ObjectArrayList.wrap(new SyncAttributes[8], 0);
+    private final ObjectArrayList<ChunkMap.TrackedEntity> resync = new ObjectArrayList<>();
+    private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
+    private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
 
     private record BossEvent(WitherBoss witherBoss,
                              ObjectArrayList<ServerPlayer> add,
                              ObjectArrayList<ServerPlayer> remove) {
     }
 
-    private record StopSeen(Entity e, ObjectArrayList<ServerPlayerConnection> q) {
+    private record StopSeen(Entity e, ObjectArrayList<ServerPlayer> q) {
     }
 
     private record StartSeen(Entity e,
-                             ObjectArrayList<ServerPlayerConnection> q,
-                             Packet<? super ClientGamePacketListener> addEntity) {
-    }
-
-    private record SyncAttributes(LivingEntity e, ServerPlayerConnection[] seenBy) {
+                             ObjectArrayList<ServerPlayerConnection> q) {
     }
 
     public TrackerCtx(ServerLevel world) {
@@ -73,55 +69,42 @@ public final class TrackerCtx {
 
     public void stopSeenByPlayer(ServerPlayerConnection connection, Entity entity) {
         if (PlayerUntrackEntityEvent.getHandlerList().getRegisteredListeners().length != 0) {
-            if (stopSeen.isEmpty()) {
+            if (stopSeen.isEmpty() || !stopSeen.getLast().e.equals(entity)) {
                 stopSeen.add(new StopSeen(entity, new ObjectArrayList<>()));
             }
-            if (!stopSeen.getLast().e.equals(entity)) {
-                stopSeen.add(new StopSeen(entity, new ObjectArrayList<>()));
-            }
-            stopSeen.getLast().q.add(connection);
+            stopSeen.getLast().q.add(connection.getPlayer());
         }
         if (entity instanceof WitherBoss witherBoss) {
-            if (witherBosses.isEmpty()) {
-                witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
-            }
-            if (!witherBosses.getLast().witherBoss.equals(witherBoss)) {
+            if (witherBosses.isEmpty() || !witherBosses.getLast().witherBoss.equals(witherBoss)) {
                 witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
             }
             witherBosses.getLast().remove.add(connection.getPlayer());
         }
     }
 
-    public void startSeenByPlayer(ServerPlayerConnection connection, Entity entity, ServerEntity serverEntity) {
-        if (startSeen.isEmpty()) {
-            StartSeen elem = new StartSeen(entity, new ObjectArrayList<>(), entity.getAddEntityPacket(serverEntity));
-            startSeen.add(elem);
-        }
-        if (!startSeen.getLast().e.equals(entity)) {
-            StartSeen elem = new StartSeen(entity, new ObjectArrayList<>(), entity.getAddEntityPacket(serverEntity));
-            startSeen.add(elem);
+    public void startSeenByPlayer(ServerPlayerConnection connection, Entity entity) {
+        if (startSeen.isEmpty() || !startSeen.getLast().e.equals(entity)) {
+            startSeen.add(new StartSeen(entity, new ObjectArrayList<>()));
         }
         startSeen.getLast().q.add(connection);
         if (entity instanceof WitherBoss witherBoss) {
-            if (witherBosses.isEmpty()) {
-                witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
-            }
-            if (!witherBosses.getLast().witherBoss.equals(witherBoss)) {
+            if (witherBosses.isEmpty() || !witherBosses.getLast().witherBoss.equals(witherBoss)) {
                 witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
             }
             witherBosses.getLast().add.add(connection.getPlayer());
         }
     }
 
-    private void syncAttributes(LivingEntity livingEntity, ServerPlayerConnection[] seenBy) {
-        syncAttributes.add(new SyncAttributes(livingEntity, seenBy));
+
+    public void forceResync(ChunkMap.TrackedEntity entity) {
+        resync.add(entity);
     }
 
     public void updateItemFrame(ItemFrame itemFrame) {
         itemFrames.add(itemFrame);
     }
 
-    public void citizensEntity(Entity entity) {
+    public void citizensEntity(ChunkMap.TrackedEntity entity) {
         pluginEntity.add(entity);
     }
 
@@ -172,8 +155,8 @@ public final class TrackerCtx {
 
     void handle(Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>>[] other) {
         if (!pluginEntity.isEmpty()) {
-            for (final Entity entity : pluginEntity) {
-                handlePlugin(entity);
+            for (ChunkMap.TrackedEntity tracker : pluginEntity) {
+                handlePlugin(tracker);
             }
         }
 
@@ -191,18 +174,25 @@ public final class TrackerCtx {
             sendPackets(world, otherPackets);
         }
 
-        SyncAttributes[] raw = syncAttributes.elements();
-        for (int i = 0, size = syncAttributes.size(); i < size; i++) {
-            handleSyncAttribute(raw[i]);
+        if (!resync.isEmpty()) {
+            for (ChunkMap.TrackedEntity tracker : resync) {
+                tracker.serverEntity.leaf$sendChanges(this, tracker, true);
+            }
+        }
+
+        if (!syncAttributes.isEmpty()) {
+            for (ChunkMap.TrackedEntity tracker : syncAttributes) {
+                handleSyncAttribute(tracker);
+            }
         }
         sendPackets(world, this.packets);
 
         if (!stopSeen.isEmpty()) {
             for (StopSeen untrack : stopSeen) {
-                for (ServerPlayerConnection connection : untrack.q) {
-                    if (world == connection.getPlayer().level()) {
+                for (ServerPlayer player : untrack.q) {
+                    if (world == player.level()) {
                         new PlayerUntrackEntityEvent(
-                            connection.getPlayer().getBukkitEntity(),
+                            player.getBukkitEntity(),
                             untrack.e.getBukkitEntity()
                         ).callEvent();
                     }
@@ -232,18 +222,13 @@ public final class TrackerCtx {
         sendPackets(world, this.packets);
     }
 
-    private static void handlePlugin(Entity entity) {
-        final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
-        if (tracker == null) {
-            return;
-        }
-        ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData chunk = ((ChunkSystemEntity) entity).moonrise$getChunkData();
+    private static void handlePlugin(ChunkMap.TrackedEntity tracker) {
+        ChunkSystemEntity entity = tracker.serverEntity.entity;
+        ChunkData chunk = entity.moonrise$getChunkData();
         tracker.moonrise$tick(chunk == null ? null : chunk.nearbyPlayers);
-        boolean flag;
-        if (tracker.moonrise$hasPlayers()) {
-            flag = true;
-        } else {
-            FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
+        boolean flag = tracker.moonrise$hasPlayers();
+        if (!flag) {
+            FullChunkStatus status = entity.moonrise$getChunkStatus();
             flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
         }
         if (flag) {
@@ -262,8 +247,8 @@ public final class TrackerCtx {
             return;
         }
         ItemStack item = itemFrame.getItem();
-        for (final ServerPlayerConnection connection : tracker.seenBy()) {
-            final ServerPlayer serverPlayer = connection.getPlayer(); // Paper
+        for (ServerPlayerConnection connection : tracker.seenBy()) {
+            ServerPlayer serverPlayer = connection.getPlayer(); // Paper
             savedData.tickCarriedBy(serverPlayer, item);
             Packet<?> updatePacket = savedData.getUpdatePacket(mapId, serverPlayer);
             if (updatePacket != null) {
@@ -278,7 +263,7 @@ public final class TrackerCtx {
         if (tracker == null) {
             return;
         }
-        list.add(startSeen.addEntity);
+        list.add(startSeen.e.getAddEntityPacket(tracker.serverEntity));
         boolean flag = tracker.serverEntity.leaf$sendPairingData(list);
         ClientboundBundlePacket packet = new ClientboundBundlePacket(list);
         for (ServerPlayerConnection connection : startSeen.q) {
@@ -309,12 +294,15 @@ public final class TrackerCtx {
             broadcastAndSend(tracker, packet);
         }
         if (entity instanceof LivingEntity livingEntity && livingEntity.getAttributes().attributeDirty()) {
-            syncAttributes(livingEntity, tracker.seenBy());
+            syncAttributes.add(tracker);
         }
     }
 
-    private void handleSyncAttribute(SyncAttributes syncAttribute) {
-        LivingEntity e = syncAttribute.e;
+    private void handleSyncAttribute(ChunkMap.TrackedEntity tracker) {
+        LivingEntity e = tracker.serverEntity.entity instanceof LivingEntity livingEntity? livingEntity : null;
+        if (e == null) {
+            return;
+        }
         ObjectArrayList<ClientboundUpdateAttributesPacket.AttributeSnapshot> attributes;
         AttributeMap attributeMap = e.getAttributes();
         ServerPlayer p = e instanceof ServerPlayer serverPlayer ? serverPlayer : null;
@@ -342,13 +330,7 @@ public final class TrackerCtx {
                 attributes.add(new ClientboundUpdateAttributesPacket.AttributeSnapshot(attribute, attributeInstance.getBaseValue(), attributeInstance.getModifiers()));
             }
         }
-        ClientboundUpdateAttributesPacket packet = new ClientboundUpdateAttributesPacket(e.getId(), attributes);
-        for (ServerPlayerConnection connection : syncAttribute.seenBy) {
-            send(connection, packet);
-        }
-        if (p != null) {
-            send(p.connection, packet);
-        }
+        broadcastAndSend(tracker, new ClientboundUpdateAttributesPacket(e.getId(), attributes));
     }
 
     private static void sendPackets(ServerLevel world, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> packets) {
