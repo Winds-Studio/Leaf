@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.misc;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.annotations.Experimental;
 
 public class VanillaUsernameCheck extends ConfigModules {
 
@@ -9,6 +10,7 @@ public class VanillaUsernameCheck extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".vanilla-username-check";
     }
 
+    @Experimental
     public static boolean removeAllCheck = false;
     public static boolean enforceSkullValidation = true;
 
