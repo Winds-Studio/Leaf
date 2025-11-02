@@ -13,6 +13,8 @@ public class VanillaUsernameCheck extends ConfigModules {
     @Experimental
     public static boolean removeAllCheck = false;
     public static boolean enforceSkullValidation = true;
+    @Experimental
+    public static boolean allowOldPlayersJoin = false;
 
     @Override
     public void onLoaded() {
@@ -30,5 +32,11 @@ public class VanillaUsernameCheck extends ConfigModules {
             """
                 强制启用头颅验证,
                 避免所有者带有特殊字符的头颅导致客户端掉线."""));
+        allowOldPlayersJoin = config.getBoolean(getBasePath() + ".allow-old-players-join", allowOldPlayersJoin, config.pickStringRegionBased("""
+                Allow old players to join the server after the username regex is changed,
+                even if their names don't meet the new requirements.""",
+            """
+                允许老玩家加入修改用户名验证正则后的服务器,
+                即使他们的用户名不满足修改后的正则."""));
     }
 }
