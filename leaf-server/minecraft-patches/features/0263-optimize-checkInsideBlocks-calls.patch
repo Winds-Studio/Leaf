@@ -1,0 +1,251 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sat, 19 Jul 2025 13:31:49 +0200
+Subject: [PATCH] optimize checkInsideBlocks calls
+
+1. Chunk caching - Reduce chunk lookups via local caching
+2. Array-based storage - Replace EnumMaps with ordinal-indexed arrays
+3. Memory reuse - Cache positions/Vec3/level references
+4. Iterator removal - Use indexed loops instead
+
+License: LGPL-3.0 (https://www.gnu.org/licenses/lgpl-3.0.html)
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index d2a6f2bfa4370fee99b3f535724fc3ee18ce496f..ea137958c70f80349041cd27d1503f7b8def2a69 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1700,8 +1700,13 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         }
+     }
+ 
++    // Leaf start - optimize checkInsideBlocks calls
+     private void checkInsideBlocks(Vec3 vec3, Vec3 vec31, InsideBlockEffectApplier.StepBasedCollector stepBasedCollector, LongSet set) {
+-        AABB aabb = this.makeBoundingBox(vec31).deflate(1.0E-5F);
++        final Level level = this.level();
++        AABB aabb = this.getBoundingBox().move(vec31.subtract(this.position())).deflate(1.0E-5F);
++        final net.minecraft.world.level.chunk.ChunkAccess[] cachedChunk = { null };
++        final long[] cachedChunkPos = { Long.MIN_VALUE };
++
+         BlockGetter.forEachBlockIntersectedBetween(
+             vec3,
+             vec31,
+@@ -1710,35 +1715,51 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+                 if (!this.isAlive()) {
+                     return false;
+                 } else {
+-                    BlockState blockState = this.level().getBlockState(pos);
++                    final int chunkX = pos.getX() >> 4;
++                    final int chunkZ = pos.getZ() >> 4;
++                    final long currentChunkPos = ChunkPos.asLong(chunkX, chunkZ);
++                    BlockState blockState;
++
++                    if (cachedChunkPos[0] != currentChunkPos) {cachedChunk[0] = level.getChunkIfLoaded(chunkX, chunkZ);cachedChunkPos[0] = currentChunkPos;}
++
++                    if (cachedChunk[0] != null) {blockState = cachedChunk[0].getBlockState(pos);
++                    } else {
++                        blockState = level.getBlockStateIfLoaded(pos);
++                        if (blockState == null) {blockState = Blocks.AIR.defaultBlockState();}
++                    }
++
++                    final long posLong = pos.asLong();
+                     if (blockState.isAir()) {
+                         this.debugBlockIntersection(pos, false, false);
+                         return true;
+-                    } else if (!set.add(pos.asLong())) {
++                    } else if (!set.add(posLong)) {
+                         return true;
+                     } else {
+-                        VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(this.level(), pos, this);
++                        VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
+                         boolean flag = entityInsideCollisionShape == Shapes.block()
+                             || this.collidedWithShapeMovingFrom(vec3, vec31, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
++
+                         if (flag) {
+                             try {
+                                 stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                                blockState.entityInside(this.level(), pos, this, stepBasedCollector);
++                                blockState.entityInside(level, pos, this, stepBasedCollector);
+                                 this.onInsideBlock(blockState);
+                             } catch (Throwable var14) {
+                                 CrashReport crashReport = CrashReport.forThrowable(var14, "Colliding entity with block");
+                                 CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
+-                                CrashReportCategory.populateBlockDetails(crashReportCategory, this.level(), pos, blockState);
++                                CrashReportCategory.populateBlockDetails(crashReportCategory, level, pos, blockState);
+                                 CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
+                                 this.fillCrashReportCategory(crashReportCategory1);
+                                 throw new ReportedException(crashReport);
+                             }
+                         }
+ 
+-                        boolean flag1 = this.collidedWithFluid(blockState.getFluidState(), pos, vec3, vec31);
++                        final FluidState fluidState = blockState.getFluidState();
++                        boolean flag1 = !fluidState.isEmpty() && this.collidedWithFluid(fluidState, pos, vec3, vec31);
++
+                         if (flag1) {
+                             stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                            blockState.getFluidState().entityInside(this.level(), pos, this, stepBasedCollector);
++                            fluidState.entityInside(level, pos, this, stepBasedCollector);
+                         }
+ 
+                         this.debugBlockIntersection(pos, flag, flag1);
+@@ -1748,6 +1769,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+             }
+         );
+     }
++// Leaf end - optimize checkInsideBlocks calls
+ 
+     private void debugBlockIntersection(BlockPos blockPos, boolean flag, boolean flag1) {
+     }
+diff --git a/net/minecraft/world/entity/InsideBlockEffectApplier.java b/net/minecraft/world/entity/InsideBlockEffectApplier.java
+index a7bc5ead2062504ceac95f603bc1ca8d4290bbfd..92b9c324cb6aab415abe2e77c5844b74c251a42f 100644
+--- a/net/minecraft/world/entity/InsideBlockEffectApplier.java
++++ b/net/minecraft/world/entity/InsideBlockEffectApplier.java
+@@ -30,20 +30,28 @@ public interface InsideBlockEffectApplier {
+     void runAfter(InsideBlockEffectType type, Consumer<Entity> effect);
+ 
+     public static class StepBasedCollector implements InsideBlockEffectApplier {
++        // Leaf start - optimize checkInsideBlocks calls
+         private static final InsideBlockEffectType[] APPLY_ORDER = InsideBlockEffectType.values();
+         private static final int NO_STEP = -1;
+-        private final Map<InsideBlockEffectType, Consumer<Entity>> effectsInStep = new java.util.EnumMap<>(InsideBlockEffectType.class); // Paper - track position inside effect was triggered on
+-        private final Map<InsideBlockEffectType, List<Consumer<Entity>>> beforeEffectsInStep = Util.makeEnumMap(
+-            InsideBlockEffectType.class, insideBlockEffectType -> new ArrayList<>()
+-        );
+-        private final Map<InsideBlockEffectType, List<Consumer<Entity>>> afterEffectsInStep = Util.makeEnumMap(
+-            InsideBlockEffectType.class, insideBlockEffectType -> new ArrayList<>()
+-        );
++
++        private final Consumer<Entity>[] effectsInStep = new Consumer[APPLY_ORDER.length];
++        private final List<Consumer<Entity>>[] beforeEffectsInStep = new List[APPLY_ORDER.length];
++        private final List<Consumer<Entity>>[] afterEffectsInStep = new List[APPLY_ORDER.length];
++
++        private static final List<Consumer<Entity>> EMPTY_LIST = List.of();
++
+         private final List<Consumer<Entity>> finalEffects = new ArrayList<>();
+         private int lastStep = -1;
+ 
+-        public void advanceStep(int step, net.minecraft.core.BlockPos pos) { // Paper - track position inside effect was triggered on
+-            this.currentBlockPos = pos; // Paper - track position inside effect was triggered on
++        public StepBasedCollector() {
++            for (int i = 0; i < APPLY_ORDER.length; i++) {
++                beforeEffectsInStep[i] = new ArrayList<>(2);
++                afterEffectsInStep[i] = new ArrayList<>(2);
++            }
++        }
++
++        public void advanceStep(int step, net.minecraft.core.BlockPos pos) {
++            this.currentBlockPos = pos;
+             if (this.lastStep != step) {
+                 this.lastStep = step;
+                 this.flushStep();
+@@ -53,46 +61,88 @@ public interface InsideBlockEffectApplier {
+         public void applyAndClear(Entity entity) {
+             this.flushStep();
+ 
+-            for (Consumer<Entity> consumer : this.finalEffects) {
++            List<Consumer<Entity>> effects = this.finalEffects;
++            int size = effects.size();
++
++            if (size == 0) {
++                this.lastStep = -1;
++                return;
++            }
++
++            if (!entity.isAlive()) {
++                effects.clear();
++                this.lastStep = -1;
++                return;
++            }
++
++            int i = 0;
++            while (i < size - 3) {
++                effects.get(i++).accept(entity);
++                effects.get(i++).accept(entity);
++                effects.get(i++).accept(entity);
++                effects.get(i++).accept(entity);
+                 if (!entity.isAlive()) {
+                     break;
+                 }
++            }
+ 
+-                consumer.accept(entity);
++            if (entity.isAlive()) {
++                for (; i < size; i++) {
++                    effects.get(i).accept(entity);
++                    if (!entity.isAlive()) {
++                        break;
++                    }
++                }
+             }
+ 
+-            this.finalEffects.clear();
++            effects.clear();
+             this.lastStep = -1;
+         }
+ 
+         private void flushStep() {
+-            for (InsideBlockEffectType insideBlockEffectType : APPLY_ORDER) {
+-                List<Consumer<Entity>> list = this.beforeEffectsInStep.get(insideBlockEffectType);
+-                this.finalEffects.addAll(list);
+-                list.clear();
+-                if (this.effectsInStep.remove(insideBlockEffectType) instanceof final Consumer<Entity> recordedEffect) { // Paper - track position inside effect was triggered on - better than null check to avoid diff.
+-                    this.finalEffects.add(recordedEffect); // Paper - track position inside effect was triggered on
++            final int len = APPLY_ORDER.length;
++            final List<Consumer<Entity>>[] beforeArr = this.beforeEffectsInStep;
++            final Consumer<Entity>[] effectArr = this.effectsInStep;
++            final List<Consumer<Entity>>[] afterArr = this.afterEffectsInStep;
++            final List<Consumer<Entity>> finalList = this.finalEffects;
++
++            for (int i = 0; i < len; i++) {
++                // Process before effects
++                List<Consumer<Entity>> beforeList = beforeArr[i];
++                if (!beforeList.isEmpty()) {
++                    finalList.addAll(beforeList);
++                    beforeList.clear();
++                }
++
++                // Process main effect
++                Consumer<Entity> effect = effectArr[i];
++                if (effect != null) {
++                    finalList.add(effect);
++                    effectArr[i] = null;
+                 }
+ 
+-                List<Consumer<Entity>> list1 = this.afterEffectsInStep.get(insideBlockEffectType);
+-                this.finalEffects.addAll(list1);
+-                list1.clear();
++                // Process after effects
++                List<Consumer<Entity>> afterList = afterArr[i];
++                if (!afterList.isEmpty()) {
++                    finalList.addAll(afterList);
++                    afterList.clear();
++                }
+             }
+         }
+ 
+         @Override
+         public void apply(InsideBlockEffectType type) {
+-            this.effectsInStep.put(type, recorded(type));  // Paper - track position inside effect was triggered on
++            effectsInStep[type.ordinal()] = recorded(type);
+         }
+ 
+         @Override
+         public void runBefore(InsideBlockEffectType type, Consumer<Entity> effect) {
+-            this.beforeEffectsInStep.get(type).add(effect);
++            beforeEffectsInStep[type.ordinal()].add(effect);
+         }
+ 
+         @Override
+         public void runAfter(InsideBlockEffectType type, Consumer<Entity> effect) {
+-            this.afterEffectsInStep.get(type).add(effect);
++            afterEffectsInStep[type.ordinal()].add(effect);
+         }
+ 
+         // Paper start - track position inside effect was triggered on
+@@ -113,5 +163,6 @@ public interface InsideBlockEffectApplier {
+             }
+         }
+         // Paper end - track position inside effect was triggered on
++        // Leaf end - optimize checkInsideBlocks calls
+     }
+ }
