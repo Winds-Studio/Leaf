@@ -1,15 +1,13 @@
 package org.dreeam.leaf.config;
 
+import it.unimi.dsi.fastutil.objects.ObjectArrays;
 import org.dreeam.leaf.config.annotations.Experimental;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public abstract class ConfigModules extends LeafConfig {
 
@@ -23,9 +21,10 @@ public abstract class ConfigModules extends LeafConfig {
 
     public static void initModules() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
         List<Field> enabledExperimentalModules = new ArrayList<>();
+        List<Field> deprecatedModules = new ArrayList<>();
 
         Class<?>[] classes = LeafConfig.getClasses(LeafConfig.I_CONFIG_PKG).toArray(new Class[0]);
-        it.unimi.dsi.fastutil.objects.ObjectArrays.quickSort(classes, java.util.Comparator.comparing(Class::getSimpleName));
+        ObjectArrays.quickSort(classes, Comparator.comparing(Class::getSimpleName));
         for (Class<?> clazz : classes) {
             ConfigModules module = (ConfigModules) clazz.getConstructor().newInstance();
             module.onLoaded();
@@ -37,11 +36,25 @@ public abstract class ConfigModules extends LeafConfig {
                     enabledExperimentalModules.add(field);
                 }
             }
+            for (Field field : getAnnotatedStaticFields(clazz, Deprecated.class)) {
+                if (!(field.get(null) instanceof Boolean enabled)) continue;
+                if (enabled) {
+                    deprecatedModules.add(field);
+                }
+            }
         }
 
         if (!enabledExperimentalModules.isEmpty()) {
-            LeafConfig.LOGGER.warn("You have following experimental module(s) enabled: {}, please proceed with caution!", enabledExperimentalModules.stream().map(f -> f.getDeclaringClass().getSimpleName() + "." + f.getName()).toList());
+            LeafConfig.LOGGER.warn("You have following experimental module(s) enabled: {}, please proceed with caution!", formatModules(enabledExperimentalModules));
         }
+
+        if (!deprecatedModules.isEmpty()) {
+            LeafConfig.LOGGER.warn("The following enabled module(s) has been deprecated: {}, please proceed with caution!", formatModules(deprecatedModules));
+        }
+    }
+
+    private static List<String> formatModules(List<Field> modules) {
+        return modules.stream().map(f -> f.getDeclaringClass().getSimpleName() + "." + f.getName()).toList();
     }
 
     public static void loadAfterBootstrap() {
