@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: roro1506HD <roro1506mcpro@gmail.com>
+Date: Fri, 24 Oct 2025 00:19:58 +0200
+Subject: [PATCH] Paper PR: Fix async command building throwing CME in some
+ cases
+
+Original license: GPLv3
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/13233
+
+The issue is from multiple places during that sendAsync process: Anything that loops through any CommandNode's children is subject to the CME.
+
+The previous fix was only working for the root node, and wasn't even fully working given a few lines lower it's being added in an HashMap, which does .hashCode and loops through the root's children again.
+
+This PR reverts the previous fix and fixes the concurrency issue once for all:
+
+Changed the CommandNode's children map to a synchronized map, still backed by a LinkedHashMap
+Lock everything in Commands#fillUsableCommands inside a synchronized block that uses the children map as lock object, the same lock object the synchronized map uses.
+This has been tested with the test plugin published on [this branch of my fork](https://github.com/roro1506HD/Paper/tree/other/async_command_cme_fix_test_plugin)
+
+Fixes https://github.com/PaperMC/Paper/issues/11101
+
+diff --git a/com/mojang/brigadier/tree/CommandNode.java b/com/mojang/brigadier/tree/CommandNode.java
+index f05e69aaf79e47951de1506a97f56d84a4fa9f7f..42549e8ed22f5e6265fea47d1e475710a36a7bf0 100644
+--- a/com/mojang/brigadier/tree/CommandNode.java
++++ b/com/mojang/brigadier/tree/CommandNode.java
+@@ -24,7 +24,7 @@ import java.util.concurrent.CompletableFuture;
+ import java.util.function.Predicate;
+ 
+ public abstract class CommandNode<S> implements Comparable<CommandNode<S>> {
+-    private final Map<String, CommandNode<S>> children = new LinkedHashMap<>();
++    public final Map<String, CommandNode<S>> children = Collections.synchronizedMap(new LinkedHashMap<>()); // Paper PR - Fix async command building throwing CME in some cases - Prevent concurrent modification when sending commands; public
+     private final Map<String, LiteralCommandNode<S>> literals = new LinkedHashMap<>();
+     private final Map<String, ArgumentCommandNode<S, ?>> arguments = new LinkedHashMap<>();
+     public Predicate<S> requirement; // Paper - public-f
+diff --git a/net/minecraft/commands/Commands.java b/net/minecraft/commands/Commands.java
+index 5f80c7b06411e0ad9b0f71f03bb4568daea3ea4d..f7b6ed257925f909a1d418c18538c68197210f8b 100644
+--- a/net/minecraft/commands/Commands.java
++++ b/net/minecraft/commands/Commands.java
+@@ -453,9 +453,7 @@ public class Commands {
+         // CraftBukkit start
+         // Register Vanilla commands into builtRoot as before
+         // Paper start - Perf: Async command map building
+-        // Copy root children to avoid concurrent modification during building
+-        final java.util.Collection<CommandNode<CommandSourceStack>> commandNodes = new java.util.ArrayList<>(this.dispatcher.getRoot().getChildren());
+-        COMMAND_SENDING_POOL.execute(() -> this.sendAsync(player, commandNodes));
++        COMMAND_SENDING_POOL.execute(() -> this.sendAsync(player)); // Paper PR - Fix async command building throwing CME in some cases
+     }
+ 
+     // Fixed pool, but with discard policy
+@@ -469,12 +467,12 @@ public class Commands {
+         new java.util.concurrent.ThreadPoolExecutor.DiscardPolicy()
+     );
+ 
+-    private void sendAsync(ServerPlayer player, java.util.Collection<CommandNode<CommandSourceStack>> dispatcherRootChildren) {
++    private void sendAsync(ServerPlayer player) { // Paper PR - Fix async command building throwing CME in some cases
+         // Paper end - Perf: Async command map building
+         Map<CommandNode<CommandSourceStack>, CommandNode<CommandSourceStack>> map = new HashMap<>();
+         RootCommandNode<CommandSourceStack> rootCommandNode = new RootCommandNode<>();
+         map.put(this.dispatcher.getRoot(), rootCommandNode);
+-        fillUsableCommands(dispatcherRootChildren, rootCommandNode, player.createCommandSourceStack(), map); // Paper - Perf: Async command map building; pass copy of children
++        fillUsableCommands(this.dispatcher.getRoot(), rootCommandNode, player.createCommandSourceStack(), map); // Paper PR - Fix async command building throwing CME in some cases
+ 
+         java.util.Collection<String> bukkit = new java.util.LinkedHashSet<>();
+         for (CommandNode node : rootCommandNode.getChildren()) {
+@@ -505,8 +503,11 @@ public class Commands {
+         player.connection.send(new ClientboundCommandsPacket(rootCommandNode, COMMAND_NODE_INSPECTOR));
+     }
+ 
+-    private static <S> void fillUsableCommands(java.util.Collection<CommandNode<S>> children, CommandNode<S> current, S source, Map<CommandNode<S>, CommandNode<S>> output) { // Paper - Perf: Async command map building; pass copy of children
+-        for (CommandNode<S> commandNode : children) {  // Paper - Perf: Async command map building; pass copy of children
++    // Paper PR start - Fix async command building throwing CME in some cases
++    private static <S> void fillUsableCommands(CommandNode<S> root, CommandNode<S> current, S source, Map<CommandNode<S>, CommandNode<S>> output) { // Paper - Perf: Async command map building; pass copy of children
++        synchronized (root.children) { // Paper - Perf: Async command map building
++            for (CommandNode<S> commandNode : root.getChildren()) {
++            // Paper PR end - Fix async command building throwing CME in some cases
+             // Paper start - Brigadier API
+             if (commandNode.clientNode != null) {
+                 commandNode = commandNode.clientNode;
+@@ -558,10 +559,11 @@ public class Commands {
+                 output.put(commandNode, commandNode1);
+                 current.addChild(commandNode1);
+                 if (!commandNode.getChildren().isEmpty()) {
+-                    fillUsableCommands(commandNode.getChildren(), commandNode1, source, output); // Paper - Perf: Async command map building; pass copy of children
++                    fillUsableCommands(commandNode, commandNode1, source, output); // Paper PR - Fix async command building throwing CME in some cases
+                 }
+             }
+         }
++        } // Paper PR - Fix async command building throwing CME in some cases
+     }
+ 
+     public static LiteralArgumentBuilder<CommandSourceStack> literal(String name) {
