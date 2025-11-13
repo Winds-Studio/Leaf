@@ -68,11 +68,12 @@ public final class TrackerCtx {
     }
 
     public void stopSeenByPlayer(ServerPlayerConnection connection, Entity entity) {
-        if (PlayerUntrackEntityEvent.getHandlerList().getRegisteredListeners().length != 0) {
-            if (stopSeen.isEmpty() || !stopSeen.getLast().e.equals(entity)) {
-                stopSeen.add(new StopSeen(entity, new ObjectArrayList<>()));
-            }
-            stopSeen.getLast().q.add(connection.getPlayer());
+        if (stopSeen.isEmpty() || !stopSeen.getLast().e.equals(entity)) {
+            stopSeen.add(new StopSeen(entity, new ObjectArrayList<>()));
+        }
+        ObjectArrayList<ServerPlayer> players = stopSeen.getLast().q;
+        if (players.isEmpty() || players.getLast() != connection.getPlayer()) {
+            players.add(connection.getPlayer());
         }
         if (entity instanceof WitherBoss witherBoss) {
             if (witherBosses.isEmpty() || !witherBosses.getLast().witherBoss.equals(witherBoss)) {
@@ -112,10 +113,6 @@ public final class TrackerCtx {
         packets.computeIfAbsent(connection, INIT_PACKET_LIST).add(packet);
     }
 
-    public void sendRemove(ServerPlayerConnection connection, int id) {
-        packets.computeIfAbsent(connection, INIT_PACKET_LIST).add(new ClientboundRemoveEntitiesPacket(id));
-    }
-
     public void broadcast(ChunkMap.TrackedEntity entity, Packet<?> packet) {
         for (ServerPlayerConnection serverPlayerConnection : entity.seenBy()) {
             send(serverPlayerConnection, packet);
@@ -139,6 +136,7 @@ public final class TrackerCtx {
 
     Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> join(TrackerCtx other) {
         itemFrames.addAll(other.itemFrames);
+        witherBosses.addAll(other.witherBosses);
         stopSeen.addAll(other.stopSeen);
         startSeen.addAll(other.startSeen);
         pluginEntity.addAll(other.pluginEntity);
@@ -149,6 +147,7 @@ public final class TrackerCtx {
 
     void reset() {
         itemFrames.clear();
+        witherBosses.clear();
         stopSeen.clear();
         startSeen.clear();
         pluginEntity.clear();
@@ -167,15 +166,16 @@ public final class TrackerCtx {
         Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> prior = new Object2ObjectOpenHashMap<>();
 
         if (!startSeen.isEmpty()) {
+            boolean callEvent = PlayerTrackEntityEvent.getHandlerList().getRegisteredListeners().length != 0;
             for (StartSeen startSeen : startSeen) {
-                handleStartTrack(startSeen, prior);
+                handleStartTrack(startSeen, prior, callEvent);
             }
         }
 
-        sendPackets(world, prior);
+        flush(world, prior);
 
         for (Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> otherPackets : other) {
-            sendPackets(world, otherPackets);
+            flush(world, otherPackets);
         }
 
         if (!resync.isEmpty()) {
@@ -189,16 +189,23 @@ public final class TrackerCtx {
                 handleSyncAttribute(tracker);
             }
         }
-        sendPackets(world, this.packets);
+        flush(world, this.packets);
 
         if (!stopSeen.isEmpty()) {
+            boolean callEvent = PlayerUntrackEntityEvent.getHandlerList().getRegisteredListeners().length != 0;
             for (StopSeen untrack : stopSeen) {
                 for (ServerPlayer player : untrack.q) {
                     if (world == player.level()) {
-                        new PlayerUntrackEntityEvent(
-                            player.getBukkitEntity(),
-                            untrack.e.getBukkitEntity()
-                        ).callEvent();
+                        if (callEvent) {
+                            new PlayerUntrackEntityEvent(
+                                player.getBukkitEntity(),
+                                untrack.e.getBukkitEntity()
+                            ).callEvent();
+                        }
+                        ChunkMap.TrackedEntity tracker = untrack.e.moonrise$getTrackedEntity();
+                        if (tracker == null || !tracker.seenBy.contains(player.connection)) {
+                            send(player.connection, new ClientboundRemoveEntitiesPacket(untrack.e.getId()));
+                        }
                     }
                 }
             }
@@ -212,18 +219,22 @@ public final class TrackerCtx {
 
         if (!witherBosses.isEmpty()) {
             for (BossEvent witherBoss : witherBosses) {
-                for (ServerPlayer player : witherBoss.add) {
-                    if (world == player.level()) {
-                        witherBoss.witherBoss.bossEvent.leaf$addPlayer(this, player);
-                    }
-                }
-                for (ServerPlayer player : witherBoss.remove) {
-                    witherBoss.witherBoss.bossEvent.leaf$removePlayer(this, player);
-                }
+                handleBossEvent(witherBoss);
             }
         }
 
-        sendPackets(world, this.packets);
+        flush(world, this.packets);
+    }
+
+    private void handleBossEvent(BossEvent witherBoss) {
+        for (ServerPlayer player : witherBoss.add) {
+            if (world == player.level()) {
+                witherBoss.witherBoss.bossEvent.leaf$addPlayer(this, player);
+            }
+        }
+        for (ServerPlayer player : witherBoss.remove) {
+            witherBoss.witherBoss.bossEvent.leaf$removePlayer(this, player);
+        }
     }
 
     private static void handlePlugin(ChunkMap.TrackedEntity tracker) {
@@ -261,7 +272,7 @@ public final class TrackerCtx {
         }
     }
 
-    private void handleStartTrack(StartSeen startSeen, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> prior) {
+    private void handleStartTrack(StartSeen startSeen, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> prior, boolean callEvent) {
         ChunkMap.TrackedEntity tracker = startSeen.e.moonrise$getTrackedEntity();
         ObjectArrayList<Packet<? super ClientGamePacketListener>> list = new ObjectArrayList<>(4);
         if (tracker == null) {
@@ -271,12 +282,12 @@ public final class TrackerCtx {
         boolean flag = tracker.serverEntity.leaf$sendPairingData(list);
         ClientboundBundlePacket packet = new ClientboundBundlePacket(list);
         for (ServerPlayerConnection connection : startSeen.q) {
-            if (PlayerTrackEntityEvent.getHandlerList().getRegisteredListeners().length != 0
+            if (callEvent
                 && !new PlayerTrackEntityEvent(
                 connection.getPlayer().getBukkitEntity(),
                 startSeen.e.getBukkitEntity()
             ).callEvent()) {
-                sendRemove(connection, startSeen.e.getId());
+                send(connection, new ClientboundRemoveEntitiesPacket(startSeen.e.getId()));
             } else if (flag && connection.getPlayer() == startSeen.e) {
                 var copy = new ObjectArrayList<>(list);
                 copy.add(new ClientboundUpdateAttributesPacket(startSeen.e.getId(), List.of(connection.getPlayer().getBukkitEntity().getScaledMaxHealth())));
@@ -337,7 +348,7 @@ public final class TrackerCtx {
         broadcastAndSend(tracker, new ClientboundUpdateAttributesPacket(e.getId(), attributes));
     }
 
-    private static void sendPackets(ServerLevel world, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> packets) {
+    private static void flush(ServerLevel world, Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> packets) {
         if (packets.isEmpty()) {
             return;
         }
