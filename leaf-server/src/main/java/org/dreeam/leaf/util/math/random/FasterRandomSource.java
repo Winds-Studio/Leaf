@@ -13,7 +13,7 @@ import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
 @NullMarked
-public final class FasterRandomSource implements BitRandomSource, RandomGenerator {
+public final class FasterRandomSource implements BitRandomSource {
 
     private static final int INT_BITS = 48;
     private static final long SEED_MASK = 0xFFFFFFFFFFFFL;
