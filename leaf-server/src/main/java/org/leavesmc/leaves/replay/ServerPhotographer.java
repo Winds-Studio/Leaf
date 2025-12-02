@@ -32,7 +32,7 @@ public class ServerPhotographer extends ServerPlayer {
     private ServerPlayer followPlayer;
     private Recorder recorder;
     private File saveFile;
-    private Vec3 lastPos;
+    private Vec3 lastPosVec3;
 
     private final ServerStatsCounter stats;
 
@@ -41,7 +41,7 @@ public class ServerPhotographer extends ServerPlayer {
         this.gameMode = new ServerPhotographerGameMode(this);
         this.followPlayer = null;
         this.stats = new BotStatsCounter(server);
-        this.lastPos = this.position();
+        this.lastPosVec3 = this.position();
     }
 
     public static ServerPhotographer createPhotographer(@NotNull PhotographerCreateState state) throws IOException {
@@ -85,6 +85,7 @@ public class ServerPhotographer extends ServerPlayer {
 
     @Override
     public void tick() {
+        this.lastPos = this.blockPosition();
         super.tick();
 
         if (this.getServer().getTickCount() % 10 == 0) {
@@ -106,7 +107,7 @@ public class ServerPhotographer extends ServerPlayer {
                 }
                 // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
             }
-            if (lastPos.distanceToSqr(this.position()) > 1024D) {
+            if (lastPosVec3.distanceToSqr(this.position()) > 1024D) {
                 // Leaf start - SparklyPaper - parallel world ticking mod (make configurable)
                 if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
                     this.getBukkitEntity().taskScheduler.schedule(entity -> {
@@ -119,7 +120,7 @@ public class ServerPhotographer extends ServerPlayer {
             }
         }
 
-        lastPos = this.position();
+        lastPosVec3 = this.position();
     }
 
     @Override
@@ -159,9 +160,7 @@ public class ServerPhotographer extends ServerPlayer {
 
         // Leaf start - SparklyPaper - parallel world ticking mod (make configurable)
         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
-            this.getServer().submit(() -> {
-                this.getServer().getPlayerList().removePhotographer(this);
-            });
+            this.getServer().submit(() -> this.getServer().getPlayerList().removePhotographer(this));
         } else {
             this.getServer().getPlayerList().removePhotographer(this);
         }
