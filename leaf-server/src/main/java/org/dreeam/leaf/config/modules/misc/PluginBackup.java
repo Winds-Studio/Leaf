@@ -9,7 +9,7 @@ public class PluginBackup extends ConfigModules {
         return EnumConfigCategory.MISC.getBaseKeyName() + ".plugin-backup";
     }
 
-    public static boolean enabled = true;
+    public static boolean enabled = false;
     public static String backupFolderName = "pluginsBackup";
 
     @Override
