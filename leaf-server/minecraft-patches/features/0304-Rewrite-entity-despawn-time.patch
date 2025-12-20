@@ -3,29 +3,48 @@ From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
 Date: Tue, 9 Nov 2077 00:00:00 +0800
 Subject: [PATCH] Rewrite entity despawn time
 
-Brings ability to despawn weak-loaded entities once they are ticked, a solution for Paper#12986.
 
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index f58b91b277ba85fa7c0e7ad10157ecbf10023065..b7f9f22abf60c75bc09126d9168fda9a0ee2375f 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1515,6 +1515,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         entity.tick();
+         entity.postTick(); // CraftBukkit
+         } else {entity.inactiveTick();} // Paper - EAR 2
++        entity.updateLastTick(); // Leaf - Rewrite entity despawn time
+ 
+         for (Entity entity1 : entity.getPassengers()) {
+             this.tickPassenger(entity, entity1, isActive); // Paper - EAR 2
+@@ -1539,6 +1540,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+                 ridingEntity.positionRider(passengerEntity);
+             }
+             // Paper end - EAR 2
++            passengerEntity.updateLastTick(); // Leaf - Rewrite entity despawn time
+ 
+             for (Entity entity : passengerEntity.getPassengers()) {
+                 this.tickPassenger(passengerEntity, entity, isActive); // Paper - EAR 2
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index f6d619709d4e5b0e6d1b943226579d7388835cdb..df9395a44e2ad903e598b87ca9e5ed75c1985a2c 100644
+index f6d619709d4e5b0e6d1b943226579d7388835cdb..0654b399e526e445aa7d903042b261d6a095b905 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -373,6 +373,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
      public boolean fixedPose = false; // Paper - Expand Pose API
      private final int despawnTime; // Paper - entity despawn time limit
      public int totalEntityAge; // Paper - age-like counter for all entities
-+    private int lastTickTicks = -1; // Leaf - Rewrite entity despawn time
++    private int lastTickTicks; // Leaf - Rewrite entity despawn time
      public boolean activatedPriorityReset = false; // Pufferfish - DAB
      public int activatedPriority = org.dreeam.leaf.config.modules.opt.DynamicActivationofBrain.maximumActivationPrio; // Pufferfish - DAB (golf score)
      public final io.papermc.paper.entity.activation.ActivationType activationType = io.papermc.paper.entity.activation.ActivationType.activationTypeFor(this); // Paper - EAR 2/tracking ranges
-@@ -384,6 +385,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
-     public @Nullable Boolean immuneToFire = null; // Purpur - Fire immune API
- 
-     public void inactiveTick() {
-+        this.lastTickTicks = net.minecraft.server.MinecraftServer.currentTick; // Leaf - Rewrite entity despawn time
+@@ -626,6 +627,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         this.setPos(0.0, 0.0, 0.0);
+         this.eyeHeight = this.dimensions.eyeHeight();
+         this.despawnTime = level == null || type == EntityType.PLAYER ? -1 : level.paperConfig().entities.spawning.despawnTime.getOrDefault(type, io.papermc.paper.configuration.type.number.IntOr.Disabled.DISABLED).or(-1); // Paper - entity despawn time limit
++        this.updateLastTick(); // Leaf - Rewrite entity despawn time
      }
-     // Paper end - EAR 2
-     // CraftBukkit end
-@@ -887,15 +889,47 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+ 
+     public boolean isColliding(BlockPos pos, BlockState state) {
+@@ -887,15 +889,50 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
      }
  
      public void tick() {
@@ -41,7 +60,6 @@ index f6d619709d4e5b0e6d1b943226579d7388835cdb..df9395a44e2ad903e598b87ca9e5ed75
          }
          // Paper end - entity despawn time limit
 +         */
-+        this.lastTickTicks = net.minecraft.server.MinecraftServer.currentTick;
 +        // Leaf end - Rewrite entity despawn time
          this.baseTick();
      }
@@ -50,7 +68,7 @@ index f6d619709d4e5b0e6d1b943226579d7388835cdb..df9395a44e2ad903e598b87ca9e5ed75
 +    private boolean detectDespawnTime() {
 +        if (this.despawnTime >= 0) {
 +            int missedTicks = this.calculateMissedTicks();
-+            if (this.lastTickTicks != -1 && missedTicks > 1) {
++            if (missedTicks > 1) {
 +                if ((this.totalEntityAge += missedTicks) >= this.despawnTime) {
 +                    this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
 +                    return true;
@@ -68,18 +86,22 @@ index f6d619709d4e5b0e6d1b943226579d7388835cdb..df9395a44e2ad903e598b87ca9e5ed75
 +    private int calculateMissedTicks() {
 +        return net.minecraft.server.MinecraftServer.currentTick - this.lastTickTicks;
 +    }
++
++    public void updateLastTick() {
++        this.lastTickTicks = net.minecraft.server.MinecraftServer.currentTick;
++    }
 +    // Leaf end - Rewrite entity despawn time
 +
      // CraftBukkit start
      public void postTick() {
          // No clean way to break out of ticking once the entity has been copied to a new world, so instead we move the portalling later in the tick cycle
-@@ -2564,6 +2598,12 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+@@ -2564,6 +2601,12 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
              if (this.maxAirTicks != this.getDefaultMaxAirSupply()) {
                  output.putInt("Bukkit.MaxAirSupply", this.getMaxAirSupply());
              }
 +            // Leaf start - Rewrite entity despawn time
 +            int missedTicks = this.calculateMissedTicks();
-+            if (this.lastTickTicks != -1 && missedTicks > 1) {
++            if (missedTicks > 1) {
 +                this.totalEntityAge += missedTicks;
 +            }
 +            // Leaf end - Rewrite entity despawn time
