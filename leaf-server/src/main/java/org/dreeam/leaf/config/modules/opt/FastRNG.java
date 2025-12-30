@@ -17,10 +17,12 @@ public class FastRNG extends ConfigModules {
     public static String randomGenerator = "Xoroshiro128PlusPlus";
     public static boolean warnForSlimeChunk = true;
     public static boolean useLegacyForSlimeChunk = false;
+    @Deprecated
     public static boolean useDirectImpl = false;
 
+    public static boolean worldgen = false;
     public static boolean worldgenEnabled() {
-        return enabled && enableForWorldgen;
+        return worldgen;
     } // Helper function
 
     @Override
@@ -88,5 +90,7 @@ public class FastRNG extends ConfigModules {
             LeafConfig.LOGGER.warn("Set performance.faster-random-generator.warn-for-slime-chunk to false to " +
                 "disable this warning.");
         }
+
+        worldgen = enableForWorldgen && enabled;
     }
 }
