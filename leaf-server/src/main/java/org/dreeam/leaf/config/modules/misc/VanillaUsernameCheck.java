@@ -19,7 +19,8 @@ public class VanillaUsernameCheck extends ConfigModules {
     @Experimental
     public static boolean allowOldPlayersJoin = false;
     public static boolean useUsernameRegex = false;
-    public static Pattern usernameRegex = Pattern.compile("^[a-zA-Z0-9_.]*$");
+    private static final String defaultRegexString = "^[a-zA-Z0-9_.]*$";
+    public static Pattern usernameRegex = Pattern.compile(defaultRegexString);
     public static boolean shouldSkipNonPlayerNameCheck() { // helper
         return removeAllCheck || useUsernameRegex;
     }
@@ -52,20 +53,20 @@ public class VanillaUsernameCheck extends ConfigModules {
             """
                 使用用户名正则来验证用户名,
                 只允许正则指定的字符."""));
-        String regexString = config.getString(getBasePath() + ".username-regex", "^[a-zA-Z0-9_.]*$", config.pickStringRegionBased("""
-                Username regex,
-                specifying the characters allowed in usernames.
-                Default: ^[a-zA-Z0-9_.]*$""",
+        String regexString = config.getString(getBasePath() + ".username-regex", defaultRegexString, config.pickStringRegionBased(
             """
-                用户名正则,
-                指定允许在用户名中使用的字符.
-                默认: ^[a-zA-Z0-9_.]*$"""));
-
+            Username regex,
+            specifying the characters allowed in usernames.
+            Default: %s""".formatted(defaultRegexString),
+            """
+            用户名正则,
+            指定允许在用户名中使用的字符.
+            默认: %s""".formatted(defaultRegexString)));
         if (!regexString.isBlank()) {
             try {
                 usernameRegex = Pattern.compile(regexString);
             } catch (Exception e) {
-                LeafConfig.LOGGER.error("Invalid username regex found, falling back to default: {}", regexString, e);
+                LeafConfig.LOGGER.error("Invalid username regex {} found, falling back to default.", regexString, e);
             }
         }
         if (useUsernameRegex && removeAllCheck) {
