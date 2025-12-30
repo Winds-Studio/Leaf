@@ -60,6 +60,7 @@ public class VanillaUsernameCheck extends ConfigModules {
                 用户名正则,
                 指定允许在用户名中使用的字符.
                 默认: ^[a-zA-Z0-9_.]*$"""));
+
         if (!regexString.isBlank()) {
             try {
                 usernameRegex = Pattern.compile(regexString);
