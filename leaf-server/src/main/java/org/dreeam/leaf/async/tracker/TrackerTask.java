@@ -25,27 +25,18 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
                 continue;
             }
             if (tracker.getClass() != ChunkMap.TrackedEntity.class) {
-                ctx.citizensEntity(entity);
+                ctx.citizensEntity(tracker);
                 continue;
             }
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
-            // removed in world if null
-            if (chunkData == null) {
-                continue;
-            }
-            tracker.leafTick(ctx, chunkData.nearbyPlayers);
-            boolean flag = false;
-            if (tracker.moonrise$hasPlayers()) {
-                flag = true;
-            } else {
+            boolean flag = tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
+            if (!flag) {
                 FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
                 // removed in world if null
-                if (status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
-                    flag = true;
-                }
+                flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
             }
             if (flag) {
-                tracker.serverEntity.leafSendChanges(ctx, tracker);
+                tracker.serverEntity.leaf$sendChanges(ctx, tracker, false);
             }
         }
         return ctx;
