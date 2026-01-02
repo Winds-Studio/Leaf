@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.ConcurrentModificationException;
 import java.util.NoSuchElementException;
+import java.util.function.Consumer;
 
 /**
  * A size-limited, circular array-backed list that automatically evicts the oldest elements
@@ -167,6 +168,23 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
             }
         }
         head = tail = size = 0;
+    }
+
+    @Override
+    public void forEach(Consumer<? super E> action) {
+        Objects.requireNonNull(action);
+        final int expectedModCount = modCount;
+        final int size = this.size;
+        int i = head;
+
+        for (int count = 0; count < size; count++) {
+            action.accept((E) elements[i]);
+            i = (i + 1) & mask;
+        }
+
+        if (modCount != expectedModCount) {
+            throw new ConcurrentModificationException();
+        }
     }
 
     @Override
