@@ -153,14 +153,20 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
 
     @Override
     public void clear() {
+        modCount++;
+        if (size == 0) {
+            return;
+        }
+
         if (head < tail) {
             Arrays.fill(elements, head, tail, null);
         } else {
             Arrays.fill(elements, head, capacity, null);
-            Arrays.fill(elements, 0, tail, null);
+            if (tail > 0) {
+                Arrays.fill(elements, 0, tail, null);
+            }
         }
         head = tail = size = 0;
-        modCount++;
     }
 
     @Override
