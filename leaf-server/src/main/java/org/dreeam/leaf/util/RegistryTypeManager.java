@@ -27,7 +27,7 @@ public final class RegistryTypeManager {
         ATTRIBUTE = new Holder[ATTRIBUTE_SIZE];
         for (int i = 0; i < ATTRIBUTE_SIZE; i++) {
             ATTRIBUTE[i] = BuiltInRegistries.ATTRIBUTE.get(i).orElseThrow();
-            if (ATTRIBUTE[i].value().uid != i) {
+            if (ATTRIBUTE[i].value().id != i) {
                 throw new ExceptionInInitializerError();
             }
         }

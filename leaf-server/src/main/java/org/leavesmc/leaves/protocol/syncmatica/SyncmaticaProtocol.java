@@ -24,7 +24,7 @@ public class SyncmaticaProtocol {
     private static final FeatureSet featureSet = new FeatureSet(Arrays.asList(Feature.values()));
     private static final SyncmaticManager syncmaticManager = new SyncmaticManager();
     private static final FileStorage fileStorage = new FileStorage();
-    private static final int[] ILLEGAL_CHARS = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 58, 42, 63, 92, 47, 34, 60, 62, 124};
+    private static final int[] ILLEGAL_CHARS = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 58, 42, 63, 92, 47, 34, 60, 62, 124};
     private static final String ILLEGAL_PATTERNS = "(^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\\..*)?$)|(^\\.\\.*$)";
     private static boolean loaded = false;
 

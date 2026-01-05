@@ -19,16 +19,16 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
 
     @Override
     public boolean add(AttributeInstance instance) {
-        return inner.add(instance.getAttribute().value().uid);
+        return inner.add(instance.getAttribute().value().id);
     }
 
     public boolean addAttribute(Attribute attribute) {
-        return inner.add(attribute.uid);
+        return inner.add(attribute.id);
     }
 
     @Override
     public boolean remove(Object o) {
-        return o instanceof AttributeInstance instance && inner.remove(instance.getAttribute().value().uid);
+        return o instanceof AttributeInstance instance && inner.remove(instance.getAttribute().value().id);
     }
 
     @Override
@@ -54,7 +54,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
     @Override
     public boolean contains(Object o) {
         if (o instanceof AttributeInstance instance) {
-            return inner.contains(instance.getAttribute().value().uid);
+            return inner.contains(instance.getAttribute().value().id);
         }
         return false;
     }
