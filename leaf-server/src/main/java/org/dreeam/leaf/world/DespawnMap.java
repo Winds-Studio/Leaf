@@ -8,6 +8,9 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.projectile.ShulkerBullet;
 import net.minecraft.world.level.entity.EntityTickList;
 import net.minecraft.world.phys.Vec3;
 import org.bukkit.event.entity.EntityRemoveEvent;
@@ -18,22 +21,25 @@ import java.util.OptionalInt;
 import java.util.function.Consumer;
 
 public final class DespawnMap implements Consumer<Entity> {
-    private static final ServerPlayer[] EMPTY_PLAYERS = {};
-    private final KDTree3D tree = new KDTree3D();
+
     private static final MobCategory[] CATEGORIES = MobCategory.values();
+    private static final ServerPlayer[] EMPTY_PLAYERS = {};
+
+    private final KDTree3D tree = new KDTree3D();
     private final double[] hard = new double[CATEGORIES.length];
     private final double[] sort = new double[CATEGORIES.length];
-    private final boolean fallback;
-    public boolean difficultyIsPeaceful = true;
-    private ServerPlayer[] players = EMPTY_PLAYERS;
+    private boolean difficultyIsPeaceful = true;
 
-    public DespawnMap(WorldConfiguration worldConfiguration) {
+    public boolean tick(final ServerLevel world, final EntityTickList entityTickList) {
+        if (!org.dreeam.leaf.config.modules.opt.OptimizeDespawn.enabled) {
+            return false;
+        }
         for (int i = 0; i < CATEGORIES.length; i++) {
             sort[i] = CATEGORIES[i].getNoDespawnDistance();
             hard[i] = CATEGORIES[i].getDespawnDistance();
         }
         boolean fallback = false;
-        for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> e : worldConfiguration.entities.spawning.despawnRanges.entrySet()) {
+        for (Map.Entry<MobCategory, WorldConfiguration.Entities.Spawning.DespawnRangePair> e : world.paperConfig().entities.spawning.despawnRanges.entrySet()) {
             OptionalInt softVertical = e.getValue().soft().verticalLimit.value();
             OptionalInt softHorizontal = e.getValue().soft().horizontalLimit.value();
             OptionalInt hardVertical = e.getValue().hard().verticalLimit.value();
@@ -56,17 +62,16 @@ public final class DespawnMap implements Consumer<Entity> {
             if (hard[i] > 0.0) {
                 hard[i] = hard[i] * hard[i];
             }
+            if (sort[i] > hard[i]) {
+                sort[i] = hard[i];
+            }
         }
-        this.fallback = fallback;
-    }
-
-    public void tick(final ServerLevel world, final EntityTickList entityTickList) {
-        players = world.players().toArray(EMPTY_PLAYERS);
+        ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
         final double[] pxl = new double[players.length];
         final double[] pyl = new double[players.length];
         final double[] pzl = new double[players.length];
         int i = 0;
-        for (final ServerPlayer p : players) {
+        for (ServerPlayer p : players) {
             if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(p)) {
                 pxl[i] = p.getX();
                 pyl[i] = p.getY();
@@ -81,41 +86,51 @@ public final class DespawnMap implements Consumer<Entity> {
         tree.build(new double[][]{pxl, pyl, pzl}, indices);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
         if (fallback) {
-            entityTickList.forEach(entity -> entity.leaf$checkDespawnFallback(this));
+            return false;
         } else {
             entityTickList.forEach(this);
+            return true;
         }
-        players = EMPTY_PLAYERS;
     }
 
-    public void checkDespawn(final Mob mob) {
-        final int i = mob.getType().getCategory().ordinal();
-        final double hardDist = this.hard[i];
-        final Vec3 vec3 = mob.position;
-        final double dist = this.tree.nearestSqr(vec3.x, vec3.y, vec3.z, hardDist);
-        if (dist == Double.POSITIVE_INFINITY) {
-            return;
-        }
-
-        if (dist >= hardDist && mob.removeWhenFarAway(dist)) {
-            mob.discard(EntityRemoveEvent.Cause.DESPAWN);
-        } else if (dist > this.sort[i]) {
-            if (mob.getNoActionTime() > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist)) {
-                mob.discard(EntityRemoveEvent.Cause.DESPAWN);
+    private boolean checkDespawn(final Entity entity) {
+        if (entity instanceof Mob mob) {
+            if (!(mob instanceof EnderDragon)) {
+                if (difficultyIsPeaceful && mob.shouldActuallyDespawnInPeaceful()) {
+                    return true;
+                } else if (mob instanceof WitherBoss || mob.isPersistenceRequired() || mob.requiresCustomPersistence()) {
+                    mob.noActionTime = 0;
+                    return false;
+                } else {
+                    final int i = mob.getType().getCategory().ordinal();
+                    final double hardDist = this.hard[i];
+                    final Vec3 vec3 = mob.position;
+                    final double dist = this.tree.nearestSqr(vec3.x, vec3.y, vec3.z, hardDist);
+                    if (dist == Double.POSITIVE_INFINITY) {
+                        return false;
+                    } else if (dist >= hardDist) {
+                        return mob.removeWhenFarAway(dist);
+                    } else if (dist > this.sort[i]) {
+                        return mob.noActionTime > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist);
+                    } else {
+                        mob.noActionTime = 0;
+                        return false;
+                    }
+                }
+            } else {
+                return false;
             }
+        } else if (!(entity instanceof ShulkerBullet)) {
+            return false;
         } else {
-            mob.setNoActionTime(0);
+            return difficultyIsPeaceful;
         }
-    }
-
-    public ServerPlayer checkDespawnFallback(final Mob mob) {
-        final Vec3 vec3 = mob.position;
-        final int i = tree.nearestIdx(vec3.x, vec3.y, vec3.z, Double.POSITIVE_INFINITY);
-        return i == -1 ? null : this.players[i];
     }
 
     @Override
     public void accept(final Entity entity) {
-        entity.leaf$checkDespawn(this);
+        if (!entity.isRemoved() && checkDespawn(entity)) {
+            entity.discard(EntityRemoveEvent.Cause.DESPAWN);
+        }
     }
 }

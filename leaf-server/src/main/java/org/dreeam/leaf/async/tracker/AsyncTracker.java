@@ -1,11 +1,14 @@
 package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.ServerPlayerConnection;
 import net.minecraft.world.entity.Entity;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.dreeam.leaf.async.FixedThreadExecutor;
@@ -26,7 +29,11 @@ public final class AsyncTracker {
         THREAD_NAME
     ) : null;
 
-    private AsyncTracker() {
+    private Future<TrackerCtx>[] fut;
+    private final TrackerCtx local;
+
+    public AsyncTracker(ServerLevel world) {
+        this.local = new TrackerCtx(world);
     }
 
     public static void init() {
@@ -35,7 +42,11 @@ public final class AsyncTracker {
         }
     }
 
-    public static void tick(ServerLevel world) {
+    public TrackerCtx ctx() {
+        return this.local;
+    }
+
+    public void tick(ServerLevel world) {
         handlePlayerVelocity(world);
         ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
         ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
@@ -54,7 +65,7 @@ public final class AsyncTracker {
             futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i]));
         }
         TRACKER_EXECUTOR.unpack();
-        world.trackerTask = futures;
+        this.fut = futures;
     }
 
     private static void handlePlayerVelocity(ServerLevel world) {
@@ -85,8 +96,9 @@ public final class AsyncTracker {
         }
     }
 
-    public static void onEntitiesTickEnd(ServerLevel world) {
-        Future<TrackerCtx>[] task = world.trackerTask;
+    public void onEntitiesTickEnd() {
+        Future<TrackerCtx>[] task = this.fut;
+        TrackerCtx local = this.local;
         if (task == null) {
             return;
         }
@@ -95,26 +107,36 @@ public final class AsyncTracker {
                 return;
             }
         }
-        handle(world, task, false);
+        this.fut = null;
+        handle(task, local);
+        local.reset();
+        // for (ServerPlayer player : world.players()) {
+        //     player.connection.connection.flushChannel();
+        // }
     }
 
-    public static void onTickEnd(MinecraftServer server) {
-        for (ServerLevel world : server.getAllLevels()) {
-            Future<TrackerCtx>[] task = world.trackerTask;
-            if (task != null) {
-                handle(world, task, false);
-            }
-        }
+    public void onTickEnd() {
+        Future<TrackerCtx>[] task = this.fut;
+        TrackerCtx local = this.local;
+        this.fut = null;
+        handle(task, local);
+        local.reset();
     }
 
-    private static void handle(ServerLevel world, Future<TrackerCtx>[] futures, boolean flush) {
+    private static void handle(Future<TrackerCtx>[] futures, TrackerCtx local) {
         try {
-            TrackerCtx ctx = futures[0].get();
-            for (int i = 1; i < futures.length; i++) {
-                ctx.join(futures[i].get());
+            if (futures == null) {
+                local.handle(new Object2ObjectOpenHashMap[0]);
+            } else {
+                TrackerCtx ctx = futures[0].get();
+                @SuppressWarnings("unchecked")
+                Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>>[] packets = new Object2ObjectOpenHashMap[futures.length];
+                packets[futures.length - 1] = ctx.join(local);
+                for (int i = 1; i < futures.length; i++) {
+                    packets[i - 1] = ctx.join(futures[i].get());
+                }
+                ctx.handle(packets);
             }
-            world.trackerTask = null;
-            ctx.handle(flush);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (ExecutionException e) {
