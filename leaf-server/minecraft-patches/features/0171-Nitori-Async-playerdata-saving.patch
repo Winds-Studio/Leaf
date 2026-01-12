@@ -10,7 +10,7 @@ diff --git a/net/minecraft/world/level/storage/LevelStorageSource.java b/net/min
 index 3b40822ea6ec9783fe3cb8eaba069a8d626d8382..0098ff448d2981723701765b063f103ac88ba1a2 100644
 --- a/net/minecraft/world/level/storage/LevelStorageSource.java
 +++ b/net/minecraft/world/level/storage/LevelStorageSource.java
-@@ -521,15 +521,26 @@ public class LevelStorageSource {
+@@ -521,15 +521,27 @@ public class LevelStorageSource {
          private void saveLevelData(CompoundTag tag) {
              Path path = this.levelDirectory.path();
  
@@ -27,8 +27,9 @@ index 3b40822ea6ec9783fe3cb8eaba069a8d626d8382..0098ff448d2981723701765b063f103a
              } catch (Exception var6) {
 -                LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
 +                LevelStorageSource.LOGGER.error("Failed to encode level {}", path, var6);
++                return;
              }
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++            org.dreeam.leaf.async.AsyncPlayerDataSaving.submitLevel(() -> {
 +                try {
 +                    Path path1 = Files.createTempFile(path, "level", ".dat");
 +                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
@@ -51,11 +52,11 @@ index fe44d8d17d2622b3d6021c11579af85ef96737bb..45da3bace1262a18c55c13ee72a08c72
      private final File playerDir;
      protected final DataFixer fixerUpper;
      private static final DateTimeFormatter FORMATTER = FileNameDateFormatter.create();
-+    private final java.util.Map<java.util.UUID, java.util.concurrent.Future<?>> savingLocks = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // Leaf - Async playerdata saving
++    private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, java.util.concurrent.CompletableFuture<Void>> savingLocks = new java.util.concurrent.ConcurrentHashMap<>(); // Leaf - Async playerdata saving
  
      public PlayerDataStorage(LevelStorageSource.LevelStorageAccess levelStorageAccess, DataFixer fixerUpper) {
          this.fixerUpper = fixerUpper;
-@@ -33,21 +34,84 @@ public class PlayerDataStorage {
+@@ -33,21 +34,69 @@ public class PlayerDataStorage {
  
      public void save(Player player) {
          if (org.spigotmc.SpigotConfig.disablePlayerDataSaving) return; // Spigot
@@ -89,59 +90,44 @@ index fe44d8d17d2622b3d6021c11579af85ef96737bb..45da3bace1262a18c55c13ee72a08c72
 +            NbtIo.writeCompressed(compoundTag, nbtBytes);
 +        } catch (Exception exception) {
 +            LOGGER.warn("Failed to encode player data for {}", stringId, exception);
++            return;
 +        }
-+        lockFor(uniqueId, playerName);
-+        synchronized (PlayerDataStorage.this) {
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
-+                try {
-+                    Path path = this.playerDir.toPath();
-+                    Path path1 = Files.createTempFile(path, stringId + "-", ".dat");
-+                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
-+                    Path path2 = path.resolve(stringId + ".dat");
-+                    Path path3 = path.resolve(stringId + ".dat_old");
-+                    Util.safeReplaceFile(path2, path1, path3);
-+                } catch (Exception var7) {
-+                    LOGGER.warn("Failed to save player data for {}", playerName, var7);
-+                } finally {
-+                    synchronized (PlayerDataStorage.this) {
-+                        savingLocks.remove(uniqueId);
-+                    }
-+                }
-+            }).ifPresent(future -> savingLocks.put(uniqueId, future));
++        var nextSave = new java.util.concurrent.CompletableFuture<Void>();
++        java.util.concurrent.CompletableFuture<Void> previous = savingLocks.put(uniqueId, nextSave);
++        Runnable task = () -> {
++            try {
++                Path path = this.playerDir.toPath();
++                Path path1 = Files.createTempFile(path, stringId + "-", ".dat");
++                org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
++                Path path2 = path.resolve(stringId + ".dat");
++                Path path3 = path.resolve(stringId + ".dat_old");
++                Util.safeReplaceFile(path2, path1, path3);
++            } catch (Exception var7) {
++                LOGGER.warn("Failed to save player data for {}", playerName, var7);
++            } finally {
++                nextSave.complete(null);
++                savingLocks.remove(uniqueId, nextSave);
++            }
++        };
++        if (previous == null) {
++            org.dreeam.leaf.async.AsyncPlayerDataSaving.submitPlayer(task);
++        } else {
++            previous.whenComplete((ignored, exception) -> org.dreeam.leaf.async.AsyncPlayerDataSaving.submitPlayer(task));
 +        }
 +    }
 +
-+    private void lockFor(java.util.UUID uniqueId, String playerName) {
-+        java.util.concurrent.Future<?> fut;
-+        synchronized (this) {
-+            fut = savingLocks.get(uniqueId);
-+        }
-+        if (fut == null) {
++    private void awaitPendingSave(java.util.UUID uniqueId, String playerName) {
++        java.util.concurrent.CompletableFuture<Void> future = savingLocks.get(uniqueId);
++        if (future == null) {
 +            return;
 +        }
-+        while (true) {
-+            try {
-+                fut.get(10_000L, java.util.concurrent.TimeUnit.MILLISECONDS);
-+                break;
-+            } catch (InterruptedException ignored) {
-+            } catch (java.util.concurrent.ExecutionException
-+                     | java.util.concurrent.TimeoutException exception) {
-+                LOGGER.warn("Failed to save player data for {}", playerName, exception);
-+
-+                String threadDump = "";
-+                var threadMXBean = java.lang.management.ManagementFactory.getThreadMXBean();
-+                for (var threadInfo : threadMXBean.dumpAllThreads(true, true)) {
-+                    if (threadInfo.getThreadName().equals("Leaf IO Thread")) {
-+                        threadDump = threadInfo.toString();
-+                        break;
-+                    }
-+                }
-+                LOGGER.warn(threadDump);
-+                fut.cancel(true);
-+                break;
-+            } finally {
-+                savingLocks.remove(uniqueId);
-+            }
++        try {
++            future.get();
++        } catch (InterruptedException exception) {
++            Thread.currentThread().interrupt();
++            LOGGER.warn("Interrupted while waiting to save player data for {}", playerName, exception);
++        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException exception) {
++            LOGGER.warn("Failed to save player data for {}", playerName, exception);
 +        }
 +    }
 +    // Leaf end - Async playerdata saving
@@ -159,7 +145,7 @@ index fe44d8d17d2622b3d6021c11579af85ef96737bb..45da3bace1262a18c55c13ee72a08c72
 +        return load(name, stringUuid, java.util.UUID.fromString(stringUuid), suffix);
 +    }
 +    private Optional<CompoundTag> load(String name, String stringUuid, java.util.UUID playerUuid, String suffix) { // CraftBukkit
-+        lockFor(playerUuid, name);
++        awaitPendingSave(playerUuid, name);
 +        // Leaf end - Async playerdata saving
          File file = new File(this.playerDir, stringUuid + suffix); // CraftBukkit
          // Spigot start
