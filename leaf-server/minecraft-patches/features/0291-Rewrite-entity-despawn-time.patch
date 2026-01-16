@@ -19,11 +19,110 @@ After: 1.5 seconds
 Brings the ability to despawn weak-loaded entities once they are ticked,
 a solution for https://github.com/PaperMC/Paper/issues/12986
 
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+index 703bf9c2a56b262e2719a1787584de537b8f12e0..90a7ea8c52c225f057b0e4dc8a8fe65ad19d8175 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+@@ -51,6 +51,11 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+     protected final ConcurrentLong2ReferenceChainedHashTable<Entity> entityById = new ConcurrentLong2ReferenceChainedHashTable<>();
+     protected final ConcurrentHashMap<UUID, Entity> entityByUUID = new ConcurrentHashMap<>();
+     protected final EntityList accessibleEntities = new EntityList();
++    // Leaf start - Rewrite entity despawn time
++    private final it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<Entity> weakEntities = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>();
++    public final it.unimi.dsi.fastutil.objects.ReferenceArrayList<Entity> weakEntityList = new it.unimi.dsi.fastutil.objects.ReferenceArrayList<>();
++    private int weakCursor = 0;
++    // Leaf end - Rewrite entity despawn time
+ 
+     public EntityLookup(final Level world, final LevelCallback<Entity> worldCallback) {
+         this.world = world;
+@@ -257,6 +262,21 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+         try {
+             final Boolean ticketBlockBefore = this.blockTicketUpdates();
+             try {
++                // Leaf start - Rewrite entity despawn time
++                if (org.dreeam.leaf.config.modules.opt.DespawnTime.activeWeakLoading) {
++                    boolean isWeakNow = newVisibility == Visibility.TRACKED;
++                    boolean wasWeakBefore = oldVisibility == Visibility.TRACKED;
++
++                    if (entity.despawnTime >= 0) {
++                        if (isWeakNow && !wasWeakBefore) {
++                            this.weakEntities.add(entity);
++                            this.weakEntityList.add(entity);
++                        } else if (!isWeakNow && wasWeakBefore) {
++                            this.weakEntities.remove(entity);
++                        }
++                    }
++                }
++                // Leaf end - Rewrite entity despawn time
+                 ((ChunkSystemEntity)entity).moonrise$setUpdatingSectionStatus(true);
+                 try {
+                     if (created) {
+@@ -497,6 +517,7 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+                 LOGGER.warn("Failed to remove entity " + entity + " from entity slices (" + sectionX + "," + sectionZ + ")");
+             }
+         }
++        if (org.dreeam.leaf.config.modules.opt.DespawnTime.activeWeakLoading) this.weakEntities.remove(entity); // Leaf - Rewrite entity despawn time
+         ((ChunkSystemEntity)entity).moonrise$setSectionX(Integer.MIN_VALUE);
+         ((ChunkSystemEntity)entity).moonrise$setSectionY(Integer.MIN_VALUE);
+         ((ChunkSystemEntity)entity).moonrise$setSectionZ(Integer.MIN_VALUE);
+@@ -935,6 +956,44 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+     }
+ 
++    // Leaf start - Rewrite entity despawn time
++    public void leaf$tickWeakEntities() {
++        if (this.weakEntityList.isEmpty()) return;
++
++        int size = this.weakEntityList.size();
++        int toProcess = Math.max(org.dreeam.leaf.config.modules.opt.DespawnTime.maxEntityToProcess, size >> 4);
++
++        if (this.weakCursor >= size) this.weakCursor = 0;
++
++        while (toProcess-- > 0 && !this.weakEntityList.isEmpty()) {
++            if (this.weakCursor >= this.weakEntityList.size()) {
++                this.weakCursor = 0;
++            }
++
++            Entity entity = this.weakEntityList.get(this.weakCursor);
++
++            if (entity == null || !this.weakEntities.contains(entity)) {
++                removeAtCursor(this.weakEntityList, this.weakCursor);
++                continue;
++            }
++
++            if (entity.isExceedingDespawnTime(true)) {
++                entity.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
++                removeAtCursor(this.weakEntityList, this.weakCursor);
++            } else {
++                this.weakCursor++;
++            }
++        }
++    }
++
++    private static void removeAtCursor(List<Entity> list, int index) {
++        int lastIndex = list.size() - 1;
++        if (index != lastIndex) {
++            list.set(index, list.get(lastIndex));
++        }
++        list.remove(lastIndex);
++    }
++    // Leaf end - Rewrite entity despawn time
+     public static final class ChunkSlicesRegion {
+ 
+         private final ChunkEntitySlices[] slices = new ChunkEntitySlices[REGION_SIZE * REGION_SIZE];
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 541c384187a0b20386ccc35200c7c4eb1ce62e9b..e41087a52c5c0521728357431afd182080ab1291 100644
+index 541c384187a0b20386ccc35200c7c4eb1ce62e9b..30d4a73138e12c73cd52517632bbd8b3c96d1f73 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -1613,6 +1613,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1061,6 +1061,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         this.debugSynchronizers.tick(this.server.debugSubscribers());
+         profilerFiller.pop();
+         this.environmentAttributes().invalidateTickCache();
++        if (org.dreeam.leaf.config.modules.opt.DespawnTime.activeWeakLoading) this.moonrise$getEntityLookup().leaf$tickWeakEntities();
+         if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) { this.leaf$asyncTracker.onEntitiesTickEnd(); } // Leaf - Multithreaded tracker
+     }
+ 
+@@ -1613,6 +1614,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          } else {entity.inactiveTick();} // Paper - EAR 2
          profilerFiller.pop();
  
@@ -32,7 +131,7 @@ index 541c384187a0b20386ccc35200c7c4eb1ce62e9b..e41087a52c5c0521728357431afd1820
          for (Entity entity1 : entity.getPassengers()) {
              this.tickPassenger(entity, entity1, isActive); // Paper - EAR 2
          }
-@@ -1641,6 +1643,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -1641,6 +1644,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              // Paper end - EAR 2
              profilerFiller.pop();
  
@@ -42,12 +141,15 @@ index 541c384187a0b20386ccc35200c7c4eb1ce62e9b..e41087a52c5c0521728357431afd1820
                  this.tickPassenger(passengerEntity, entity, isActive); // Paper - EAR 2
              }
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index ece19e97fe6084b212cd0d7adc46b33768fe73f6..ff95d27720d8605cd58172ec695d254941632c2c 100644
+index ece19e97fe6084b212cd0d7adc46b33768fe73f6..75b3bedb71e948431a987e2ae508f3fb5329b2f0 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -377,6 +377,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -375,8 +375,9 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     // Paper end
+     public boolean freezeLocked = false; // Paper - Freeze Tick Lock API
      public boolean fixedPose = false; // Paper - Expand Pose API
-     private final int despawnTime; // Paper - entity despawn time limit
+-    private final int despawnTime; // Paper - entity despawn time limit
++    public final int despawnTime; // Paper - entity despawn time limit // Leaf - Rewrite entity despawn time - private -> public
      public int totalEntityAge; // Paper - age-like counter for all entities
 +    private int lastTickTime; // Leaf - Rewrite entity despawn time
      public boolean activatedPriorityReset = false; // Pufferfish - DAB
@@ -69,7 +171,7 @@ index ece19e97fe6084b212cd0d7adc46b33768fe73f6..ff95d27720d8605cd58172ec695d2549
      }
  
      public boolean isColliding(BlockPos pos, BlockState state) {
-@@ -898,15 +901,50 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -898,15 +901,57 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
      }
  
      public void tick() {
@@ -90,26 +192,33 @@ index ece19e97fe6084b212cd0d7adc46b33768fe73f6..ff95d27720d8605cd58172ec695d2549
      }
  
 +    // Leaf start - Rewrite entity despawn time
-+    protected final boolean detectDespawnTime() {
-+        this.syncEntityAge();
-+        if (this.despawnTime >= 0) {
-+            if (this.totalEntityAge >= this.despawnTime) {
-+                this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
-+                return true;
-+            }
-+        }
-+        return false;
-+    }
-+
 +    private int calculateMissedTicks() {
 +        return net.minecraft.server.MinecraftServer.currentTick - this.lastTickTime;
 +    }
 +
-+    private void syncEntityAge() {
++    public final boolean detectDespawnTime() {
++        boolean exceeded = this.isExceedingDespawnTime(false);
++        if (exceeded) {
++            this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
++        }
++        return exceeded;
++    }
++
++    public final boolean isExceedingDespawnTime(boolean isWeakLoaded) {
++        if (this.despawnTime >= 0) {
++            int compensatedAge = this.syncEntityAge(!isWeakLoaded);
++            return compensatedAge >= this.despawnTime;
++        }
++        return false;
++    }
++
++    private int syncEntityAge(boolean writeBack) {
 +        int missedTicks = this.calculateMissedTicks();
 +        if (missedTicks > 1) {
++            if (writeBack) return this.totalEntityAge + missedTicks;
 +            this.totalEntityAge += missedTicks;
 +        }
++        return this.totalEntityAge;
 +    }
 +
 +    public void updateLastTick() {
@@ -120,15 +229,15 @@ index ece19e97fe6084b212cd0d7adc46b33768fe73f6..ff95d27720d8605cd58172ec695d2549
      // CraftBukkit start
      public void postTick() {
          // No clean way to break out of ticking once the entity has been copied to a new world, so instead we move the portalling later in the tick cycle
-@@ -2681,6 +2719,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -2681,6 +2726,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
              if (this.maxAirTicks != this.getDefaultMaxAirSupply() && this.getDefaultMaxAirSupply() != this.level().purpurConfig.drowningAirTicks) { // Purpur - Drowning Settings
                  output.putInt("Bukkit.MaxAirSupply", this.getMaxAirSupply());
              }
-+            this.syncEntityAge(); // Leaf - Rewrite entity despawn time
++            this.syncEntityAge(false); // Leaf - Rewrite entity despawn time
              output.putInt("Spigot.ticksLived", this.totalEntityAge); // Paper
              // CraftBukkit end
              output.storeNullable("CustomName", ComponentSerialization.CODEC, this.getCustomName());
-@@ -2840,7 +2879,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -2840,7 +2886,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
  
              // CraftBukkit start
              // Spigot start
@@ -137,11 +246,11 @@ index ece19e97fe6084b212cd0d7adc46b33768fe73f6..ff95d27720d8605cd58172ec695d2549
                  this.totalEntityAge = input.getIntOr("Spigot.ticksLived", 0); // Paper
              }
              // Spigot end
-@@ -5431,9 +5470,10 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -5431,9 +5477,10 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
  
      @Override
      public boolean shouldBeSaved() {
-+        this.syncEntityAge(); // Leaf - Rewrite entity despawn time
++        this.syncEntityAge(false); // Leaf - Rewrite entity despawn time
          return (this.removalReason == null || this.removalReason.shouldSave())
              && !this.isPassenger()
 -            && (!this.isVehicle() || !((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this).moonrise$hasAnyPlayerPassengers()); // Paper - rewrite chunk system
