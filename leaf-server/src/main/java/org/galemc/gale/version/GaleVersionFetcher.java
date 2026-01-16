@@ -10,7 +10,9 @@ public class GaleVersionFetcher extends AbstractPaperVersionFetcher {
             "GaleMC",
             "Gale",
             "GaleMC",
-            "Gale");
+            "Gale",
+            ApiType.GITHUB
+        );
     }
 
 }

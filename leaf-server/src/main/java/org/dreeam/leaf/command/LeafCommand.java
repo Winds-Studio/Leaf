@@ -4,7 +4,7 @@ import io.papermc.paper.command.CommandUtil;
 import it.unimi.dsi.fastutil.Pair;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import org.dreeam.leaf.command.subcommands.MSPTCommand;
 import org.dreeam.leaf.command.subcommands.ReloadCommand;
 import org.dreeam.leaf.command.subcommands.VersionCommand;

@@ -43,7 +43,7 @@ public class ProtocolSupport extends ConfigModules {
         syncmaticaQuota = config.getBoolean(getBasePath() + ".syncmatica-quota", syncmaticaQuota);
         syncmaticaQuotaLimit = config.getInt(getBasePath() + ".syncmatica-quota-limit", syncmaticaQuotaLimit);
 
-        org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol);
+        //org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol); // TODO: Uncomment when Leaves 1.21.11 is updated
 
         doABarrelRollProtocol = config.getBoolean(getBasePath() + ".do-a-barrel-roll-protocol", doABarrelRollProtocol);
         doABarrelRollAllowThrusting = config.getBoolean(getBasePath() + ".do-a-barrel-roll-allow-thrusting", doABarrelRollAllowThrusting);

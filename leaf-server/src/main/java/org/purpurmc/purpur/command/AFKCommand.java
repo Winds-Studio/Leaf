@@ -5,6 +5,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.Permissions;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -12,10 +13,10 @@ import java.util.Collections;
 public class AFKCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("afk")
-            .requires((listener) -> listener.hasPermission(2, "bukkit.command.afk"))
+            .requires((listener) -> listener.hasPermission(Permissions.COMMANDS_GAMEMASTER, "bukkit.command.afk"))
             .executes((context) -> execute(context.getSource(), Collections.singleton(context.getSource().getPlayerOrException())))
             .then(Commands.argument("targets", EntityArgument.players())
-                .requires(listener -> listener.hasPermission(2, "bukkit.command.afk.other"))
+                .requires(listener -> listener.hasPermission(Permissions.COMMANDS_GAMEMASTER, "bukkit.command.afk.other"))
                 .executes((context) -> execute(context.getSource(), EntityArgument.getPlayers(context, "targets")))
             )
         );

@@ -75,7 +75,7 @@ public class Protocols {
     private static <B extends FriendlyByteBuf> void encode(B byteBuf, LeafCustomPayload payload, Protocol protocol) {
         for (var codec : protocol.s2c()) {
             if (codec.type().id().equals(payload.type().id())) {
-                byteBuf.writeResourceLocation(payload.type().id());
+                byteBuf.writeIdentifier(payload.type().id());
                 //noinspection unchecked,rawtypes
                 ((StreamCodec) codec.codec()).encode(byteBuf, payload);
                 return;

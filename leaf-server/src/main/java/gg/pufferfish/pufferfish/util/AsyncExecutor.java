@@ -3,7 +3,7 @@ package gg.pufferfish.pufferfish.util;
 import it.unimi.dsi.fastutil.PriorityQueue;
 import it.unimi.dsi.fastutil.PriorityQueues;
 import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 

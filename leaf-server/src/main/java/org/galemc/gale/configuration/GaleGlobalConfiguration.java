@@ -4,13 +4,9 @@ package org.galemc.gale.configuration;
 
 import io.papermc.paper.configuration.Configuration;
 import io.papermc.paper.configuration.ConfigurationPart;
-import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
 import org.spongepowered.configurate.objectmapping.meta.PostProcess;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
 import org.bukkit.plugin.java.JavaPluginLoader;
-
-import java.util.Locale;
-import java.util.function.Consumer;
 
 @SuppressWarnings({"CanBeFinal", "FieldCanBeLocal", "FieldMayBeFinal", "InnerClassMayBeStatic"})
 public class GaleGlobalConfiguration extends ConfigurationPart {
@@ -41,7 +37,7 @@ public class GaleGlobalConfiguration extends ConfigurationPart {
 
             @PostProcess
             public void postProcess() {
-                net.minecraft.world.entity.player.Player.increaseTimeStatisticsInterval = Math.max(1, increaseTimeStatistics); // Gale - Hydrinity - increase time statistics in intervals - store as static field for fast access
+                net.minecraft.server.level.ServerPlayer.increaseTimeStatisticsInterval = Math.max(1, increaseTimeStatistics); // Gale - Hydrinity - increase time statistics in intervals - store as static field for fast access
             }
 
         }

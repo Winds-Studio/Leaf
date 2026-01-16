@@ -4,13 +4,13 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.NotNull;
 
 public class DoABarrelRollPackets {
 
     private static <T extends LeafCustomPayload> LeafCustomPayload.@NotNull Type<T> createType(String path) {
-        return new LeafCustomPayload.Type<>(ResourceLocation.fromNamespaceAndPath(DoABarrelRollProtocol.NAMESPACE, path));
+        return new LeafCustomPayload.Type<>(Identifier.fromNamespaceAndPath(DoABarrelRollProtocol.NAMESPACE, path));
     }
 
     public record ConfigResponseC2SPacket(int protocolVersion, boolean success) implements LeafCustomPayload {

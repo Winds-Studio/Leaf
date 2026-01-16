@@ -3,7 +3,7 @@ package org.dreeam.leaf.config;
 import io.papermc.paper.configuration.GlobalConfiguration;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;

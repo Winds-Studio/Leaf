@@ -7,10 +7,10 @@ import it.unimi.dsi.fastutil.longs.LongArrays;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.material.FluidState;
 
@@ -37,7 +37,7 @@ public final class RandomTickSystem {
 
         final BitRandomSource random = world.simpleRandom;
         final ReferenceList<LevelChunk> entityTickingChunks = world.moonrise$getEntityTickingChunks();
-        final int randomTickSpeed = world.getGameRules().getInt(GameRules.RULE_RANDOMTICKING);
+        final int randomTickSpeed = world.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
         final LevelChunk[] raw = entityTickingChunks.getRawDataUnchecked();
         final int size = entityTickingChunks.size();
         final boolean disableIceAndSnow = world.paperConfig().environment.disableIceAndSnow;

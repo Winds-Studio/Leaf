@@ -23,30 +23,26 @@ import static it.unimi.dsi.fastutil.Hash.FAST_LOAD_FACTOR;
 
 /**
  * Generally provides better performance over the vanilla {@link net.minecraft.world.level.chunk.HashMapPalette} when calling
- * {@link LithiumHashPalette#idFor(Object)} through using a faster backing map and reducing pointer chasing.
+ * {@link LithiumHashPalette#idFor(Object, PaletteResize<T>)} through using a faster backing map and reducing pointer chasing.
  */
 public class LithiumHashPalette<T> implements Palette<T> {
     private static final int ABSENT_VALUE = -1;
 
-    private final IdMap<T> idList;
-    private final PaletteResize<T> resizeHandler;
     private final int indexBits;
 
     private final Reference2IntOpenHashMap<T> table;
     private T[] entries;
     private int size = 0;
 
-    private LithiumHashPalette(IdMap<T> idList, PaletteResize<T> resizeHandler, int indexBits, T[] entries, Reference2IntOpenHashMap<T> table, int size) {
-        this.idList = idList;
-        this.resizeHandler = resizeHandler;
+    private LithiumHashPalette(int indexBits, T[] entries, Reference2IntOpenHashMap<T> table, int size) {
         this.indexBits = indexBits;
         this.entries = entries;
         this.table = table;
         this.size = size;
     }
 
-    public LithiumHashPalette(IdMap<T> idList, int bits, PaletteResize<T> resizeHandler, List<T> list) {
-        this(idList, bits, resizeHandler);
+    public LithiumHashPalette(int bits, List<T> list) {
+        this(bits);
 
         for (T t : list) {
             this.addEntry(t);
@@ -54,10 +50,8 @@ public class LithiumHashPalette<T> implements Palette<T> {
     }
 
     @SuppressWarnings("unchecked")
-    public LithiumHashPalette(IdMap<T> idList, int bits, PaletteResize<T> resizeHandler) {
-        this.idList = idList;
+    public LithiumHashPalette(int bits) {
         this.indexBits = bits;
-        this.resizeHandler = resizeHandler;
 
         int capacity = 1 << bits;
 
@@ -67,11 +61,11 @@ public class LithiumHashPalette<T> implements Palette<T> {
     }
 
     @Override
-    public int idFor(@NotNull T obj) {
+    public int idFor(@NotNull T obj, @NotNull PaletteResize<T> paletteResize) {
         int id = this.table.getInt(obj);
 
         if (id == ABSENT_VALUE) {
-            id = this.computeEntry(obj);
+            id = this.computeEntry(obj, paletteResize);
         }
 
         return id;
@@ -88,14 +82,14 @@ public class LithiumHashPalette<T> implements Palette<T> {
         return false;
     }
 
-    private int computeEntry(T obj) {
+    private int computeEntry(T obj, PaletteResize<T> paletteResize) {
         int id = this.addEntry(obj);
 
         if (id >= 1 << this.indexBits) {
-            if (this.resizeHandler == null) {
+            if (paletteResize == null) {
                 throw new IllegalStateException("Cannot grow");
             } else {
-                id = this.resizeHandler.onResize(this.indexBits + 1, obj);
+                id = paletteResize.onResize(this.indexBits + 1, obj);
             }
         }
 
@@ -151,32 +145,32 @@ public class LithiumHashPalette<T> implements Palette<T> {
     }
 
     @Override
-    public void read(FriendlyByteBuf buf) {
+    public void read(FriendlyByteBuf buf, @NotNull IdMap<T> idMap) {
         this.clear();
 
         int entryCount = buf.readVarInt();
 
         for (int i = 0; i < entryCount; ++i) {
-            this.addEntry(this.idList.byIdOrThrow(buf.readVarInt()));
+            this.addEntry(idMap.byIdOrThrow(buf.readVarInt()));
         }
     }
 
     @Override
-    public void write(FriendlyByteBuf buf) {
+    public void write(FriendlyByteBuf buf, @NotNull IdMap<T> idMap) {
         int size = this.size;
         buf.writeVarInt(size);
 
         for (int i = 0; i < size; ++i) {
-            buf.writeVarInt(this.idList.getId(this.valueFor(i)));
+            buf.writeVarInt(idMap.getId(this.valueFor(i)));
         }
     }
 
     @Override
-    public int getSerializedSize() {
+    public int getSerializedSize(@NotNull IdMap<T> idMap) {
         int size = VarInt.getByteSize(this.size);
 
         for (int i = 0; i < this.size; ++i) {
-            size += VarInt.getByteSize(this.idList.getId(this.valueFor(i)));
+            size += VarInt.getByteSize(idMap.getId(this.valueFor(i)));
         }
 
         return size;
@@ -188,8 +182,8 @@ public class LithiumHashPalette<T> implements Palette<T> {
     }
 
     @Override
-    public @NotNull Palette<T> copy(@NotNull PaletteResize<T> resizeHandler) {
-        return new LithiumHashPalette<>(this.idList, resizeHandler, this.indexBits, this.entries.clone(), this.table.clone(), this.size);
+    public @NotNull Palette<T> copy() {
+        return new LithiumHashPalette<>(this.indexBits, this.entries.clone(), this.table.clone(), this.size);
     }
 
     private void clear() {
@@ -203,7 +197,7 @@ public class LithiumHashPalette<T> implements Palette<T> {
         return Arrays.asList(copy);
     }
 
-    public static <A> Palette<A> create(int bits, IdMap<A> idList, PaletteResize<A> listener, List<A> list) {
-        return new LithiumHashPalette<>(idList, bits, listener, list);
+    public static <A> Palette<A> create(int bits, List<A> list) {
+        return new LithiumHashPalette<>(bits, list);
     }
 }

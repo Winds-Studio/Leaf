@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martijn Muijsers <martijnmuijsers@live.nl>
+Date: Wed, 30 Aug 2023 20:01:31 +0200
+Subject: [PATCH] Reduce line of sight updates and cache lookups
+
+License: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.html)
+Gale - https://galemc.org
+
+This patch is based on the following patch:
+"feat: reduce sensor work"
+By: peaches94 <peachescu94@gmail.com>
+As part of: Petal (https://github.com/Bloom-host/Petal)
+Licensed under: GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.html)
+
+* Petal description *
+
+this patch is focused around the sensors used for ai
+delete the line of sight cache less often and use a faster nearby comparison
+
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index a2cddabd0363a49c64df9bc96a53abe1e5078156..6fde6e5ced0bf997d91618322668acd2e7935907 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -9,25 +9,65 @@ import net.minecraft.world.entity.Mob;
+ 
+ public class Sensing {
+     private final Mob mob;
+-    // Gale start - initialize line of sight cache with low capacity
+-    private final IntSet seen = new IntOpenHashSet(2);
+-    private final IntSet unseen = new IntOpenHashSet(2);
+-    // Gale end - initialize line of sight cache with low capacity
++    private final it.unimi.dsi.fastutil.ints.Int2IntMap seen = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap(2); // Gale end - initialize line of sight cache with low capacity // Gale - Petal - reduce line of sight cache lookups - merge sets
++
++    // Gale start - Petal - reduce line of sight updates - expiring entity id lists
++    private final @org.jetbrains.annotations.NotNull it.unimi.dsi.fastutil.ints.IntList @org.jetbrains.annotations.Nullable [] expiring;
++    private int currentCacheAddIndex = 0;
++    private int nextToExpireIndex = 1;
++    // Gale end - Petal - reduce line of sight updates - expiring entity id lists
+ 
+     public Sensing(Mob mob) {
+         this.mob = mob;
++        // Gale start - Petal - reduce line of sight updates - expiring entity id lists
++        int updateLineOfSightInterval = org.galemc.gale.configuration.GaleGlobalConfiguration.get().smallOptimizations.reducedIntervals.updateEntityLineOfSight;
++
++        if (updateLineOfSightInterval <= 1) {
++            this.expiring = null;
++        } else {
++            this.expiring = new it.unimi.dsi.fastutil.ints.IntList[updateLineOfSightInterval];
++
++            for (int i = 0; i < updateLineOfSightInterval; i++) {
++                this.expiring[i] = new it.unimi.dsi.fastutil.ints.IntArrayList(0);
++            }
++        }
++        // Gale end - Petal - reduce line of sight updates - expiring entity id lists
+     }
+ 
+     public void tick() {
++        if (this.expiring == null) { // Gale - Petal - reduce line of sight updates
+         this.seen.clear();
+-        this.unseen.clear();
++            // Gale start - Petal - reduce line of sight updates
++        } else {
++            var expiringNow = this.expiring[this.nextToExpireIndex];
++
++            expiringNow.forEach(this.seen::remove);
++            expiringNow.clear();
++
++            this.currentCacheAddIndex++;
++
++            if (this.currentCacheAddIndex == this.expiring.length) {
++                this.currentCacheAddIndex = 0;
++            }
++
++            this.nextToExpireIndex++;
++
++            if (this.nextToExpireIndex == this.expiring.length) {
++                this.nextToExpireIndex = 0;
++            }
++        }
++        // Gale end - Petal - reduce line of sight updates
+     }
+ 
+     public boolean hasLineOfSight(Entity entity) {
+         int id = entity.getId();
+-        if (this.seen.contains(id)) {
++        // Gale start - Petal - reduce line of sight cache lookups - merge sets
++        int cached = this.seen.get(id);
++
++        if (cached == 1) {
++            // Gale end - Petal - reduce line of sight cache lookups - merge sets
+             return true;
+-        } else if (this.unseen.contains(id)) {
++        } else if (cached == 2) { // Gale - Petal - reduce line of sight cache lookups - merge sets
+             return false;
+         } else {
+             ProfilerFiller profilerFiller = Profiler.get();
+@@ -35,10 +75,16 @@ public class Sensing {
+             boolean hasLineOfSight = this.mob.hasLineOfSight(entity);
+             profilerFiller.pop();
+             if (hasLineOfSight) {
+-                this.seen.add(id);
++                this.seen.put(id, 1); // Gale - Petal - reduce line of sight cache lookups - merge sets
+             } else {
+-                this.unseen.add(id);
++                this.seen.put(id, 2); // Gale - Petal - reduce line of sight cache lookups - merge sets
++            }
++
++            // Gale start - Petal - reduce line of sight updates
++            if (this.expiring != null) {
++                this.expiring[this.currentCacheAddIndex].add(id);
+             }
++            // Gale end - Petal - reduce line of sight updates
+ 
+             return hasLineOfSight;
+         }

@@ -3,8 +3,6 @@ package org.dreeam.leaf.util;
 @org.jspecify.annotations.NullMarked
 public final class KDTree3D {
 
-    private static final boolean FMA = Boolean.getBoolean("Leaf.enableFMA");
-
     private static final double[] EMPTY_DOUBLES = {};
     private static final int[] EMPTY_INTS = {};
     private static final Node[] EMPTY_NODES = {};
@@ -118,7 +116,7 @@ public final class KDTree3D {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
                 final double dz = nzl[j] - tz;
-                dist = Math.min(dist, FMA
+                dist = Math.min(dist, LeafConstants.ENABLE_FMA
                     ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
                     : dx * dx + dy * dy + dz * dz);
                 break;
@@ -149,7 +147,7 @@ public final class KDTree3D {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
                 final double dz = nzl[k] - tz;
-                dist = Math.min(dist, FMA
+                dist = Math.min(dist, LeafConstants.ENABLE_FMA
                     ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
                     : dx * dx + dy * dy + dz * dz);
             } else {
@@ -192,7 +190,7 @@ public final class KDTree3D {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
                 final double dz = nzl[j] - tz;
-                final double candidate = FMA
+                final double candidate = LeafConstants.ENABLE_FMA
                     ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
                     : dx * dx + dy * dy + dz * dz;
                 if (candidate < dist) {
@@ -227,7 +225,7 @@ public final class KDTree3D {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
                 final double dz = nzl[k] - tz;
-                final double candidate = FMA
+                final double candidate = LeafConstants.ENABLE_FMA
                     ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
                     : dx * dx + dy * dy + dz * dz;
                 if (candidate < dist) {

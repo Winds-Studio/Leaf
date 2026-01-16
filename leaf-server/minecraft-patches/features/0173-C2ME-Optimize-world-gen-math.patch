@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] C2ME: Optimize world gen math
+
+This patch is based on following mixins:
+* "com/ishland/c2me/opts/math/mixin/MixinChunkPos.java"
+* "com/ishland/c2me/opts/worldgen/vanilla/mixin/structure_weight_sampler/MixinStructureWeightSampler.java"
+By: ishland <ishlandmc@yeah.net>
+As part of: C2ME-fabric (https://github.com/RelativityMC/C2ME-fabric)
+Licensed under: MIT
+
+diff --git a/net/minecraft/world/level/ChunkPos.java b/net/minecraft/world/level/ChunkPos.java
+index de7c262f65557f149e00059c7df85917c9ca4342..125fc0057b0ac1ebd830da11bf3a75caf2770f1f 100644
+--- a/net/minecraft/world/level/ChunkPos.java
++++ b/net/minecraft/world/level/ChunkPos.java
+@@ -119,7 +119,13 @@ public class ChunkPos {
+ 
+     @Override
+     public boolean equals(Object other) {
+-        return this == other || other instanceof ChunkPos chunkPos && this.x == chunkPos.x && this.z == chunkPos.z;
++        // Leaf start - C2ME - Optimize world gen math
++        // Use standard equals
++        if (other == this) return true;
++        if (other == null || other.getClass() != this.getClass()) return false;
++        ChunkPos thatPos = (ChunkPos) other;
++        return this.x == thatPos.x && this.z == thatPos.z;
++        // Leaf end - C2ME - Optimize world gen math
+     }
+ 
+     public int getMiddleBlockX() {
+diff --git a/net/minecraft/world/level/levelgen/Beardifier.java b/net/minecraft/world/level/levelgen/Beardifier.java
+index b87fad848fa4342dc420a186a762cc826e9c0294..c55cabb53b79fa88c6e90000e0a1b99ad50d7c21 100644
+--- a/net/minecraft/world/level/levelgen/Beardifier.java
++++ b/net/minecraft/world/level/levelgen/Beardifier.java
+@@ -108,51 +108,53 @@ public class Beardifier implements DensityFunctions.BeardifierOrMarker {
+         }
+     }
+ 
++    // Leaf start - C2ME - Optimize world gen math
++    private Beardifier.Rigid[] c2me$pieceArray;
++    private JigsawJunction[] c2me$junctionArray;
++    private void c2me$initArrays() {
++        this.c2me$pieceArray = this.pieces.toArray(Beardifier.Rigid[]::new);
++        this.c2me$junctionArray = this.junctions.toArray(JigsawJunction[]::new);
++    }
++    // Leaf end - C2ME - Optimize world gen math
++
+     @Override
+     public double compute(DensityFunction.FunctionContext context) {
+         if (this.affectedBox == null) {
+             return 0.0;
+         } else {
+-            int i = context.blockX();
+-            int i1 = context.blockY();
+-            int i2 = context.blockZ();
+-            if (!this.affectedBox.isInside(i, i1, i2)) {
+-                return 0.0;
+-            } else {
+-                double d = 0.0;
+-
+-                for (Beardifier.Rigid rigid : this.pieces) {
+-                    BoundingBox boundingBox = rigid.box();
+-                    int groundLevelDelta = rigid.groundLevelDelta();
+-                    int max = Math.max(0, Math.max(boundingBox.minX() - i, i - boundingBox.maxX()));
+-                    int max1 = Math.max(0, Math.max(boundingBox.minZ() - i2, i2 - boundingBox.maxZ()));
+-                    int i3 = boundingBox.minY() + groundLevelDelta;
+-                    int i4 = i1 - i3;
+-
+-                    int i5 = switch (rigid.terrainAdjustment()) {
+-                        case NONE -> 0;
+-                        case BURY, BEARD_THIN -> i4;
+-                        case BEARD_BOX -> Math.max(0, Math.max(i3 - i1, i1 - boundingBox.maxY()));
+-                        case ENCAPSULATE -> Math.max(0, Math.max(boundingBox.minY() - i1, i1 - boundingBox.maxY()));
+-                    };
+-
+-                    d += switch (rigid.terrainAdjustment()) {
+-                        case NONE -> 0.0;
+-                        case BURY -> getBuryContribution(max, i5 / 2.0, max1);
+-                        case BEARD_THIN, BEARD_BOX -> getBeardContribution(max, i5, max1, i4) * 0.8;
+-                        case ENCAPSULATE -> getBuryContribution(max / 2.0, i5 / 2.0, max1 / 2.0) * 0.8;
+-                    };
+-                }
+-
+-                for (JigsawJunction jigsawJunction : this.junctions) {
+-                    int i6 = i - jigsawJunction.getSourceX();
+-                    int groundLevelDelta = i1 - jigsawJunction.getSourceGroundY();
+-                    int max = i2 - jigsawJunction.getSourceZ();
+-                    d += getBeardContribution(i6, groundLevelDelta, max, groundLevelDelta) * 0.4;
+-                }
+-
+-                return d;
++            // Leaf start - C2ME - Optimize world gen math
++            int x = context.blockX();
++            int y = context.blockY();
++            int z = context.blockZ();
++
++            if (!this.affectedBox.isInside(x, y, z)) return 0.0;
++            if (this.c2me$pieceArray == null || this.c2me$junctionArray == null) this.c2me$initArrays();
++
++            double density = 0.0;
++
++            for (Beardifier.Rigid piece : this.c2me$pieceArray) {
++                BoundingBox blockBox = piece.box();
++                int groundLevelDelta = piece.groundLevelDelta();
++                int distanceXToBox = Math.max(0, Math.max(blockBox.minX() - x, x - blockBox.maxX()));
++                int distanceZToBox = Math.max(0, Math.max(blockBox.minZ() - z, z - blockBox.maxZ()));
++                int groundY = blockBox.minY() + groundLevelDelta;
++                int distanceToGround = y - groundY;
++                density += switch (piece.terrainAdjustment()) { // 2 switch statement merged
++                    case NONE -> 0.0;
++                    case BURY -> getBuryContribution(distanceXToBox, (double) distanceToGround / 2.0, distanceZToBox);
++                    case BEARD_THIN -> getBeardContribution(distanceXToBox, distanceToGround, distanceZToBox, distanceToGround) * 0.8;
++                    case BEARD_BOX -> getBeardContribution(distanceXToBox, Math.max(0, Math.max(groundY - y, y - blockBox.maxY())), distanceZToBox, distanceToGround) * 0.8;
++                    case ENCAPSULATE -> getBuryContribution((double) distanceXToBox / 2.0, (double) Math.max(0, Math.max(blockBox.minY() - y, y - blockBox.maxY())) / 2.0, (double) distanceZToBox / 2.0) * 0.8;
++                };
++            }
++            for (JigsawJunction jigsawJunction : this.c2me$junctionArray) {
++                int deltaX = x - jigsawJunction.getSourceX();
++                int deltaY = y - jigsawJunction.getSourceGroundY();
++                int deltaZ = z - jigsawJunction.getSourceZ();
++                density += getBeardContribution(deltaX, deltaY, deltaZ, deltaY) * 0.4;
+             }
++
++            return density;
+         }
+     }
+ 
+@@ -167,8 +169,15 @@ public class Beardifier implements DensityFunctions.BeardifierOrMarker {
+     }
+ 
+     private static double getBuryContribution(double x, double y, double z) {
+-        double len = Mth.length(x, y, z);
+-        return Mth.clampedMap(len, 0.0, 6.0, 1.0, 0.0);
++        // Leaf start - C2ME - Optimize world gen math
++        // Optimize method for beardifier
++        double len = Math.sqrt(x * x + y * y + z * z);
++        if (len > 6.0) {
++            return 0.0;
++        } else {
++            return 1.0 - len / 6.0;
++        }
++        // Leaf end - C2ME - Optimize world gen math
+     }
+ 
+     private static double getBeardContribution(int x, int y, int z, int height) {

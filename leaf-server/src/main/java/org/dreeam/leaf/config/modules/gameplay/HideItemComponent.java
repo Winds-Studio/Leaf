@@ -2,7 +2,7 @@ package org.dreeam.leaf.config.modules.gameplay;
 
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
@@ -55,7 +55,7 @@ public class HideItemComponent extends ConfigModules {
         final List<DataComponentType<?>> types = new ArrayList<>(hiddenTypeStrings.size());
 
         for (String componentType : hiddenTypeStrings) {
-            BuiltInRegistries.DATA_COMPONENT_TYPE.get(ResourceLocation.parse(componentType)).ifPresentOrElse(
+            BuiltInRegistries.DATA_COMPONENT_TYPE.get(Identifier.parse(componentType)).ifPresentOrElse(
                 optional -> types.add(optional.value()),
                 () -> LeafConfig.LOGGER.warn("Unknown component type: {}", componentType)
             );

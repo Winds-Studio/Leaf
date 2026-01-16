@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Warrior <50800980+Warriorrrr@users.noreply.github.com>
+Date: Thu, 31 Aug 2023 10:23:06 +0200
+Subject: [PATCH] Paper PR: Fix some beacon event issues
+
+Original license: GPLv3
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/9674
+
+Closes Paper#8947
+
+Moves the deactivate event call into the onRemove method for the beacon block itself to prevent it from running when the block entity is unloaded. Also fixes an issue where the events were not being called when the beacon beam gets blocked.
+
+The field I added feels a bit wrong but it works, it's to prevent the activation event being called immediately after loading, can't see any better way to differentiate between a newly placed beacon and a newly loaded one.
+
+diff --git a/net/minecraft/world/level/block/entity/BeaconBlockEntity.java b/net/minecraft/world/level/block/entity/BeaconBlockEntity.java
+index cc301cff64e1bf604a1432f6e36be8aa17db53e7..f5f02ff27c364db75c41166250df0d9120c7d4bb 100644
+--- a/net/minecraft/world/level/block/entity/BeaconBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BeaconBlockEntity.java
+@@ -167,6 +167,8 @@ public class BeaconBlockEntity extends BlockEntity implements MenuProvider, Name
+         return VALID_EFFECTS.contains(effect) ? effect : null;
+     }
+ 
++    public boolean justLoadedAndPreviouslyActive; // Paper PR - consider beacon previously active for first tick to skip activate event/sound
++
+     public BeaconBlockEntity(BlockPos pos, BlockState blockState) {
+         super(BlockEntityType.BEACON, pos, blockState);
+     }
+@@ -235,10 +237,15 @@ public class BeaconBlockEntity extends BlockEntity implements MenuProvider, Name
+             }
+         }
+         // Paper start - beacon activation/deactivation events
+-        if (originalLevels <= 0 && blockEntity.levels > 0) {
++        // Paper PR start - Fix some beacon event issues
++        final boolean prevActive = originalLevels > 0 && (!blockEntity.beamSections.isEmpty() || (blockEntity.justLoadedAndPreviouslyActive && !blockEntity.checkingBeamSections.isEmpty()));
++        blockEntity.justLoadedAndPreviouslyActive = false;
++        final boolean newActive = blockEntity.levels > 0 && !blockEntity.checkingBeamSections.isEmpty();
++        if (!prevActive && newActive) {
++            // Paper PR end - Fix some beacon event issues
+             org.bukkit.block.Block block = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
+             new io.papermc.paper.event.block.BeaconActivatedEvent(block).callEvent();
+-        } else if (originalLevels > 0 && blockEntity.levels <= 0) {
++        } else if (prevActive && !newActive) { // Paper PR - Fix some beacon event issues
+             org.bukkit.block.Block block = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
+             new io.papermc.paper.event.block.BeaconDeactivatedEvent(block).callEvent();
+         }
+@@ -246,10 +253,10 @@ public class BeaconBlockEntity extends BlockEntity implements MenuProvider, Name
+ 
+         if (blockEntity.lastCheckY >= height) {
+             blockEntity.lastCheckY = level.getMinY() - 1;
+-            boolean flag = i > 0;
++            boolean flag = prevActive; // Paper PR - Fix MC-183981
+             blockEntity.beamSections = blockEntity.checkingBeamSections;
+             if (!level.isClientSide()) {
+-                boolean flag1 = blockEntity.levels > 0;
++                boolean flag1 = newActive; // Paper PR - Fix MC-183981
+                 if (!flag && flag1) {
+                     playSound(level, pos, SoundEvents.BEACON_ACTIVATE);
+ 
+@@ -293,10 +300,6 @@ public class BeaconBlockEntity extends BlockEntity implements MenuProvider, Name
+ 
+     @Override
+     public void setRemoved() {
+-        // Paper start - beacon activation/deactivation events
+-        org.bukkit.block.Block block = org.bukkit.craftbukkit.block.CraftBlock.at(level, worldPosition);
+-        new io.papermc.paper.event.block.BeaconDeactivatedEvent(block).callEvent();
+-        // Paper end - beacon activation/deactivation events
+         // Paper start - fix MC-153086
+         if (this.levels > 0 && !this.beamSections.isEmpty()) {
+         playSound(this.level, this.worldPosition, SoundEvents.BEACON_DEACTIVATE);
+@@ -423,6 +426,7 @@ public class BeaconBlockEntity extends BlockEntity implements MenuProvider, Name
+         this.primaryPower = loadEffect(input, "primary_effect");
+         this.secondaryPower = loadEffect(input, "secondary_effect");
+         this.levels = input.getIntOr("Levels", 0); // CraftBukkit - SPIGOT-5053, use where available
++        this.justLoadedAndPreviouslyActive = this.levels > 0; // Paper PR - Fix some beacon event issues
+         this.name = parseCustomNameSafe(input, "CustomName");
+         this.lockKey = LockCode.fromTag(input);
+         this.effectRange = input.getDoubleOr(PAPER_RANGE_TAG, -1); // Paper - Custom beacon ranges
+@@ -495,4 +499,15 @@ public class BeaconBlockEntity extends BlockEntity implements MenuProvider, Name
+         super.setLevel(level);
+         this.lastCheckY = level.getMinY() - 1;
+     }
++
++    // Paper PR start - Fix some beacon event issues - BeaconDeactivatedEvent
++    @Override
++    public void preRemoveSideEffects(BlockPos pos, BlockState state) {
++        BeaconBlockEntity beacon = this;
++        if (true /*beacon.levels > 0 && !beacon.getBeamSections().isEmpty()*/) { // Calling deactive everytime on remove to keep consistent with Paper's behavior
++            org.bukkit.block.Block block = org.bukkit.craftbukkit.block.CraftBlock.at(this.level, pos);
++            new io.papermc.paper.event.block.BeaconDeactivatedEvent(block).callEvent();
++        }
++    }
++    // Paper PR end - Fix some beacon event issues - BeaconDeactivatedEvent
+ }

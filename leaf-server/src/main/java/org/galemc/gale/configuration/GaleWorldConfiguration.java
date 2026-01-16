@@ -6,7 +6,7 @@ import com.mojang.logging.LogUtils;
 import io.papermc.paper.configuration.Configuration;
 import io.papermc.paper.configuration.ConfigurationPart;
 import io.papermc.paper.configuration.PaperConfigurations;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.spigotmc.SpigotWorldConfig;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
@@ -17,9 +17,9 @@ public class GaleWorldConfiguration extends ConfigurationPart {
     public static final int CURRENT_VERSION = 1;
 
     private transient final SpigotWorldConfig spigotConfig;
-    private transient final ResourceLocation worldKey;
+    private transient final Identifier worldKey;
 
-    public GaleWorldConfiguration(SpigotWorldConfig spigotConfig, ResourceLocation worldKey) {
+    public GaleWorldConfiguration(SpigotWorldConfig spigotConfig, Identifier worldKey) {
         this.spigotConfig = spigotConfig;
         this.worldKey = worldKey;
     }
@@ -135,7 +135,6 @@ public class GaleWorldConfiguration extends ConfigurationPart {
 
         }
 
-        public boolean arrowMovementResetsDespawnCounter = true; // Gale - Purpur - make arrow movement resetting despawn counter configurable
         public boolean entitiesCanRandomStrollIntoNonTickingChunks = true; // Gale - MultiPaper - prevent entities random strolling into non-ticking chunks
         public double entityWakeUpDurationRatioStandardDeviation = 0.2; // Gale - variable entity wake-up duration
         public boolean hideFlamesOnEntitiesWithFireResistance = false; // Gale - Slice - hide flames on entities with fire resistance

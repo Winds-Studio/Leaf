@@ -1,7 +1,7 @@
 package org.dreeam.leaf.async.chunk;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
