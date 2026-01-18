@@ -53,8 +53,8 @@ public final class TrackerCtx {
     private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
 
     private record BossEvent(WitherBoss witherBoss,
-                             ObjectArrayList<ServerPlayer> add,
-                             ObjectArrayList<ServerPlayer> remove) {
+                             ServerPlayer p,
+                             boolean add) {
     }
 
     private record StopSeen(Entity e, ObjectArrayList<ServerPlayer> q) {
@@ -77,10 +77,7 @@ public final class TrackerCtx {
             players.add(connection.getPlayer());
         }
         if (entity instanceof WitherBoss witherBoss) {
-            if (witherBosses.isEmpty() || !witherBosses.getLast().witherBoss.equals(witherBoss)) {
-                witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
-            }
-            witherBosses.getLast().remove.add(connection.getPlayer());
+            witherBosses.add(new BossEvent(witherBoss, connection.getPlayer(), false));
         }
     }
 
@@ -90,10 +87,7 @@ public final class TrackerCtx {
         }
         startSeen.getLast().q.add(connection);
         if (entity instanceof WitherBoss witherBoss) {
-            if (witherBosses.isEmpty() || !witherBosses.getLast().witherBoss.equals(witherBoss)) {
-                witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
-            }
-            witherBosses.getLast().add.add(connection.getPlayer());
+            witherBosses.add(new BossEvent(witherBoss, connection.getPlayer(), true));
         }
     }
 
@@ -228,13 +222,11 @@ public final class TrackerCtx {
     }
 
     private void handleBossEvent(BossEvent witherBoss) {
-        for (ServerPlayer player : witherBoss.add) {
-            if (world == player.level()) {
-                witherBoss.witherBoss.bossEvent.leaf$addPlayer(this, player);
-            }
-        }
-        for (ServerPlayer player : witherBoss.remove) {
-            witherBoss.witherBoss.bossEvent.leaf$removePlayer(this, player);
+        ServerPlayer player = witherBoss.p;
+        if (witherBoss.add) {
+            witherBoss.witherBoss.bossEvent.addPlayer(player);
+        } else {
+            witherBoss.witherBoss.bossEvent.removePlayer(player);
         }
     }
 
