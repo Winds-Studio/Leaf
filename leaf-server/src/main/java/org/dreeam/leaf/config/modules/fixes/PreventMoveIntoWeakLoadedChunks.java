@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config.modules.gameplay;
+package org.dreeam.leaf.config.modules.fixes;
 
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
