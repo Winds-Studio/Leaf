@@ -22,7 +22,7 @@ public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
             "阻止实体进入弱加载区块."
         );
 
-        enabled = config.getBoolean(getBasePath(), enabled, config().pickStringRegionBased(
+        enabled = config.getBoolean(getBasePath() + ".enabled", enabled, config().pickStringRegionBased(
             "Set to true to enable features below.",
             "设置为 true 以启用以下功能."
         ));
