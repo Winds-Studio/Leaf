@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Mon, 19 Jan 2026 22:26:07 +0800
+Subject: [PATCH] Prevents entities from moving into weak loaded chunks
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index cf2a365bcbb1a278e5553c16ffef6d9ae81f4d41..1a37a469924da67cfc34a9564a346fee9f3dbe7e 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -250,7 +250,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     }
+ 
+     // Paper start
+-    public final boolean areChunksLoadedForMove(AABB box) {
++    public final boolean areChunksLoadedForMove(AABB box) { // Leaf - diff on change - update areChunksLoadedForEntityMove if this changed
+         // copied code from collision methods, so that we can guarantee that they won't load chunks (we don't override
+         // CollisionGetter methods for VoxelShapes)
+         // be more strict too, add a block (dumb plugins in move events?)
+@@ -276,8 +276,40 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+             }
+         }
+ 
++        return true;
++    } // Leaf - diff on change - update areChunksLoadedForEntityMove if this changed
++
++    // Leaf start - Prevent entity from moving into weak loaded chunks
++    public final boolean areChunksLoadedForEntityMove(AABB box) {
++        // copied code from collision methods, so that we can guarantee that they won't load chunks (we don't override
++        // CollisionGetter methods for VoxelShapes)
++        // be more strict too, add a block (dumb plugins in move events?)
++        int minBlockX = Mth.floor(box.minX - 1.0E-7D) - 3;
++        int maxBlockX = Mth.floor(box.maxX + 1.0E-7D) + 3;
++
++        int minBlockZ = Mth.floor(box.minZ - 1.0E-7D) - 3;
++        int maxBlockZ = Mth.floor(box.maxZ + 1.0E-7D) + 3;
++
++        int minChunkX = minBlockX >> 4;
++        int maxChunkX = maxBlockX >> 4;
++
++        int minChunkZ = minBlockZ >> 4;
++        int maxChunkZ = maxBlockZ >> 4;
++
++        ServerChunkCache chunkProvider = this.getChunkSource();
++
++        for (int cx = minChunkX; cx <= maxChunkX; ++cx) {
++            for (int cz = minChunkZ; cz <= maxChunkZ; ++cz) {
++                LevelChunk chunk = chunkProvider.getChunkAtIfLoadedImmediately(cx, cz);
++                if (chunk == null || !chunk.getFullStatus().isOrAfter(FullChunkStatus.ENTITY_TICKING)) { // check chunk status
++                    return false;
++                }
++            }
++        }
++
+         return true;
+     }
++    // Leaf end - Prevent entity from moving into weak loaded chunks
+ 
+     public final void loadChunksForMoveAsync(AABB box, ca.spottedleaf.concurrentutil.util.Priority priority,
+                                              java.util.function.Consumer<List<net.minecraft.world.level.chunk.ChunkAccess>> onLoad) {
+diff --git a/net/minecraft/world/entity/projectile/ThrowableProjectile.java b/net/minecraft/world/entity/projectile/ThrowableProjectile.java
+index 47f2e940b68738cb02719cd82a5c0fff56fba062..9b2144e4f73bdb1d1aab1b7185149380bd04b4a0 100644
+--- a/net/minecraft/world/entity/projectile/ThrowableProjectile.java
++++ b/net/minecraft/world/entity/projectile/ThrowableProjectile.java
+@@ -12,6 +12,7 @@ import net.minecraft.world.phys.Vec3;
+ 
+ public abstract class ThrowableProjectile extends Projectile {
+     private static final float MIN_CAMERA_DISTANCE_SQUARED = 12.25F;
++    protected boolean preventMoveIntoWeakLoadedChunks = org.dreeam.leaf.config.modules.gameplay.PreventMoveIntoWeakLoadedChunks.isThrowableProjectilesEnabled(); // Leaf - Prevent entity from moving into weak loaded chunks
+ 
+     protected ThrowableProjectile(EntityType<? extends ThrowableProjectile> type, Level level) {
+         super(type, level);
+@@ -57,7 +58,20 @@ public abstract class ThrowableProjectile extends Projectile {
+         if (hitResultOnMoveVector.getType() != HitResult.Type.MISS) {
+             location = hitResultOnMoveVector.getLocation();
+         } else {
+-            location = this.position().add(this.getDeltaMovement());
++            // Leaf start - Prevent entity from moving into weak loaded chunks
++            if (preventMoveIntoWeakLoadedChunks) {
++                Vec3 previousLocation = this.position();
++                location = this.position().add(this.getDeltaMovement());
++                if (this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
++                    if (!serverLevel.areChunksLoadedForEntityMove(this.getBoundingBox().expandTowards(location.subtract(previousLocation)))) {
++                        location = previousLocation;
++                        this.setDeltaMovement(Vec3.ZERO);
++                    }
++                }
++            } else {
++                location = this.position().add(this.getDeltaMovement());
++            }
++            // Leaf end - Prevent entity from moving into weak loaded chunks
+         }
+ 
+         this.setPos(location);
