@@ -6,7 +6,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 public class MCBugFix extends ConfigModules {
 
     public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".vanilla-bug-fix";
+        return EnumConfigCategory.FIXES.getBaseKeyName() + ".vanilla-bug-fix";
     }
 
     public static boolean mc270656 = false;
