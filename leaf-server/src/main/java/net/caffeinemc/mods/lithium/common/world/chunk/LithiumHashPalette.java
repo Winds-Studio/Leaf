@@ -1,4 +1,4 @@
-// Gale - Lithium - faster chunk serialization
+// Leaf - Lithium - faster hash palette
 
 package net.caffeinemc.mods.lithium.common.world.chunk;
 

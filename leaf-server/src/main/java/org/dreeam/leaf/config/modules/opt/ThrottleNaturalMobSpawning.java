@@ -1,6 +1,7 @@
 package org.dreeam.leaf.config.modules.opt;
 
 import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.level.NaturalSpawner;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 
@@ -24,7 +25,7 @@ public class ThrottleNaturalMobSpawning extends ConfigModules {
             随机跳过这些区块中 1-`spawn-chance`% 的生物生成尝试.
             达到生成限制时, 失败计数器不会增加.""");
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        MobCategory[] categories = MobCategory.values();
+        MobCategory[] categories = NaturalSpawner.SPAWNING_CATEGORIES;
         failedAttempts = new long[categories.length];
         spawnChance = new int[categories.length];
         for (int i = 0; i < categories.length; i++) {

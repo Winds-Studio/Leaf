@@ -1,3 +1,6 @@
+// Removed since Leaf 1.21.11
+// Since Java already provides more flexible utils for using Virtual Threads
+
 // Gale - virtual thread support
 
 package org.galemc.gale.virtualthread;

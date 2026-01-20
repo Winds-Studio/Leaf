@@ -94,37 +94,57 @@ public final class DespawnMap implements Consumer<Entity> {
     }
 
     private boolean checkDespawn(final Entity entity) {
-        if (entity instanceof Mob mob) {
-            if (!(mob instanceof EnderDragon)) {
-                if (difficultyIsPeaceful && mob.shouldDespawnInPeaceful()) {
-                    return true;
-                } else if (mob instanceof WitherBoss || mob.isPersistenceRequired() || mob.requiresCustomPersistence()) {
-                    mob.noActionTime = 0;
-                    return false;
-                } else {
-                    final int i = mob.getType().getCategory().ordinal();
-                    final double hardDist = this.hard[i];
-                    final Vec3 vec3 = mob.position;
-                    final double dist = this.tree.nearestSqr(vec3.x, vec3.y, vec3.z, hardDist);
-                    if (dist == Double.POSITIVE_INFINITY) {
-                        return false;
-                    } else if (dist >= hardDist) {
-                        return mob.removeWhenFarAway(dist);
-                    } else if (dist > this.sort[i]) {
-                        return mob.noActionTime > 600 && mob.random.nextInt(800) == 0 && mob.removeWhenFarAway(dist);
-                    } else {
-                        mob.noActionTime = 0;
-                        return false;
-                    }
-                }
-            } else {
-                return false;
-            }
-        } else if (!(entity instanceof ShulkerBullet)) {
-            return false;
-        } else {
-            return difficultyIsPeaceful;
+        if (!(entity instanceof Mob mob)) {
+            // ShulkerBullet#checkDespawn
+            return entity instanceof ShulkerBullet && difficultyIsPeaceful;
         }
+
+        // EnderDragon#checkDespawn nop
+        if (mob instanceof EnderDragon) {
+            return false;
+        }
+
+        // WitherBoss#checkDespawn
+        if (mob instanceof WitherBoss) {
+            if (difficultyIsPeaceful && mob.shouldDespawnInPeaceful()) {
+                return true;
+            }
+            mob.noActionTime = 0;
+            return false;
+        }
+
+        // Mob#checkDespawn
+
+        if (difficultyIsPeaceful && mob.shouldDespawnInPeaceful()) {
+            return true;
+        }
+
+        if (mob.isPersistenceRequired() || mob.requiresCustomPersistence()) {
+            mob.noActionTime = 0;
+            return false;
+        }
+
+        final int category = mob.getType().getCategory().ordinal();
+        final double hardDist = this.hard[category];
+        final Vec3 pos = mob.position;
+        final double dist = this.tree.nearestSqr(pos.x, pos.y, pos.z, hardDist);
+
+        if (dist == Double.POSITIVE_INFINITY) {
+            return false;
+        }
+
+        if (dist >= hardDist) {
+            return mob.removeWhenFarAway(dist);
+        }
+
+        if (dist > this.sort[category]) {
+            return mob.noActionTime > 600
+                && mob.random.nextInt(800) == 0
+                && mob.removeWhenFarAway(dist);
+        }
+
+        mob.noActionTime = 0;
+        return false;
     }
 
     @Override
