@@ -4,7 +4,6 @@ import it.unimi.dsi.fastutil.longs.LongCollection;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSpliterator;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Serial;
 import java.util.Collection;
@@ -171,7 +170,7 @@ public class SyncLongOpenHashSet extends LongOpenHashSet {
     }
 
     @Override
-    public <T> T[] toArray(@NotNull IntFunction<T[]> generator) {
+    public <T> T[] toArray(IntFunction<T[]> generator) {
         synchronized (this) {
             return super.toArray(generator);
         }

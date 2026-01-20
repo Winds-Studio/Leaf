@@ -9,8 +9,7 @@ import net.minecraft.network.protocol.common.custom.DiscardedPayload;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.jetbrains.annotations.Contract;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 
 public class Protocols {
 
@@ -37,7 +36,7 @@ public class Protocols {
         }
     }
 
-    public static void handle(ServerPlayer player, @NotNull DiscardedPayload payload) {
+    public static void handle(ServerPlayer player, DiscardedPayload payload) {
         for (Protocol protocol : PROTOCOLS) {
             if (payload.type().id().getNamespace().equals(protocol.namespace())) {
                 var leafCustomPayload = decode(protocol, payload);
@@ -68,7 +67,7 @@ public class Protocols {
     }
 
     @Contract("_ -> new")
-    public static @NotNull ClientboundCustomPayloadPacket createPacket(LeafCustomPayload payload) {
+    public static ClientboundCustomPayloadPacket createPacket(LeafCustomPayload payload) {
         return new ClientboundCustomPayloadPacket(payload);
     }
 

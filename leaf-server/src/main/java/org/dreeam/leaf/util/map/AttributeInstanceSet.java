@@ -3,7 +3,6 @@ package org.dreeam.leaf.util.map;
 import it.unimi.dsi.fastutil.ints.IntArraySet;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
-import org.jetbrains.annotations.NotNull;
 
 import java.lang.reflect.Array;
 import java.util.*;
@@ -32,7 +31,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
     }
 
     @Override
-    public @NotNull Iterator<AttributeInstance> iterator() {
+    public Iterator<AttributeInstance> iterator() {
         return new CloneIterator(inner.toIntArray(), map);
     }
 
@@ -60,7 +59,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
     }
 
     @Override
-    public AttributeInstance @NotNull [] toArray() {
+    public AttributeInstance[] toArray() {
         int[] innerClone = inner.toIntArray();
         AttributeInstance[] arr = new AttributeInstance[innerClone.length];
         for (int i = 0; i < arr.length; i++) {
@@ -71,7 +70,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
 
     @SuppressWarnings({"unchecked"})
     @Override
-    public <T> T @NotNull [] toArray(T[] a) {
+    public <T> T[] toArray(T[] a) {
         if (a == null || (a.getClass() == AttributeInstance[].class && a.length == 0)) {
             return (T[]) toArray();
         }

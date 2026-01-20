@@ -6,19 +6,20 @@ import org.bukkit.entity.Entity;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.block.BlockEvent;
-import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NullMarked;
 
 /**
  * Called when a block executes its explosion hit actions.
  * If the event is cancelled, the block will not execute the explosion hit actions.
  */
+@NullMarked
 public class BlockExplosionHitEvent extends BlockEvent implements Cancellable {
     private static final HandlerList handlers = new HandlerList();
     private boolean cancelled;
     private final Entity source;
     private final ExplosionResult result;
 
-    public BlockExplosionHitEvent(@NotNull Block block, Entity source, ExplosionResult result) {
+    public BlockExplosionHitEvent(final Block block, final Entity source, final ExplosionResult result) {
         super(block);
         this.source = source;
         this.result = result;
@@ -39,7 +40,7 @@ public class BlockExplosionHitEvent extends BlockEvent implements Cancellable {
     }
 
     @Override
-    public void setCancelled(boolean cancel) {
+    public void setCancelled(final boolean cancel) {
         this.cancelled = cancel;
     }
 

@@ -3,7 +3,6 @@ package org.dreeam.leaf.async.path;
 import ca.spottedleaf.concurrentutil.collection.MultiThreadedQueue;
 import net.minecraft.world.level.pathfinder.NodeEvaluator;
 import org.apache.commons.lang3.Validate;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 import java.util.Queue;
@@ -14,11 +13,11 @@ public class NodeEvaluatorCache {
     private static final Map<NodeEvaluatorFeatures, MultiThreadedQueue<NodeEvaluator>> threadLocalNodeEvaluators = new ConcurrentHashMap<>();
     private static final Map<NodeEvaluator, NodeEvaluatorGenerator> nodeEvaluatorToGenerator = new ConcurrentHashMap<>();
 
-    private static @NotNull Queue<NodeEvaluator> getQueueForFeatures(@NotNull NodeEvaluatorFeatures nodeEvaluatorFeatures) {
+    private static Queue<NodeEvaluator> getQueueForFeatures(NodeEvaluatorFeatures nodeEvaluatorFeatures) {
         return threadLocalNodeEvaluators.computeIfAbsent(nodeEvaluatorFeatures, key -> new MultiThreadedQueue<>());
     }
 
-    public static @NotNull NodeEvaluator takeNodeEvaluator(@NotNull NodeEvaluatorGenerator generator, @NotNull NodeEvaluator localNodeEvaluator) {
+    public static NodeEvaluator takeNodeEvaluator(NodeEvaluatorGenerator generator, NodeEvaluator localNodeEvaluator) {
         final NodeEvaluatorFeatures nodeEvaluatorFeatures = NodeEvaluatorFeatures.fromNodeEvaluator(localNodeEvaluator);
         NodeEvaluator nodeEvaluator = getQueueForFeatures(nodeEvaluatorFeatures).poll();
 
@@ -31,7 +30,7 @@ public class NodeEvaluatorCache {
         return nodeEvaluator;
     }
 
-    public static void returnNodeEvaluator(@NotNull NodeEvaluator nodeEvaluator) {
+    public static void returnNodeEvaluator(NodeEvaluator nodeEvaluator) {
         final NodeEvaluatorGenerator generator = nodeEvaluatorToGenerator.remove(nodeEvaluator);
         Validate.notNull(generator, "NodeEvaluator already returned");
 
@@ -39,7 +38,7 @@ public class NodeEvaluatorCache {
         getQueueForFeatures(nodeEvaluatorFeatures).offer(nodeEvaluator);
     }
 
-    public static void removeNodeEvaluator(@NotNull NodeEvaluator nodeEvaluator) {
+    public static void removeNodeEvaluator(NodeEvaluator nodeEvaluator) {
         nodeEvaluatorToGenerator.remove(nodeEvaluator);
     }
 }

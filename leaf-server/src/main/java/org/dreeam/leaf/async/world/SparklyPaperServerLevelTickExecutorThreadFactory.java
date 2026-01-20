@@ -1,10 +1,11 @@
 package org.dreeam.leaf.async.world;
 
 import ca.spottedleaf.moonrise.common.util.TickThread;
-import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NullMarked;
 
 import java.util.concurrent.ThreadFactory;
 
+@NullMarked
 public class SparklyPaperServerLevelTickExecutorThreadFactory implements ThreadFactory {
 
     private final String worldName;
@@ -14,7 +15,7 @@ public class SparklyPaperServerLevelTickExecutorThreadFactory implements ThreadF
     }
 
     @Override
-    public Thread newThread(@NotNull Runnable runnable) {
+    public Thread newThread(Runnable runnable) {
         TickThread.ServerLevelTickThread tickThread = new TickThread.ServerLevelTickThread(runnable, "Leaf World Ticking Thread - " + this.worldName);
 
         if (tickThread.isDaemon()) {

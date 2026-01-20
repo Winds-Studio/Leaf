@@ -8,8 +8,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 import org.dreeam.leaf.config.modules.opt.FastBiomeManagerSeedObfuscation;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.NullMarked;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.Command;
@@ -41,6 +40,7 @@ import java.util.jar.JarFile;
  *  Yoinked from: https://github.com/xGinko/AnarchyExploitFixes/ & https://github.com/LuminolMC/Luminol
  *  @author: @xGinko & @MrHua269
  */
+@NullMarked
 public class LeafConfig {
 
     public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
@@ -59,7 +59,7 @@ public class LeafConfig {
     /* Load & Reload */
 
     // Reload config (async)
-    public static @NotNull CompletableFuture<Void> reloadAsync(CommandSender sender) {
+    public static CompletableFuture<Void> reloadAsync(CommandSender sender) {
         return CompletableFuture.runAsync(() -> {
             try {
                 long begin = System.nanoTime();
@@ -120,7 +120,7 @@ public class LeafConfig {
 
     /* Scan classes under package */
 
-    public static @NotNull Set<Class<?>> getClasses(String pack) {
+    public static Set<Class<?>> getClasses(String pack) {
         Set<Class<?>> classes = new LinkedHashSet<>();
         String packageDirName = pack.replace('.', '/');
         Enumeration<URL> dirs;
@@ -223,7 +223,7 @@ public class LeafConfig {
             "config/gale-world-defaults.yml"
         ));
 
-        @Nullable String existing = System.getProperty("spark.serverconfigs.extra");
+        String existing = System.getProperty("spark.serverconfigs.extra");
         if (existing != null) {
             extraConfigs.addAll(Arrays.asList(existing.split(",")));
         }
@@ -240,7 +240,7 @@ public class LeafConfig {
     }
 
     private static List<String> buildSparkHiddenPaths() {
-        @Nullable String existing = System.getProperty("spark.serverconfigs.hiddenpaths");
+        String existing = System.getProperty("spark.serverconfigs.hiddenpaths");
 
         List<String> extraHidden = existing != null ? new ArrayList<>(Arrays.asList(existing.split(","))) : new ArrayList<>();
         extraHidden.add(SentryDSN.sentryDsnConfigPath); // Hide Sentry DSN key

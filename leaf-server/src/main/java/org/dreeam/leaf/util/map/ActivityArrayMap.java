@@ -2,7 +2,6 @@ package org.dreeam.leaf.util.map;
 
 import net.minecraft.world.entity.schedule.Activity;
 import org.dreeam.leaf.util.RegistryTypeManager;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 
@@ -151,7 +150,6 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
-    @NotNull
     public Set<Activity> keySet() {
         if (keySet == null) {
             keySet = new KeySet();
@@ -160,7 +158,6 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
-    @NotNull
     public Collection<V> values() {
         if (values == null) {
             values = new Values();
@@ -169,7 +166,6 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
-    @NotNull
     public Set<Entry<Activity, V>> entrySet() {
         if (entrySet == null) {
             entrySet = new EntrySet();
@@ -179,7 +175,6 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     private final class KeySet extends AbstractSet<Activity> {
         @Override
-        @NotNull
         public Iterator<Activity> iterator() {
             return new Iterator<>() {
                 private int index = 0;
@@ -225,7 +220,6 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     private final class Values extends AbstractCollection<V> {
         @Override
-        @NotNull
         public Iterator<V> iterator() {
             return new Iterator<>() {
                 private int index = 0;
@@ -271,7 +265,6 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     private final class EntrySet extends AbstractSet<Entry<Activity, V>> {
         @Override
-        @NotNull
         public Iterator<Entry<Activity, V>> iterator() {
             return new Iterator<>() {
                 private int index = 0;

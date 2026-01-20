@@ -1,7 +1,6 @@
 package org.dreeam.leaf.util.map;
 
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 import java.util.function.Predicate;
@@ -111,7 +110,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
     }
 
     @Override
-    public boolean removeIf(@NotNull final Predicate<? super WrappedGoal> filter) {
+    public boolean removeIf(final Predicate<? super WrappedGoal> filter) {
         Objects.requireNonNull(filter);
 
         boolean removed = false;
@@ -166,7 +165,6 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
     }
 
     @Override
-    @NotNull
     public Iterator<WrappedGoal> iterator() {
         return new Iterator<>() {
             private int cursor = 0;
