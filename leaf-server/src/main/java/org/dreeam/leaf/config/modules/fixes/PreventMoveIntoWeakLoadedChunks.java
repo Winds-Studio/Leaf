@@ -9,10 +9,10 @@ public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    public static boolean throwableProjectiles = false;
+    public static boolean projectiles = false;
 
-    public static boolean isThrowableProjectilesEnabled() {
-        return enabled && throwableProjectiles;
+    public static boolean isProjectileEnabled() {
+        return enabled && projectiles;
     }
 
     @Override
@@ -27,8 +27,8 @@ public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
             "设置为 true 以启用以下功能."
         ));
 
-        throwableProjectiles = config.getBoolean(getBasePath() + ".throwable-projectiles", throwableProjectiles, config().pickStringRegionBased(
-            "Prevents throwable projectiles from moving into weak loaded chunks.",
+        projectiles = config.getBoolean(getBasePath() + ".projectiles", projectiles, config().pickStringRegionBased(
+            "Prevents projectiles from moving into weak loaded chunks.",
             "阻止投掷物进入弱加载区块."
         ));
     }
