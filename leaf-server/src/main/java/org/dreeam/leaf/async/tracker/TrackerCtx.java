@@ -50,6 +50,7 @@ public final class TrackerCtx {
     private final ObjectArrayList<ChunkMap.TrackedEntity> resync = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
+    private final ObjectArrayList<Entity> debugRegistration = new ObjectArrayList<>();
 
     private record BossEvent(WitherBoss witherBoss,
                              ObjectArrayList<ServerPlayer> add,
@@ -93,6 +94,9 @@ public final class TrackerCtx {
                 witherBosses.add(new BossEvent(witherBoss, new ObjectArrayList<>(), new ObjectArrayList<>()));
             }
             witherBosses.getLast().add.add(connection.getPlayer());
+        }
+        if (flag) {
+            debugRegistration.add(entity);
         }
     }
 
@@ -142,6 +146,7 @@ public final class TrackerCtx {
         pluginEntity.addAll(other.pluginEntity);
         resync.addAll(other.resync);
         syncAttributes.addAll(other.syncAttributes);
+        debugRegistration.addAll(other.debugRegistration);
         return other.packets;
     }
 
@@ -153,6 +158,7 @@ public final class TrackerCtx {
         pluginEntity.clear();
         resync.clear();
         syncAttributes.clear();
+        debugRegistration.clear();
         packets.clear();
     }
 
@@ -165,6 +171,11 @@ public final class TrackerCtx {
 
         if (!startSeen.isEmpty()) {
             boolean callEvent = PlayerTrackEntityEvent.getHandlerList().getRegisteredListeners().length != 0;
+            for (Entity entity : debugRegistration) {
+                if (entity.moonrise$getTrackedEntity() != null && !entity.isRemoved()) {
+                    world.debugSynchronizers().registerEntity(entity);
+                }
+            }
             for (StartSeen startSeen : startSeen) {
                 handleStartTrack(startSeen, callEvent);
             }
@@ -271,17 +282,21 @@ public final class TrackerCtx {
                 player.getBukkitEntity(),
                 startSeen.e.getBukkitEntity()
             ).callEvent()) {
-            } else if (player.level() == world) {
-                ClientboundBundlePacket toSend;
-                if (flag && player == startSeen.e) {
-                    ObjectArrayList<Packet<? super ClientGamePacketListener>> copy = new ObjectArrayList<>(list);
-                    copy.add(new ClientboundUpdateAttributesPacket(startSeen.e.getId(), List.of(player.getBukkitEntity().getScaledMaxHealth())));
-                    toSend = new ClientboundBundlePacket(copy);
-                } else {
-                    toSend = packet;
-                }
-                connection.send(toSend);
+                continue;
+            } else if (player.level() != world) {
+                // do not send old entities if it changed dimension
+                continue;
             }
+            ClientboundBundlePacket toSend;
+            if (flag && player == startSeen.e) {
+                ObjectArrayList<Packet<? super ClientGamePacketListener>> copy = new ObjectArrayList<>(list);
+                copy.add(new ClientboundUpdateAttributesPacket(startSeen.e.getId(), List.of(player.getBukkitEntity().getScaledMaxHealth())));
+                toSend = new ClientboundBundlePacket(copy);
+            } else {
+                toSend = packet;
+            }
+            connection.send(toSend); // #startTrackingEntity call after #send
+            world.debugSynchronizers().startTrackingEntity(player, startSeen.e);
         }
     }
 
@@ -295,6 +310,7 @@ public final class TrackerCtx {
                 ).callEvent();
             }
             if (tracker == null || !tracker.seenBy.contains(player.connection)) {
+                // client side will clean entities if it has changed dimension
                 send(player.connection, new ClientboundRemoveEntitiesPacket(untrack.e.getId()));
             }
         }
