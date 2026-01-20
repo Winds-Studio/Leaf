@@ -5,7 +5,7 @@ import org.dreeam.leaf.config.EnumConfigCategory;
 
 public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
     public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".prevent-moving-into-weak-loaded-chunks";
+        return EnumConfigCategory.FIXES.getBaseKeyName() + ".prevent-moving-into-weak-loaded-chunks";
     }
 
     public static boolean enabled = false;
