@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Leaf <noreply@leafmc.one>
+Date: Wed, 22 Jan 2026 12:00:00 +0000
+Subject: [PATCH] Add JUring file I/O
+
+
+diff --git a/net/minecraft/world/level/chunk/storage/RegionFile.java b/net/minecraft/world/level/chunk/storage/RegionFile.java
+--- a/net/minecraft/world/level/chunk/storage/RegionFile.java
++++ b/net/minecraft/world/level/chunk/storage/RegionFile.java
+@@ -19,6 +19,7 @@
+ import net.minecraft.resources.Identifier;
+ import net.minecraft.util.Util;
+ import net.minecraft.util.profiling.jfr.JvmProfiler;
+ import net.minecraft.world.level.ChunkPos;
++import org.dreeam.leaf.util.LeafFileIoUring;
+ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ 
+@@ -35,6 +36,7 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patches
+     final RegionStorageInfo info;
+     private final Path path;
+     private final FileChannel file;
++    private @Nullable LeafFileIoUring leafFileIoUring;
+     private final Path externalFileDir;
+     final RegionFileVersion version;
+     private final ByteBuffer header = ByteBuffer.allocateDirect(8192);
+@@ -433,6 +435,7 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patches
+             } else {
+                 this.file = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+             }
++            this.leafFileIoUring = sync ? null : LeafFileIoUring.open(path);
+ 
+             this.usedSectors.force(0, 2);
+             this.header.position(0);
+@@ -573,7 +576,17 @@ public synchronized @Nullable DataInputStream getChunkDataInputStream(ChunkPos ch
+             // Spigot end
+             int i = numSectors * 4096;
+             ByteBuffer byteBuffer = ByteBuffer.allocate(i);
+-            this.file.read(byteBuffer, sectorNumber * 4096);
++            if (this.leafFileIoUring != null) {
++                try {
++                    this.leafFileIoUring.read(byteBuffer, sectorNumber * 4096L);
++                } catch (IOException ex) {
++                    this.disableLeafFileIoUring(ex);
++                    this.file.read(byteBuffer, sectorNumber * 4096L);
++                }
++            } else {
++                this.file.read(byteBuffer, sectorNumber * 4096L);
++            }
+             byteBuffer.flip();
+             if (byteBuffer.remaining() < 5) {
+                 LOGGER.error("Chunk {} header is truncated: expected {} but read {}", chunkPos, i, byteBuffer.remaining());
+@@ -814,7 +827,16 @@ public synchronized void write(ChunkPos chunkPos, ByteBuffer chunkData) throws IO
+         } else {
+             i3 = this.usedSectors.allocate(i2);
+             commitOp = () -> Files.deleteIfExists(this.getExternalChunkPath(chunkPos));
+-            this.file.write(chunkData, i3 * 4096);
++            if (this.leafFileIoUring != null) {
++                try {
++                    this.leafFileIoUring.write(chunkData, i3 * 4096L);
++                } catch (IOException ex) {
++                    this.disableLeafFileIoUring(ex);
++                    this.file.write(chunkData, i3 * 4096L);
++                }
++            } else {
++                this.file.write(chunkData, i3 * 4096L);
++            }
+         }
+ 
+         this.offsets.put(offsetIndex, this.packSectorOffset(i3, i2));
+@@ -890,6 +912,9 @@ public void close() throws IOException {
+         } finally {
+             try {
+                 this.file.force(true);
+             } finally {
++                if (this.leafFileIoUring != null) {
++                    this.leafFileIoUring.close();
++                }
+                 this.file.close();
+             }
+@@ -907,6 +932,18 @@ private void padToFullSector() throws IOException {
+             this.file.write(byteBuffer, i1 - 1);
+         }
+     }
++
++    private void disableLeafFileIoUring(IOException ex) {
++        if (this.leafFileIoUring == null) {
++            return;
++        }
++        try {
++            this.leafFileIoUring.close();
++        } catch (Exception ignored) {
++        }
++        this.leafFileIoUring = null;
++        LOGGER.warn("JUring file I/O disabled for {}: {}", this.path, ex.toString());
++        LOGGER.debug("JUring file I/O failure", ex);
++    }
