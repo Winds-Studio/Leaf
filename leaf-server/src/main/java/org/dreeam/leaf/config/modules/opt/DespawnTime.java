@@ -11,23 +11,23 @@ public class DespawnTime extends ConfigModules {
     }
 
     @Experimental
-    public static boolean activeWeakLoading = false;
+    public static boolean proactiveWeakLoading = false;
     public static int maxEntityToProcess = 20;
 
     @Override
     public void onLoaded() {
-        activeWeakLoading = config.getBoolean(getBasePath() + ".active-weak-loading-despawn", activeWeakLoading,
+        proactiveWeakLoading = config.getBoolean(getBasePath() + ".proactive-weak-loading-despawn", proactiveWeakLoading,
             config.pickStringRegionBased("""
-                    Active despawn check for weak-loaded entities.
+                    Proactive despawn check for weak-loaded entities.
                     This is an experimental feature.""",
                 """
-                    启用主动弱加载实体消失检查,
-                    这是一个实验性功能."""));
+                    启用主动弱加载实体消失检查，
+                    这是一个实验性功能。"""));
         maxEntityToProcess = config.getInt(getBasePath() + ".max-entity-to-process", maxEntityToProcess,
             config.pickStringRegionBased("""
                     Maximum amount of entities to process per tick.""",
                 """
-                    每刻处理最大实体数.
-                    最低为当前实体量的 5%."""));
+                    每刻处理最大实体数。
+                    最低为当前实体量的 5%。"""));
     }
 }
