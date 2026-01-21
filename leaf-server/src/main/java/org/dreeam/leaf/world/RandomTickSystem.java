@@ -41,7 +41,6 @@ public final class RandomTickSystem {
         final LevelChunk[] raw = entityTickingChunks.getRawDataUnchecked();
         final int size = entityTickingChunks.size();
         final boolean disableIceAndSnow = world.paperConfig().environment.disableIceAndSnow;
-        final BlockPos.MutableBlockPos cachedMutablePos = ServerLevel.POS_CACHE.get();
         if (randomTickSpeed <= 0) {
             return;
         }
@@ -57,7 +56,7 @@ public final class RandomTickSystem {
         for (int k = 0, len = queue.size(); k < len; ++k) {
             final long packed = q[k];
             final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
-            tickBlock(world, chunk, cachedMutablePos, (int) (packed & SECTION_MASK), random, minY);
+            tickBlock(world, chunk, (int) (packed & SECTION_MASK), random, minY);
         }
     }
 
@@ -223,14 +222,14 @@ public final class RandomTickSystem {
         }
     }
 
-    private static void tickBlock(ServerLevel world, LevelChunk chunk, BlockPos.MutableBlockPos cachedMutablePos, int sectionIdx, BitRandomSource random, int minSection) {
+    private static void tickBlock(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection) {
         LevelChunkSection section = chunk.getSection(sectionIdx);
         ShortList list = section.moonrise$getTickingBlockList();
         int size = list.size();
         if (size == 0) return;
         short location = list.getRaw(boundedNextInt(random, size));
         BlockState state = section.states.get(location);
-        final BlockPos pos = cachedMutablePos.set((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
+        final BlockPos pos = ServerLevel.POS_CACHE.set((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
         final BlockPos finalPos = org.dreeam.leaf.config.modules.opt.MutableBlockPos.enabled ? pos : pos.immutable();
         state.randomTick(world, finalPos, random);
 
