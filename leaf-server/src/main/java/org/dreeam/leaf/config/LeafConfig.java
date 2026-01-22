@@ -8,6 +8,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 import org.dreeam.leaf.config.modules.opt.FastBiomeManagerSeedObfuscation;
+import org.dreeam.leaf.util.LeafConstants;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.bukkit.Bukkit;
@@ -32,8 +33,10 @@ import java.util.Date;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -50,6 +53,7 @@ public class LeafConfig {
     protected static final String I_LEVEL_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per level config
 
     private static LeafGlobalConfig leafGlobalConfig;
+    private static final AtomicBoolean LOGGED_URING_STATUS = new AtomicBoolean(false);
 
     //private static int preMajorVer;
     private static int preMinorVer;
@@ -85,6 +89,7 @@ public class LeafConfig {
 
             purgeOutdated();
             loadConfig(true);
+            logUringStatusOnce();
 
             LOGGER.info("Successfully loaded config in {}ms.", (System.nanoTime() - begin) / 1_000_000);
         } catch (Exception e) {
@@ -102,6 +107,23 @@ public class LeafConfig {
 
         // Load config modules
         ConfigModules.initModules();
+    }
+
+    private static void logUringStatusOnce() {
+        if (!LOGGED_URING_STATUS.compareAndSet(false, true)) {
+            return;
+        }
+        boolean enabled = LeafConstants.ENABLE_FILE_IO_URING;
+        boolean isLinux = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux");
+        if (!enabled) {
+            LOGGER.info("JUring file I/O disabled (set -Dleaf.enable-file-io-uring=true to enable).");
+            return;
+        }
+        if (!isLinux) {
+            LOGGER.warn("JUring file I/O requested but OS is not Linux; disabled.");
+            return;
+        }
+        LOGGER.info("JUring file I/O requested; will initialize on first region I/O.");
     }
 
     public static LeafGlobalConfig config() {
