@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -23,6 +24,7 @@ public final class LeafFileIoUring implements AutoCloseable {
     private static final int QUEUE_DEPTH = 256;
     private static final Object INIT_LOCK = new Object();
     private static final AtomicReference<Availability> AVAILABILITY = new AtomicReference<>(Availability.UNKNOWN);
+    private static final AtomicBoolean LOGGED_ENABLED = new AtomicBoolean(false);
     private static final ThreadLocal<JUring> RINGS = new ThreadLocal<>();
 
     private enum Availability {
@@ -166,6 +168,9 @@ public final class LeafFileIoUring implements AutoCloseable {
             }
             try (JUring ring = new JUring(QUEUE_DEPTH, IoUringOptions.IORING_SETUP_SINGLE_ISSUER)) {
                 AVAILABILITY.set(Availability.AVAILABLE);
+                if (LOGGED_ENABLED.compareAndSet(false, true)) {
+                    LOGGER.info("JUring file I/O enabled.");
+                }
                 return true;
             } catch (Throwable t) {
                 disable(t);
