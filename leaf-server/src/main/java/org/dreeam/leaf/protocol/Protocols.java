@@ -11,7 +11,10 @@ import net.minecraft.server.level.ServerPlayer;
 import org.jetbrains.annotations.Contract;
 import org.jspecify.annotations.Nullable;
 
-public class Protocols {
+public final class Protocols {
+
+    private Protocols() {
+    }
 
     private static final ObjectArrayList<Protocol> PROTOCOLS = new ObjectArrayList<>();
 

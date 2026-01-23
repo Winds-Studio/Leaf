@@ -19,6 +19,7 @@ import org.dreeam.leaf.protocol.DoABarrelRollPackets.ModConfigServer;
 import org.dreeam.leaf.protocol.DoABarrelRollPackets.RollSyncC2SPacket;
 import org.dreeam.leaf.protocol.DoABarrelRollPackets.RollSyncS2CPacket;
 import org.bukkit.event.player.PlayerKickEvent;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 import java.util.OptionalInt;
@@ -30,6 +31,7 @@ public class DoABarrelRollProtocol implements Protocol {
     private static final int PROTOCOL_VERSION = 4;
     private static final ModConfigServer DEFAULT = new ModConfigServer(false, false, false, 40, KineticDamage.VANILLA);
     private static final Component SYNC_TIMEOUT_MESSAGE = Component.literal("Please install Do a Barrel Roll 2.4.0 or later to play on this server.");
+    @Nullable
     private static DoABarrelRollProtocol INSTANCE = null;
 
     private final List<Protocols.TypeAndCodec<FriendlyByteBuf, ? extends LeafCustomPayload>> c2s = ImmutableList.of(
@@ -54,9 +56,10 @@ public class DoABarrelRollProtocol implements Protocol {
     public final Reference2FloatMap<ServerGamePacketListenerImpl> lastRollMap = Reference2FloatMaps.synchronize(new Reference2FloatOpenHashMap<>());
 
     public static void deinit() {
-        if (INSTANCE != null) {
+        DoABarrelRollProtocol instance = INSTANCE;
+        if (instance != null) {
             INSTANCE = null;
-            Protocols.unregister(INSTANCE);
+            Protocols.unregister(instance);
         }
     }
 
@@ -260,7 +263,7 @@ public class DoABarrelRollProtocol implements Protocol {
         return new ConfigSyncS2CPacket(PROTOCOL_VERSION, config, isLimited, isLimited ? DEFAULT : config);
     }
 
-    private static class ClientInfo {
+    private static final class ClientInfo {
         private HandshakeState state;
         private int protocolVersion;
         // private boolean isLimited;
@@ -272,7 +275,7 @@ public class DoABarrelRollProtocol implements Protocol {
         }
     }
 
-    private static class DelayedRunnable {
+    private static final class DelayedRunnable {
         private final Runnable runnable;
         private final int delay;
         private int ticks = 0;
