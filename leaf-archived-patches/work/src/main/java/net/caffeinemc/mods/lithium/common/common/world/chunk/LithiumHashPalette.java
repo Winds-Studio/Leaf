@@ -15,6 +15,7 @@ import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PaletteResize;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Predicate;
@@ -198,6 +199,6 @@ public class LithiumHashPalette<T> implements Palette<T> {
     }
 
     public static <A> Palette<A> create(int bits, List<A> list) {
-        return new LithiumHashPalette<>(bits, list);
+        return new LithiumHashPalette<>(bits, new ArrayList<>(list));
     }
 }

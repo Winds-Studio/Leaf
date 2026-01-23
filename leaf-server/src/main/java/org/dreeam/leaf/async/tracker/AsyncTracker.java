@@ -47,7 +47,7 @@ public final class AsyncTracker {
     }
 
     public void tick(ServerLevel world) {
-        handlePlayerVelocity(world);
+        handlePlayer(world);
         ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
         ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         int trackerEntitiesSize = trackerEntities.size();
@@ -68,8 +68,10 @@ public final class AsyncTracker {
         this.fut = futures;
     }
 
-    private static void handlePlayerVelocity(ServerLevel world) {
+    private static void handlePlayer(ServerLevel world) {
         for (ServerPlayer player : world.players()) {
+            player.updateDataBeforeSync();
+
             if (!player.hurtMarked) {
                 continue;
             }
