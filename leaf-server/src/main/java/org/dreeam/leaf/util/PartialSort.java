@@ -1,6 +1,5 @@
 package org.dreeam.leaf.util;
 
-@org.jspecify.annotations.NullMarked
 public final class PartialSort {
 
     private static final int INSERTION_SORT_THRESHOLD = 12;

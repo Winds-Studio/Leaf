@@ -2,7 +2,6 @@ package org.dreeam.leaf.util;
 
 import net.minecraft.world.entity.Entity;
 
-@org.jspecify.annotations.NullMarked
 public final class FastBitRadixSort {
 
     private static final int SMALL_ARRAY_THRESHOLD = 6;

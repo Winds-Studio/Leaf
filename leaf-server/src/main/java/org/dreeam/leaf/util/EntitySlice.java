@@ -5,8 +5,8 @@ import org.jspecify.annotations.NullMarked;
 
 import java.util.Iterator;
 
-@NullMarked
 public record EntitySlice(Entity[] array, int start, int end) implements Iterable<Entity> {
+
     public EntitySlice(final Entity[] entities) {
         this(entities, 0, entities.length);
     }

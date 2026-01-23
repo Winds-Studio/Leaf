@@ -1,6 +1,5 @@
 package org.dreeam.leaf.util;
 
-@org.jspecify.annotations.NullMarked
 public final class KDTree3D {
 
     private static final double[] EMPTY_DOUBLES = {};
