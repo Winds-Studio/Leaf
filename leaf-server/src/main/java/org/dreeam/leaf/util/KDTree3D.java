@@ -123,7 +123,7 @@ public final class KDTree3D {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
                 final double dz = nzl[j] - tz;
-                dist = Math.min(dist, euclideanDistanceSquared(dz, dy, dx));
+                dist = Math.min(dist, euclideanDistanceSquared(dx, dy, dz));
                 break;
             } else {
                 final int next = ((curr + 1) % 3) << 30;
