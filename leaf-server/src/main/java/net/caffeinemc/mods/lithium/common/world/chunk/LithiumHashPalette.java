@@ -28,7 +28,7 @@ import static it.unimi.dsi.fastutil.Hash.FAST_LOAD_FACTOR;
  * Generally provides better performance over the vanilla {@link net.minecraft.world.level.chunk.HashMapPalette} when calling
  * {@link LithiumHashPalette#idFor(Object, PaletteResize)} through using a faster backing map and reducing pointer chasing.
  */
-public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<T>, FastPalette<T> {
+public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<T>, FastPalette<T> {
     private static final int ABSENT_VALUE = -1;
 
     private final int indexBits;
@@ -67,7 +67,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
 
     // Leaf start - Sync moonrise changes
     @Override
-    public final T @NonNull [] moonrise$getRawPalette(final @NonNull FastPaletteData<T> container) {
+    public T @NonNull [] moonrise$getRawPalette(final @NonNull FastPaletteData<T> container) {
         return this.entries;
     }
     // Leaf end - Sync moonrise changes
