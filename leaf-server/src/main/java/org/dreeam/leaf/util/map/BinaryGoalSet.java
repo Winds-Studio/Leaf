@@ -1,13 +1,14 @@
 package org.dreeam.leaf.util.map;
 
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Predicate;
 
 public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
     private static final WrappedGoal[] EMPTY_ARRAY = {};
-    private WrappedGoal[] a;
+    private @Nullable WrappedGoal[] a;
     private int size;
     private static final int DEFAULT_CAPACITY = 4;
 
@@ -45,7 +46,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
 
         while (left < right) {
             final int mid = (left + right) >>> 1;
-            if (a[mid].getPriority() < priority) {
+            if (Objects.requireNonNull(a[mid]).getPriority() < priority) {
                 left = mid + 1;
             } else {
                 right = mid;
@@ -53,7 +54,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
         }
 
         int gap = left;
-        while (gap < size && a[gap].getPriority() == priority) {
+        while (gap < size && Objects.requireNonNull(a[gap]).getPriority() == priority) {
             if (a[gap] == goal) {
                 return false;
             }
@@ -81,7 +82,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
 
         while (left < right) {
             final int mid = (left + right) >>> 1;
-            if (a[mid].getPriority() < priority) {
+            if (Objects.requireNonNull(a[mid]).getPriority() < priority) {
                 left = mid + 1;
             } else {
                 right = mid;
@@ -89,7 +90,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
         }
 
         int gap = -1;
-        for (int i = left; i < size && a[i].getPriority() == priority; i++) {
+        for (int i = left; i < size && Objects.requireNonNull(a[i]).getPriority() == priority; i++) {
             if (a[i] == goal) {
                 gap = i;
                 break;
@@ -141,14 +142,14 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
 
         while (left < right) {
             final int mid = (left + right) >>> 1;
-            if (a[mid].getPriority() < priority) {
+            if (Objects.requireNonNull(a[mid]).getPriority() < priority) {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
 
-        for (int i = left; i < size && a[i].getPriority() == priority; i++) {
+        for (int i = left; i < size && Objects.requireNonNull(a[i]).getPriority() == priority; i++) {
             if (a[i] == goal) {
                 return true;
             }
@@ -181,7 +182,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
                     throw new NoSuchElementException();
                 }
                 last = cursor;
-                return a[cursor++];
+                return Objects.requireNonNull(a[cursor++]);
             }
 
             @Override
@@ -208,7 +209,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
         return result;
     }
 
-    public WrappedGoal[] elements() {
+    public @Nullable WrappedGoal[] elements() {
         return a;
     }
 }

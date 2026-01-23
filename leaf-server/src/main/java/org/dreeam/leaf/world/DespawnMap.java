@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
 
+@org.jspecify.annotations.NullMarked
 public final class DespawnMap implements Consumer<Entity> {
 
     private static final MobCategory[] CATEGORIES = MobCategory.values();
@@ -94,9 +95,14 @@ public final class DespawnMap implements Consumer<Entity> {
     }
 
     private boolean checkDespawn(final Entity entity) {
+        // ShulkerBullet#checkDespawn
         if (!(entity instanceof Mob mob)) {
-            // ShulkerBullet#checkDespawn
             return entity instanceof ShulkerBullet && difficultyIsPeaceful;
+        }
+
+        // Mob#checkDespawn
+        if (!(mob instanceof EnderDragon || mob instanceof WitherBoss)) {
+            return checkDespawnMob(mob);
         }
 
         // EnderDragon#checkDespawn nop
@@ -105,16 +111,15 @@ public final class DespawnMap implements Consumer<Entity> {
         }
 
         // WitherBoss#checkDespawn
-        if (mob instanceof WitherBoss) {
-            if (difficultyIsPeaceful && mob.shouldDespawnInPeaceful()) {
-                return true;
-            }
-            mob.noActionTime = 0;
-            return false;
+        if (difficultyIsPeaceful && mob.shouldDespawnInPeaceful()) {
+            return true;
         }
+        mob.noActionTime = 0;
+        return false;
 
-        // Mob#checkDespawn
+    }
 
+    private boolean checkDespawnMob(Mob mob) {
         if (difficultyIsPeaceful && mob.shouldDespawnInPeaceful()) {
             return true;
         }
@@ -123,7 +128,6 @@ public final class DespawnMap implements Consumer<Entity> {
             mob.noActionTime = 0;
             return false;
         }
-
         final int category = mob.getType().getCategory().ordinal();
         final double hardDist = this.hard[category];
         final Vec3 pos = mob.position;

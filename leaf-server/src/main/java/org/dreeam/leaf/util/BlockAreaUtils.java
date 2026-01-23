@@ -2,6 +2,7 @@ package org.dreeam.leaf.util;
 
 import net.minecraft.core.BlockPos;
 
+@org.jspecify.annotations.NullMarked
 public final class BlockAreaUtils {
     private BlockAreaUtils() {}
 

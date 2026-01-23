@@ -8,6 +8,7 @@ import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FlowingFluid;
 
+@org.jspecify.annotations.NullMarked
 public final class BlockMasks {
     public static final int WALL_TAG = 0x01;
     public static final int FENCE_TAG = 0x02;

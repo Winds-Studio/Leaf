@@ -74,7 +74,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    public @Nullable AttributeInstance put(Holder<Attribute> key, AttributeInstance value) {
+    public @Nullable AttributeInstance put(Holder<Attribute> key, @Nullable AttributeInstance value) {
         int id = key.value().id;
         AttributeInstance prev = a[id];
         setByIndex(id, value);
@@ -92,8 +92,8 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     @Override
     public void putAll(Map<? extends Holder<Attribute>, ? extends AttributeInstance> m) {
-        for (AttributeInstance e : m.values()) {
-            if (e != null) {
+        if (!m.isEmpty()) {
+            for (AttributeInstance e : m.values()) {
                 setByIndex(e.getAttribute().value().id, e);
             }
         }
@@ -285,7 +285,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
             currentIndex = nextIndex;
             AttributeInstance value = a[nextIndex];
             nextIndex = findNextOccupied(nextIndex + 1);
-            return new MapEntry(currentIndex, value);
+            return new MapEntry(currentIndex, Objects.requireNonNull(value));
         }
 
         @Override
@@ -352,7 +352,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
         return -1;
     }
 
-    public AttributeInstance[] elements() {
+    public @Nullable AttributeInstance[] elements() {
         return a;
     }
 }

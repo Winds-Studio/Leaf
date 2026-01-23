@@ -3,6 +3,7 @@ package org.dreeam.leaf.util.map;
 import it.unimi.dsi.fastutil.ints.IntArraySet;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.Array;
 import java.util.*;
@@ -63,14 +64,14 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
         int[] innerClone = inner.toIntArray();
         AttributeInstance[] arr = new AttributeInstance[innerClone.length];
         for (int i = 0; i < arr.length; i++) {
-            arr[i] = map.getInstance(innerClone[i]);
+            arr[i] = Objects.requireNonNull(map.getInstance(innerClone[i]));
         }
         return arr;
     }
 
     @SuppressWarnings({"unchecked"})
     @Override
-    public <T> T[] toArray(T[] a) {
+    public <T> @Nullable T[] toArray(@Nullable T @Nullable[] a) {
         if (a == null || (a.getClass() == AttributeInstance[].class && a.length == 0)) {
             return (T[]) toArray();
         }
@@ -102,7 +103,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
         @Override
         public AttributeInstance next() {
             if (!hasNext()) throw new NoSuchElementException();
-            return map.getInstance(array[index++]);
+            return Objects.requireNonNull(map.getInstance(array[index++]));
         }
     }
 

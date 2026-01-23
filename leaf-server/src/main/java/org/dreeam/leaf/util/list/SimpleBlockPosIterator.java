@@ -40,7 +40,7 @@ public final class SimpleBlockPosIterator extends AbstractIterator<BlockPos> {
     }
 
     @Override
-    protected BlockPos computeNext() {
+    protected @Nullable BlockPos computeNext() {
         final MutableBlockPos pos = this.pos;
         if (pos == null) {
             return this.pos = new MutableBlockPos(this.startX, this.startY, this.startZ);

@@ -2,18 +2,19 @@ package org.dreeam.leaf.util.map;
 
 import net.minecraft.world.entity.schedule.Activity;
 import org.dreeam.leaf.util.RegistryTypeManager;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
 public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
     public int[] k;
-    public V[] v;
+    public @Nullable V[] v;
     private int size = 0;
     private int bitset = 0;
-    private transient KeySet keySet;
-    private transient Values values;
-    private transient EntrySet entrySet;
+    private transient @Nullable KeySet keySet;
+    private transient @Nullable Values values;
+    private transient @Nullable EntrySet entrySet;
 
     public ActivityArrayMap(V[] arr) {
         this.k = new int[arr.length];
@@ -54,7 +55,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
-    public V put(Activity key, V value) {
+    public @Nullable V put(Activity key, @Nullable V value) {
         int raw = key.id;
         int index = findIndex(raw);
         if (index >= 0) {
@@ -76,7 +77,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
-    public V get(Object key) {
+    public @Nullable V get(@Nullable Object key) {
         if (key instanceof Activity activity) {
             int index = findIndex(activity.id);
             if (index >= 0) {
@@ -86,7 +87,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
         return null;
     }
 
-    public V getValue(int key) {
+    public @Nullable V getValue(int key) {
         int index = findIndex(key);
         if (index >= 0) {
             return v[index];
@@ -103,7 +104,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     }
 
     @Override
-    public V remove(Object key) {
+    public @Nullable V remove(Object key) {
         if (key instanceof Activity activity) {
             int index = findIndex(activity.id);
             if (index >= 0) {
@@ -234,7 +235,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
                 public V next() {
                     if (!hasNext()) throw new NoSuchElementException();
                     lastReturned = index;
-                    return v[index++];
+                    return Objects.requireNonNull(v[index++]);
                 }
 
                 @Override
@@ -282,7 +283,7 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
                     int key = k[index];
                     V value = v[index];
                     index++;
-                    return new MapEntry(key, value);
+                    return new MapEntry(key, Objects.requireNonNull(value));
                 }
 
                 @Override

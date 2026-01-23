@@ -14,6 +14,7 @@ import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.material.FluidState;
 
+@org.jspecify.annotations.NullMarked
 public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
     private static final long FILTER_MASK = 0b11L;
