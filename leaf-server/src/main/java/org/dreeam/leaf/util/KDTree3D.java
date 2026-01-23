@@ -6,7 +6,7 @@ public final class KDTree3D {
     private static final double[] EMPTY_DOUBLES = {};
     private static final int[] EMPTY_INTS = {};
     private static final Node[] EMPTY_NODES = {};
-    public static final boolean ENABLE_FMA = LeafConstants.ENABLE_FMA;
+    private static final boolean ENABLE_FMA = LeafConstants.ENABLE_FMA;
 
     private static final int INITIAL_CAPACITY = 8;
 
