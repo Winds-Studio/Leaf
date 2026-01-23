@@ -10,7 +10,6 @@ import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.util.List;
 
-@org.jspecify.annotations.NullMarked
 public final class NatureSpawnChunkMap {
     /// breadth-first search
     ///

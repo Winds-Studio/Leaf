@@ -116,7 +116,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
 
         boolean removed = false;
         for (int i = size - 1; i >= 0; i--) {
-            final WrappedGoal e = a[i];
+            final WrappedGoal e = Objects.requireNonNull(a[i]);
             if (!filter.test(e)) {
                 continue;
             }

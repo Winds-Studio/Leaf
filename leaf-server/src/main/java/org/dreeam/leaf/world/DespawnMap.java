@@ -20,7 +20,6 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
 
-@org.jspecify.annotations.NullMarked
 public final class DespawnMap implements Consumer<Entity> {
 
     private static final MobCategory[] CATEGORIES = MobCategory.values();
