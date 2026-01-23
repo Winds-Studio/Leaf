@@ -16,7 +16,7 @@ import net.minecraft.world.level.chunk.HashMapPalette;
 import net.minecraft.world.level.chunk.MissingPaletteEntryException;
 import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PaletteResize;
-import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.NullMarked;
 
 import java.util.Arrays;
 import java.util.List;
@@ -28,6 +28,7 @@ import static it.unimi.dsi.fastutil.Hash.FAST_LOAD_FACTOR;
  * Generally provides better performance over the vanilla {@link net.minecraft.world.level.chunk.HashMapPalette} when calling
  * {@link LithiumHashPalette#idFor(Object, PaletteResize)} through using a faster backing map and reducing pointer chasing.
  */
+@NullMarked
 public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<T>, FastPalette<T> {
     private static final int ABSENT_VALUE = -1;
 
@@ -67,13 +68,13 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
 
     // Leaf start - Sync moonrise changes
     @Override
-    public T @NonNull [] moonrise$getRawPalette(final @NonNull FastPaletteData<T> container) {
+    public T[] moonrise$getRawPalette(final FastPaletteData<T> container) {
         return this.entries;
     }
     // Leaf end - Sync moonrise changes
 
     @Override
-    public int idFor(@NonNull T obj, @NonNull PaletteResize<T> paletteResize) {
+    public int idFor(T obj, PaletteResize<T> paletteResize) {
         int id = this.table.getInt(obj);
 
         if (id == ABSENT_VALUE) {
@@ -84,7 +85,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
     }
 
     @Override
-    public boolean maybeHas(@NonNull Predicate<T> predicate) {
+    public boolean maybeHas(Predicate<T> predicate) {
         for (int i = 0; i < this.size; ++i) {
             if (predicate.test(this.entries[i])) {
                 return true;
@@ -128,7 +129,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
     }
 
     @Override
-    public @NonNull T valueFor(int id) {
+    public T valueFor(int id) {
         T[] entries = this.entries;
 
         T entry = null;
@@ -157,7 +158,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
     }
 
     @Override
-    public void read(FriendlyByteBuf buf, @NonNull IdMap<T> idMap) {
+    public void read(FriendlyByteBuf buf, IdMap<T> idMap) {
         this.clear();
 
         int entryCount = buf.readVarInt();
@@ -168,7 +169,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
     }
 
     @Override
-    public void write(FriendlyByteBuf buf, @NonNull IdMap<T> idMap) {
+    public void write(FriendlyByteBuf buf, IdMap<T> idMap) {
         int size = this.size;
         buf.writeVarInt(size);
 
@@ -178,7 +179,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
     }
 
     @Override
-    public int getSerializedSize(@NonNull IdMap<T> idMap) {
+    public int getSerializedSize(IdMap<T> idMap) {
         int size = VarInt.getByteSize(this.size);
 
         for (int i = 0; i < this.size; ++i) {
@@ -194,7 +195,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
     }
 
     @Override
-    public @NonNull Palette<T> copy() {
+    public Palette<T> copy() {
         return new LithiumHashPalette<>(this.indexBits, this.entries.clone(), this.table.clone(), this.size);
     }
 
@@ -211,13 +212,13 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
 
     // Leaf start - override getEntries
     @Override
-    public @NonNull List<T> getEntries() {
+    public List<T> getEntries() {
         T[] copy = Arrays.copyOf(this.entries, this.size);
         return Arrays.asList(copy);
     }
     // Leaf end - override getEntries
 
-    public static <A> @NonNull Palette<A> create(int bits, @NonNull List<A> list) {
+    public static <A> Palette<A> create(int bits, List<A> list) {
         return new LithiumHashPalette<>(bits, list);
     }
 }
