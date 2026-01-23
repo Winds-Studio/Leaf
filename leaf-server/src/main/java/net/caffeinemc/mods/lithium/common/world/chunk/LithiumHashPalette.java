@@ -16,7 +16,6 @@ import net.minecraft.world.level.chunk.HashMapPalette;
 import net.minecraft.world.level.chunk.MissingPaletteEntryException;
 import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PaletteResize;
-import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.NonNull;
 
 import java.util.Arrays;
@@ -74,7 +73,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     // Leaf end - Sync moonrise changes
 
     @Override
-    public int idFor(@NotNull T obj, @NotNull PaletteResize<T> paletteResize) {
+    public int idFor(@NonNull T obj, @NonNull PaletteResize<T> paletteResize) {
         int id = this.table.getInt(obj);
 
         if (id == ABSENT_VALUE) {
@@ -85,7 +84,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     }
 
     @Override
-    public boolean maybeHas(@NotNull Predicate<T> predicate) {
+    public boolean maybeHas(@NonNull Predicate<T> predicate) {
         for (int i = 0; i < this.size; ++i) {
             if (predicate.test(this.entries[i])) {
                 return true;
@@ -129,7 +128,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     }
 
     @Override
-    public @NotNull T valueFor(int id) {
+    public @NonNull T valueFor(int id) {
         T[] entries = this.entries;
 
         T entry = null;
@@ -158,7 +157,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     }
 
     @Override
-    public void read(FriendlyByteBuf buf, @NotNull IdMap<T> idMap) {
+    public void read(FriendlyByteBuf buf, @NonNull IdMap<T> idMap) {
         this.clear();
 
         int entryCount = buf.readVarInt();
@@ -169,7 +168,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     }
 
     @Override
-    public void write(FriendlyByteBuf buf, @NotNull IdMap<T> idMap) {
+    public void write(FriendlyByteBuf buf, @NonNull IdMap<T> idMap) {
         int size = this.size;
         buf.writeVarInt(size);
 
@@ -179,7 +178,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     }
 
     @Override
-    public int getSerializedSize(@NotNull IdMap<T> idMap) {
+    public int getSerializedSize(@NonNull IdMap<T> idMap) {
         int size = VarInt.getByteSize(this.size);
 
         for (int i = 0; i < this.size; ++i) {
@@ -195,7 +194,7 @@ public class LithiumHashPalette<T> extends HashMapPalette<T> implements Palette<
     }
 
     @Override
-    public @NotNull Palette<T> copy() {
+    public @NonNull Palette<T> copy() {
         return new LithiumHashPalette<>(this.indexBits, this.entries.clone(), this.table.clone(), this.size);
     }
 
