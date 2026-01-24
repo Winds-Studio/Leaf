@@ -30,7 +30,7 @@ public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
 
         projectiles = config.getBoolean(getBasePath() + ".projectiles", projectiles, config().pickStringRegionBased(
             "Prevents projectiles from moving into weak loaded chunks.",
-            "阻止投掷物进入弱加载区块。"
+            "阻止弹射物进入弱加载区块。"
         ));
     }
 }
