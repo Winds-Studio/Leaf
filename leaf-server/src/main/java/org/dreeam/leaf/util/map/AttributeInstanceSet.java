@@ -60,11 +60,11 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
     }
 
     @Override
-    public AttributeInstance[] toArray() {
+    public @Nullable AttributeInstance[] toArray() {
         int[] innerClone = inner.toIntArray();
-        AttributeInstance[] arr = new AttributeInstance[innerClone.length];
+        @Nullable AttributeInstance[] arr = new AttributeInstance[innerClone.length];
         for (int i = 0; i < arr.length; i++) {
-            arr[i] = Objects.requireNonNull(map.getInstance(innerClone[i]));
+            arr[i] = map.getInstance(innerClone[i]);
         }
         return arr;
     }

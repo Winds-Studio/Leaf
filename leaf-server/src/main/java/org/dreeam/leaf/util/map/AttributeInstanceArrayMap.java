@@ -68,8 +68,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
         return key instanceof Holder<?> holder && holder.value() instanceof Attribute attribute ? a[attribute.id] : null;
     }
 
-    @Nullable
-    public AttributeInstance getInstance(int key) {
+    public @Nullable AttributeInstance getInstance(int key) {
         return a[key];
     }
 
