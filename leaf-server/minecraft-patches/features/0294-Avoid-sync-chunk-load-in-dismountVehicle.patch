@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noel <noel@boocord.com>
+Date: Sun, 8 Feb 2026 14:20:00 +0000
+Subject: [PATCH] Avoid sync chunk load in dismountVehicle
+
+When a passenger dismounts, LivingEntity#dismountVehicle queried
+`level().getBlockState(vehicle.blockPosition())` to check for portals.
+On Parallel World Ticking this can force a sync chunk load from a world
+tick thread, which can deadlock with the main thread waiting for world
+tick futures.
+
+Use `getBlockStateIfLoaded` and only run the "normal" dismount path when
+the vehicle chunk is already loaded. If the chunk is not loaded, fall
+back to the existing safe dismount branch instead of forcing a load.
+This avoids the stall while keeping behavior unchanged for loaded chunks.
+
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 6db0882a2f7fb0d95dd3f6b41213e8a1d77af36d..200fd969e2ce4b6dfdfb5e4f372ef4787e1297b4 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -2242,9 +2242,13 @@
+         Vec3 vec3;
+         if (this.isRemoved()) {
+             vec3 = this.position();
+-        } else if (!vehicle.isRemoved() && !this.level().getBlockState(vehicle.blockPosition()).is(BlockTags.PORTALS)) {
+-            vec3 = vehicle.getDismountLocationForPassenger(this);
+         } else {
++            final BlockPos vehiclePos = vehicle.blockPosition();
++            final BlockState vehicleState = this.level().getBlockStateIfLoaded(vehiclePos);
++            // Avoid forcing a sync chunk load from a world tick thread (PWT deadlock path).
++            if (!vehicle.isRemoved() && vehicleState != null && !vehicleState.is(BlockTags.PORTALS)) {
++                vec3 = vehicle.getDismountLocationForPassenger(this);
++            } else {
+             double max = Math.max(this.getY(), vehicle.getY());
+             vec3 = new Vec3(this.getX(), max, this.getZ());
+             boolean flag = this.getBbWidth() <= 4.0F && this.getBbHeight() <= 4.0F;
+@@ -2258,6 +2262,7 @@
+                     .orElse(vec3);
+             }
+         }
++        }
+ 
+         this.dismountTo(vec3.x, vec3.y, vec3.z);
+     }
