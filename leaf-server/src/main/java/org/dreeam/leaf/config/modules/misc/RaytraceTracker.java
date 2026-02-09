@@ -1,0 +1,116 @@
+package org.dreeam.leaf.config.modules.misc;
+
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import org.dreeam.leaf.config.ConfigModules;
+import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.LeafConfig;
+import org.dreeam.leaf.config.annotations.Experimental;
+
+import java.util.*;
+
+public class RaytraceTracker extends ConfigModules {
+
+    public String getBasePath() {
+        return EnumConfigCategory.MISC.getBaseKeyName() + ".raytrace-entity-tracker";
+    }
+
+    @Experimental
+    public static boolean enabled = false;
+
+    public static int maxTraceDistance = 64;
+    public static boolean skipMarkerArmorStand = false;
+    public static int boundingBoxLimit = 20;
+    public static int traceInterval = 50;
+    public static double forceVisibleRadius = 2.0D;
+    public static double boundingBoxExpansion = 0.5D;
+    public static List<String> skippedEntities = List.of();
+    public static boolean invertSkipEntities = false;
+
+    @Override
+    public void onLoaded() {
+        config.addCommentRegionBased(getBasePath(), """
+                *** EXPERIMENTAL FEATURE ***
+                Raytrace Entity Tracker uses async ray-tracing to untrack entities players cannot see,
+                which can reduce bandwidth usage significantly,
+                especially in some massive entities in small area situations.
+                Also it provides a way to guard against Entity ESP hacks.""",
+            """
+                *** 实验性功能 ***
+                使用异步射线追踪来动态取消跟踪玩家看不见的实体,
+                可以显著降低带宽使用,
+                在实体数量多且密集的情况下效果明显.
+                也提供了一种对抗 Entity ESP 作弊的方案.""");
+
+        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        maxTraceDistance = config.getInt(getBasePath() + ".max-trace-distance", maxTraceDistance, config.pickStringRegionBased(
+            """
+                The maximum distance to trace entities in blocks.""",
+            """
+                最大追踪实体距离, 单位: 方块."""));
+        skipMarkerArmorStand = config.getBoolean(getBasePath() + ".skip-marker-armor-stand", skipMarkerArmorStand, config.pickStringRegionBased(
+            """
+                Whether to skip tracing entities with marker armor stand.""",
+            """
+                是否跳过追踪带标记盔甲架的实体."""));
+        boundingBoxLimit = config.getInt(getBasePath() + ".bounding-box-limit", boundingBoxLimit, config.pickStringRegionBased(
+            """
+                The maximum size of bounding box to trace.
+                Entities with bounding box larger than this value will be skipped.""",
+            """
+                碰撞箱大小限制,
+                实体碰撞箱大于该值将被跳过."""));
+        traceInterval = config.getInt(getBasePath() + ".trace-interval", traceInterval, config.pickStringRegionBased(
+            """
+                The interval between each trace in milliseconds.
+                Lower value means more frequent trace.""",
+            """
+                追踪间隔(单位: 毫秒), 越小越频繁."""));
+        forceVisibleRadius = config.getDouble(getBasePath() + ".force-visible-radius", forceVisibleRadius, config.pickStringRegionBased(
+            """
+                The radius to force visible entities.
+                Entities within this radius will be forced visible.
+                Set to values less than or equal to zero to disable.""",
+            """
+                强制可见半径,
+                实体在范围内将被强制可见.
+                设置为小于等于 0 的值来禁用强制可见."""));
+        boundingBoxExpansion = config.getDouble(getBasePath() + ".bounding-box-expansion", boundingBoxExpansion, config.pickStringRegionBased(
+            """
+                The expansion of bounding box.
+                This modifier will be added to the actual bounding box when tracing.""",
+            """
+                碰撞箱扩大量.
+                此值将会在射线追踪时添加到实际碰撞箱上."""));
+        skippedEntities = config.getList(getBasePath() + ".skipped-entities", skippedEntities, config.pickStringRegionBased(
+            """
+                The entities to skip tracing.""",
+            """
+                跳过追踪的实体."""));
+        invertSkipEntities = config.getBoolean(getBasePath() + ".invert-skip-entities", invertSkipEntities, config.pickStringRegionBased(
+            """
+                Whether to invert the skip entities list.""",
+            """
+                是否反转跳过实体列表."""));
+    }
+
+    @Override
+    public void onPostLoaded() {
+        for (EntityType<?> entityType : BuiltInRegistries.ENTITY_TYPE) {
+            entityType.skipRaytraceCheck = invertSkipEntities;
+        }
+
+        final String DEFAULT_PREFIX = ResourceLocation.DEFAULT_NAMESPACE + ResourceLocation.NAMESPACE_SEPARATOR;
+
+        for (String name : skippedEntities) {
+            String lowerName = name.toLowerCase(Locale.ROOT);
+            String typeId = lowerName.startsWith(DEFAULT_PREFIX) ? lowerName : DEFAULT_PREFIX + lowerName;
+
+            EntityType.byString(typeId).ifPresentOrElse(entityType ->
+                    entityType.skipRaytraceCheck = !invertSkipEntities,
+                () -> LeafConfig.LOGGER.warn("Skip unknown entity {}, in {}", name, getBasePath() + ".skipped-entities")
+            );
+        }
+    }
+}
