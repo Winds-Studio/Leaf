@@ -24,11 +24,11 @@ public class FastRNG extends ConfigModules {
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
                 Use faster random generator?
-                Requires a JVM that supports RandomGenerator.
+                Requires a JVM that supports Xoroshiro128PlusPlus.
                 Some JREs don't support this.""",
             """
                 是否使用更快的随机生成器?
-                需要支持 RandomGenerator 的 JVM.
+                需要支持 Xoroshiro128PlusPlus 的 JVM.
                 一些 JRE 不支持此功能.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
@@ -54,7 +54,7 @@ public class FastRNG extends ConfigModules {
             try {
                 Class.forName("org.dreeam.leaf.util.math.random.FasterRandomSource");
             } catch (Throwable ignored) {
-                LeafConfig.LOGGER.error("Faster random generator is enabled but Xoroshiro128PlusPLus is not supported by your JVM, " +
+                LeafConfig.LOGGER.error("Faster random generator is enabled but Xoroshiro128PlusPlus is not supported by your JVM, " +
                     "falling back to legacy random source.");
                 enabled = false;
             }
