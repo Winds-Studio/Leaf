@@ -37,6 +37,13 @@ public final class FasterRandomSource implements BitRandomSource {
     }
 
     @Override
+    public void consumeCount(int count) {
+        for (int i = 0; i < count; i++) {
+            this.delegate.nextLong();
+        }
+    }
+
+    @Override
     public int next(int bits) {
         return (int) (nextLong() >>> (64 - bits));
     }
