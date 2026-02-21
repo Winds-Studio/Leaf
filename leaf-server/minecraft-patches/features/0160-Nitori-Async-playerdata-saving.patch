@@ -3,157 +3,162 @@ From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
 Date: Fri, 23 Aug 2024 22:04:20 -0400
 Subject: [PATCH] Nitori: Async playerdata saving
 
-Original license: GPL v3
+Original license: GPL-3.0
 Original project: https://github.com/Gensokyo-Reimagined/Nitori
 
+diff --git a/net/minecraft/server/PlayerAdvancements.java b/net/minecraft/server/PlayerAdvancements.java
+index 78135cf45c8900eb142933d216744f4a73127965..14e33218bb9bd3e1f8484c88114900297ec65c1e 100644
+--- a/net/minecraft/server/PlayerAdvancements.java
++++ b/net/minecraft/server/PlayerAdvancements.java
+@@ -111,6 +111,7 @@ public class PlayerAdvancements {
+ 
+     private void load(ServerAdvancementManager manager) {
+         if (Files.isRegularFile(this.playerSavePath)) {
++            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(playerSavePath, org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.advancements); // Leaf - Async playerdata saving
+             try (Reader bufferedReader = Files.newBufferedReader(this.playerSavePath, StandardCharsets.UTF_8)) {
+                 JsonElement jsonElement = StrictJsonParser.parse(bufferedReader);
+                 PlayerAdvancements.Data data = this.codec.parse(JsonOps.INSTANCE, jsonElement).getOrThrow(JsonParseException::new);
+@@ -128,17 +129,18 @@ public class PlayerAdvancements {
+ 
+     public void save() {
+         if (org.spigotmc.SpigotConfig.disableAdvancementSaving) return; // Spigot
++        // Leaf start - Async playerdata saving
+         JsonElement jsonElement = this.codec.encodeStart(JsonOps.INSTANCE, this.asData()).getOrThrow();
+-
+-        try {
+-            FileUtil.createDirectoriesSafe(this.playerSavePath.getParent());
+-
+-            try (Writer bufferedWriter = Files.newBufferedWriter(this.playerSavePath, StandardCharsets.UTF_8)) {
+-                GSON.toJson(jsonElement, GSON.newJsonWriter(bufferedWriter));
+-            }
+-        } catch (JsonIOException | IOException var7) {
+-            LOGGER.error("Couldn't save player advancements to {}", this.playerSavePath, var7);
+-        }
++        Path path = this.playerSavePath;
++        org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++            FileUtil.createDirectoriesSafe(path.getParent());
++            String content = GSON.toJson(jsonElement);
++            Path temp = org.dreeam.leaf.async.AsyncPlayerDataSaving.tempFile(path);
++            org.apache.commons.io.FileUtils.writeStringToFile(temp.toFile(), content, java.nio.charset.StandardCharsets.UTF_8, false);
++            Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
++            return null;
++        }, this.playerSavePath, org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.advancements);
++        // Leaf end - Async playerdata saving
+     }
+ 
+     private void applyFrom(ServerAdvancementManager advancementManager, PlayerAdvancements.Data data) {
+diff --git a/net/minecraft/stats/ServerStatsCounter.java b/net/minecraft/stats/ServerStatsCounter.java
+index f239f445f83d50a69e7e6ffb97e7cf005c421e3a..13710f2fcceba200b6df8222d2402f33f83be0da 100644
+--- a/net/minecraft/stats/ServerStatsCounter.java
++++ b/net/minecraft/stats/ServerStatsCounter.java
+@@ -68,6 +68,7 @@ public class ServerStatsCounter extends StatsCounter {
+         if (Files.isRegularFile(file)) {
+             try (Reader bufferedReader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                 JsonElement jsonElement = StrictJsonParser.parse(bufferedReader);
++                org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(file, org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.stats); // Leaf - Async playerdata saving
+                 this.parse(server.getFixerUpper(), jsonElement);
+             } catch (IOException var8) {
+                 LOGGER.error("Couldn't read statistics file {}", file, var8);
+@@ -90,15 +91,16 @@ public class ServerStatsCounter extends StatsCounter {
+ 
+     public void save() {
+         if (org.spigotmc.SpigotConfig.disableStatSaving) return; // Spigot
+-        try {
+-            FileUtil.createDirectoriesSafe(this.file.getParent());
+-
+-            try (Writer bufferedWriter = Files.newBufferedWriter(this.file, StandardCharsets.UTF_8)) {
+-                GSON.toJson(this.toJson(), GSON.newJsonWriter(bufferedWriter));
+-            }
+-        } catch (JsonIOException | IOException var6) {
+-            LOGGER.error("Couldn't save stats to {}", this.file, var6);
+-        }
++        // Leaf start - Async playerdata saving
++        Path file = this.file;
++        JsonElement data = this.toJson();
++        org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++            java.nio.file.Path temp = org.dreeam.leaf.async.AsyncPlayerDataSaving.tempFile(file);
++            org.apache.commons.io.FileUtils.writeStringToFile(temp.toFile(), GSON.toJson(data), java.nio.charset.StandardCharsets.UTF_8, false);
++            java.nio.file.Files.move(temp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
++            return null;
++        }, file, org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.stats);
++        // Leaf end - Async playerdata saving
+     }
+ 
+     @Override
 diff --git a/net/minecraft/world/level/storage/LevelStorageSource.java b/net/minecraft/world/level/storage/LevelStorageSource.java
-index 140630186c3b0324c248cc2a2f31d3b906557b9c..d5e9190f0a6baffd2b08225f595ff4d7eb662e65 100644
+index 140630186c3b0324c248cc2a2f31d3b906557b9c..75feaa87159f8bf399b6d51f73ccf1c25a50265e 100644
 --- a/net/minecraft/world/level/storage/LevelStorageSource.java
 +++ b/net/minecraft/world/level/storage/LevelStorageSource.java
-@@ -516,15 +516,26 @@ public class LevelStorageSource {
+@@ -516,15 +516,20 @@ public class LevelStorageSource {
          private void saveLevelData(CompoundTag tag) {
              Path path = this.levelDirectory.path();
  
+-            try {
 +            // Leaf start - Async playerdata saving
 +            // Save level.dat asynchronously
-+            var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
-             try {
--                Path path1 = Files.createTempFile(path, "level", ".dat");
++
++            Path path2 = this.levelDirectory.oldDataFile();
++            Path path3 = this.levelDirectory.dataFile();
++            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++                var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
++                NbtIo.writeCompressed(tag, nbtBytes);
+                 Path path1 = Files.createTempFile(path, "level", ".dat");
 -                NbtIo.writeCompressed(tag, path1);
 -                Path path2 = this.levelDirectory.oldDataFile();
 -                Path path3 = this.levelDirectory.dataFile();
--                Util.safeReplaceFile(path3, path1, path2);
-+                NbtIo.writeCompressed(tag, nbtBytes);
-             } catch (Exception var6) {
++                org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
+                 Util.safeReplaceFile(path3, path1, path2);
+-            } catch (Exception var6) {
 -                LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
-+                LevelStorageSource.LOGGER.error("Failed to encode level {}", path, var6);
-             }
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
-+                try {
-+                    Path path1 = Files.createTempFile(path, "level", ".dat");
-+                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
-+                    Path path2 = this.levelDirectory.oldDataFile();
-+                    Path path3 = this.levelDirectory.dataFile();
-+                    Util.safeReplaceFile(path3, path1, path2);
-+                } catch (Exception var6) {
-+                    LevelStorageSource.LOGGER.error("Failed to save level {}", path, var6);
-+                }
-+            });
+-            }
++                return null;
++            }, path3, org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.levelData);
 +            // Leaf end - Async playerdata saving
          }
  
          public Optional<Path> getIconFile() {
 diff --git a/net/minecraft/world/level/storage/PlayerDataStorage.java b/net/minecraft/world/level/storage/PlayerDataStorage.java
-index b8ef50bc3d07890c9da2c98d5f009a3adc52f4b0..4099f4ebf76c6bf74384aa5b9f5e889d53ebcfa9 100644
+index b8ef50bc3d07890c9da2c98d5f009a3adc52f4b0..11055fa067933083af5fca1c9d9e45435684f23b 100644
 --- a/net/minecraft/world/level/storage/PlayerDataStorage.java
 +++ b/net/minecraft/world/level/storage/PlayerDataStorage.java
-@@ -23,6 +23,7 @@ public class PlayerDataStorage {
-     private static final Logger LOGGER = LogUtils.getLogger();
-     private final File playerDir;
-     protected final DataFixer fixerUpper;
-+    private final java.util.Map<java.util.UUID, java.util.concurrent.Future<?>> savingLocks = new it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<>(); // Leaf - Async playerdata saving
- 
-     public PlayerDataStorage(LevelStorageSource.LevelStorageAccess levelStorageAccess, DataFixer fixerUpper) {
-         this.fixerUpper = fixerUpper;
-@@ -32,21 +33,84 @@ public class PlayerDataStorage {
- 
-     public void save(Player player) {
-         if (org.spigotmc.SpigotConfig.disablePlayerDataSaving) return; // Spigot
-+        // Leaf start - Async playerdata saving
-+        CompoundTag compoundTag;
-         try (ProblemReporter.ScopedCollector scopedCollector = new ProblemReporter.ScopedCollector(player.problemPath(), LOGGER)) {
-             TagValueOutput tagValueOutput = TagValueOutput.createWithContext(scopedCollector, player.registryAccess());
-             player.saveWithoutId(tagValueOutput);
--            Path path = this.playerDir.toPath();
--            Path path1 = Files.createTempFile(path, player.getStringUUID() + "-", ".dat");
--            CompoundTag compoundTag = tagValueOutput.buildResult();
+@@ -38,15 +38,28 @@ public class PlayerDataStorage {
+             Path path = this.playerDir.toPath();
+             Path path1 = Files.createTempFile(path, player.getStringUUID() + "-", ".dat");
+             CompoundTag compoundTag = tagValueOutput.buildResult();
 -            NbtIo.writeCompressed(compoundTag, path1);
 -            Path path2 = path.resolve(player.getStringUUID() + ".dat");
 -            Path path3 = path.resolve(player.getStringUUID() + ".dat_old");
 -            Util.safeReplaceFile(path2, path1, path3);
--        } catch (Exception var11) {
--            LOGGER.warn("Failed to save player data for {}", player.getPlainTextName(), var11); // Paper - Print exception
-+            compoundTag = tagValueOutput.buildResult();
-+        } catch (Exception exception) {
-+            LOGGER.warn("Failed to encode player data for {}", player.getPlainTextName(), exception);
-+            return;
++            save(player.getStringUUID(), compoundTag);
+         } catch (Exception var11) {
+             LOGGER.warn("Failed to save player data for {}", player.getPlainTextName(), var11); // Paper - Print exception
          }
-+        save(player.getScoreboardName(), player.getUUID(), player.getStringUUID(), compoundTag);
-+        // Leaf end - Async playerdata saving
      }
  
 +    // Leaf start - Async playerdata saving
-+    public void save(String playerName, java.util.UUID uniqueId, String stringId, CompoundTag compoundTag) {
-+        var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
-+        try {
++    public void save(String stringId, CompoundTag compoundTag) {
++        Path path = this.playerDir.toPath();
++        Path path2 = path.resolve(stringId + ".dat");
++        org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
++            var nbtBytes = new it.unimi.dsi.fastutil.io.FastByteArrayOutputStream(65536);
 +            NbtIo.writeCompressed(compoundTag, nbtBytes);
-+        } catch (Exception exception) {
-+            LOGGER.warn("Failed to encode player data for {}", stringId, exception);
-+        }
-+        lockFor(uniqueId, playerName);
-+        synchronized (PlayerDataStorage.this) {
-+            org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(() -> {
-+                try {
-+                    Path path = this.playerDir.toPath();
-+                    Path path1 = Files.createTempFile(path, stringId + "-", ".dat");
-+                    org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
-+                    Path path2 = path.resolve(stringId + ".dat");
-+                    Path path3 = path.resolve(stringId + ".dat_old");
-+                    Util.safeReplaceFile(path2, path1, path3);
-+                } catch (Exception var7) {
-+                    LOGGER.warn("Failed to save player data for {}", playerName, var7);
-+                } finally {
-+                    synchronized (PlayerDataStorage.this) {
-+                        savingLocks.remove(uniqueId);
-+                    }
-+                }
-+            }).ifPresent(future -> savingLocks.put(uniqueId, future));
-+        }
-+    }
-+
-+    private void lockFor(java.util.UUID uniqueId, String playerName) {
-+        java.util.concurrent.Future<?> fut;
-+        synchronized (this) {
-+            fut = savingLocks.get(uniqueId);
-+        }
-+        if (fut == null) {
-+            return;
-+        }
-+        while (true) {
-+            try {
-+                fut.get(10_000L, java.util.concurrent.TimeUnit.MILLISECONDS);
-+                break;
-+            } catch (InterruptedException ignored) {
-+            } catch (java.util.concurrent.ExecutionException
-+                     | java.util.concurrent.TimeoutException exception) {
-+                LOGGER.warn("Failed to save player data for {}", playerName, exception);
-+
-+                String threadDump = "";
-+                var threadMXBean = java.lang.management.ManagementFactory.getThreadMXBean();
-+                for (var threadInfo : threadMXBean.dumpAllThreads(true, true)) {
-+                    if (threadInfo.getThreadName().equals("Leaf IO Thread")) { // TODO: We should use instanceOf here
-+                        threadDump = threadInfo.toString();
-+                        break;
-+                    }
-+                }
-+                LOGGER.warn(threadDump);
-+                fut.cancel(true);
-+                break;
-+            } finally {
-+                savingLocks.remove(uniqueId);
-+            }
-+        }
++            Path path1 = org.dreeam.leaf.async.AsyncPlayerDataSaving.tempFile(path, stringId, ".dat");
++            org.apache.commons.io.FileUtils.writeByteArrayToFile(path1.toFile(), nbtBytes.array, 0, nbtBytes.length, false);
++            Path path3 = path.resolve(stringId + ".dat_old");
++            Util.safeReplaceFile(path2, path1, path3);
++            return null;
++        }, path2, org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.playerdata);
 +    }
 +    // Leaf end - Async playerdata saving
 +
      private void backup(NameAndId nameAndId, String suffix) {
          Path path = this.playerDir.toPath();
          String string = nameAndId.id().toString();
-@@ -62,6 +126,7 @@ public class PlayerDataStorage {
-     }
- 
-     private Optional<CompoundTag> load(NameAndId nameAndId, String suffix) {
-+        lockFor(nameAndId.id(), nameAndId.name()); // Leaf - Async playerdata saving
-         File file = new File(this.playerDir, nameAndId.id() + suffix);
-         // Spigot start
-         boolean usingWrongFile = false;
+@@ -76,6 +89,7 @@ public class PlayerDataStorage {
+         if (file.exists() && file.isFile()) {
+             try {
+                 // Spigot start
++                org.dreeam.leaf.async.AsyncPlayerDataSaving.submit(file.toPath(), org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave.playerdata); // Leaf - Async playerdata saving
+                 Optional<CompoundTag> optional = Optional.of(NbtIo.readCompressed(file.toPath(), NbtAccounter.unlimitedHeap()));
+                 if (usingWrongFile) {
+                     file.renameTo(new File(file.getPath() + ".offline-read"));
