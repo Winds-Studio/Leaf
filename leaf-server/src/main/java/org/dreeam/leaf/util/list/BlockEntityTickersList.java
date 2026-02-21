@@ -44,15 +44,15 @@ public final class BlockEntityTickersList extends ReferenceArrayList<TickingBloc
      * @param index the index of the item on the list to be marked as removed
      */
     public void markAsRemoved(final int index) {
-        if (index < minRemovalIndex) {
-            minRemovalIndex = index;
+        if (index < this.minRemovalIndex) {
+            this.minRemovalIndex = index;
         }
 
-        if (index < lastAddedRemoveIndex) {
-            isSorted = false; // in theory, this should never happen as the TE iteration order is incremental
+        if (index < this.lastAddedRemoveIndex) {
+            this.isSorted = false; // in theory, this should never happen as the TE iteration order is incremental
         }
 
-        lastAddedRemoveIndex = index;
+        this.lastAddedRemoveIndex = index;
         this.toRemove.add(index);
     }
 
@@ -60,34 +60,34 @@ public final class BlockEntityTickersList extends ReferenceArrayList<TickingBloc
      * Removes elements that have been marked as removed.
      */
     public void removeMarkedEntries() {
-        if (toRemove.isEmpty()) {
+        if (this.toRemove.isEmpty()) {
             return;
         }
 
-        if (!isSorted) {
-            IntArrays.quickSort(toRemove.elements(), 0, toRemove.size());
-            minRemovalIndex = toRemove.getInt(0);
+        if (!this.isSorted) {
+            IntArrays.quickSort(this.toRemove.elements(), 0, this.toRemove.size());
+            minRemovalIndex = this.toRemove.getInt(0);
         }
 
         removeBySortedIndices();
 
-        toRemove.clear();
-        minRemovalIndex = Integer.MAX_VALUE;
-        lastAddedRemoveIndex = -1;
-        isSorted = true;
+        this.toRemove.clear();
+        this.minRemovalIndex = Integer.MAX_VALUE;
+        this.lastAddedRemoveIndex = -1;
+        this.isSorted = true;
     }
 
     private void removeBySortedIndices() {
-        if (minRemovalIndex >= size) {
+        if (this.minRemovalIndex >= this.size) {
             return;
         }
 
-        final int[] removeIndices = toRemove.elements();
-        final int removeCount = toRemove.size();
+        final int[] removeIndices = this.toRemove.elements();
+        final int removeCount = this.toRemove.size();
         final Object[] backingArray = this.a;
 
-        int writeIndex = minRemovalIndex;
-        int prevRemoveIndex = minRemovalIndex;
+        int writeIndex = this.minRemovalIndex;
+        int prevRemoveIndex = this.minRemovalIndex;
 
         for (int i = 1; i < removeCount; i++) {
             int currRemoveIndex = removeIndices[i];
@@ -105,14 +105,14 @@ public final class BlockEntityTickersList extends ReferenceArrayList<TickingBloc
             prevRemoveIndex = currRemoveIndex;
         }
 
-        int tailLength = size - (prevRemoveIndex + 1);
+        int tailLength = this.size - (prevRemoveIndex + 1);
         if (tailLength > 0) {
             System.arraycopy(backingArray, prevRemoveIndex + 1, backingArray, writeIndex, tailLength);
             writeIndex += tailLength;
         }
 
-        Arrays.fill(backingArray, writeIndex, size, null);
-        size = writeIndex;
+        Arrays.fill(backingArray, writeIndex, this.size, null);
+        this.size = writeIndex;
     }
 
     @Override
