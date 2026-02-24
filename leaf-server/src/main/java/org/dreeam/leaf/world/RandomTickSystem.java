@@ -55,10 +55,11 @@ public final class RandomTickSystem {
         final int minY = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(world) << 4;
         final boolean doubleTickFluids = !ca.spottedleaf.moonrise.common.PlatformHooks.get().configFixMC224294();
         if (org.dreeam.leaf.config.modules.opt.MutableBlockPos.enabled) {
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             for (int k = 0, len = queue.size(); k < len; ++k) {
                 final long packed = q[k];
                 final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
-                tickBlockMutable(world, chunk, (int) (packed & SECTION_MASK), random, minY, doubleTickFluids, new BlockPos.MutableBlockPos());
+                tickBlockMutable(world, chunk, (int) (packed & SECTION_MASK), random, minY, doubleTickFluids, pos);
             }
         } else {
             for (int k = 0, len = queue.size(); k < len; ++k) {
