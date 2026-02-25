@@ -4,7 +4,6 @@ import it.unimi.dsi.fastutil.objects.AbstractObjectSet;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.world.entity.schedule.Activity;
 import org.dreeam.leaf.util.RegistryTypeManager;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 
@@ -54,7 +53,7 @@ public final class ActivityBitSet extends AbstractObjectSet<Activity> {
     }
 
     @Override
-    public @NotNull ObjectIterator<Activity> iterator() {
+    public ObjectIterator<Activity> iterator() {
         return new ObjectIterator<>() {
             private int index = 0;
             {

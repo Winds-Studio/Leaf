@@ -6,8 +6,7 @@ import net.minecraft.world.level.pathfinder.Path;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncPathfinding;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,7 +28,7 @@ public class AsyncPathProcessor {
     private static final String THREAD_PREFIX = "Leaf Async Pathfinding";
     private static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
     private static long lastWarnMillis = System.currentTimeMillis();
-    public static ThreadPoolExecutor PATH_PROCESSING_EXECUTOR = null;
+    public static @Nullable ThreadPoolExecutor PATH_PROCESSING_EXECUTOR = null;
 
     public static void init() {
         if (PATH_PROCESSING_EXECUTOR == null) {
@@ -47,7 +46,7 @@ public class AsyncPathProcessor {
         }
     }
 
-    protected static CompletableFuture<Void> queue(@NotNull AsyncPath path) {
+    protected static CompletableFuture<Void> queue(AsyncPath path) {
         return CompletableFuture.runAsync(path::process, PATH_PROCESSING_EXECUTOR)
             .orTimeout(60L, TimeUnit.SECONDS)
             .exceptionally(throwable -> {
@@ -92,7 +91,7 @@ public class AsyncPathProcessor {
         return new LinkedBlockingQueue<>(queueCapacity);
     }
 
-    private static @NotNull ThreadFactory getThreadFactory() {
+    private static ThreadFactory getThreadFactory() {
         return new ThreadFactoryBuilder()
             .setNameFormat(THREAD_PREFIX + " Thread - %d")
             .setPriority(Thread.NORM_PRIORITY - 2)
@@ -100,7 +99,7 @@ public class AsyncPathProcessor {
             .build();
     }
 
-    private static @NotNull RejectedExecutionHandler getRejectedPolicy() {
+    private static RejectedExecutionHandler getRejectedPolicy() {
         return (Runnable rejectedTask, ThreadPoolExecutor executor) -> {
             BlockingQueue<Runnable> workQueue = executor.getQueue();
             if (!executor.isShutdown()) {

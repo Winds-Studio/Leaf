@@ -27,8 +27,9 @@ import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.apache.logging.log4j.LogManager;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import java.util.List;
 
@@ -47,6 +48,7 @@ import static net.kyori.adventure.text.format.TextColor.color;
  * <br>
  * Changes to {@link PaperVersionFetcher} are indicated by Gale marker comments.
  */
+@NullMarked
 public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
 
     protected static final Logger LOGGER = LogUtils.getClassLogger();
@@ -63,15 +65,15 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
     protected final String projectDisplayName;
     protected final String gitHubOrganizationName;
     protected final String gitHubRepoName;
-    protected final String apiUrl;
-    protected final String userAgent;
+    protected final @Nullable String apiUrl;
+    protected final @Nullable String userAgent;
     protected final ApiType apiType;
 
     protected AbstractPaperVersionFetcher(String downloadPage, String organizationDisplayName, String projectDisplayName, String gitHubOrganizationName, String gitHubRepoName, ApiType apiType) {
         this(downloadPage, organizationDisplayName,projectDisplayName, gitHubOrganizationName, gitHubRepoName, null, null, apiType);
     }
 
-    protected AbstractPaperVersionFetcher(String downloadPage, String organizationDisplayName, String projectDisplayName, String gitHubOrganizationName, String gitHubRepoName, String apiUrl, String userAgent, ApiType apiType) {
+    protected AbstractPaperVersionFetcher(String downloadPage, String organizationDisplayName, String projectDisplayName, String gitHubOrganizationName, String gitHubRepoName, @Nullable String apiUrl, @Nullable String userAgent, ApiType apiType) {
         this.downloadPage = downloadPage;
         this.organizationDisplayName = organizationDisplayName;
         this.projectDisplayName = projectDisplayName;
@@ -96,7 +98,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
         } else {
             updateMessage = getUpdateStatusMessage(this.gitHubOrganizationName + "/" + this.gitHubRepoName, this.downloadPage, this.apiUrl, this.userAgent, this.apiType); // Gale - branding changes - version fetcher
         }
-        final @Nullable Component history = this.getHistory();
+        final Component history = this.getHistory();
 
         return history != null ? Component.textOfChildren(updateMessage, Component.newline(), history) : updateMessage;
     }
@@ -143,7 +145,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
         }
     }
 
-    private static Component getUpdateStatusMessage(final String repo, final String downloadPage, final String apiUrl, final String userAgent, final ApiType apiType) { // Gale - branding changes - version fetcher
+    private static Component getUpdateStatusMessage(final String repo, final String downloadPage, final @Nullable String apiUrl, final @Nullable String userAgent, final ApiType apiType) { // Gale - branding changes - version fetcher
         final int distance = getDistanceFromApi(repo, apiUrl, userAgent, apiType); // Gale - branding changes - version fetcher
 
         return switch (distance) {
@@ -228,7 +230,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
         return fetchDistanceFromGitHub(PaperVersionFetcher.REPOSITORY, branch, hash);
     }
 
-    private static int getDistanceFromApi(final String repo, final String apiUrl, final String userAgent, final ApiType apiType) {
+    private static int getDistanceFromApi(final String repo, final @Nullable String apiUrl, final @Nullable String userAgent, final ApiType apiType) {
         final Optional<String> gitBranch = BUILD_INFO.gitBranch();
         final Optional<String> gitCommit = BUILD_INFO.gitCommit();
 
@@ -239,7 +241,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
         }
 
         final OptionalInt buildNumber = BUILD_INFO.buildNumber();
-        if (buildNumber.isPresent()) {
+        if (buildNumber.isPresent() && apiUrl != null) {
             return fetchDistanceFromSiteApi(buildNumber.getAsInt(), apiUrl, userAgent, apiType);
         }
 
@@ -267,7 +269,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
     }
     // Gale end - branding changes - version fetcher
 
-    protected static int fetchDistanceFromSiteApi(final int currBuild, final String apiUrl, final String userAgent, final ApiType apiType) { // Gale - branding changes - version fetcher
+    protected static int fetchDistanceFromSiteApi(final int currBuild, final String apiUrl, final @Nullable String userAgent, final ApiType apiType) { // Gale - branding changes - version fetcher
         try {
             final URL buildsUrl = URI.create(apiUrl).toURL(); // Gale - branding changes - version fetcher
             final HttpURLConnection connection = (HttpURLConnection) buildsUrl.openConnection();
@@ -321,7 +323,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
             return null;
         }
 
-        final @Nullable String oldVersion = data.getOldVersion();
+        final String oldVersion = data.getOldVersion();
         if (oldVersion == null) {
             return null;
         }

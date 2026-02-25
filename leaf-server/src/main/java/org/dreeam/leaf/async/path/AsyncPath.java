@@ -7,8 +7,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.pathfinder.Node;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.phys.Vec3;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 import java.util.Set;
@@ -70,7 +69,7 @@ public class AsyncPath extends Path {
     private boolean canReach = true;
 
     @SuppressWarnings("ConstantConditions")
-    public AsyncPath(@NotNull List<Node> emptyNodeList, @NotNull Set<BlockPos> positions, @NotNull Supplier<Path> pathSupplier) {
+    public AsyncPath(List<Node> emptyNodeList, Set<BlockPos> positions, Supplier<Path> pathSupplier) {
         super(emptyNodeList, null, false);
 
         this.nodes = emptyNodeList;
@@ -88,7 +87,7 @@ public class AsyncPath extends Path {
     /**
      * Returns the future representing the processing state of this path
      */
-    public final void schedulePostProcessing(@NotNull Runnable runnable) {
+    public final void schedulePostProcessing(Runnable runnable) {
         if (this.ready) {
             runnable.run();
         } else {
@@ -154,7 +153,7 @@ public class AsyncPath extends Path {
      */
 
     @Override
-    public @NotNull BlockPos getTarget() {
+    public BlockPos getTarget() {
         this.process();
         return this.target;
     }
@@ -199,7 +198,7 @@ public class AsyncPath extends Path {
     }
 
     @Override
-    public @NotNull Node getNode(int index) {
+    public Node getNode(int index) {
         this.process();
         return super.getNode(index);
     }
@@ -211,7 +210,7 @@ public class AsyncPath extends Path {
     }
 
     @Override
-    public void replaceNode(int index, @NotNull Node node) {
+    public void replaceNode(int index, Node node) {
         this.process();
         super.replaceNode(index, node);
     }
@@ -235,31 +234,31 @@ public class AsyncPath extends Path {
     }
 
     @Override
-    public @NotNull Vec3 getEntityPosAtNode(@NotNull Entity entity, int index) {
+    public Vec3 getEntityPosAtNode(Entity entity, int index) {
         this.process();
         return super.getEntityPosAtNode(entity, index);
     }
 
     @Override
-    public @NotNull BlockPos getNodePos(int index) {
+    public BlockPos getNodePos(int index) {
         this.process();
         return super.getNodePos(index);
     }
 
     @Override
-    public @NotNull Vec3 getNextEntityPos(@NotNull Entity entity) {
+    public Vec3 getNextEntityPos(Entity entity) {
         this.process();
         return super.getNextEntityPos(entity);
     }
 
     @Override
-    public @NotNull BlockPos getNextNodePos() {
+    public BlockPos getNextNodePos() {
         this.process();
         return super.getNextNodePos();
     }
 
     @Override
-    public @NotNull Node getNextNode() {
+    public Node getNextNode() {
         this.process();
         return super.getNextNode();
     }

@@ -5,11 +5,10 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.resources.Identifier;
-import org.jetbrains.annotations.NotNull;
 
 public class DoABarrelRollPackets {
 
-    private static <T extends LeafCustomPayload> LeafCustomPayload.@NotNull Type<T> createType(String path) {
+    private static <T extends LeafCustomPayload> LeafCustomPayload.Type<T> createType(String path) {
         return new LeafCustomPayload.Type<>(Identifier.fromNamespaceAndPath(DoABarrelRollProtocol.NAMESPACE, path));
     }
 
@@ -22,7 +21,7 @@ public class DoABarrelRollPackets {
         );
 
         @Override
-        public @NotNull Type<ConfigResponseC2SPacket> type() {
+        public Type<ConfigResponseC2SPacket> type() {
             return TYPE;
         }
     }
@@ -42,7 +41,7 @@ public class DoABarrelRollPackets {
         );
 
         @Override
-        public @NotNull Type<ConfigSyncS2CPacket> type() {
+        public Type<ConfigSyncS2CPacket> type() {
             return TYPE;
         }
     }
@@ -56,7 +55,7 @@ public class DoABarrelRollPackets {
         );
 
         @Override
-        public @NotNull Type<ConfigUpdateAckS2CPacket> type() {
+        public Type<ConfigUpdateAckS2CPacket> type() {
             return TYPE;
         }
     }
@@ -70,7 +69,7 @@ public class DoABarrelRollPackets {
         );
 
         @Override
-        public @NotNull Type<ConfigUpdateC2SPacket> type() {
+        public Type<ConfigUpdateC2SPacket> type() {
             return TYPE;
         }
     }
@@ -84,7 +83,7 @@ public class DoABarrelRollPackets {
         );
 
         @Override
-        public @NotNull Type<RollSyncC2SPacket> type() {
+        public Type<RollSyncC2SPacket> type() {
             return TYPE;
         }
     }
@@ -99,7 +98,7 @@ public class DoABarrelRollPackets {
         );
 
         @Override
-        public @NotNull Type<RollSyncS2CPacket> type() {
+        public Type<RollSyncS2CPacket> type() {
             return TYPE;
         }
     }

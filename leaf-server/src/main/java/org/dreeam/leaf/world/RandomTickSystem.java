@@ -53,10 +53,20 @@ public final class RandomTickSystem {
         }
         final long[] q = queue.elements();
         final int minY = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(world) << 4;
-        for (int k = 0, len = queue.size(); k < len; ++k) {
-            final long packed = q[k];
-            final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
-            tickBlock(world, chunk, (int) (packed & SECTION_MASK), random, minY);
+        final boolean doubleTickFluids = !ca.spottedleaf.moonrise.common.PlatformHooks.get().configFixMC224294();
+        if (org.dreeam.leaf.config.modules.opt.MutableBlockPos.enabled) {
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+            for (int k = 0, len = queue.size(); k < len; ++k) {
+                final long packed = q[k];
+                final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
+                tickBlockMutable(world, chunk, (int) (packed & SECTION_MASK), random, minY, doubleTickFluids, pos);
+            }
+        } else {
+            for (int k = 0, len = queue.size(); k < len; ++k) {
+                final long packed = q[k];
+                final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
+                tickBlock(world, chunk, (int) (packed & SECTION_MASK), random, minY, doubleTickFluids);
+            }
         }
     }
 
@@ -222,17 +232,32 @@ public final class RandomTickSystem {
         }
     }
 
-    private static void tickBlock(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection) {
+    private static void tickBlockMutable(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection, boolean doubleTickFluids, BlockPos.MutableBlockPos pos) {
         LevelChunkSection section = chunk.getSection(sectionIdx);
         ShortList list = section.moonrise$getTickingBlockList();
         int size = list.size();
         if (size == 0) return;
         short location = list.getRaw(boundedNextInt(random, size));
         BlockState state = section.states.get(location);
-        final BlockPos pos = new BlockPos((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
+        pos.set((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
         state.randomTick(world, pos, random);
+        if (doubleTickFluids) {
+            final FluidState fluidState = state.getFluidState();
+            if (fluidState.isRandomlyTicking()) {
+                fluidState.randomTick(world, pos, random);
+            }
+        }
+    }
 
-        final boolean doubleTickFluids = !ca.spottedleaf.moonrise.common.PlatformHooks.get().configFixMC224294();
+    private static void tickBlock(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection, boolean doubleTickFluids) {
+        LevelChunkSection section = chunk.getSection(sectionIdx);
+        ShortList list = section.moonrise$getTickingBlockList();
+        int size = list.size();
+        if (size == 0) return;
+        short location = list.getRaw(boundedNextInt(random, size));
+        BlockState state = section.states.get(location);
+        BlockPos pos = new BlockPos((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
+        state.randomTick(world, pos, random);
         if (doubleTickFluids) {
             final FluidState fluidState = state.getFluidState();
             if (fluidState.isRandomlyTicking()) {

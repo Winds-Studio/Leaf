@@ -2,11 +2,12 @@
 
 package org.galemc.gale.version;
 
-import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NullMarked;
 
 /**
  * A holder for the Gale semantic version.
  */
+@NullMarked
 public final class GaleSemanticVersion {
 
     private GaleSemanticVersion() {
@@ -22,12 +23,12 @@ public final class GaleSemanticVersion {
      * The <code>patch</code> version is incremented for small changes that do not affect the goal of any feature,
      * such as bug fixes, performance improvements or changes in wording.
      */
-    public static final @NotNull String version = "0.6.15";
+    public static final String version = "0.6.15";
 
     /**
      * The "<code>major.minor</code>" portion of the {@link #version}.
      */
-    public static final @NotNull String majorMinorVersion;
+    public static final String majorMinorVersion;
 
     static {
         int firstDotIndex = version.indexOf('.');

@@ -3,8 +3,6 @@ package org.dreeam.leaf.command.subcommands;
 import ca.spottedleaf.moonrise.common.time.TickData;
 import net.kyori.adventure.text.Component;
 import net.minecraft.server.MinecraftServer;
-import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.framework.qual.DefaultQualifier;
 import org.dreeam.leaf.command.LeafCommand;
 import org.dreeam.leaf.command.PermissionedLeafSubcommand;
 import org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking;
@@ -20,7 +18,6 @@ import java.util.List;
 import static net.kyori.adventure.text.Component.text;
 import static net.kyori.adventure.text.format.NamedTextColor.*;
 
-@DefaultQualifier(NonNull.class)
 public final class MSPTCommand extends PermissionedLeafSubcommand {
 
     public static final String LITERAL_ARGUMENT = "mspt";

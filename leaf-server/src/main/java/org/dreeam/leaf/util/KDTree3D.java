@@ -1,11 +1,11 @@
 package org.dreeam.leaf.util;
 
-@org.jspecify.annotations.NullMarked
 public final class KDTree3D {
 
     private static final double[] EMPTY_DOUBLES = {};
     private static final int[] EMPTY_INTS = {};
     private static final Node[] EMPTY_NODES = {};
+    private static final boolean ENABLE_FMA = LeafConstants.ENABLE_FMA;
 
     private static final int INITIAL_CAPACITY = 8;
 
@@ -100,6 +100,12 @@ public final class KDTree3D {
         nil = it.unimi.dsi.fastutil.ints.IntArrays.forceCapacity(nil, length, preserve);
     }
 
+    private static double euclideanDistanceSquared(double dx, double dy, double dz) {
+        return ENABLE_FMA
+            ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
+            : dx * dx + dy * dy + dz * dz;
+    }
+
     public double nearestSqr(final double tx, final double ty, final double tz, double dist) {
         final int[] stack = this.search;
         final int[] nrl = this.nrl;
@@ -116,9 +122,7 @@ public final class KDTree3D {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
                 final double dz = nzl[j] - tz;
-                dist = Math.min(dist, LeafConstants.ENABLE_FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz);
+                dist = Math.min(dist, euclideanDistanceSquared(dx, dy, dz));
                 break;
             } else {
                 final int next = ((curr + 1) % 3) << 30;
@@ -147,9 +151,7 @@ public final class KDTree3D {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
                 final double dz = nzl[k] - tz;
-                dist = Math.min(dist, LeafConstants.ENABLE_FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz);
+                dist = Math.min(dist, euclideanDistanceSquared(dx, dy, dz));
             } else {
                 final int axis = j >>> 30;
                 final int next = ((axis + 1) % 3) << 30;
@@ -190,9 +192,7 @@ public final class KDTree3D {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
                 final double dz = nzl[j] - tz;
-                final double candidate = LeafConstants.ENABLE_FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz;
+                final double candidate = euclideanDistanceSquared(dx, dy, dz);
                 if (candidate < dist) {
                     dist = candidate;
                     nearest = nil[j];
@@ -225,9 +225,7 @@ public final class KDTree3D {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
                 final double dz = nzl[k] - tz;
-                final double candidate = LeafConstants.ENABLE_FMA
-                    ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
-                    : dx * dx + dy * dy + dz * dz;
+                final double candidate = euclideanDistanceSquared(dx, dy, dz);
                 if (candidate < dist) {
                     dist = candidate;
                     nearest = nil[k];

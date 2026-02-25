@@ -5,12 +5,13 @@
 
 package org.dreeam.leaf.util.queue;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+@NullMarked
 public final class MpmcQueue<T> {
     private static final long DONE_MASK = 0x0000_0000_0000_FF00L;
     private static final long PENDING_MASK = 0x0000_0000_0000_00FFL;
@@ -26,8 +27,7 @@ public final class MpmcQueue<T> {
 
     private final long mask;
     private final long capacity;
-    @Nullable
-    private final T[] buffer;
+    private final @Nullable T[] buffer;
 
     private final ReadCounter reads = new ReadCounter();
     private final WriteCounter writes = new WriteCounter();
@@ -65,7 +65,7 @@ public final class MpmcQueue<T> {
         }
     }
 
-    public boolean send(@NotNull final T item) {
+    public boolean send(final T item) {
         long write = (long) WRITE.getAcquire(this.writes);
         boolean success;
         long newWrite = 0L;

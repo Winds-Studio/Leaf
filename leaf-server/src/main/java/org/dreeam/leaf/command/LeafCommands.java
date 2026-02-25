@@ -1,15 +1,12 @@
 package org.dreeam.leaf.command;
 
 import net.minecraft.server.MinecraftServer;
-import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.framework.qual.DefaultQualifier;
 import org.bukkit.command.Command;
 import org.bukkit.craftbukkit.util.permissions.CraftDefaultPermissions;
 
 import java.util.HashMap;
 import java.util.Map;
 
-@DefaultQualifier(NonNull.class)
 public final class LeafCommands {
 
     public static final String COMMAND_BASE_PERM = CraftDefaultPermissions.LEAF_ROOT + ".command";

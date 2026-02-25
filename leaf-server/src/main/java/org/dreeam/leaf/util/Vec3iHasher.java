@@ -16,9 +16,7 @@ public final class Vec3iHasher {
     }
 
     public static int hash(int x, int y, int z) {
-        final int h = x * 31337 + y * 961 + z;
-
-        final int hash = h * INT_PHI;
+        final int hash = (x * 31337 + y * 961 + z) * INT_PHI;
         return hash ^ (hash >>> 16);
     }
 }

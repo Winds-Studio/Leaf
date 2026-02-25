@@ -8,8 +8,7 @@ import net.minecraft.util.Util;
 import org.dreeam.leaf.command.subcommands.MSPTCommand;
 import org.dreeam.leaf.command.subcommands.ReloadCommand;
 import org.dreeam.leaf.command.subcommands.VersionCommand;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
@@ -79,9 +78,9 @@ public final class LeafCommand extends Command {
     }
 
     @Override
-    public @NotNull List<String> tabComplete(
-        final @NotNull CommandSender sender,
-        final @NotNull String alias,
+    public List<String> tabComplete(
+        final CommandSender sender,
+        final String alias,
         final String[] args,
         final @Nullable Location location
     ) throws IllegalArgumentException {
@@ -97,7 +96,7 @@ public final class LeafCommand extends Command {
             return CommandUtil.getListMatchingLast(sender, args, subCommandArguments);
         }
 
-        final @Nullable Pair<String, LeafSubcommand> subCommand = resolveCommand(args[0]);
+        final Pair<String, LeafSubcommand> subCommand = resolveCommand(args[0]);
 
         if (subCommand != null && subCommand.second().testPermission(sender)) {
             return subCommand.second().tabComplete(sender, subCommand.first(), Arrays.copyOfRange(args, 1, args.length));
@@ -119,7 +118,7 @@ public final class LeafCommand extends Command {
     @Override
     public boolean execute(
         final CommandSender sender,
-        final @NotNull String commandLabel,
+        final String commandLabel,
         final String[] args
     ) {
         // Check if the sender has the base permission and at least one specific permission
@@ -145,7 +144,7 @@ public final class LeafCommand extends Command {
         }
 
         // If they do not have permission for the subcommand they gave, or the argument is not a valid subcommand
-        final @Nullable Pair<String, LeafSubcommand> subCommand = resolveCommand(args[0]);
+        final Pair<String, LeafSubcommand> subCommand = resolveCommand(args[0]);
         if (subCommand == null || !subCommand.second().testPermission(sender)) {
             sender.sendMessage(Component.text("Usage: " + specificUsageMessage, NamedTextColor.RED));
             return false;
@@ -159,9 +158,9 @@ public final class LeafCommand extends Command {
 
     private static @Nullable Pair<String, LeafSubcommand> resolveCommand(String label) {
         label = label.toLowerCase(Locale.ENGLISH);
-        @Nullable LeafSubcommand subCommand = SUBCOMMANDS.get(label);
+        LeafSubcommand subCommand = SUBCOMMANDS.get(label);
         if (subCommand == null) {
-            final @Nullable String command = ALIASES.get(label);
+            final String command = ALIASES.get(label);
             if (command != null) {
                 label = command;
                 subCommand = SUBCOMMANDS.get(command);

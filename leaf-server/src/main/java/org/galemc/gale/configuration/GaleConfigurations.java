@@ -40,7 +40,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.ConfigurationNode;
@@ -60,6 +61,7 @@ import java.util.function.Function;
 
 import static io.leangen.geantyref.GenericTypeReflector.erase;
 
+@NullMarked
 @SuppressWarnings("Convert2Diamond")
 public class GaleConfigurations extends Configurations<GaleGlobalConfiguration, GaleWorldConfiguration> {
 

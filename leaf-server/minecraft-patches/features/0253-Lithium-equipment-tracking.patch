@@ -1,0 +1,535 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Lithium: equipment tracking
+
+Should have special treatment to ArmorStand, since Paper introduced the configurable
+ArmorStand no-tick, and still gives it ability to update equipment changes.
+Thus added a bypass condition in LivingEntity#collectEquipmentChanges, always send
+ArmorStand equipment changes even if the ArmorStand is no-tick
+
+This patch is based on the following mixins:
+* "net/caffeinemc/mods/lithium/mixin/util/in_world_tracking/entity/LivingEntityMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/util/in_world_tracking/entity/EntityMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/util/item_component_and_count_tracking/PatchedDataComponentMapMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/util/item_component_and_count_tracking/ItemStackMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/entity/equipment_tracking/enchantment_ticking/LivingEntityMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/entity/equipment_tracking/equipment_changes/LivingEntityMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/entity/equipment_tracking/EntityEquipmentMixin.java"
+* "net/caffeinemc/mods/lithium/common/util/change_tracking/ChangePublisher.java"
+* "net/caffeinemc/mods/lithium/common/util/change_tracking/ChangeSubscriber.java"
+* "net/caffeinemc/mods/lithium/common/world/in_world_tracking/MaybeInLevelObject.java"
+By: 2No2Name <2No2Name@web.de>
+As part of: Lithium (https://github.com/CaffeineMC/lithium)
+Licensed under: LGPL-3.0 (https://www.gnu.org/licenses/lgpl-3.0.html)
+
+diff --git a/net/minecraft/core/component/PatchedDataComponentMap.java b/net/minecraft/core/component/PatchedDataComponentMap.java
+index 4276819c6143b41886e26d359a562beb3b277afc..95dca918687547574ae926b9819b4f02109fa633 100644
+--- a/net/minecraft/core/component/PatchedDataComponentMap.java
++++ b/net/minecraft/core/component/PatchedDataComponentMap.java
+@@ -14,10 +14,11 @@ import java.util.Map.Entry;
+ import java.util.stream.Collectors;
+ import org.jspecify.annotations.Nullable;
+ 
+-public final class PatchedDataComponentMap implements DataComponentMap {
++public final class PatchedDataComponentMap implements DataComponentMap, net.caffeinemc.mods.lithium.common.util.change_tracking.ChangePublisher<PatchedDataComponentMap> { // Leaf - Lithium - equipment tracking
+     private final DataComponentMap prototype;
+     private Reference2ObjectMap<DataComponentType<?>, Optional<?>> patch;
+     private boolean copyOnWrite;
++    private net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<PatchedDataComponentMap> subscriber; // Leaf - Lithium - equipment tracking
+ 
+     public PatchedDataComponentMap(DataComponentMap prototype) {
+         this(prototype, Reference2ObjectMaps.emptyMap(), true);
+@@ -136,6 +137,11 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+     }
+ 
+     private void ensureMapOwnership() {
++        // Leaf start - Lithium - equipment tracking
++        if (this.subscriber != null) {
++            this.subscriber.lithium$notify(this, 0);
++        }
++        // Leaf end - Lithium - equipment tracking
+         if (this.copyOnWrite) {
+             this.patch = new Reference2ObjectArrayMap<>(this.patch);
+             this.copyOnWrite = false;
+@@ -222,6 +228,22 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+         return (DataComponentMap)(this.patch.isEmpty() ? this.prototype : this.copy());
+     }
+ 
++    // Leaf start - Lithium - equipment tracking
++    @Override
++    public void lithium$subscribe(net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<PatchedDataComponentMap> subscriber, int subscriberData) {
++        if (subscriberData != 0) {
++            throw new UnsupportedOperationException("ComponentMapImpl does not support subscriber data");
++        }
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.combine(this.subscriber, 0, subscriber, 0);
++    }
++
++    @Override
++    public int lithium$unsubscribe(net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<PatchedDataComponentMap> subscriber) {
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.without(this.subscriber, subscriber);
++        return 0;
++    }
++    // Leaf end - Lithium - equipment tracking
++
+     @Override
+     public boolean equals(Object other) {
+         return this == other
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index f152126cfe27a73f8c4b75f5a00bb30647fc6c8a..07709ff0a02b3d4c9c5c481b9e80777e9275c2ab 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -152,7 +152,7 @@ import org.jetbrains.annotations.Contract;
+ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ 
+-public abstract class Entity implements SyncedDataHolder, DebugValueSource, Nameable, ItemOwner, SlotProvider, EntityAccess, ScoreHolder, DataComponentGetter, ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity, ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity { // Paper - rewrite chunk system // Paper - optimise entity tracker
++public abstract class Entity implements SyncedDataHolder, DebugValueSource, Nameable, ItemOwner, SlotProvider, EntityAccess, ScoreHolder, DataComponentGetter, ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity, ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity, net.caffeinemc.mods.lithium.common.world.in_world_tracking.MaybeInLevelObject { // Paper - rewrite chunk system // Paper - optimise entity tracker // Leaf - Lithium - equipment tracking
+     public static javax.script.ScriptEngine scriptEngine = new javax.script.ScriptEngineManager().getEngineByName("rhino"); // Purpur - Configurable entity base attributes
+     // CraftBukkit start
+     private static final int CURRENT_LEVEL = 2;
+@@ -5392,6 +5392,13 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     @Override
+     public void setLevelCallback(EntityInLevelCallback levelCallback) {
+         this.levelCallback = levelCallback;
++        // Leaf start - Lithium - equipment tracking
++        if (this.levelCallback == EntityInLevelCallback.NULL) {
++            this.lithium$handleRemovedFromLevel(this.level());
++        } else {
++            this.lithium$handleAddedToLevel(this.level());
++        }
++        // Leaf end - Lithium - equipment tracking
+     }
+ 
+     @Override
+@@ -5637,6 +5644,13 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+     // Purpur end - Ridables
+ 
++    // Leaf start - Lithium - equipment tracking
++    @Override
++    public boolean lithium$isInLevel() {
++        return this.levelCallback != EntityInLevelCallback.NULL;
++    }
++    // Leaf end - Lithium - equipment tracking
++
+     // Leaf start - Optimize Entity distanceTo
+     // Inlining and avoid casting
+     // Use Math#sqrt instead of Mojang's Mth#sqrt - only cast once
+diff --git a/net/minecraft/world/entity/EntityEquipment.java b/net/minecraft/world/entity/EntityEquipment.java
+index 1e00a7bd89d885cabb4b9ca3c86fbd8cd93cebf5..e8e713b4e62e0afd82f447b9dc53ec54489cc71e 100644
+--- a/net/minecraft/world/entity/EntityEquipment.java
++++ b/net/minecraft/world/entity/EntityEquipment.java
+@@ -7,7 +7,7 @@ import java.util.Objects;
+ import java.util.Map.Entry;
+ import net.minecraft.world.item.ItemStack;
+ 
+-public class EntityEquipment {
++public class EntityEquipment implements net.caffeinemc.mods.lithium.common.entity.EquipmentInfo, net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.CountChangeSubscriber<ItemStack>, net.caffeinemc.mods.lithium.common.world.in_world_tracking.MaybeInLevelObject { // Leaf - Lithium - equipment tracking
+     public static final Codec<EntityEquipment> CODEC = Codec.unboundedMap(EquipmentSlot.CODEC, ItemStack.CODEC).xmap(map -> {
+         EnumMap<EquipmentSlot, ItemStack> map1 = new EnumMap<>(EquipmentSlot.class);
+         map1.putAll((Map<? extends EquipmentSlot, ? extends ItemStack>)map);
+@@ -18,6 +18,12 @@ public class EntityEquipment {
+         return map;
+     });
+     private final EnumMap<EquipmentSlot, ItemStack> items;
++    // Leaf start - Lithium - equipment tracking
++    boolean shouldTickEnchantments = false;
++    ItemStack recheckEnchantmentForStack = null;
++    boolean hasUnsentEquipmentChanges = true;
++    boolean inLevel = false;
++    // Leaf end - Lithium - equipment tracking
+ 
+     private EntityEquipment(EnumMap<EquipmentSlot, ItemStack> items) {
+         this.items = items;
+@@ -28,7 +34,11 @@ public class EntityEquipment {
+     }
+ 
+     public ItemStack set(EquipmentSlot slot, ItemStack stack) {
+-        return Objects.requireNonNullElse(this.items.put(slot, stack), ItemStack.EMPTY);
++        // Leaf start - Lithium - equipment tracking
++        ItemStack oldStack = Objects.requireNonNullElse(this.items.put(slot, stack), ItemStack.EMPTY);
++        if (inLevel) this.onEquipmentReplaced(oldStack, stack);
++        return oldStack;
++        // Leaf end - Lithium - equipment tracking
+     }
+ 
+     public ItemStack get(EquipmentSlot slot) {
+@@ -55,8 +65,10 @@ public class EntityEquipment {
+     }
+ 
+     public void setAll(EntityEquipment equipment) {
++        if (this.inLevel) this.invalidateData(); // Leaf - Lithium - equipment tracking
+         this.items.clear();
+         this.items.putAll(equipment.items);
++        if (this.inLevel) this.initializeData(); // Leaf - Lithium - equipment tracking
+     }
+ 
+     public void dropAll(LivingEntity entity) {
+@@ -69,6 +81,7 @@ public class EntityEquipment {
+ 
+     public void clear() {
+         this.items.replaceAll((equipmentSlot, itemStack) -> ItemStack.EMPTY);
++        if (inLevel) this.invalidateData(); // Leaf - Lithium - equipment tracking
+     }
+ 
+     // Paper start - EntityDeathEvent
+@@ -77,4 +90,151 @@ public class EntityEquipment {
+         return this.items.containsKey(slot);
+     }
+     // Paper end - EntityDeathEvent
++
++    // Leaf start - Lithium - equipment tracking
++    @Override
++    public boolean lithium$shouldTickEnchantments() {
++        if (!this.inLevel) {
++            return true;
++        }
++        this.processScheduledEnchantmentCheck(null);
++        return this.shouldTickEnchantments;
++    }
++
++    @Override
++    public boolean lithium$hasUnsentEquipmentChanges() {
++        if (!this.inLevel) {
++            return true;
++        }
++        return this.hasUnsentEquipmentChanges;
++    }
++
++    @Override
++    public void lithium$onEquipmentChangesSent() {
++        if (!this.inLevel) {
++            return;
++        }
++        this.hasUnsentEquipmentChanges = false;
++    }
++
++    private void onEquipmentReplaced(ItemStack oldStack, ItemStack newStack) {
++        if (!this.shouldTickEnchantments) {
++            if (this.recheckEnchantmentForStack == oldStack) {
++                this.recheckEnchantmentForStack = null;
++            }
++            this.shouldTickEnchantments = stackHasTickableEnchantment(newStack);
++        }
++
++        this.hasUnsentEquipmentChanges = true;
++
++        if (!oldStack.isEmpty()) {
++            oldStack.lithium$unsubscribeWithData(this, 0);
++        }
++        if (!newStack.isEmpty()) {
++            newStack.lithium$subscribe(this, 0);
++        }
++    }
++
++    private static boolean stackHasTickableEnchantment(ItemStack stack) {
++        if (!stack.isEmpty()) {
++            net.minecraft.world.item.enchantment.ItemEnchantments enchantments = stack.get(net.minecraft.core.component.DataComponents.ENCHANTMENTS);
++            if (enchantments != null && !enchantments.isEmpty()) {
++                for (net.minecraft.core.Holder<net.minecraft.world.item.enchantment.Enchantment> enchantmentEntry : enchantments.keySet()) {
++                    if (!enchantmentEntry.value().getEffects(net.minecraft.world.item.enchantment.EnchantmentEffectComponents.TICK).isEmpty()) {
++                        return true;
++                    }
++                }
++            }
++        }
++        return false;
++    }
++
++    @Override
++    public void lithium$notify(@org.jetbrains.annotations.Nullable ItemStack publisher, int zero) {
++        this.hasUnsentEquipmentChanges = true;
++
++        if (!this.shouldTickEnchantments) {
++            this.processScheduledEnchantmentCheck(publisher);
++            this.scheduleEnchantmentCheck(publisher);
++        }
++    }
++
++    private void scheduleEnchantmentCheck(@org.jetbrains.annotations.Nullable ItemStack toCheck) {
++        this.recheckEnchantmentForStack = toCheck;
++    }
++
++    private void processScheduledEnchantmentCheck(@org.jetbrains.annotations.Nullable ItemStack ignoredStack) {
++        if (this.recheckEnchantmentForStack != null && this.recheckEnchantmentForStack != ignoredStack) {
++            this.shouldTickEnchantments = stackHasTickableEnchantment(this.recheckEnchantmentForStack);
++            this.recheckEnchantmentForStack = null;
++        }
++    }
++
++    @Override
++    public void lithium$notifyCount(ItemStack publisher, int zero, int newCount) {
++        if (newCount == 0) {
++            publisher.lithium$unsubscribeWithData(this, zero);
++        }
++
++        this.onEquipmentReplaced(publisher, ItemStack.EMPTY);
++    }
++
++    @Override
++    public void lithium$forceUnsubscribe(ItemStack publisher, int zero) {
++        throw new UnsupportedOperationException();
++    }
++
++    @Override
++    public boolean lithium$isInLevel() {
++        return this.inLevel;
++    }
++
++    @Override
++    public void lithium$handleAddedToLevel(net.minecraft.world.level.Level level) {
++        this.inLevel = true;
++        this.initializeData();
++
++        net.caffeinemc.mods.lithium.common.world.in_world_tracking.MaybeInLevelObject.super.lithium$handleAddedToLevel(level);
++    }
++
++    @Override
++    public void lithium$handleRemovedFromLevel(net.minecraft.world.level.Level level) {
++        this.inLevel = false;
++        this.invalidateData();
++
++        net.caffeinemc.mods.lithium.common.world.in_world_tracking.MaybeInLevelObject.super.lithium$handleRemovedFromLevel(level);
++    }
++
++    private void invalidateData() {
++        this.shouldTickEnchantments = false;
++        this.recheckEnchantmentForStack = null;
++        this.hasUnsentEquipmentChanges = true;
++
++        for (ItemStack oldStack : this.items.values()) {
++            if (!oldStack.isEmpty()) {
++                //noinspection unchecked
++                oldStack.lithium$unsubscribeWithData(this, 0);
++            }
++        }
++    }
++
++    private void initializeData() {
++        this.shouldTickEnchantments = false;
++        this.recheckEnchantmentForStack = null;
++        this.hasUnsentEquipmentChanges = true;
++
++        for (ItemStack newStack : this.items.values()) {
++            if (!newStack.isEmpty()) {
++                if (!this.shouldTickEnchantments) {
++                    this.shouldTickEnchantments = stackHasTickableEnchantment(newStack);
++                }
++
++                if (!newStack.isEmpty()) {
++                    //noinspection unchecked
++                    newStack.lithium$subscribe(this, 0);
++                }
++            }
++        }
++    }
++    // Leaf end - Lithium - equipment tracking
+ }
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 5d7d5d0b632782a6eae8cccb34e770e4b421d915..ff37f6625f05ee771ddf25157cda94677a308162 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -154,7 +154,7 @@ import org.bukkit.event.entity.EntityRegainHealthEvent;
+ import org.bukkit.event.entity.EntityResurrectEvent;
+ // CraftBukkit end
+ 
+-public abstract class LivingEntity extends Entity implements Attackable, WaypointTransmitter {
++public abstract class LivingEntity extends Entity implements Attackable, WaypointTransmitter, net.caffeinemc.mods.lithium.common.world.in_world_tracking.MaybeInLevelObject { // Leaf - Lithium - equipment tracking
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private static final String TAG_ACTIVE_EFFECTS = "active_effects";
+     public static final String TAG_ATTRIBUTES = "attributes";
+@@ -440,7 +440,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             this.getSleepingPos().ifPresent(this::setPosToBed);
+         }
+ 
+-        if (this.level() instanceof ServerLevel serverLevel) {
++        if ((this instanceof Player || this.equipment.lithium$shouldTickEnchantments()) && this.level() instanceof ServerLevel serverLevel) { // Leaf - Lithium - equipment tracking
+             EnchantmentHelper.tickEffects(serverLevel, this);
+         }
+ 
+@@ -3652,6 +3652,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     public void detectEquipmentUpdates() {
+         Map<EquipmentSlot, ItemStack> map = this.collectEquipmentChanges();
+         if (map != null) {
++            if (!(this instanceof net.minecraft.world.entity.player.Player)) this.equipment.lithium$onEquipmentChangesSent(); // Leaf - Lithium - equipment tracking
+             this.handleHandSwap(map);
+             if (!map.isEmpty()) {
+                 this.handleEquipmentChanges(map);
+@@ -3660,6 +3661,10 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     }
+ 
+     private @Nullable Map<EquipmentSlot, ItemStack> collectEquipmentChanges() {
++        // Leaf start - Lithium - equipment tracking
++        final boolean isArmorStandUpdateNoTick = this instanceof net.minecraft.world.entity.decoration.ArmorStand stand && !stand.canTick && stand.noTickEquipmentDirty;
++        if (!isArmorStandUpdateNoTick && !this.equipment.lithium$hasUnsentEquipmentChanges()) return null;
++        // Leaf end - Lithium - equipment tracking
+         Map<EquipmentSlot, ItemStack> map = null;
+         // Paper start - EntityEquipmentChangedEvent
+         record EquipmentChangeImpl(org.bukkit.inventory.ItemStack oldItem, org.bukkit.inventory.ItemStack newItem) implements io.papermc.paper.event.entity.EntityEquipmentChangedEvent.EquipmentChange {
+@@ -5104,4 +5109,16 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+ 
+     public record Fallsounds(SoundEvent small, SoundEvent big) {
+     }
++
++    // Leaf start - Lithium - equipment tracking
++    @Override
++    public void lithium$handleAddedToLevel(Level level) {
++        this.equipment.lithium$handleAddedToLevel(level);
++    }
++
++    @Override
++    public void lithium$handleRemovedFromLevel(Level level) {
++        this.equipment.lithium$handleRemovedFromLevel(level);
++    }
++    // Leaf end - Lithium - equipment tracking
+ }
+diff --git a/net/minecraft/world/entity/decoration/ArmorStand.java b/net/minecraft/world/entity/decoration/ArmorStand.java
+index 9d5b4309884f9d5fa42cfd46f96502b1bb7a4dc8..9ab14c1d61665358b4e3cdafeffe067292130708 100644
+--- a/net/minecraft/world/entity/decoration/ArmorStand.java
++++ b/net/minecraft/world/entity/decoration/ArmorStand.java
+@@ -529,8 +529,9 @@ public class ArmorStand extends LivingEntity {
+         maxUpStep = level().purpurConfig.armorstandStepHeight; // Purpur - Add option to set armorstand step height
+         if (!this.canTick) {
+             if (this.noTickEquipmentDirty) {
+-                this.noTickEquipmentDirty = false;
++                //this.noTickEquipmentDirty = false; // Leaf - Lithium - equipment tracking - move down
+                 this.detectEquipmentUpdates();
++                this.noTickEquipmentDirty = false; // Leaf - Lithium - equipment tracking
+             }
+ 
+             return;
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index bba028a852aa1552269a1942994cc8ad1cb3e695..dcf65e03f65051681555328e0e75678a01758f61 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -102,7 +102,7 @@ import org.apache.commons.lang3.mutable.MutableBoolean;
+ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ 
+-public final class ItemStack implements DataComponentHolder {
++public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods.lithium.common.util.change_tracking.ChangePublisher<ItemStack>, net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<PatchedDataComponentMap> { // Leaf - Lithium - equipment tracking
+     private static final List<Component> OP_NBT_WARNING = List.of(
+         Component.translatable("item.op_warning.line1").withStyle(ChatFormatting.RED, ChatFormatting.BOLD),
+         Component.translatable("item.op_warning.line2").withStyle(ChatFormatting.RED),
+@@ -172,6 +172,10 @@ public final class ItemStack implements DataComponentHolder {
+     private @Nullable Item item;
+     PatchedDataComponentMap components;
+     private @Nullable Entity entityRepresentation;
++    // Leaf start - Lithium - equipment tracking
++    private net.caffeinemc.mods.lithium.common.util.change_tracking.@Nullable ChangeSubscriber<ItemStack> subscriber;
++    private int subscriberData;
++    // Leaf end - Lithium - equipment tracking
+ 
+     public static DataResult<ItemStack> validateStrict(ItemStack stack) {
+         DataResult<Unit> dataResult = validateComponents(stack.getComponents());
+@@ -1374,6 +1378,21 @@ public final class ItemStack implements DataComponentHolder {
+     }
+ 
+     public void setCount(int count) {
++        // Leaf start - Lithium - equipment tracking
++        if (count != this.count) {
++            if (this.subscriber instanceof net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.CountChangeSubscriber<ItemStack> countChangeSubscriber) {
++                countChangeSubscriber.lithium$notifyCount(this, this.subscriberData, count);
++            }
++            if (count == 0) {
++                this.components.lithium$unsubscribe(this);
++                if (this.subscriber != null) {
++                    this.subscriber.lithium$forceUnsubscribe(this, this.subscriberData);
++                    this.subscriber = null;
++                    this.subscriberData = 0;
++                }
++            }
++        }
++        // Leaf end - Lithium - equipment tracking
+         this.count = count;
+     }
+ 
+@@ -1442,4 +1461,87 @@ public final class ItemStack implements DataComponentHolder {
+             .or(() -> Optional.ofNullable(this.getItem().getItemDamageSource(attacker)))
+             .orElseGet(fallback);
+     }
++
++    // Leaf start - Lithium - equipment tracking
++    @Override
++    public void lithium$subscribe(net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemStack> subscriber, int subscriberData) {
++        if (this.isEmpty()) {
++            throw new IllegalStateException("Cannot subscribe to an empty ItemStack!");
++        }
++
++        if (this.subscriber == null) {
++            this.startTrackingChanges();
++        }
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.combine(this.subscriber, this.subscriberData, subscriber, subscriberData);
++        if (this.subscriber instanceof net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.Multi<?>) {
++            this.subscriberData = 0;
++        } else {
++            this.subscriberData = subscriberData;
++        }
++    }
++
++    @Override
++    public int lithium$unsubscribe(net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemStack> subscriber) {
++        if (this.isEmpty()) {
++            throw new IllegalStateException("Cannot unsubscribe from an empty ItemStack!");
++        }
++
++        int retval = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.dataOf(this.subscriber, subscriber, this.subscriberData);
++        this.subscriberData = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.dataWithout(this.subscriber, subscriber, this.subscriberData);
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.without(this.subscriber, subscriber);
++
++        if (this.subscriber == null) {
++            this.components.lithium$unsubscribe(this);
++        }
++        return retval;
++    }
++
++    @Override
++    public void lithium$unsubscribeWithData(net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemStack> subscriber, int subscriberData) {
++        if (this.isEmpty()) {
++            throw new IllegalStateException("Cannot unsubscribe from an empty ItemStack!");
++        }
++
++        this.subscriberData = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.dataWithout(this.subscriber, subscriber, this.subscriberData, subscriberData, true);
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.without(this.subscriber, subscriber, subscriberData, true);
++
++        if (this.subscriber == null) {
++            this.components.lithium$unsubscribe(this);
++        }
++    }
++
++    @Override
++    public boolean lithium$isSubscribedWithData(net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemStack> subscriber, int subscriberData) {
++        if (this.isEmpty()) {
++            throw new IllegalStateException("Cannot be subscribed to an empty ItemStack!");
++        }
++
++        return net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.containsSubscriber(this.subscriber, this.subscriberData, subscriber, subscriberData);
++    }
++
++    @Override
++    public void lithium$forceUnsubscribe(PatchedDataComponentMap publisher, int subscriberData) {
++        if (publisher != this.components) {
++            throw new IllegalStateException("Invalid publisher, expected " + this.components + " but got " + publisher);
++        }
++        this.subscriber.lithium$forceUnsubscribe(this, this.subscriberData);
++        this.subscriber = null;
++        this.subscriberData = 0;
++    }
++
++    @Override
++    public void lithium$notify(PatchedDataComponentMap publisher, int subscriberData) {
++        if (publisher != this.components) {
++            throw new IllegalStateException("Invalid publisher, expected " + this.components + " but got " + publisher);
++        }
++
++        if (this.subscriber != null) {
++            this.subscriber.lithium$notify(this, this.subscriberData);
++        }
++    }
++
++    private void startTrackingChanges() {
++        this.components.lithium$subscribe(this, 0);
++    }
++    // Leaf end - Lithium - equipment tracking
+ }
