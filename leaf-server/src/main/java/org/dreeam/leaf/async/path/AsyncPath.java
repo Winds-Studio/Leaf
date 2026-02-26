@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.pathfinder.Node;
 import net.minecraft.world.level.pathfinder.Path;
+import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * I'll be using this to represent a path that not be processed yet!
@@ -28,7 +29,7 @@ public final class AsyncPath extends Path {
      */
     private final Set<BlockPos> positions;
 
-    private @Nullable Supplier<Path> pathSupplier;
+    private @Nullable Function<PathFinder, Path> pathFn;
 
     /// Represents an asynchronous task. `null` indicates that is not ready.
     private volatile @Nullable Path ret;
@@ -45,17 +46,20 @@ public final class AsyncPath extends Path {
      * While processing, we can always theoretically reach the target so default is true
      */
     private boolean canReach = true;
+    private final PathFinder finder;
 
-    @SuppressWarnings("ConstantConditions")
-    public AsyncPath(List<Node> emptyNodeList, Set<BlockPos> positions, Supplier<Path> pathSupplier) {
-        super(emptyNodeList, null, false);
+    public AsyncPath(PathFinder finder, List<Node> emptyNodeList, Set<BlockPos> positions, Function<PathFinder, Path> pathFn) {
+        super(emptyNodeList, BlockPos.ZERO, false);
 
+        this.finder = finder;
         this.positions = positions;
-        this.pathSupplier = pathSupplier;
+        this.pathFn = pathFn;
 
         AsyncPathProcessor.queue(() -> {
-            if (this.ret == null) {
-                this.ret = pathSupplier.get();
+            synchronized (finder) {
+                if (this.ret == null) {
+                    this.ret = pathFn.apply(finder);
+                }
             }
         });
     }
@@ -94,29 +98,32 @@ public final class AsyncPath extends Path {
         return this.positions.equals(positions);
     }
 
-    /**
-     * Starts processing this path
-     * Since this is no longer a synchronized function, checkProcessed is no longer required
-     */
     private void process() {
         if (this.ready) {
             return;
         }
-        final Path ret = this.ret;
-        final Path bestPath = ret != null ? ret : (this.ret = Objects.requireNonNull(pathSupplier).get());
-        complete(bestPath);
+        Path ret = this.ret;
+        if (ret == null) {
+            synchronized (finder) {
+                if ((ret = this.ret) == null) {
+                    ret = (this.ret = Objects.requireNonNull(pathFn).apply(finder));
+                }
+            }
+        }
+        complete(ret);
     }
 
     /// not [#ready]
     ///
-    /// @see #isDone
-    /// @see #process
+    /// @see #isDone()
+    /// @see #process()
+    /// @see #isProcessed()
     private void complete(Path bestPath) {
         this.nodes = bestPath.nodes;
         this.target = bestPath.getTarget();
         this.distToTarget = bestPath.getDistToTarget();
         this.canReach = bestPath.canReach();
-        this.pathSupplier = null;
+        this.pathFn = null;
         this.ready = true;
         for (Consumer<Path> consumer : this.postProcessing) {
             consumer.accept(this);
