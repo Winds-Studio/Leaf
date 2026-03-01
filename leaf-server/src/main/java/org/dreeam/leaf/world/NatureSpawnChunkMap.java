@@ -65,10 +65,12 @@ public final class NatureSpawnChunkMap {
         this.centersByRadius[range].add(player.chunkPosition().longKey);
     }
 
-    public void build() {
+    public void build(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
         for (int index = 0; index < SIZE_RADIUS; index++) {
             buildBy(index);
         }
+
+        collectSpawningChunks(chunks, out);
     }
 
     private void buildBy(int index) {
@@ -135,7 +137,7 @@ public final class NatureSpawnChunkMap {
         return size + 1;
     }
 
-    public void collectSpawningChunks(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
+    private void collectSpawningChunks(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
         LevelChunk[] raw = chunks.getRawDataUnchecked();
         for (int i = 0, length = chunks.size(); i < length; i++) {
             LevelChunk chunk = raw[i];
