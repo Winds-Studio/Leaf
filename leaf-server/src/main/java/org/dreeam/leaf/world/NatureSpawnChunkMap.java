@@ -70,7 +70,7 @@ public final class NatureSpawnChunkMap {
             buildBy(index);
         }
 
-        collectSpawningChunks(chunks, out);
+        collectSpawningChunks(chunks, regionBitSets, out);
     }
 
     private void buildBy(int index) {
@@ -137,20 +137,25 @@ public final class NatureSpawnChunkMap {
         return size + 1;
     }
 
-    private void collectSpawningChunks(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
+    private static void collectSpawningChunks(ReferenceList<LevelChunk> chunks, Long2LongOpenHashMap bitSets, List<LevelChunk> out) {
         LevelChunk[] raw = chunks.getRawDataUnchecked();
-        for (int i = 0, length = chunks.size(); i < length; i++) {
+        int size = chunks.size();
+        java.util.Objects.checkFromToIndex(0, size, raw.length);
+        for (int i = 0; i < size; i++) {
             LevelChunk chunk = raw[i];
-            if (contains(chunk.locX, chunk.locZ)) {
+            if (contains(bitSets, chunk.coordinateKey)) {
                 out.add(chunk);
             }
         }
     }
 
-    public boolean contains(int chunkX, int chunkZ) {
+    private static boolean contains(Long2LongOpenHashMap bitSets, long pos) {
+        int chunkX = ChunkPos.getX(pos);
+        int chunkZ = ChunkPos.getZ(pos);
         int regionX = chunkX >> REGION_SHIFT;
         int regionZ = chunkZ >> REGION_SHIFT;
-        long bitset = this.regionBitSets.get(ChunkPos.asLong(regionX, regionZ));
-        return bitset != 0 && (bitset & (1L << (((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK)))) != 0L;
+        int local = ((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK);
+        long bitset = bitSets.get(ChunkPos.asLong(regionX, regionZ));
+        return (bitset & (1L << local)) != 0L; // 63
     }
 }
