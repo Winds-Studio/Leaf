@@ -14,7 +14,7 @@ public final class NatureSpawnChunkMap {
     /// breadth-first search
     ///
     /// 0 4 12 28 48 80 112 148 196
-    private static final long[][] TABLE_BFS = new long[][]{
+    private static final long[][] TABLE_BFS = {
         {0L},
         {0L, 4294967295L, -4294967296L, 4294967296L, 1L},
         {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, 4294967294L, -8589934592L, 8589934592L, 2L},
@@ -101,7 +101,7 @@ public final class NatureSpawnChunkMap {
                 int localX = chunkX & REGION_MASK;
                 int localZ = chunkZ & REGION_MASK;
                 int bitIndex = (localZ << REGION_SHIFT) | localX;
-                long bitMask = 1L << bitIndex;
+                long bit = 1L << bitIndex;
 
                 if (regionKey != cachedKey) {
                     this.regionBitSets.put(cachedKey, cachedVal);
@@ -109,7 +109,7 @@ public final class NatureSpawnChunkMap {
                     cachedVal = this.regionBitSets.get(regionKey);
                 }
 
-                cachedVal |= bitMask;
+                cachedVal |= bit;
             }
         }
 
