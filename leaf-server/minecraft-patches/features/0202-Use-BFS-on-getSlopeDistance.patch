@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Wed, 19 Mar 2025 18:41:56 +0100
+Subject: [PATCH] Use BFS on getSlopeDistance
+
+Uses Breadth First Search (BFS) to optimize getSlopeDistance
+Paper: ~75ms
+Leaf: ~48ms (-36%)
+This should help drastically on the farms that use actively changing fluids.
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 64543ea3fad4aa7031ad0b71fb87490a1d4ab4ba..514b16717db33885cb0c339e485c38e8930803de 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1554,6 +1554,10 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         this.emptyTime = 0;
+     }
+ 
++    // Leaf start - Use BFS on getSlopeDistance
++    public it.unimi.dsi.fastutil.longs.LongSet slopeDistanceCacheVisited = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(512);
++    public net.minecraft.world.level.material.FlowingFluid.SlopeDistanceNodeDeque slopeDistanceCacheQueue = new net.minecraft.world.level.material.FlowingFluid.SlopeDistanceNodeDeque();
++    // Leaf end - Use BFS on getSlopeDistance
+     private void tickFluid(BlockPos pos, Fluid fluid) {
+         BlockState blockState = this.getBlockState(pos);
+         FluidState fluidState = blockState.getFluidState();
+diff --git a/net/minecraft/world/level/material/FlowingFluid.java b/net/minecraft/world/level/material/FlowingFluid.java
+index af3d41aa18fc864970961ce788ecb23f03d1bbf2..b4d2b3c50be1b87a55f09882bee044ea3282bed9 100644
+--- a/net/minecraft/world/level/material/FlowingFluid.java
++++ b/net/minecraft/world/level/material/FlowingFluid.java
+@@ -343,32 +343,124 @@ public abstract class FlowingFluid extends Fluid {
+ 
+     protected abstract void beforeDestroyingBlock(LevelAccessor level, BlockPos pos, BlockState state);
+ 
+-    protected int getSlopeDistance(LevelReader level, BlockPos pos, int depth, Direction direction, BlockState state, FlowingFluid.SpreadContext spreadContext) {
+-        int i = 1000;
++    // Leaf start - Use BFS on getSlopeDistance
++    protected int getSlopeDistance(LevelReader level, BlockPos startPos, int initialDepth, Direction excludedDirection, BlockState startState, FlowingFluid.SpreadContext spreadContext) {
++        it.unimi.dsi.fastutil.longs.LongSet visited = ((ServerLevel) level).slopeDistanceCacheVisited;
++        SlopeDistanceNodeDeque queue = ((ServerLevel) level).slopeDistanceCacheQueue;
++        visited.clear();
++        queue.clear();
++
++        for (Direction dir : Direction.Plane.HORIZONTAL) {
++            if (dir == excludedDirection) continue;
++
++            BlockPos neighborPos = startPos.relative(dir); // immutable
++            BlockState neighborState = spreadContext.getBlockStateIfLoaded(neighborPos);
++            if (neighborState == null) continue;
++
++            // Check if the fluid can actually pass through to this first neighbor before adding
++            FluidState neighborFluidState = neighborState.getFluidState();
++            if (!this.canPassThrough(level, this.getFlowing(), startPos, startState, dir, neighborPos, neighborState, neighborFluidState)) {
++                continue;
++            }
++            long visitKey = encodeSlopeNode(neighborPos, dir.getOpposite());
++            if (visited.add(visitKey)) {
++                queue.add(new FlowingFluid.SlopeDistanceNode(neighborPos, initialDepth, dir.getOpposite(), neighborState));
++            }
++        }
+ 
+-        for (Direction direction1 : Direction.Plane.HORIZONTAL) {
+-            if (direction1 != direction) {
+-                BlockPos blockPos = pos.relative(direction1);
+-                BlockState blockState = spreadContext.getBlockStateIfLoaded(blockPos); // Paper - Prevent chunk loading from fluid flowing
+-                if (blockState == null) continue; // Paper - Prevent chunk loading from fluid flowing
+-                FluidState fluidState = blockState.getFluidState();
+-                if (this.canPassThrough(level, this.getFlowing(), pos, state, direction1, blockPos, blockState, fluidState)) {
+-                    if (spreadContext.isHole(blockPos)) {
+-                        return depth;
+-                    }
++        int slopeFindDistance = this.getSlopeFindDistance(level);
++        int minDistance = 1000;
+ 
+-                    if (depth < this.getSlopeFindDistance(level)) {
+-                        int slopeDistance = this.getSlopeDistance(level, blockPos, depth + 1, direction1.getOpposite(), blockState, spreadContext);
+-                        if (slopeDistance < i) {
+-                            i = slopeDistance;
+-                        }
+-                    }
++        // Process the queue
++        while (!queue.isEmpty()) {
++            FlowingFluid.SlopeDistanceNode current = queue.poll();
++            if (spreadContext.isHole(current.pos)) {
++                return current.depth;
++            }
++
++            if (current.depth >= slopeFindDistance) continue;
++
++            for (Direction dir : Direction.Plane.HORIZONTAL) {
++                if (dir == current.excludedDir) continue;
++
++                BlockPos nextPos = current.pos.relative(dir); // immutable
++                BlockState nextState = spreadContext.getBlockStateIfLoaded(nextPos);
++                if (nextState == null) continue;
++
++                FluidState nextFluidState = nextState.getFluidState();
++                if (!this.canPassThrough(level, this.getFlowing(), current.pos, current.state, dir, nextPos, nextState, nextFluidState)) {
++                    continue;
++                }
++
++                long visitKey = encodeSlopeNode(nextPos, dir.getOpposite());
++                if (visited.add(visitKey)) {
++                    queue.add(new FlowingFluid.SlopeDistanceNode(nextPos, current.depth + 1, dir.getOpposite(), nextState));
+                 }
+             }
+         }
+ 
+-        return i;
++        return minDistance;
++    }
++
++    private static long encodeSlopeNode(BlockPos pos, Direction excludedDir) {
++        return ((pos.getX() & 67108863L) << 38) | ((pos.getZ() & 67108863L) << 12) | (excludedDir.ordinal() & 0x0F);
++    }
++
++    public static class SlopeDistanceNodeDeque {
++        private SlopeDistanceNode[] array;
++        private int length;
++        private int start;
++        private int end;
++
++        public SlopeDistanceNodeDeque() {
++            array = new SlopeDistanceNode[256];
++            length = array.length;
++        }
++
++            /*
++        private int size() {
++            int apparent = end - start;
++            return apparent >= 0 ? apparent : length + apparent;
++        }
++        */
++
++        private void clear() {
++            start = 0;
++            end = 0;
++        }
++
++        private boolean isEmpty() {
++            return end == start || (end <= start && length == start - end);
++        }
++
++        private SlopeDistanceNode poll() {
++            final SlopeDistanceNode t = array[start];
++            if (++start == length) start = 0;
++            return t;
++        }
++
++        private void add(final SlopeDistanceNode node) {
++            array[end++] = node;
++            if (end == length) end = 0;
++            if (end == start) resize(length, 2 * length);
++        }
++
++        private void resize(final int size, final int newLength) {
++            final SlopeDistanceNode[] newArray = new SlopeDistanceNode[newLength];
++            if (size != 0) {
++                System.arraycopy(array, start, newArray, 0, length - start);
++                System.arraycopy(array, 0, newArray, length - start, end);
++            }
++            start = 0;
++            end = size;
++            array = newArray;
++            length = newLength;
++        }
++    }
++
++    private record SlopeDistanceNode(BlockPos pos, int depth, Direction excludedDir, BlockState state) {
+     }
++    // Leaf end - Use BFS on getSlopeDistance
+ 
+     boolean isWaterHole(BlockGetter level, BlockPos pos, BlockState state, BlockPos belowPos, BlockState belowState) {
+         return canPassThroughWall(Direction.DOWN, level, pos, state, belowPos, belowState)

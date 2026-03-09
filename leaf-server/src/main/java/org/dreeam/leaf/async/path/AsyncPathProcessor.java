@@ -46,8 +46,8 @@ public class AsyncPathProcessor {
         }
     }
 
-    protected static CompletableFuture<Void> queue(AsyncPath path) {
-        return CompletableFuture.runAsync(path::process, PATH_PROCESSING_EXECUTOR)
+    protected static CompletableFuture<Void> queue(Runnable path) {
+        return CompletableFuture.runAsync(path, PATH_PROCESSING_EXECUTOR)
             .orTimeout(60L, TimeUnit.SECONDS)
             .exceptionally(throwable -> {
                 if (throwable instanceof TimeoutException e) {
@@ -67,7 +67,7 @@ public class AsyncPathProcessor {
      */
     public static void awaitProcessing(@Nullable Path path, Consumer<@Nullable Path> afterProcessing) {
         if (path != null && !path.isProcessed() && path instanceof AsyncPath asyncPath) {
-            asyncPath.schedulePostProcessing(() -> afterProcessing.accept(path)); // Reduce double lambda allocation
+            asyncPath.schedulePostProcessing(afterProcessing); // Reduce double lambda allocation
         } else {
             afterProcessing.accept(path);
         }

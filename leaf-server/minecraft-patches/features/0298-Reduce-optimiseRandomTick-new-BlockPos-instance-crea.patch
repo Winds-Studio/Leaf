@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrlingXD <90316914+wling-art@users.noreply.github.com>
+Date: Thu, 22 May 2025 02:28:50 +0800
+Subject: [PATCH] Reduce optimiseRandomTick new BlockPos instance create
+
+
+diff --git a/io/papermc/paper/redstone/RedstoneWireTurbo.java b/io/papermc/paper/redstone/RedstoneWireTurbo.java
+index 0838b3d60e94a280a6fdd1aef413078a0ec71a1c..bdc5f13321362d5ecd99562b48f9950ad72bbfba 100644
+--- a/io/papermc/paper/redstone/RedstoneWireTurbo.java
++++ b/io/papermc/paper/redstone/RedstoneWireTurbo.java
+@@ -717,7 +717,7 @@ public final class RedstoneWireTurbo {
+             upd.parent = pos;
+             upd.visited = true;
+             identifyNode(worldIn, upd);
+-            nodeCache.put(pos, upd);
++            nodeCache.put(pos.immutable(), upd); // Leaf - Reduce optimiseRandomTick new BlockPos instance create - immutable
+         }
+         upd.currentState = newState;
+ 
+@@ -795,7 +795,7 @@ public final class RedstoneWireTurbo {
+         upd.currentState = newState;
+         upd.type = UpdateNode.Type.REDSTONE;
+         upd.visited = true;
+-        nodeCache.put(pos, upd);
++        nodeCache.put(pos.immutable(), upd); // Leaf - Reduce optimiseRandomTick new BlockPos instance create - immutable
+         propagateChanges(worldIn, upd, 0);
+ 
+         // Perform the walk over all directly reachable redstone wire blocks, propagating wire value
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 68830e362d4071e52e5776b16ac77238244e4663..8aed2dead0314811aaebc9735362ae98b1f3fafa 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1127,6 +1127,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         this.players.stream().filter(LivingEntity::isSleeping).collect(Collectors.toList()).forEach(player -> player.stopSleepInBed(false, false));
+     }
+ 
++    public static final BlockPos.MutableBlockPos POS_CACHE = new BlockPos.MutableBlockPos(); // Leaf - Reduce optimiseRandomTick new BlockPos instance create
++
+     // Paper start - optimise random ticking
+     private void optimiseRandomTick(final LevelChunk chunk, final int tickSpeed) {
+         final LevelChunkSection[] sections = chunk.getSections();
+@@ -1161,14 +1163,16 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+                 final int location = tickList.getRaw(index); // Leaf - Micro optimizations for random tick - no unnecessary operations
+                 final BlockState state = states.get(location);
+ 
+-                // do not use a mutable pos, as some random tick implementations store the input without calling immutable()!
+-                final BlockPos pos = new BlockPos((location & 15) | offsetX, (location >>> (4 + 4)) | offsetY, ((location >>> 4) & 15) | offsetZ); // Leaf - Micro optimizations for random tick - no redundant mask
++                // Leaf start - Reduce optimiseRandomTick new BlockPos instance create
++                final BlockPos pos = POS_CACHE.set((location & 15) | offsetX, (location >>> 8) | offsetY, ((location >>> 4) & 15) | offsetZ);
++                final BlockPos finalPos = org.dreeam.leaf.config.modules.opt.MutableBlockPos.enabled ? pos : pos.immutable();
++                state.randomTick(this, finalPos, simpleRandom); // Leaf - Micro optimizations for random tick - no redundant cast
++                // Leaf end - Reduce optimiseRandomTick new BlockPos instance create
+ 
+-                state.randomTick(this, pos, simpleRandom); // Leaf - Micro optimizations for random tick - no redundant cast
+                 if (doubleTickFluids) {
+                     final FluidState fluidState = state.getFluidState();
+                     if (fluidState.isRandomlyTicking()) {
+-                        fluidState.randomTick(this, pos, simpleRandom); // Leaf - Micro optimizations for random tick - no redundant cast
++                        fluidState.randomTick(this, finalPos, simpleRandom); // Leaf - Micro optimizations for random tick - no redundant cast // Leaf - Reduce optimiseRandomTick new BlockPos instance create
+                     }
+                 }
+             }
+diff --git a/net/minecraft/world/level/block/SculkSpreader.java b/net/minecraft/world/level/block/SculkSpreader.java
+index 050f7595bda2e735ec112f70d6462042900b8c2c..3485a08070b1f021ee0dfb9b7456d0227599027b 100644
+--- a/net/minecraft/world/level/block/SculkSpreader.java
++++ b/net/minecraft/world/level/block/SculkSpreader.java
+@@ -156,7 +156,7 @@ public class SculkSpreader {
+                     if (chargeCursor.charge <= 0) {
+                         level.levelEvent(LevelEvent.PARTICLES_SCULK_CHARGE, chargeCursor.getPos(), 0);
+                     } else {
+-                        BlockPos pos1 = chargeCursor.getPos();
++                        BlockPos pos1 = chargeCursor.getPos().immutable(); // Leaf - Reduce optimiseRandomTick new BlockPos instance create - immutable
+                         map1.computeInt(pos1, (blockPos, integer) -> (integer == null ? 0 : integer) + chargeCursor.charge);
+                         SculkSpreader.ChargeCursor chargeCursor1 = map.get(pos1);
+                         if (chargeCursor1 == null) {
+diff --git a/net/minecraft/world/level/redstone/ExperimentalRedstoneWireEvaluator.java b/net/minecraft/world/level/redstone/ExperimentalRedstoneWireEvaluator.java
+index 453eb859b78fe6df909ef3bc478d6fdd848a96d1..a678bc008827ea128c484efd8126737bcfca93c3 100644
+--- a/net/minecraft/world/level/redstone/ExperimentalRedstoneWireEvaluator.java
++++ b/net/minecraft/world/level/redstone/ExperimentalRedstoneWireEvaluator.java
+@@ -113,7 +113,7 @@ public class ExperimentalRedstoneWireEvaluator extends RedstoneWireEvaluator {
+         BlockState blockState = level.getBlockState(pos);
+         if (blockState.is(this.wireBlock)) {
+             this.setPower(pos, blockState.getValue(RedStoneWireBlock.POWER), orientation);
+-            this.wiresToTurnOff.add(pos);
++            this.wiresToTurnOff.add(pos.immutable()); // Leaf - Reduce optimiseRandomTick new BlockPos instance create - immutable
+         } else {
+             this.propagateChangeToNeighbors(level, pos, 0, orientation, true);
+         }

@@ -4,8 +4,6 @@ import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
 
-import java.util.random.RandomGeneratorFactory;
-
 public class FastRNG extends ConfigModules {
 
     public String getBasePath() {
@@ -14,11 +12,8 @@ public class FastRNG extends ConfigModules {
 
     public static boolean enabled = false;
     public static boolean enableForWorldgen = false;
-    public static String randomGenerator = "Xoroshiro128PlusPlus";
     public static boolean warnForSlimeChunk = true;
     public static boolean useLegacyForSlimeChunk = false;
-    @Deprecated
-    public static boolean useDirectImpl = false;
 
     public static boolean worldgen = false;
     public static boolean worldgenEnabled() {
@@ -29,22 +24,14 @@ public class FastRNG extends ConfigModules {
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
                 Use faster random generator?
-                Requires a JVM that supports RandomGenerator.
+                Requires a JVM that supports Xoroshiro128PlusPlus.
                 Some JREs don't support this.""",
             """
                 是否使用更快的随机生成器?
-                需要支持 RandomGenerator 的 JVM.
+                需要支持 Xoroshiro128PlusPlus 的 JVM.
                 一些 JRE 不支持此功能.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        randomGenerator = config.getString(getBasePath() + ".random-generator", randomGenerator,
-            config.pickStringRegionBased(
-                """
-                    Which random generator will be used?
-                    See https://openjdk.org/jeps/356""",
-                """
-                    使用什么种类的随机生成器.
-                    请参阅 https://openjdk.org/jeps/356"""));
         enableForWorldgen = config.getBoolean(getBasePath() + ".enable-for-worldgen", enableForWorldgen,
             config.pickStringRegionBased(
                 """
@@ -63,21 +50,12 @@ public class FastRNG extends ConfigModules {
                 to follow vanilla behavior.""",
             """
                 是否使用原版随机生成器来生成史莱姆区块."""));
-        useDirectImpl = config.getBoolean(getBasePath() + ".use-direct-implementation", useDirectImpl,
-            config.pickStringRegionBased(
-                """
-                    Use direct random implementation instead of delegating to Java's RandomGenerator.
-                    This may improve performance but potentially changes RNG behavior.""",
-                """
-                    使用直接随机实现而不是委派给 RandomGenerator.
-                    这可能会提高性能, 但可能会改变 RNG 行为."""));
-
         if (enabled) {
             try {
-                RandomGeneratorFactory.of(randomGenerator);
-            } catch (Exception e) {
-                LeafConfig.LOGGER.error("Faster random generator is enabled but {} is not supported by your JVM, " +
-                    "falling back to legacy random source.", randomGenerator);
+                Class.forName("org.dreeam.leaf.util.math.random.FasterRandomSource");
+            } catch (Throwable ignored) {
+                LeafConfig.LOGGER.error("Faster random generator is enabled but Xoroshiro128PlusPlus is not supported by your JVM, " +
+                    "falling back to legacy random source.");
                 enabled = false;
             }
         }

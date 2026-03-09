@@ -32,7 +32,7 @@ public class GaleGlobalConfiguration extends ConfigurationPart {
 
         public class ReducedIntervals extends ConfigurationPart {
 
-            public int increaseTimeStatistics = 20; // Gale - Hydrinity - increase time statistics in intervals
+            public int increaseTimeStatistics = 1; // Gale - Hydrinity - increase time statistics in intervals
             public int updateEntityLineOfSight = 4; // Gale - Petal - reduce line of sight updates
 
             @PostProcess
