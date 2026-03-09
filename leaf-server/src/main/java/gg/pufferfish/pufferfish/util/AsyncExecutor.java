@@ -44,18 +44,20 @@ public class AsyncExecutor implements Runnable {
     @Override
     public void run() {
         while (!killswitch) {
-            LockSupport.park();
-            if (Thread.interrupted()) {
-                return;
-            }
             try {
-                Runnable runnable;
+                Runnable runnable = null;
+
                 synchronized (jobs) {
-                    if (jobs.isEmpty()) {
-                        continue;
+                    if (!jobs.isEmpty()) {
+                        runnable = jobs.dequeue();
                     }
-                    runnable = jobs.dequeue();
                 }
+
+                if (runnable == null) {
+                    LockSupport.park();
+                    continue;
+                }
+
                 runnable.run();
             } catch (Exception e) {
                 LOGGER.error("Failed to execute async job for thread {}", thread.getName(), e);
