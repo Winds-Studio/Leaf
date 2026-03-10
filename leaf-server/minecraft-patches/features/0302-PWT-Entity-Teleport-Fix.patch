@@ -1,0 +1,257 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: splatage <noj.melville@gmail.com>
+Date: Tue, 10 Mar 2026 11:53:48 +1300
+Subject: [PATCH] PWT Entity Teleport Fix
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 912ef41ae1e97ff856386394d8816710d31d2e13..3ca4c34011d4c473c30247490b48c7793aeeb910 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -138,10 +138,13 @@ import net.minecraft.util.thread.ReentrantBlockableEventLoop;
+ import net.minecraft.world.Difficulty;
+ import net.minecraft.world.RandomSequences;
+ import net.minecraft.world.Stopwatches;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.PortalProcessor;
+ import net.minecraft.world.entity.ai.village.VillageSiege;
+ import net.minecraft.world.entity.npc.CatSpawner;
+ import net.minecraft.world.entity.npc.wanderingtrader.WanderingTraderSpawner;
+ import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.level.portal.TeleportTransition;
+ import net.minecraft.world.flag.FeatureFlagSet;
+ import net.minecraft.world.flag.FeatureFlags;
+ import net.minecraft.world.item.alchemy.PotionBrewing;
+@@ -312,7 +315,76 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     protected boolean upnp = false; // Purpur - UPnP Port Forwarding
+     public gg.pufferfish.pufferfish.util.AsyncExecutor mobSpawnExecutor = new gg.pufferfish.pufferfish.util.AsyncExecutor("Leaf Async Mob Spawn Thread"); // Pufferfish - optimize mob spawning // Leaf - Fix Pufferfish and Purpur patches - Unify thread name
+     public java.util.concurrent.Semaphore serverLevelTickingSemaphore = null; // Leaf - SparklyPaper - parallel world ticking
+-    // Paper start - improve tick loop
++    private final java.util.Queue<PendingDimensionTransfer> pendingDimensionTransfers = new java.util.concurrent.ConcurrentLinkedQueue<>();
++
++    private static final class PendingDimensionTransfer {
++        final Entity entity;
++        final ServerLevel sourceLevel;
++        final PortalProcessor portalProcess;
++
++        private PendingDimensionTransfer(final Entity entity, final ServerLevel sourceLevel, final PortalProcessor portalProcess) {
++            this.entity = entity;
++            this.sourceLevel = sourceLevel;
++            this.portalProcess = portalProcess;
++        }
++    }
++
++    public final void pwt$queuePendingDimensionTransfer(final Entity entity, final ServerLevel sourceLevel, final PortalProcessor portalProcess) {
++        this.pendingDimensionTransfers.add(new PendingDimensionTransfer(entity, sourceLevel, portalProcess));
++    }
++
++    private volatile boolean pwt$processingPendingDimensionTransfers = false;
++
++    public final boolean pwt$isProcessingPendingDimensionTransfers() {
++        return this.pwt$processingPendingDimensionTransfers;
++    }
++
++    private void pwt$drainPendingDimensionTransfers() {
++        PendingDimensionTransfer pending;
++
++        this.pwt$processingPendingDimensionTransfers = true;
++        try {
++            while ((pending = this.pendingDimensionTransfers.poll()) != null) {
++                final Entity entity = pending.entity;
++                if (entity.isRemoved()) {
++                    continue;
++                }
++
++                if (!(entity.level() instanceof ServerLevel currentLevel) || currentLevel != pending.sourceLevel) {
++                    continue;
++                }
++
++                final PortalProcessor currentPortalProcess = entity.portalProcess;
++                if (currentPortalProcess == null || currentPortalProcess != pending.portalProcess) {
++                    continue;
++                }
++
++                if (currentPortalProcess.isParallelCancelledByPlugin()) {
++                    entity.portalProcess = null;
++                    continue;
++                }
++
++                final TeleportTransition portalDestination = currentPortalProcess.getPortalDestination(pending.sourceLevel, entity);
++                if (portalDestination != null) {
++                    final ServerLevel destinationLevel = portalDestination.newLevel();
++                    if (
++                        pending.sourceLevel.isAllowedToEnterPortal(destinationLevel)
++                            && (destinationLevel.dimension() == pending.sourceLevel.dimension() || entity.canTeleport(pending.sourceLevel, destinationLevel))
++                    ) {
++                        entity.teleport(portalDestination);
++                    }
++                }
++
++                if (entity.portalProcess == currentPortalProcess) {
++                    currentPortalProcess.confirmParallelAsHandled();
++                }
++            }
++        } finally {
++            this.pwt$processingPendingDimensionTransfers = false;
++        }
++    }
++
++   // Paper start - improve tick loop
+     public final ca.spottedleaf.moonrise.common.time.TickData tickTimes1s  = new ca.spottedleaf.moonrise.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(1L));
+     public final ca.spottedleaf.moonrise.common.time.TickData tickTimes5s  = new ca.spottedleaf.moonrise.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(5L));
+     public final ca.spottedleaf.moonrise.common.time.TickData tickTimes10s = new ca.spottedleaf.moonrise.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(10L));
+@@ -536,6 +608,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+        LOGGER.info("Saved all worlds");
+        LOGGER.warn("Performed emergency save");
+    }
++
++    
+     // Paper end - rewrite chunk system
+ 
+     public MinecraftServer(
+@@ -1970,18 +2044,20 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             }
+ 
+             while (!tasks.isEmpty()) {
+-                ServerLevel serverLevel = tasks.pop().get(); // Leaf - thread unsafe chunk map
+-                serverLevel.getChunkSource().fullChunksNonSync.setThread(); // Leaf - thread unsafe chunk map
+-                serverLevel.moonrise$getChunkTaskScheduler().chunkHolderManager.chunkHoldersNoSync.setThread(); // Leaf - thread unsafe chunk map
++                ServerLevel serverLevel = tasks.pop().get();
++                serverLevel.getChunkSource().fullChunksNonSync.setThread();
++                serverLevel.moonrise$getChunkTaskScheduler().chunkHolderManager.chunkHoldersNoSync.setThread();
+             }
+-        } catch (java.lang.InterruptedException | java.util.concurrent.ExecutionException e) {
+-            throw new RuntimeException(e); // Propagate exception
+-        }
+-        // Leaf end - SparklyPaper - parallel world ticking
+-        this.isIteratingOverLevels = false; // Paper - Throw exception on world create while being ticked
++            } catch (java.lang.InterruptedException | java.util.concurrent.ExecutionException e) {
++                throw new RuntimeException(e);
++            }
++            this.isIteratingOverLevels = false;
+ 
+-        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) { for (ServerLevel world : getAllLevels()) { world.leaf$asyncTracker.onTickEnd(); } } // Leaf - Multithreaded tracker
++            if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                this.pwt$drainPendingDimensionTransfers();
++            }
+ 
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) { for (ServerLevel world : getAllLevels()) { world.leaf$asyncTracker.onTickEnd(); } } // Leaf - Multithreaded tracker
+         profilerFiller.popPush("connection");
+         this.tickConnection();
+         profilerFiller.popPush("players");
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index c30c53942005d230e73841c9e6bb4d05e746d866..f05887fff8a1352f6bd59aa06d0736bc10472eab 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1879,7 +1879,10 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     }
+ 
+     private void addPlayer(ServerPlayer player) {
+-        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Cannot add player off-main"); // Leaf - SparklyPaper - parallel world ticking (async is no longer safe; schedule on main; additional concurrency issues logs)
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled
++            && !(this.server.pwt$isProcessingPendingDimensionTransfers() && Thread.currentThread() == this.server.serverThread)) {
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Cannot add player off-main");
++        }
+         Entity entity = this.getEntity(player.getUUID());
+         if (entity != null) {
+             LOGGER.warn("Force-added player with duplicate UUID {}", player.getUUID());
+@@ -1894,13 +1897,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     private boolean addEntity(Entity entity, org.bukkit.event.entity.CreatureSpawnEvent.@Nullable SpawnReason spawnReason) {
+         // Leaf start - SparklyPaper - parallel world ticking
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+-            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Cannot add entity off-main"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
++            if (!(this.server.pwt$isProcessingPendingDimensionTransfers() && Thread.currentThread() == this.server.serverThread)) {
++                ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Cannot add entity off-main");
++            }
+         } else {
+             org.spigotmc.AsyncCatcher.catchOp("entity add"); // Spigot
+         }
+         // Leaf end - SparklyPaper - parallel world ticking
+-        entity.generation = false; // Paper - Don't fire sync event during generation; Reset flag if it was added during a ServerLevel generation process
+-        // Paper start - extra debug info
++        entity.generation = false; // Paper - Don't fire sync event during generation; Reset flag if it was added during a ServerLevel generation process        // Paper start - extra debug info
+         if (entity.valid) {
+             MinecraftServer.LOGGER.error("Attempted Double World add on {}", entity, new Throwable());
+             return true;
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 6565b517710e6a2ed7a1fcf617b1a46279bab149..b565def57cd78163f3e455311d4122702101cca2 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -3693,8 +3693,15 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+ 
+     // Leaf start - SparklyPaper - parallel world ticking - mark pending teleport to prevent clearing portal process
+     private void handleTeleport(ServerLevel serverLevel) {
+-        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+-            pwt$handleTeleport(serverLevel);
++        if (
++            org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled
++                && this.portalProcess != null
++                && (
++                    this.portalProcess.isSamePortal((net.minecraft.world.level.block.NetherPortalBlock) Blocks.NETHER_PORTAL)
++                        || this.portalProcess.isSamePortal((net.minecraft.world.level.block.EndPortalBlock) Blocks.END_PORTAL)
++                )
++        ) {
++            this.pwt$queueDimensionTeleport(serverLevel);
+         } else {
+             TeleportTransition portalDestination = this.portalProcess.getPortalDestination(serverLevel, this);
+             if (portalDestination != null) {
+@@ -3707,38 +3714,30 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         }
+     }
+ 
+-    private void pwt$handleTeleport(ServerLevel serverLevel) {
+-        java.util.function.Consumer<Entity> portalEntityTask = entity -> {
+-            assert entity.portalProcess != null;
+-            // Fix NPE when portalProcess becomes null before task execution
+-            // Portal process was likely nulled out (e.g., expired) between scheduling and execution.
+-            if (entity.portalProcess == null) {
+-                return;
+-            }
+-
+-            if (entity.portalProcess.isParallelCancelledByPlugin()) {
+-                entity.portalProcess = null;
+-                return;
+-            }
++private void pwt$queueDimensionTeleport(ServerLevel serverLevel) {
++    if (this.portalProcess == null) {
++        return;
++    }
+ 
+-            TeleportTransition portalDestination = entity.portalProcess.getPortalDestination(serverLevel, entity);
+-            if (portalDestination != null) {
+-                ServerLevel level = portalDestination.newLevel();
+-                if (serverLevel.isAllowedToEnterPortal(level) && (level.dimension() == serverLevel.dimension() || this.canTeleport(serverLevel, level))
+-                ) {
+-                    entity.teleport(portalDestination);
+-                }
+-            }
+-            // Add another null check here just in case teleport() somehow nulled it (defensive)
+-            if (entity.portalProcess != null) {
+-                entity.portalProcess.confirmParallelAsHandled();
+-            }
+-        };
++    if (this.portalProcess.isParallelCancelledByPlugin()) {
++        this.portalProcess = null;
++        return;
++    }
+ 
+-        this.portalProcess.setParallelAsScheduled();
+-        this.getBukkitEntity().taskScheduler.schedule(portalEntityTask, entity -> {
+-        }, 0);
++    final Entity vehicle = this.getVehicle();
++    if (vehicle != null) {
++        final PortalProcessor vehiclePortalProcess = vehicle.portalProcess;
++        if (vehiclePortalProcess != null && !vehicle.isRemoved()) {
++            // Mounted passengers must be carried by the vehicle's cross-dimension transfer path.
++            // Drop the passenger-local portal process so it does not queue or retry independently.
++            this.portalProcess = null;
++            return;
++        }
+     }
++
++    this.portalProcess.setParallelAsScheduled();
++    serverLevel.getServer().pwt$queuePendingDimensionTransfer(this, serverLevel, this.portalProcess);
++}
+     // Leaf start - SparklyPaper - parallel world ticking - mark pending teleport to prevent clearing portal process
+ 
+     public int getDimensionChangingDelay() {
