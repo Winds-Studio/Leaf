@@ -10,9 +10,11 @@ public class ReduceUselessPackets extends ConfigModules {
     }
 
     public static boolean reduceUselessEntityMovePackets = false;
+    public static boolean filterClientboundSetEntityMotionPacket = false;
 
     @Override
     public void onLoaded() {
         reduceUselessEntityMovePackets = config.getBoolean(getBasePath() + ".reduce-entity-move-packets", reduceUselessEntityMovePackets);
+        filterClientboundSetEntityMotionPacket = config.getBoolean(getBasePath() + ".reduce-entity-motion-packets", filterClientboundSetEntityMotionPacket);
     }
 }
