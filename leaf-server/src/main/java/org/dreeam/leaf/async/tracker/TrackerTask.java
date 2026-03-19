@@ -35,7 +35,7 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
                 // removed in world if null
                 flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
             }
-            if (flag) {
+            if (flag || entity.needsSync) {
                 tracker.serverEntity.leaf$sendChanges(ctx, tracker, false);
             }
         }
