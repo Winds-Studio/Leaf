@@ -13,9 +13,11 @@ import java.util.Arrays;
 public class WorldgenCryptoRandom extends WorldgenRandom {
 
     // hash the world seed to guard against badly chosen world seeds
-    private static final long[] HASHED_ZERO_SEED = Hashing.hashWorldSeed(new long[Globals.WORLD_SEED_LONGS]);
+    private static final long[] HASHED_ZERO_SEED_BLAKE2B = HashingBlake2b.hashWorldSeed(new long[Globals.WORLD_SEED_LONGS]);
+    private static final long[] HASHED_ZERO_SEED_BLAKE3 = HashingBlake3.hashWorldSeed(new long[Globals.WORLD_SEED_LONGS]);
     private static final ThreadLocal<long[]> LAST_SEEN_WORLD_SEED = ThreadLocal.withInitial(() -> new long[Globals.WORLD_SEED_LONGS]);
-    private static final ThreadLocal<long[]> HASHED_WORLD_SEED = ThreadLocal.withInitial(() -> HASHED_ZERO_SEED);
+    private static final ThreadLocal<long[]> HASHED_WORLD_SEED = ThreadLocal.withInitial(
+        () -> org.dreeam.leaf.config.modules.misc.SecureSeed.useBlake3 ? HASHED_ZERO_SEED_BLAKE3 : HASHED_ZERO_SEED_BLAKE2B);
 
     private final long[] worldSeed = new long[Globals.WORLD_SEED_LONGS];
     private final long[] randomBits = new long[8];
@@ -44,7 +46,9 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
 
     private long[] getHashedWorldSeed() {
         if (!Arrays.equals(worldSeed, LAST_SEEN_WORLD_SEED.get())) {
-            HASHED_WORLD_SEED.set(Hashing.hashWorldSeed(worldSeed));
+            HASHED_WORLD_SEED.set(org.dreeam.leaf.config.modules.misc.SecureSeed.useBlake3
+                ? HashingBlake3.hashWorldSeed(worldSeed)
+                : HashingBlake2b.hashWorldSeed(worldSeed));
             System.arraycopy(worldSeed, 0, LAST_SEEN_WORLD_SEED.get(), 0, Globals.WORLD_SEED_LONGS);
         }
         return HASHED_WORLD_SEED.get();
@@ -53,7 +57,11 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
     private void moreRandomBits() {
         message[3] = counter++;
         System.arraycopy(getHashedWorldSeed(), 0, randomBits, 0, 8);
-        Hashing.hash(message, randomBits, cachedInternalState, 64, true);
+        if (org.dreeam.leaf.config.modules.misc.SecureSeed.useBlake3) {
+            HashingBlake3.hash(message, randomBits, cachedInternalState, 64, true);
+        } else {
+            HashingBlake2b.hash(message, randomBits, cachedInternalState, 64, true);
+        }
     }
 
     private long getBits(int count) {

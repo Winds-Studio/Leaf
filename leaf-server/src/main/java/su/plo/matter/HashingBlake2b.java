@@ -1,6 +1,6 @@
 package su.plo.matter;
 
-public class Hashing {
+public class HashingBlake2b {
 
     // https://en.wikipedia.org/wiki/BLAKE_(hash_function)
     // https://github.com/bcgit/bc-java/blob/master/core/src/main/java/org/bouncycastle/crypto/digests/Blake2bDigest.java
