@@ -10,7 +10,7 @@ import java.util.concurrent.locks.LockSupport;
 public final class FixedThreadExecutor {
     private final Thread[] threads;
     public final MpmcQueue<Runnable> channel;
-    private static volatile boolean SHUTDOWN = false;
+    private volatile boolean shutdown = false;
 
     public FixedThreadExecutor(int numThreads, int queue, String prefix) {
         if (numThreads <= 0) {
@@ -24,12 +24,12 @@ public final class FixedThreadExecutor {
                 .daemon(false)
                 .priority(Thread.NORM_PRIORITY)
                 .name(prefix + " - " + i)
-                .start(new Worker(channel));
+                .start(new Worker(this));
         }
     }
 
     public <T> FutureTask<T> submitOrRun(Callable<T> task) {
-        if (SHUTDOWN) {
+        if (shutdown) {
             throw new IllegalStateException();
         }
 
@@ -48,7 +48,7 @@ public final class FixedThreadExecutor {
     }
 
     public void shutdown() {
-        SHUTDOWN = true;
+        shutdown = true;
         for (Thread thread : threads) {
             LockSupport.unpark(thread);
         }
@@ -69,14 +69,15 @@ public final class FixedThreadExecutor {
         }
     }
 
-    private record Worker(MpmcQueue<Runnable> channel) implements Runnable {
+    private record Worker(FixedThreadExecutor executor) implements Runnable {
         @Override
         public void run() {
+            MpmcQueue<Runnable> channel = executor.channel;
             while (true) {
                 final Runnable task = channel.recv();
                 if (task != null) {
                     task.run();
-                } else if (SHUTDOWN) {
+                } else if (executor.shutdown) {
                     break;
                 } else {
                     Thread.yield();

@@ -33,11 +33,13 @@ import net.minecraft.world.item.MapItem;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import org.dreeam.leaf.util.map.AttributeInstanceArrayMap;
+import org.jspecify.annotations.NullMarked;
 
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 
+@NullMarked
 public final class TrackerCtx {
     @SuppressWarnings("unchecked")
     private static final Object2ObjectFunction<ServerPlayerConnection, ObjectArrayList<Packet<?>>> INIT_PACKET_LIST = x -> ObjectArrayList.wrap(new Packet[16], 0);
@@ -51,6 +53,7 @@ public final class TrackerCtx {
     private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
     private final ObjectArrayList<Entity> debugRegistration = new ObjectArrayList<>();
+    private final ObjectArrayList<ChunkMap.TrackedEntity> updateData = new ObjectArrayList<>();
 
     private record BossEvent(WitherBoss witherBoss,
                              ServerPlayer p,
@@ -99,6 +102,10 @@ public final class TrackerCtx {
         resync.add(entity);
     }
 
+    public void wantUpdateData(ChunkMap.TrackedEntity entity) {
+        updateData.add(entity);
+    }
+
     public void updateItemFrame(ItemFrame itemFrame) {
         itemFrames.add(itemFrame);
     }
@@ -141,6 +148,7 @@ public final class TrackerCtx {
         resync.addAll(other.resync);
         syncAttributes.addAll(other.syncAttributes);
         debugRegistration.addAll(other.debugRegistration);
+        updateData.addAll(other.updateData);
         return other.packets;
     }
 
@@ -153,6 +161,7 @@ public final class TrackerCtx {
         resync.clear();
         syncAttributes.clear();
         debugRegistration.clear();
+        updateData.clear();
         packets.clear();
     }
 
@@ -182,6 +191,12 @@ public final class TrackerCtx {
         if (!resync.isEmpty()) {
             for (ChunkMap.TrackedEntity tracker : resync) {
                 tracker.serverEntity.leaf$sendChanges(this, tracker, true);
+            }
+        }
+
+        if (!updateData.isEmpty()) {
+            for (ChunkMap.TrackedEntity tracker : updateData) {
+                tracker.serverEntity.entity.updateDataBeforeSync();
             }
         }
 
@@ -312,49 +327,56 @@ public final class TrackerCtx {
     }
 
     public void sendDirtyEntityData(ChunkMap.TrackedEntity tracker) {
-        Entity entity = tracker.serverEntity.entity;
-        SynchedEntityData entityData = entity.getEntityData();
-        List<SynchedEntityData.DataValue<?>> list = entityData.packDirty();
-        if (list != null) {
-            tracker.serverEntity.trackedDataValues = entityData.getNonDefaultValues();
-            ClientboundSetEntityDataPacket packet = new ClientboundSetEntityDataPacket(entity.getId(), list);
-            sendToTrackingPlayersAndSelf(tracker, packet);
-        }
-        if (entity instanceof LivingEntity livingEntity && livingEntity.getAttributes().attributeDirty()) {
+        Entity e = tracker.serverEntity.entity;
+        if (e.getEntityData().isDirty() || e instanceof LivingEntity l && l.getAttributes().attributeDirty()) {
             syncAttributes.add(tracker);
         }
     }
 
     private void handleSyncAttribute(ChunkMap.TrackedEntity tracker) {
-        LivingEntity e = tracker.serverEntity.entity instanceof LivingEntity livingEntity? livingEntity : null;
+        Entity entity = tracker.serverEntity.entity;
+        SynchedEntityData entityData = entity.getEntityData();
+        List<SynchedEntityData.DataValue<?>> list = entityData.packDirty();
+        if (list != null) {
+            tracker.serverEntity.trackedDataValues = entityData.getNonDefaultValues();
+            ClientboundSetEntityDataPacket packet = new ClientboundSetEntityDataPacket(tracker.serverEntity.entity.getId(), list);
+            sendToTrackingPlayersAndSelf(tracker, packet);
+        }
+
+        LivingEntity e = entity instanceof LivingEntity livingEntity ? livingEntity : null;
         if (e == null) {
             return;
         }
-        ObjectArrayList<ClientboundUpdateAttributesPacket.AttributeSnapshot> attributes;
         AttributeMap attributeMap = e.getAttributes();
-        ServerPlayer p = e instanceof ServerPlayer serverPlayer ? serverPlayer : null;
+        ServerPlayer player = e instanceof ServerPlayer serverPlayer ? serverPlayer : null;
+
+        ObjectArrayList<ClientboundUpdateAttributesPacket.AttributeSnapshot> attributes;
         if (attributeMap.attributes instanceof AttributeInstanceArrayMap map) {
             int[] ids = attributeMap.getAttributesToSyncIds();
             attributes = new ObjectArrayList<>(ids.length);
             for (int attributeIdx : ids) {
-                AttributeInstance attributeInstance = map.getInstance(attributeIdx);
-                if (attributeInstance == null) continue;
-                Holder<Attribute> attribute = attributeInstance.getAttribute();
-                if (p != null && attribute == Attributes.MAX_HEALTH) {
-                    attributeInstance = p.getBukkitEntity().getScaledMaxHealth();
+                AttributeInstance instance = map.getInstance(attributeIdx);
+                if (instance == null) {
+                    continue;
                 }
-                attributes.add(new ClientboundUpdateAttributesPacket.AttributeSnapshot(attribute, attributeInstance.getBaseValue(), attributeInstance.getModifiers()));
+                Holder<Attribute> attribute = instance.getAttribute();
+                if (player != null && attribute == Attributes.MAX_HEALTH) {
+                    instance = player.getBukkitEntity().getScaledMaxHealth();
+                }
+                attributes.add(new ClientboundUpdateAttributesPacket.AttributeSnapshot(attribute, instance.getBaseValue(), instance.getModifiers()));
             }
         } else {
             Set<AttributeInstance> toSync = attributeMap.getAttributesToSync();
             attributes = new ObjectArrayList<>(toSync.size());
-            for (AttributeInstance attributeInstance : toSync) {
-                if (attributeInstance == null) continue;
-                Holder<Attribute> attribute = attributeInstance.getAttribute();
-                if (p != null && attribute == Attributes.MAX_HEALTH) {
-                    attributeInstance = p.getBukkitEntity().getScaledMaxHealth();
+            for (AttributeInstance instance : toSync) {
+                if (instance == null) {
+                    continue;
                 }
-                attributes.add(new ClientboundUpdateAttributesPacket.AttributeSnapshot(attribute, attributeInstance.getBaseValue(), attributeInstance.getModifiers()));
+                Holder<Attribute> attribute = instance.getAttribute();
+                if (player != null && attribute == Attributes.MAX_HEALTH) {
+                    instance = player.getBukkitEntity().getScaledMaxHealth();
+                }
+                attributes.add(new ClientboundUpdateAttributesPacket.AttributeSnapshot(attribute, instance.getBaseValue(), instance.getModifiers()));
             }
         }
         sendToTrackingPlayersAndSelf(tracker, new ClientboundUpdateAttributesPacket(e.getId(), attributes));
