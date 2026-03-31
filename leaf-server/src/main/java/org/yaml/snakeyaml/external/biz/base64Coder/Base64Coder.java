@@ -78,7 +78,7 @@ public class Base64Coder {
      */
     public static String encodeString(String s) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return encodeString(s, false);
     }
     private static String encodeString(String s, boolean dummy) {
@@ -95,7 +95,7 @@ public class Base64Coder {
      */
     public static String encodeLines(byte[] in) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return encodeLines(in, false);
     }
     private static String encodeLines(byte[] in, boolean dummy) {
@@ -116,7 +116,7 @@ public class Base64Coder {
     public static String encodeLines(byte[] in, int iOff, int iLen, int lineLen,
                                      String lineSeparator) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return encodeLines(in, iOff, iLen, lineLen, lineSeparator, false);
     }
     private static String encodeLines(byte[] in, int iOff, int iLen, int lineLen,
@@ -147,7 +147,7 @@ public class Base64Coder {
      */
     public static char[] encode(byte[] in) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return encode(in, false);
     }
     private static char[] encode(byte[] in, boolean dummy) {
@@ -164,7 +164,7 @@ public class Base64Coder {
      */
     public static char[] encode(byte[] in, int iLen) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return encode(in, iLen, false);
     }
     private static char[] encode(byte[] in, int iLen, boolean dummy) {
@@ -182,7 +182,7 @@ public class Base64Coder {
      */
     public static char[] encode(byte[] in, int iOff, int iLen) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return encode(in, iOff, iLen, false);
     }
     private static char[] encode(byte[] in, int iOff, int iLen, boolean dummy) {
@@ -221,7 +221,7 @@ public class Base64Coder {
      */
     public static String decodeString(String s) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return decodeString(s, false);
     }
     private static String decodeString(String s, boolean dummy) {
@@ -240,7 +240,7 @@ public class Base64Coder {
      */
     public static byte[] decodeLines(String s) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return decodeLines(s, false);
     }
     private static byte[] decodeLines(String s, boolean dummy) {
@@ -266,7 +266,7 @@ public class Base64Coder {
      */
     public static byte[] decode(String s) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return decode(s, false);
     }
     private static byte[] decode(String s, boolean dummy) {
@@ -284,7 +284,7 @@ public class Base64Coder {
      */
     public static byte[] decode(char[] in) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return decode(in, false);
     }
     private static byte[] decode(char[] in, boolean dummy) {
@@ -304,7 +304,7 @@ public class Base64Coder {
      */
     public static byte[] decode(char[] in, int iOff, int iLen) {
         // Leaf start - Print warning for using deprecated snakeyaml's Base64Coder library
-        if (true) warn();
+        warn();
         return decode(in, iOff, iLen, false);
     }
     private static byte[] decode(char[] in, int iOff, int iLen, boolean dummy) {
