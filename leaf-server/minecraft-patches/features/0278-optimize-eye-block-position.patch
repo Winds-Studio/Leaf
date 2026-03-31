@@ -1,22 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: hayanesuru <hayanesuru@outlook.jp>
 Date: Sat, 9 Aug 2025 15:43:24 +0900
-Subject: [PATCH] cache eye block position
+Subject: [PATCH] optimize eye block position
 
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index bd1b5ec838aa04c482d4bf186dd92214dadce4f0..d2be94132fafc92b969e1432447382eab4971f9d 100644
+index bd1b5ec838aa04c482d4bf186dd92214dadce4f0..2a21f7292db4068769e1b2c94d3fd0f32d0f6f8d 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -556,18 +556,13 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -555,19 +555,11 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     // Purpur end - Add canSaveToDisk to Entity
  
      // Purpur start - copied from Mob - API for any mob to burn daylight
-     // Gale start - JettPack - optimize sun burn tick - cache eye blockpos
+-    // Gale start - JettPack - optimize sun burn tick - cache eye blockpos
 -    private BlockPos cached_eye_blockpos;
 -    private net.minecraft.world.phys.Vec3 cached_position;
-+    private BlockPos leaf$cached_eye_blockpos = BlockPos.ZERO;
-+    private @Nullable Vec3 leaf$cached_position = null;
-     // Gale end - JettPack - optimize sun burn tick - cache eye blockpos
+-    // Gale end - JettPack - optimize sun burn tick - cache eye blockpos
      public boolean isSunBurnTick() {
          if (!this.level().isClientSide() && this.level().environmentAttributes().getValue(EnvironmentAttributes.MONSTERS_BURN, this.position())) {
              // Gale start - JettPack - optimize sun burn tick - optimizations and cache eye blockpos
@@ -26,93 +25,75 @@ index bd1b5ec838aa04c482d4bf186dd92214dadce4f0..d2be94132fafc92b969e1432447382ea
 -            }
 -
 -            float lightLevelDependentMagicValue = this.getLightLevelDependentMagicValue(cached_eye_blockpos); // Pass BlockPos to getBrightness
-+            float lightLevelDependentMagicValue = this.getLightLevelDependentMagicValue();
++            BlockPos blockPos = new BlockPos(this.blockPosition.getX(), Mth.floor(this.getEyeY()), this.blockPosition.getZ());
++            float lightLevelDependentMagicValue = this.getLightLevelDependentMagicValue(blockPos);
  
              // Check brightness first
              if (lightLevelDependentMagicValue <= 0.5F) return false;
-@@ -576,11 +571,28 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -576,7 +568,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
  
              boolean flag = this.isInWater() || this.isInPowderSnow || this.wasInPowderSnow;
  
 -            return !flag && this.level().canSeeSky(this.cached_eye_blockpos); // Gale - JettPack - optimize sun burn tick - optimizations and cache eye blockpos
-+            return !flag && this.level().canSeeSky(this.leaf$getEyeBlockPos()); // Gale - JettPack - optimize sun burn tick - optimizations and cache eye blockpos
++            return !flag && this.level().canSeeSky(blockPos); // Leaf - optimize eye block position
          }
  
          return false; // Gale - JettPack - optimize sun burn tick - optimizations and cache eye blockpos - diff on change
-     }
-+
-+    // Leaf start - cache eye block pos
-+    public BlockPos leaf$getEyeBlockPos() {
-+        if (this.leaf$cached_position != this.position) {
-+            double eyeY = this.getEyeY();
-+            int x = Mth.floor(this.getX());
-+            int y = Mth.floor(eyeY);
-+            int z = Mth.floor(this.getZ());
-+            BlockPos o = leaf$cached_eye_blockpos;
-+            if (o.getX() != x || o.getY() != y || o.getZ() != z) {
-+                this.leaf$cached_eye_blockpos = new BlockPos(x, y, z);
-+            }
-+            this.leaf$cached_position = this.position;
-+        }
-+        return this.leaf$cached_eye_blockpos;
-+    }
-+    // Leaf end - cache eye block pos
-     // Purpur end - copied from Mob - API for any mob to burn daylight
- 
-     public Entity(EntityType<?> type, Level level) {
-@@ -2145,8 +2157,9 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -2145,9 +2137,15 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
                  && abstractBoat.getBoundingBox().maxY >= eyeY
                  && abstractBoat.getBoundingBox().minY <= eyeY
          )) {
 -            BlockPos blockPos = BlockPos.containing(this.getX(), eyeY, this.getZ());
 -            FluidState fluidState = this.level().getFluidState(blockPos);
-+            BlockPos blockPos = leaf$getEyeBlockPos(); // Leaf
-+            FluidState fluidState = this.level().getFluidStateIfLoadedUnchecked(blockPos.getX(), blockPos.getY(), blockPos.getZ()); // Leaf
-+            if (fluidState == null) { fluidState = this.level().getFluidState(blockPos); } // Leaf
-             double d = blockPos.getY() + fluidState.getHeight(this.level(), blockPos);
+-            double d = blockPos.getY() + fluidState.getHeight(this.level(), blockPos);
++            // Leaf start - optimize eye block position
++            int blockX = this.blockPosition.getX();
++            int blockZ = this.blockPosition.getZ();
++            int blockY = Mth.floor(eyeY);
++            Level world = this.level();
++            FluidState fluidState = world.getFluidStateIfLoadedUnchecked(blockX, blockY, blockZ); // Leaf
++            if (fluidState == null) { fluidState = world.getFluidState(new BlockPos(blockX, blockY, blockZ)); }
++            double d = fluidState.isEmpty() ? blockY : blockY + fluidState.getHeight(world, new BlockPos(blockX, blockY, blockZ));
++            // Leaf end - optimize eye block position
              if (d > eyeY) {
                  // Leaf start - Optimize isEyeInFluid
-@@ -2274,20 +2287,10 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+                 this.isInWaterOrLava = fluidState.isEmpty() ? 0 : fluidState.is(FluidTags.WATER) ? 1 : 2;
+@@ -2272,22 +2270,24 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         }
+     }
  
++    // Leaf start - optimize eye block position
      @Deprecated
      public float getLightLevelDependentMagicValue() {
 -        return this.getLightLevelDependentMagicValue(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ())); // Gale - JettPack - optimize sun burn tick - allow passing BlockPos to getLightLevelDependentMagicValue
--    }
++        Level world = this.level();
++        int blockX = this.getBlockX();
++        int blockZ = this.getBlockZ();
++        return world.hasChunkAt(blockX, blockZ)
++            ? world.getLightLevelDependentMagicValue(new BlockPos(blockX, Mth.floor(this.getEyeY()), blockZ))
++            : 0.0F;
+     }
 -
 -    // Gale start - JettPack - optimize sun burn tick - allow passing BlockPos to getLightLevelDependentMagicValue
 -    /**
 -     * @deprecated
 -     */
--    @Deprecated
--    public float getLightLevelDependentMagicValue(BlockPos pos) {
+     @Deprecated
+     public float getLightLevelDependentMagicValue(BlockPos pos) {
 -        return this.level().hasChunkAt(this.getBlockX(), this.getBlockZ())
 -            ? this.level.getLightLevelDependentMagicValue(pos)
-+        return this.level.hasChunkAt(this.getBlockX(), this.getBlockZ()) // Leaf
-+            ? this.level.getLightLevelDependentMagicValue(leaf$getEyeBlockPos()) // Leaf
++        Level world = this.level();
++        return world.hasChunkAt(pos.getX(), pos.getZ())
++            ? world.getLightLevelDependentMagicValue(pos)
              : 0.0F;
      }
 -    // Gale end - JettPack - optimize sun burn tick - allow passing BlockPos to getLightLevelDependentMagicValue
++    // Leaf end - optimize eye block position
  
      public void absSnapTo(double x, double y, double z, float yRot, float xRot) {
          this.absSnapTo(x, y, z);
-@@ -4541,6 +4544,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
-         EntityDimensions dimensions = this.getDimensions(pose);
-         this.dimensions = dimensions;
-         this.eyeHeight = dimensions.eyeHeight();
-+        this.leaf$cached_position = null; // Leaf
-     }
- 
-     public void refreshDimensions() {
-@@ -4549,6 +4553,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
-         EntityDimensions dimensions = this.getDimensions(pose);
-         this.dimensions = dimensions;
-         this.eyeHeight = dimensions.eyeHeight();
-+        this.leaf$cached_position = null; // Leaf
-         this.reapplyPosition();
-         boolean flag = dimensions.width() <= 4.0F && dimensions.height() <= 4.0F;
-         if (!this.level.isClientSide()
 diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
-index 19ffea9465b7674c278b2b1c75323704df5baaea..56b115378dde05378147a98333a21d7c27567474 100644
+index 19ffea9465b7674c278b2b1c75323704df5baaea..1d0833a7cd561aadada218c1d1a8ab8e96593b97 100644
 --- a/net/minecraft/world/entity/LivingEntity.java
 +++ b/net/minecraft/world/entity/LivingEntity.java
 @@ -471,7 +471,7 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
@@ -120,7 +101,27 @@ index 19ffea9465b7674c278b2b1c75323704df5baaea..56b115378dde05378147a98333a21d7c
  
              if (this.isEyeInWater() // Leaf - Optimize isEyeInFluid
 -                && !serverLevel1.getBlockState(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ())).is(Blocks.BUBBLE_COLUMN)) {
-+                && !serverLevel1.getBlockState(leaf$getEyeBlockPos()).is(Blocks.BUBBLE_COLUMN)) { // Leaf
++                && !isEyeInBubbleColumn(serverLevel1)) { // Leaf - optimize eye block position
                  boolean flag1 = !this.canBreatheUnderwater()
                      && !MobEffectUtil.hasWaterBreathing(this)
                      && (!flag || !((Player)this).getAbilities().invulnerable);
+@@ -539,6 +539,19 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+         profilerFiller.pop();
+     }
+ 
++    // Leaf start - optimize eye block position
++    private boolean isEyeInBubbleColumn(ServerLevel world) {
++        int x = this.blockPosition.getX();
++        int z = this.blockPosition.getZ();
++        int y = Mth.floor(this.getEyeY());
++        BlockState blockState = world.getBlockStateIfLoadedUnchecked(x, y, z);
++        if (blockState == null) {
++            blockState = world.getBlockState(new BlockPos(x, y, z));
++        }
++        return blockState.is(Blocks.BUBBLE_COLUMN);
++    }
++    // Leaf end - optimize eye block position
++
+     protected boolean shouldTakeDrowningDamage() {
+         return this.getAirSupply() <= -this.level().purpurConfig.drowningDamageInterval; // Purpur - Drowning Settings
+     }
