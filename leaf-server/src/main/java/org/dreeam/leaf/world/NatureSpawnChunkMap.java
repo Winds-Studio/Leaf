@@ -14,7 +14,7 @@ public final class NatureSpawnChunkMap {
     /// breadth-first search
     ///
     /// 0 4 12 28 48 80 112 148 196
-    private static final long[][] TABLE_BFS = new long[][]{
+    private static final long[][] TABLE_BFS = {
         {0L},
         {0L, 4294967295L, -4294967296L, 4294967296L, 1L},
         {0L, -1L, 4294967295L, 8589934591L, -4294967296L, 4294967296L, -4294967295L, 1L, 4294967297L, 4294967294L, -8589934592L, 8589934592L, 2L},
@@ -65,10 +65,12 @@ public final class NatureSpawnChunkMap {
         this.centersByRadius[range].add(player.chunkPosition().longKey);
     }
 
-    public void build() {
+    public void build(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
         for (int index = 0; index < SIZE_RADIUS; index++) {
             buildBy(index);
         }
+
+        collectSpawningChunks(chunks, regionBitSets, out);
     }
 
     private void buildBy(int index) {
@@ -99,7 +101,7 @@ public final class NatureSpawnChunkMap {
                 int localX = chunkX & REGION_MASK;
                 int localZ = chunkZ & REGION_MASK;
                 int bitIndex = (localZ << REGION_SHIFT) | localX;
-                long bitMask = 1L << bitIndex;
+                long bit = 1L << bitIndex;
 
                 if (regionKey != cachedKey) {
                     this.regionBitSets.put(cachedKey, cachedVal);
@@ -107,7 +109,7 @@ public final class NatureSpawnChunkMap {
                     cachedVal = this.regionBitSets.get(regionKey);
                 }
 
-                cachedVal |= bitMask;
+                cachedVal |= bit;
             }
         }
 
@@ -135,20 +137,25 @@ public final class NatureSpawnChunkMap {
         return size + 1;
     }
 
-    public void collectSpawningChunks(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
+    private static void collectSpawningChunks(ReferenceList<LevelChunk> chunks, Long2LongOpenHashMap bitSets, List<LevelChunk> out) {
         LevelChunk[] raw = chunks.getRawDataUnchecked();
-        for (int i = 0, length = chunks.size(); i < length; i++) {
+        int size = chunks.size();
+        java.util.Objects.checkFromToIndex(0, size, raw.length);
+        for (int i = 0; i < size; i++) {
             LevelChunk chunk = raw[i];
-            if (contains(chunk.locX, chunk.locZ)) {
+            if (contains(bitSets, chunk.coordinateKey)) {
                 out.add(chunk);
             }
         }
     }
 
-    public boolean contains(int chunkX, int chunkZ) {
+    private static boolean contains(Long2LongOpenHashMap bitSets, long pos) {
+        int chunkX = ChunkPos.getX(pos);
+        int chunkZ = ChunkPos.getZ(pos);
         int regionX = chunkX >> REGION_SHIFT;
         int regionZ = chunkZ >> REGION_SHIFT;
-        long bitset = this.regionBitSets.get(ChunkPos.asLong(regionX, regionZ));
-        return bitset != 0 && (bitset & (1L << (((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK)))) != 0L;
+        int local = ((chunkZ & REGION_MASK) << REGION_SHIFT) | (chunkX & REGION_MASK);
+        long bitset = bitSets.get(ChunkPos.asLong(regionX, regionZ));
+        return (bitset & (1L << local)) != 0L; // 63
     }
 }

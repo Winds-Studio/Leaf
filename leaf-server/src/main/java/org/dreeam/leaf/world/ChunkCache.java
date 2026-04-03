@@ -1,8 +1,7 @@
 package org.dreeam.leaf.world;
 
-import ca.spottedleaf.moonrise.common.util.TickThread;
 import it.unimi.dsi.fastutil.HashCommon;
-import net.minecraft.server.level.ServerLevel;
+import org.jspecify.annotations.Nullable;
 import org.spigotmc.WatchdogThread;
 
 import java.util.Arrays;
@@ -23,11 +22,11 @@ public final class ChunkCache<V> {
     private static final int MIN_N = HashCommon.arraySize(1024, FACTOR);
 
     private long k1 = EMPTY_KEY;
-    private V v1 = null;
+    private @Nullable V v1 = null;
     private Thread thread;
 
     private transient long[] key;
-    private transient V[] value;
+    private transient @Nullable V[] value;
     private transient int mask;
     private transient boolean containsNullKey;
     private transient int n;
@@ -61,7 +60,7 @@ public final class ChunkCache<V> {
     /// @return The value associated with the key, or `null` if no mapping exists
     /// @implNote This method updates the single-entry cache on successful lookups
     /// @see #isSameThread()
-    public V get(long k) {
+    public @Nullable V get(long k) {
         long k1 = this.k1;
         V v1 = this.v1;
         if (k1 == k && v1 != null) {
@@ -104,7 +103,7 @@ public final class ChunkCache<V> {
     /// @param k The key whose mapping is to be removed
     /// @return The previous value associated with the key, or `null` if no mapping existed
     /// @throws IllegalStateException If the current thread is not the owning thread
-    public V remove(long k) {
+    public @Nullable V remove(long k) {
         // Safety: throws IllegalStateException for all non-owning threads
         ensureSameThread();
         if (k == k1) {
@@ -131,10 +130,10 @@ public final class ChunkCache<V> {
     /// If the key matches the cached key, the single-entry cache is invalidated.
     ///
     /// @param k The key with which the specified value is to be associated
-    /// @param levelChunk The value to be associated with the specified key
+    /// @param chunk The value to be associated with the specified key
     /// @return The previous value associated with the key, or null if no mapping existed
     /// @throws IllegalStateException If the current thread is not the owning thread
-    public V put(long k, V levelChunk) {
+    public @Nullable V put(long k, V chunk) {
         // Safety: throws IllegalStateException for all non-owning threads
         ensureSameThread();
         if (k == k1) {
@@ -143,11 +142,11 @@ public final class ChunkCache<V> {
         }
         final int pos = find(k);
         if (pos < 0) {
-            insert(-pos - 1, k, levelChunk);
+            insert(-pos - 1, k, chunk);
             return null;
         }
         final V oldValue = value[pos];
-        value[pos] = levelChunk;
+        value[pos] = chunk;
         return oldValue;
     }
 
@@ -183,26 +182,21 @@ public final class ChunkCache<V> {
         this.thread = Thread.currentThread();
     }
 
-    /// Checks if the current thread is the same as the owning thread,
-    /// Or the watchdog thread on crash.
+    /// Returns whether the current thread is the same as the owning thread.
     ///
     /// @return The current thread owns this map
     public boolean isSameThread() {
-        Thread currThread = Thread.currentThread();
-        return currThread == this.thread || currThread instanceof WatchdogThread;
+        return Thread.currentThread() == this.thread;
     }
 
-    public boolean isSameThreadFor(ServerLevel serverLevel, int chunkX, int chunkZ) {
-        return Thread.currentThread() == this.thread && TickThread.isTickThreadFor(serverLevel, chunkX, chunkZ);
-    }
-
-    /// Ensure that the current thread is the owning thread.
+    /// Ensure that the current thread is the owning thread,
+    /// or the watchdog thread on crash.
     ///
     /// @throws IllegalStateException If the current thread is not the owning thread
     /// @see #isSameThread()
     /// @see #setThread()
     public void ensureSameThread() {
-        if (!isSameThread()) {
+        if (!isSameThread() && !(Thread.currentThread() instanceof WatchdogThread)) {
             throw new IllegalStateException("Thread failed main thread check: Cannot update chunk status asynchronously, context=thread=" + Thread.currentThread().getName());
         }
     }
@@ -224,7 +218,7 @@ public final class ChunkCache<V> {
         int last, slot;
         long curr;
         final long[] key = this.key;
-        final V[] value = this.value;
+        final @Nullable V[] value = this.value;
         for (;;) {
             pos = ((last = pos) + 1) & mask;
             for (;;) {
@@ -255,11 +249,11 @@ public final class ChunkCache<V> {
     // from fastutil
     private void rehash(final int newN) {
         final long[] key = this.key;
-        final V[] value = this.value;
+        final @Nullable V[] value = this.value;
         final int mask = newN - 1;
         final long[] newKey = new long[newN + 1];
         //noinspection unchecked
-        final V[] newValue = (V[])new Object[newN + 1];
+        final @Nullable V[] newValue = (V[])new Object[newN + 1];
         int i = n, pos;
         for (int j = realSize(); j-- != 0;) {
             //noinspection StatementWithEmptyBody

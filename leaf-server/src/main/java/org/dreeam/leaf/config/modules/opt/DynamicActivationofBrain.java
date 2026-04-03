@@ -1,7 +1,7 @@
 package org.dreeam.leaf.config.modules.opt;
 
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityType;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
@@ -75,7 +75,7 @@ public class DynamicActivationofBrain extends ConfigModules {
             entityType.dabEnabled = true; // reset all, before setting the ones to true
         }
 
-        final String DEFAULT_PREFIX = ResourceLocation.DEFAULT_NAMESPACE + ResourceLocation.NAMESPACE_SEPARATOR;
+        final String DEFAULT_PREFIX = Identifier.DEFAULT_NAMESPACE + Identifier.NAMESPACE_SEPARATOR;
 
         for (String name : blackedEntities) {
             // Be compatible with both `minecraft:example` and `example` syntax

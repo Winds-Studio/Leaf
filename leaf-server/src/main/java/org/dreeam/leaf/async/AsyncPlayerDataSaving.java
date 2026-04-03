@@ -1,6 +1,6 @@
 package org.dreeam.leaf.async;
 
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import org.dreeam.leaf.config.modules.async.AsyncPlayerDataSave;
 
 import java.util.Optional;

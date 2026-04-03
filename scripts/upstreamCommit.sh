@@ -53,7 +53,7 @@ logsuffix=""
 # Paper updates
 if [ -n "$paperHash" ]; then
     newHash=$(git diff gradle.properties | awk '/^+paperCommit =/{print $NF}')
-    paper=$(getCommits "PaperMC/Paper" "$paperHash" $(echo $newHash | grep . -q && echo $newHash || echo "ver/1.21.8")) # Update this on every version update
+    paper=$(getCommits "PaperMC/Paper" "$paperHash" $(echo $newHash | grep . -q && echo $newHash || echo "main")) # Update this on every version update
 
     # Updates found
     if [ -n "$paper" ]; then
@@ -64,7 +64,7 @@ fi
 
 # Purpur updates
 if [ -n "$purpurHash" ]; then
-    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/1.21.8") # Update this on every version update
+    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/1.21.11") # Update this on every version update
 
     # Updates found
     if [ -n "$purpur" ]; then

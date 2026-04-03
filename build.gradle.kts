@@ -3,7 +3,7 @@ import org.gradle.api.tasks.testing.logging.TestLogEvent
 
 plugins {
     `maven-publish`
-    id("io.papermc.paperweight.patcher") version "2.0.0-beta.18"
+    id("io.papermc.paperweight.patcher") version "2.0.0-beta.19"
 }
 
 val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
@@ -25,10 +25,6 @@ subprojects {
         maven(leafMavenPublicUrl)
     }
 
-    tasks.withType<AbstractArchiveTask>().configureEach {
-        isPreserveFileTimestamps = false
-        isReproducibleFileOrder = true
-    }
     tasks.withType<JavaCompile>().configureEach {
         options.encoding = Charsets.UTF_8.name()
         options.release = 21

@@ -1,5 +1,6 @@
 package org.dreeam.leaf.config.modules.async;
 
+import org.dreeam.leaf.async.world.UnsafeReadPolicy;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
@@ -18,8 +19,7 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
     public static boolean disableHardThrow = false;
     @Deprecated
     public static Boolean runAsyncTasksSync;
-    // STRICT, BUFFERED, DISABLED
-    public static String asyncUnsafeReadHandling = "BUFFERED";
+    public static UnsafeReadPolicy asyncUnsafeReadHandling = UnsafeReadPolicy.DISABLED;
 
     @Override
     public void onLoaded() {
@@ -42,15 +42,7 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
         logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
         disableHardThrow = config.getBoolean(getBasePath() + ".disable-hard-throw", disableHardThrow);
         disableHardThrow = enabled && disableHardThrow;
-        asyncUnsafeReadHandling = config.getString(getBasePath() + ".async-unsafe-read-handling", asyncUnsafeReadHandling).toUpperCase();
-
-        if (!asyncUnsafeReadHandling.equals("STRICT") && !asyncUnsafeReadHandling.equals("BUFFERED") && !asyncUnsafeReadHandling.equals("DISABLED")) {
-            LeafConfig.LOGGER.warn("Invalid value for {}.async-unsafe-read-handling: {}, fallback to STRICT.", getBasePath(), asyncUnsafeReadHandling);
-            asyncUnsafeReadHandling = "STRICT";
-        }
-        if (!enabled) {
-            asyncUnsafeReadHandling = "DISABLED";
-        }
+        asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(config.getString(getBasePath() + ".async-unsafe-read-handling", asyncUnsafeReadHandling.toString()));
 
         // Transfer old config
         runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync");

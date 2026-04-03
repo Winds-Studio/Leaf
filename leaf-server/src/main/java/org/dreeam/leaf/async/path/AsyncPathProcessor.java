@@ -1,14 +1,12 @@
 package org.dreeam.leaf.async.path;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import net.minecraft.Util;
-import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.pathfinder.Path;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncPathfinding;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +28,7 @@ public class AsyncPathProcessor {
     private static final String THREAD_PREFIX = "Leaf Async Pathfinding";
     private static final Logger LOGGER = LogManager.getLogger(THREAD_PREFIX);
     private static long lastWarnMillis = System.currentTimeMillis();
-    public static ThreadPoolExecutor PATH_PROCESSING_EXECUTOR = null;
+    public static @Nullable ThreadPoolExecutor PATH_PROCESSING_EXECUTOR = null;
 
     public static void init() {
         if (PATH_PROCESSING_EXECUTOR == null) {
@@ -48,8 +46,8 @@ public class AsyncPathProcessor {
         }
     }
 
-    protected static CompletableFuture<Void> queue(@NotNull AsyncPath path) {
-        return CompletableFuture.runAsync(path::process, PATH_PROCESSING_EXECUTOR)
+    protected static CompletableFuture<Void> queue(Runnable path) {
+        return CompletableFuture.runAsync(path, PATH_PROCESSING_EXECUTOR)
             .orTimeout(60L, TimeUnit.SECONDS)
             .exceptionally(throwable -> {
                 if (throwable instanceof TimeoutException e) {
@@ -69,7 +67,7 @@ public class AsyncPathProcessor {
      */
     public static void awaitProcessing(@Nullable Path path, Consumer<@Nullable Path> afterProcessing) {
         if (path != null && !path.isProcessed() && path instanceof AsyncPath asyncPath) {
-            asyncPath.schedulePostProcessing(() -> afterProcessing.accept(path)); // Reduce double lambda allocation
+            asyncPath.schedulePostProcessing(afterProcessing); // Reduce double lambda allocation
         } else {
             afterProcessing.accept(path);
         }
@@ -93,7 +91,7 @@ public class AsyncPathProcessor {
         return new LinkedBlockingQueue<>(queueCapacity);
     }
 
-    private static @NotNull ThreadFactory getThreadFactory() {
+    private static ThreadFactory getThreadFactory() {
         return new ThreadFactoryBuilder()
             .setNameFormat(THREAD_PREFIX + " Thread - %d")
             .setPriority(Thread.NORM_PRIORITY - 2)
@@ -101,7 +99,7 @@ public class AsyncPathProcessor {
             .build();
     }
 
-    private static @NotNull RejectedExecutionHandler getRejectedPolicy() {
+    private static RejectedExecutionHandler getRejectedPolicy() {
         return (Runnable rejectedTask, ThreadPoolExecutor executor) -> {
             BlockingQueue<Runnable> workQueue = executor.getQueue();
             if (!executor.isShutdown()) {

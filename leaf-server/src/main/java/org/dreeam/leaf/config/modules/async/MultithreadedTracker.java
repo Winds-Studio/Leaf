@@ -35,13 +35,12 @@ public class MultithreadedTracker extends ConfigModules {
 
         enabled = config.getBoolean(getBasePath() + ".enabled", false);
         threads = config.getInt(getBasePath() + ".threads", 0);
-        int aval = Runtime.getRuntime().availableProcessors();
-        if (threads < 0) {
-            threads = aval + threads;
-        } else if (threads == 0) {
-            threads = Math.min(aval, 4);
+
+        if (threads <= 0) {
+            threads = Math.min(Runtime.getRuntime().availableProcessors(), 4);
         }
         threads = Math.max(threads, 1);
+
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
             AsyncTracker.init();

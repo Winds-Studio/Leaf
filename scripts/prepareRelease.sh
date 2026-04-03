@@ -5,12 +5,12 @@ IS_EOL=false
 IS_UNSUPPORTED=false
 IS_DEV=true
 
-JAR_NAME="leaf-1.21.8"
-CURRENT_TAG="ver-1.21.8"
+JAR_NAME="leaf-${MC_VERSION}"
+CURRENT_TAG="ver-${MC_VERSION}"
 RELEASE_NOTES="release_notes.md"
 
 # Rename Leaf jar
-mv ./leaf-server/build/libs/leaf-paperclip-1.21.8-R0.1-SNAPSHOT-mojmap.jar ./$JAR_NAME-${BUILD_NUMBER}.jar
+mv ./leaf-server/build/libs/leaf-paperclip-${MC_VERSION}-R0.1-SNAPSHOT-mojmap.jar ./$JAR_NAME-${BUILD_NUMBER}.jar
 
 # Branch name
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -102,8 +102,6 @@ fi
 
 # Delete current release tag
 if git show-ref --tags $CURRENT_TAG --quiet; then
-  {
-    gh release delete $CURRENT_TAG --cleanup-tag -y -R "${GITHUB_REPO}"
-  }
+  gh release delete $CURRENT_TAG --cleanup-tag -y -R "${GITHUB_REPO}"
 fi
 echo "🚀Ready for release"

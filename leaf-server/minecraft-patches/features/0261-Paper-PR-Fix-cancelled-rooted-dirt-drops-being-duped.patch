@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Sun, 10 Jan 2077 00:00:00 +0800
+Subject: [PATCH] Paper PR: Fix cancelled rooted dirt drops being duped
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/13537
+
+This PR fixes Paper#13536, cancelled rooted dirt drops being duped
+
+Analysis
+
+```
+protected static final Map<Block, Pair<Predicate<UseOnContext>, Consumer<UseOnContext>>> TILLABLES = Maps.newHashMap(
+        ImmutableMap.of(
+            Blocks.GRASS_BLOCK,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.FARMLAND.defaultBlockState())),
+            Blocks.DIRT_PATH,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.FARMLAND.defaultBlockState())),
+            Blocks.DIRT,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.FARMLAND.defaultBlockState())),
+            Blocks.COARSE_DIRT,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.DIRT.defaultBlockState())),
+            Blocks.ROOTED_DIRT,
+            Pair.of(useOnContext -> true, changeIntoStateAndDropItem(Blocks.DIRT.defaultBlockState(), Items.HANGING_ROOTS))
+        )
+    );
+```
+
+The rooted dirt item drop logic is being processed in HoeItem#useOn, the drop capturing isn't enabled in this path, causing hanging roots to still be dropped even BlockPlaceEvent is cancelled.
+This bug has existed since 1.19, after Mojang added the rooted dirt.
+
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index dcf65e03f65051681555328e0e75678a01758f61..f276bb5a02e64b352cc319cfe54289b87e99c9b8 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -395,11 +395,23 @@ public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods
+                     serverLevel.captureTreeGeneration = true;
+                 }
+             }
++            // Paper start - Fix cancelled rooted dirt drops being duped
++            List<ItemEntity> capturedDrops = null;
++            if (item instanceof HoeItem) {
++                capturedDrops = new java.util.ArrayList<>();
++                serverLevel.captureDrops = capturedDrops;
++            }
++            // Paper end - Fix cancelled rooted dirt drops being duped
+             InteractionResult interactionResult;
+             try {
+                 interactionResult = item.useOn(context);
+             } finally {
+                 serverLevel.captureBlockStates = false;
++                // Paper start - Fix cancelled rooted dirt drops being duped
++                if (capturedDrops != null) {
++                    serverLevel.captureDrops = null;
++                }
++                // Paper end - Fix cancelled rooted dirt drops being duped
+             }
+             DataComponentPatch newPatch = this.components.asPatch();
+             int newCount = this.getCount();
+@@ -434,6 +446,15 @@ public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods
+                         snapshot.place(snapshot.getFlags());
+                         serverLevel.checkCapturedTreeStateForObserverNotify(clickedPos, snapshot); // Paper - notify observers even if grow failed
+                     }
++
++                    // Paper start - Fix cancelled rooted dirt drops being duped
++                    if (capturedDrops != null) {
++                        for (ItemEntity drop : capturedDrops) {
++                            serverLevel.addFreshEntity(drop);
++                        }
++                    }
++                    // Paper end - Fix cancelled rooted dirt drops being duped
++
+                     player.awardStat(Stats.ITEM_USED.get(item)); // SPIGOT-7236 - award stat
+                 }
+ 

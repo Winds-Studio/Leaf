@@ -4,7 +4,7 @@ import it.unimi.dsi.fastutil.objects.AbstractObjectSet;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.behavior.BehaviorControl;
-import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -13,14 +13,14 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
 
     private static final BehaviorControl[] EMPTY_ARRAY = {};
     private int running;
-    private transient BehaviorControl<? super E>[] a;
+    private transient @Nullable BehaviorControl<? super E>[] a;
     private int size;
 
     public BehaviorControlArraySet() {
         this.a = EMPTY_ARRAY;
     }
 
-    public BehaviorControl<? super E>[] raw() {
+    public @Nullable BehaviorControl<? super E>[] raw() {
         return a;
     }
 
@@ -42,7 +42,7 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
     }
 
     private int findKey(final Object o) {
-        final BehaviorControl<? super E>[] a = this.a;
+        final @Nullable BehaviorControl<? super E>[] a = this.a;
         for (int i = size; i-- != 0; ) if (Objects.equals(a[i], o)) return i;
         return -1;
     }
@@ -70,7 +70,7 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
             @Override
             public BehaviorControl<? super E> next() {
                 if (!hasNext()) throw new NoSuchElementException();
-                return a[curr = next++];
+                return Objects.requireNonNull(a[curr = next++]);
             }
 
             @Override
@@ -93,21 +93,21 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
 
             @Override
             public void forEachRemaining(final Consumer<? super BehaviorControl<? super E>> action) {
-                final BehaviorControl<? super E>[] a = BehaviorControlArraySet.this.a;
+                final @Nullable BehaviorControl<? super E>[] a = BehaviorControlArraySet.this.a;
                 while (next < size) action.accept(a[next++]);
             }
         };
     }
 
     @Override
-    public @NotNull Object[] toArray() {
+    public Object[] toArray() {
         final int size = size();
         if (size == 0) return it.unimi.dsi.fastutil.objects.ObjectArrays.EMPTY_ARRAY;
         return java.util.Arrays.copyOf(a, size, Object[].class);
     }
 
     @Override
-    public @NotNull <T> T[] toArray(@NotNull T[] a) {
+    public <T> @Nullable T[] toArray(@Nullable T @Nullable[] a) {
         if (a == null) {
             a = (T[]) new Object[size];
         } else if (a.length < size) {
@@ -125,7 +125,7 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
         final int pos = findKey(k);
         if (pos != -1) return false;
         if (size == a.length) {
-            final BehaviorControl<? super E>[] b = new BehaviorControl[size == 0 ? 2 : size * 2];
+            final @Nullable BehaviorControl<? super E>[] b = new BehaviorControl[size == 0 ? 2 : size * 2];
             for (int i = size; i-- != 0; ) b[i] = a[i];
             a = b;
         }

@@ -1,16 +1,12 @@
 package org.dreeam.leaf.command.subcommands;
 
 import net.minecraft.server.MinecraftServer;
-import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.framework.qual.DefaultQualifier;
 import org.dreeam.leaf.command.LeafCommand;
 import org.dreeam.leaf.command.PermissionedLeafSubcommand;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.permissions.PermissionDefault;
 
-@DefaultQualifier(NonNull.class)
 public final class VersionCommand extends PermissionedLeafSubcommand {
 
     public final static String LITERAL_ARGUMENT = "version";
@@ -22,7 +18,7 @@ public final class VersionCommand extends PermissionedLeafSubcommand {
 
     @Override
     public boolean execute(final CommandSender sender, final String subCommand, final String[] args) {
-        final @Nullable Command ver = MinecraftServer.getServer().server.getCommandMap().getCommand("version");
+        final Command ver = MinecraftServer.getServer().server.getCommandMap().getCommand("version");
 
         if (ver != null) {
             ver.execute(sender, LeafCommand.COMMAND_LABEL, me.titaniumtown.ArrayConstants.emptyStringArray); // Gale - JettPack - reduce array allocations

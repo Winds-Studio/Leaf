@@ -4,10 +4,12 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
-import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 import java.util.Arrays;
 
+@NullMarked
 public class WorldgenCryptoRandom extends WorldgenRandom {
 
     // hash the world seed to guard against badly chosen world seeds
@@ -24,7 +26,7 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
     private final long[] message = new long[16];
     private final long[] cachedInternalState = new long[16];
 
-    public WorldgenCryptoRandom(int x, int z, Globals.Salt typeSalt, long salt) {
+    public WorldgenCryptoRandom(int x, int z, Globals.@Nullable Salt typeSalt, long salt) {
         super(org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new org.dreeam.leaf.util.math.random.FasterRandomSource(0L) : new LegacyRandomSource(0L));
         if (typeSalt != null) {
             this.setSecureSeed(x, z, typeSalt, salt);
@@ -81,7 +83,7 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
     }
 
     @Override
-    public @NotNull RandomSource fork() {
+    public RandomSource fork() {
         WorldgenCryptoRandom fork = new WorldgenCryptoRandom(0, 0, null, 0);
 
         System.arraycopy(Globals.worldSeed, 0, fork.worldSeed, 0, Globals.WORLD_SEED_LONGS);

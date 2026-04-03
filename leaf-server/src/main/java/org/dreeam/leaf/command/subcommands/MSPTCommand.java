@@ -1,9 +1,8 @@
 package org.dreeam.leaf.command.subcommands;
 
+import ca.spottedleaf.moonrise.common.time.TickData;
 import net.kyori.adventure.text.Component;
 import net.minecraft.server.MinecraftServer;
-import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.framework.qual.DefaultQualifier;
 import org.dreeam.leaf.command.LeafCommand;
 import org.dreeam.leaf.command.PermissionedLeafSubcommand;
 import org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking;
@@ -19,7 +18,6 @@ import java.util.List;
 import static net.kyori.adventure.text.Component.text;
 import static net.kyori.adventure.text.format.NamedTextColor.*;
 
-@DefaultQualifier(NonNull.class)
 public final class MSPTCommand extends PermissionedLeafSubcommand {
 
     public static final String LITERAL_ARGUMENT = "mspt";
@@ -77,7 +75,7 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
 
     private void displayCompactStats(CommandSender sender, MinecraftServer server) {
         // Get server stats (only 5s data with avg/min/max)
-        List<Component> serverTimes = eval(server.tickTimes5s.getTimes());
+        List<Component> serverTimes = eval(server.tickTimes5s);
 
         // Display server stats in compact form
         sender.sendMessage(Component.text()
@@ -100,9 +98,9 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
 
     private void displayServerMSPT(CommandSender sender, MinecraftServer server) {
         List<Component> times = new ArrayList<>();
-        times.addAll(eval(server.tickTimes5s.getTimes()));
-        times.addAll(eval(server.tickTimes10s.getTimes()));
-        times.addAll(eval(server.tickTimes60s.getTimes()));
+        times.addAll(eval(server.tickTimes5s));
+        times.addAll(eval(server.tickTimes10s));
+        times.addAll(eval(server.tickTimes1m));
 
         sender.sendMessage(Component.text()
             .content("Server tick times ")
@@ -146,7 +144,7 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
             List<Component> worldTimes = new ArrayList<>();
             worldTimes.addAll(eval(serverLevel.tickTimes5s.getTimes()));
             worldTimes.addAll(eval(serverLevel.tickTimes10s.getTimes()));
-            worldTimes.addAll(eval(serverLevel.tickTimes60s.getTimes()));
+            worldTimes.addAll(eval(serverLevel.tickTimes1m.getTimes()));
 
             // World name header
             sender.sendMessage(Component.text()
@@ -217,6 +215,14 @@ public final class MSPTCommand extends PermissionedLeafSubcommand {
         double minD = ((double) min) * 1.0E-6D;
         double maxD = ((double) max) * 1.0E-6D;
 
+        return Arrays.asList(getColoredValue(avgD), getColoredValue(minD), getColoredValue(maxD));
+    }
+
+    private static List<Component> eval(TickData tickData) {
+        TickData.TickReportData reportData = tickData.generateTickReport(null, System.nanoTime(), MinecraftServer.getServer().tickRateManager().nanosecondsPerTick());
+        double avgD = reportData == null ? 0.0 : reportData.timePerTickData().segmentAll().average() * 1.0E-6D;
+        double minD = reportData == null ? 0.0 : reportData.timePerTickData().segmentAll().least() * 1.0E-6D;
+        double maxD = reportData == null ? 0.0 : reportData.timePerTickData().segmentAll().greatest() * 1.0E-6D;
         return Arrays.asList(getColoredValue(avgD), getColoredValue(minD), getColoredValue(maxD));
     }
 

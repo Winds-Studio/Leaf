@@ -4,8 +4,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import org.dreeam.leaf.util.RegistryTypeManager;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
@@ -13,15 +12,15 @@ import java.util.*;
 public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, AttributeInstance>, Cloneable {
 
     private int size = 0;
-    private transient AttributeInstance[] a = new AttributeInstance[RegistryTypeManager.ATTRIBUTE_SIZE];
-    private transient KeySet keys;
-    private transient Values values;
-    private transient EntrySet entries;
+    private transient @Nullable AttributeInstance[] a = new AttributeInstance[RegistryTypeManager.ATTRIBUTE_SIZE];
+    private transient @Nullable KeySet keys;
+    private transient @Nullable Values values;
+    private transient @Nullable EntrySet entries;
 
     public AttributeInstanceArrayMap() {
     }
 
-    public AttributeInstanceArrayMap(final @NotNull Map<Holder<Attribute>, AttributeInstance> m) {
+    public AttributeInstanceArrayMap(final Map<Holder<Attribute>, AttributeInstance> m) {
         putAll(m);
     }
 
@@ -65,7 +64,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    public AttributeInstance get(Object key) {
+    public @Nullable AttributeInstance get(Object key) {
         return key instanceof Holder<?> holder && holder.value() instanceof Attribute attribute ? a[attribute.id] : null;
     }
 
@@ -75,7 +74,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    public AttributeInstance put(@NotNull Holder<Attribute> key, AttributeInstance value) {
+    public @Nullable AttributeInstance put(Holder<Attribute> key, @Nullable AttributeInstance value) {
         int id = key.value().id;
         AttributeInstance prev = a[id];
         setByIndex(id, value);
@@ -83,7 +82,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    public AttributeInstance remove(Object key) {
+    public @Nullable AttributeInstance remove(Object key) {
         if (!(key instanceof Holder<?> holder) || !(holder.value() instanceof Attribute attribute)) return null;
         int id = attribute.id;
         AttributeInstance prev = a[id];
@@ -92,9 +91,9 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    public void putAll(@NotNull Map<? extends Holder<Attribute>, ? extends AttributeInstance> m) {
-        for (AttributeInstance e : m.values()) {
-            if (e != null) {
+    public void putAll(Map<? extends Holder<Attribute>, ? extends AttributeInstance> m) {
+        if (!m.isEmpty()) {
+            for (AttributeInstance e : m.values()) {
                 setByIndex(e.getAttribute().value().id, e);
             }
         }
@@ -107,7 +106,6 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    @NotNull
     public Set<Holder<Attribute>> keySet() {
         if (keys == null) {
             keys = new KeySet();
@@ -116,7 +114,6 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    @NotNull
     public Collection<AttributeInstance> values() {
         if (values == null) {
             values = new Values();
@@ -125,7 +122,6 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     @Override
-    @NotNull
     public Set<Entry<Holder<Attribute>, AttributeInstance>> entrySet() {
         if (entries == null) {
             entries = new EntrySet();
@@ -171,7 +167,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     private final class KeySet extends AbstractSet<Holder<Attribute>> {
         @Override
-        public @NotNull Iterator<Holder<Attribute>> iterator() {
+        public Iterator<Holder<Attribute>> iterator() {
             return new KeyIterator();
         }
 
@@ -213,7 +209,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     private final class Values extends AbstractCollection<AttributeInstance> {
         @Override
-        public @NotNull Iterator<AttributeInstance> iterator() {
+        public Iterator<AttributeInstance> iterator() {
             return new ValueIterator();
         }
 
@@ -238,7 +234,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
         }
 
         @Override
-        public AttributeInstance next() {
+        public @Nullable AttributeInstance next() {
             if (!hasNext()) throw new NoSuchElementException();
             currentIndex = nextIndex;
             AttributeInstance value = a[nextIndex];
@@ -256,7 +252,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     private final class EntrySet extends AbstractSet<Entry<Holder<Attribute>, AttributeInstance>> {
         @Override
-        public @NotNull Iterator<Entry<Holder<Attribute>, AttributeInstance>> iterator() {
+        public Iterator<Entry<Holder<Attribute>, AttributeInstance>> iterator() {
             return new EntryIterator();
         }
 
@@ -289,7 +285,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
             currentIndex = nextIndex;
             AttributeInstance value = a[nextIndex];
             nextIndex = findNextOccupied(nextIndex + 1);
-            return new MapEntry(currentIndex, value);
+            return new MapEntry(currentIndex, Objects.requireNonNull(value));
         }
 
         @Override
@@ -356,7 +352,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
         return -1;
     }
 
-    public AttributeInstance[] elements() {
+    public @Nullable AttributeInstance[] elements() {
         return a;
     }
 }

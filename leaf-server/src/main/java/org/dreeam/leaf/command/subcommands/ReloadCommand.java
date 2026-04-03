@@ -3,8 +3,6 @@ package org.dreeam.leaf.command.subcommands;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.minecraft.server.MinecraftServer;
-import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.framework.qual.DefaultQualifier;
 import org.dreeam.leaf.command.LeafCommand;
 import org.dreeam.leaf.command.PermissionedLeafSubcommand;
 import org.dreeam.leaf.config.LeafConfig;
@@ -13,7 +11,6 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.craftbukkit.CraftServer;
 import org.bukkit.permissions.PermissionDefault;
 
-@DefaultQualifier(NonNull.class)
 public final class ReloadCommand extends PermissionedLeafSubcommand {
 
     public final static String LITERAL_ARGUMENT = "reload";
