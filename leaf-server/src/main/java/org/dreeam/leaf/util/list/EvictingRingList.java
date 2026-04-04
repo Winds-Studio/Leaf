@@ -63,7 +63,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
     }
 
     public EvictingRingList(Collection<? extends E> c) {
-        this(c.size());
+        this(Math.max(1, c.size()));
         addAll(c);
     }
 
@@ -82,13 +82,13 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
 
     @Override
     public E get(int index) {
-        rangeCheck(index);
+        Objects.checkIndex(index, size);
         return (E) elements[(head + index) & mask];
     }
 
     @Override
     public E set(int index, E element) {
-        rangeCheck(index);
+        Objects.checkIndex(index, size);
         int realIndex = (head + index) & mask;
         E oldValue = (E) elements[realIndex];
         elements[realIndex] = element;
@@ -97,7 +97,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
 
     @Override
     public E remove(int index) {
-        rangeCheck(index);
+        Objects.checkIndex(index, size);
         modCount++;
         int realIndex = (head + index) & mask;
         E oldValue = (E) elements[realIndex];
@@ -223,6 +223,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
     }
 
     private void rangeCheck(int index) {
+        Objects.checkIndex(index, size);
         if (index < 0 || index >= size) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
         }
