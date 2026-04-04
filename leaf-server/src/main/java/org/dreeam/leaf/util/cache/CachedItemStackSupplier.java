@@ -13,7 +13,7 @@ public final class CachedItemStackSupplier implements Supplier<ItemStack> {
     }
 
     @Override
-    public ItemStack get() {
+    public ItemStack get() { // The supplier passed down may not always in active use, copy it lazily like Guava's memoize suppliers
         if (this.cachedCopy == null && this.source != null) {
             this.cachedCopy = this.source.copy();
         }
