@@ -361,7 +361,7 @@ public class Base64Coder {
     }
 
     private static void warn() {
-        if (org.dreeam.leaf.util.LeafConstants.ENABLE_BASE64CODER_DEBUG_WARNING) {
+        if (org.dreeam.leaf.util.LeafConstants.ENABLE_BASE64CODER_WARNING) {
             LOGGER.warn("Plugin is using deprecated method from Base64Coder.", new Throwable());
         }
     }
