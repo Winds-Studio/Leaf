@@ -32,18 +32,22 @@ public class ProtocolSupport extends ConfigModules {
 
     @Override
     public void onLoaded() {
+        /*
         jadeProtocol = config.getBoolean(getBasePath() + ".jade-protocol", jadeProtocol);
         appleskinProtocol = config.getBoolean(getBasePath() + ".appleskin-protocol", appleskinProtocol);
         appleskinSyncTickInterval = config.getInt(getBasePath() + ".appleskin-protocol-sync-tick-interval", appleskinSyncTickInterval);
         asteorBarProtocol = config.getBoolean(getBasePath() + ".asteorbar-protocol", asteorBarProtocol);
         chatImageProtocol = config.getBoolean(getBasePath() + ".chatimage-protocol", chatImageProtocol);
         xaeroMapProtocol = config.getBoolean(getBasePath() + ".xaero-map-protocol", xaeroMapProtocol);
+        */
         xaeroMapServerID = config.getInt(getBasePath() + ".xaero-map-server-id", xaeroMapServerID);
+        /*
         syncmaticaProtocol = config.getBoolean(getBasePath() + ".syncmatica-protocol", syncmaticaProtocol);
         syncmaticaQuota = config.getBoolean(getBasePath() + ".syncmatica-quota", syncmaticaQuota);
         syncmaticaQuotaLimit = config.getInt(getBasePath() + ".syncmatica-quota-limit", syncmaticaQuotaLimit);
 
-        //org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol); // TODO: Uncomment when Leaves 1.21.11 is updated
+        org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol); // TODO: Uncomment when Leaves 1.21.11 is updated
+        */
 
         doABarrelRollProtocol = config.getBoolean(getBasePath() + ".do-a-barrel-roll-protocol", doABarrelRollProtocol);
         doABarrelRollAllowThrusting = config.getBoolean(getBasePath() + ".do-a-barrel-roll-allow-thrusting", doABarrelRollAllowThrusting);
