@@ -82,21 +82,20 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
     public boolean add(E e) {
         modCount++;
 
-        if (size == elements.length) {
-            if (elements.length < maxCapacity) {
-                grow();
-            } else {
-                head = (head + 1) & mask;
-                size--;
-            }
+        if (size < elements.length) {
+            size++;
+        } else if (elements.length < maxCapacity) {
+            grow();
+            size++;
+        } else {
+            head = (head + 1) & mask;
         }
 
         elements[tail] = e;
         tail = (tail + 1) & mask;
-        size++;
+
         return true;
     }
-
     @Override
     public E get(int index) {
         Objects.checkIndex(index, size);
