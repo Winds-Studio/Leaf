@@ -238,13 +238,6 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
         return a;
     }
 
-    private void rangeCheck(int index) {
-        Objects.checkIndex(index, size);
-        if (index < 0 || index >= size) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
-        }
-    }
-
     @Override
     public @NotNull Iterator<E> iterator() {
         return new RingIterator();
