@@ -62,6 +62,11 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
         addAll(c);
     }
 
+    public EvictingRingList(int requestedMaxCapacity, Collection<? extends E> c) {
+        this(requestedMaxCapacity);
+        addAll(c);
+    }
+
     private void grow() {
         int oldCapacity = elements.length;
         int newCapacity = oldCapacity << 1;
@@ -112,7 +117,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
     }
 
     @Override
-    public E remove(int index) {
+    public E remove(int index) { // TODO Can be further optimized, but do we really need it?
         Objects.checkIndex(index, size);
         modCount++;
         int realIndex = (head + index) & mask;
