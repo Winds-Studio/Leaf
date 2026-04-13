@@ -15,51 +15,46 @@ import java.util.function.Consumer;
 
 /**
  * A size-limited, circular array-backed list that automatically evicts the oldest elements
- * when new elements are added and the list is at full capacity. This list is ideal for
- * scenarios requiring a fixed-size "rolling buffer" or "history log" where elements
- * are primarily added and iterated, and the oldest elements are implicitly removed
- * to make space for new ones.
+ * when new elements are added and the list is at full capacity. This list dynamically
+ * grows up to its maximum capacity, making it ideal for scenarios requiring a fixed-size
+ * "rolling buffer" or "history log" where elements are primarily added and iterated.
  *
  * <p>This implementation provides constant-time {@code add}, {@code get}, and {@code set} operations.
- * When the list reaches its specified capacity, adding a new element will automatically
- * evict the element at the head of the list, ensuring the list's size never exceeds its capacity.
- *
- * <p>The {@code remove(int index)}, {@code indexOf(Object o)}, and {@code lastIndexOf(Object o)}
- * operations run in linear time (O(n)). Iteration over the elements also takes time proportional
- * to the number of elements in the list.
+ * When the list reaches its specified max capacity, adding a new element will automatically
+ * evict the element at the head of the list.
  *
  * <p>The capacity of the list is always rounded up to the next power of two to optimize
- * index calculations using bitwise operations.
+ * index calculations using bitwise operations. It starts with an initial capacity (default 16)
+ * and dynamically doubles its size until it hits the max capacity.
  */
 @SuppressWarnings({"unchecked", "unused"})
 public final class EvictingRingList<E> extends AbstractList<E> implements RandomAccess {
 
-    private final Object[] elements;
-    private final int capacity;
+    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    private static final int MAXIMUM_CAPACITY = 1 << 30;
+    private Object[] elements;
+    private final int maxCapacity;
 
     private int head = 0;
     private int size = 0;
     private int tail = 0;
 
-    private final int mask;
+    private int mask;
 
-    public EvictingRingList(int requestedCapacity) {
-        if (requestedCapacity <= 0) {
+    public EvictingRingList(int requestedMaxCapacity) {
+        if (requestedMaxCapacity <= 0) {
             throw new IllegalArgumentException("Capacity must be positive");
         }
-        this.capacity = tableSizeFor(requestedCapacity);
-        this.mask = this.capacity - 1;
-        this.elements = new Object[this.capacity];
+        this.maxCapacity = tableSizeFor(requestedMaxCapacity);
+
+        int initialCapacity = Math.min(DEFAULT_INITIAL_CAPACITY, this.maxCapacity);
+        this.elements = new Object[initialCapacity];
+        this.mask = initialCapacity - 1;
     }
 
     private static int tableSizeFor(int cap) {
-        int n = cap - 1;
-        n |= n >>> 1;
-        n |= n >>> 2;
-        n |= n >>> 4;
-        n |= n >>> 8;
-        n |= n >>> 16;
-        return (n < 0) ? 1 : n + 1;
+        int n = -1 >>> Integer.numberOfLeadingZeros(cap - 1);
+        return (n < 0) ? 1 : (n >= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;
     }
 
     public EvictingRingList(Collection<? extends E> c) {
@@ -67,16 +62,38 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
         addAll(c);
     }
 
+    private void grow() {
+        int oldCapacity = elements.length;
+        int newCapacity = oldCapacity << 1;
+
+        Object[] newElements = new Object[newCapacity];
+
+        int firstPart = oldCapacity - head;
+        System.arraycopy(elements, head, newElements, 0, firstPart);
+        System.arraycopy(elements, 0, newElements, firstPart, head);
+
+        this.elements = newElements;
+        this.mask = newCapacity - 1;
+        this.head = 0;
+        this.tail = oldCapacity;
+    }
+
     @Override
     public boolean add(E e) {
         modCount++;
+
+        if (size == elements.length) {
+            if (elements.length < maxCapacity) {
+                grow();
+            } else {
+                head = (head + 1) & mask;
+                size--;
+            }
+        }
+
         elements[tail] = e;
         tail = (tail + 1) & mask;
-        if (size < capacity) {
-            size++;
-        } else {
-            head = (head + 1) & mask;
-        }
+        size++;
         return true;
     }
 
@@ -162,7 +179,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
         if (head < tail) {
             Arrays.fill(elements, head, tail, null);
         } else {
-            Arrays.fill(elements, head, capacity, null);
+            Arrays.fill(elements, head, elements.length, null);
             if (tail > 0) {
                 Arrays.fill(elements, 0, tail, null);
             }
@@ -174,10 +191,10 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
     public void forEach(Consumer<? super E> action) {
         Objects.requireNonNull(action);
         final int expectedModCount = modCount;
-        final int size = this.size;
+        final int currentSize = this.size;
         int i = head;
 
-        for (int count = 0; count < size; count++) {
+        for (int count = 0; count < currentSize; count++) {
             action.accept((E) elements[i]);
             i = (i + 1) & mask;
         }
@@ -194,7 +211,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
             if (head < tail) {
                 System.arraycopy(elements, head, result, 0, size);
             } else {
-                int firstPart = capacity - head;
+                int firstPart = elements.length - head;
                 System.arraycopy(elements, head, result, 0, firstPart);
                 System.arraycopy(elements, 0, result, firstPart, tail);
             }
@@ -211,7 +228,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
             if (head < tail) {
                 System.arraycopy(elements, head, a, 0, size);
             } else {
-                int firstPart = capacity - head;
+                int firstPart = elements.length - head;
                 System.arraycopy(elements, head, a, 0, firstPart);
                 System.arraycopy(elements, 0, a, firstPart, tail);
             }
