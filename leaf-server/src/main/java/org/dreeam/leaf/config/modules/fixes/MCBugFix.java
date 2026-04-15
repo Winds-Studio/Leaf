@@ -39,5 +39,7 @@ public class MCBugFix extends ConfigModules {
             "Max allowed entries in mob's combat tracker.",
             "生物战斗跟踪器中允许的最大条目。"
         ));
+
+        mc301114maxCombatEntries = Math.max(1, mc301114maxCombatEntries);
     }
 }
