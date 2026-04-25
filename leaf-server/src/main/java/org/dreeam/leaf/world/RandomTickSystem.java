@@ -13,6 +13,7 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.material.FluidState;
+import org.dreeam.leaf.config.modules.gameplay.IceAndSnowChance;
 
 public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
@@ -35,17 +36,19 @@ public final class RandomTickSystem {
     public void tick(ServerLevel world) {
         queue.clear();
 
-        final BitRandomSource random = world.simpleRandom;
         final ReferenceList<LevelChunk> entityTickingChunks = world.moonrise$getEntityTickingChunks();
-        final int randomTickSpeed = world.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
         final LevelChunk[] raw = entityTickingChunks.getRawDataUnchecked();
         final int size = entityTickingChunks.size();
         final boolean disableIceAndSnow = world.paperConfig().environment.disableIceAndSnow;
+        final int randomTickSpeed = world.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
         if (randomTickSpeed <= 0) {
             return;
         }
+
+        final BitRandomSource random = world.simpleRandom;
         if (!disableIceAndSnow) {
-            iceSnow(world, size, randomTickSpeed, random, raw);
+            final int speed = IceAndSnowChance.iceAndSnowChance * 2 - 1;
+            iceSnow(world, size, randomTickSpeed, Math.max(1, speed), random, raw);
         }
         final long weightsSum = collectTickingChunks(size, random, raw, randomTickSpeed);
         if (weightsSum != 0L) {
@@ -82,7 +85,9 @@ public final class RandomTickSystem {
         final long[] s = samples;
         long accumulated = w[0];
         final long spoke = weightsSum / chosen;
-        if (spoke == 0L) return;
+        if (spoke == 0L) {
+            return;
+        }
 
         long current = boundedNextLong(random, spoke);
         int i = 0;
@@ -219,12 +224,12 @@ public final class RandomTickSystem {
         }
     }
 
-    private static void iceSnow(ServerLevel world, int size, int randomTickSpeed, BitRandomSource random, LevelChunk[] raw) {
-        int currentIceAndSnowTick = random.nextInt(48 * 16);
+    private static void iceSnow(ServerLevel world, int size, int tickSpeed, int speed, BitRandomSource random, LevelChunk[] raw) {
+        int rand = 1 + boundedNextInt(random, speed);
         for (int i = 0; i < size; i++) {
-            currentIceAndSnowTick -= randomTickSpeed;
-            if (currentIceAndSnowTick <= 0) {
-                currentIceAndSnowTick = random.nextInt(48 * 16);
+            rand -= tickSpeed;
+            if (rand <= 0) {
+                rand = 1 + boundedNextInt(random, speed);
                 LevelChunk chunk = raw[i];
                 ChunkPos pos = chunk.getPos();
                 world.tickPrecipitation(world.getBlockRandomPos(pos.getMinBlockX(), 0, pos.getMinBlockZ(), 15));
@@ -266,6 +271,7 @@ public final class RandomTickSystem {
         }
     }
 
+    // bound > 0
     private static long boundedNextLong(BitRandomSource rng, long bound) {
         final long m = bound - 1L;
         long r = rng.nextLong();
@@ -281,6 +287,7 @@ public final class RandomTickSystem {
         return r;
     }
 
+    // bound > 0
     private static int boundedNextInt(BitRandomSource rng, int bound) {
         final int m = bound - 1;
         int r = rng.nextInt();

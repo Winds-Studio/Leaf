@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Penilla <11360596+jpenilla@users.noreply.github.com>
+Date: Fri, 13 Sep 2024 14:32:32 -0700
+Subject: [PATCH] Paper PR: Add ticket on player join to avoid chunk
+ load-unload-load cycle
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/11398
+
+Adding the entity will add and then immediately remove an entity load ticket, which would result in the chunk loading and then unloading before being loaded again once the player chunk loader reacts (delay can vary based on rate limit configs)
+By adding a ticket with a short removal delay we attempt to keep the chunk loaded until the player chunk loader reacts, but this is not a guarantee due to the aforementioned rate limit configs. Plugins should still handle load/unload events as normal, however this will reduce redundant calls.
+The delay is currently set to 2 seconds, however, we may want to adjust this before merging (for example the player chunk unload delay is 5 seconds)
+
+fixes Paper#9581
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+index b4402b7c441daa5a55495603ee31fe7421854cca..2e44ee5c444f0856e764d92ea84d87c6ec08b4ea 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+@@ -48,6 +48,7 @@ public final class RegionizedPlayerChunkLoader {
+ 
+     public static final TicketType PLAYER_TICKET         = ChunkSystemTicketType.create("chunk_system:player_ticket", Long::compareTo, 0L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE);
+     public static final TicketType PLAYER_TICKET_DELAYED = ChunkSystemTicketType.create("chunk_system:player_ticket_delayed", Long::compareTo, 1L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE);
++    public static final TicketType PLAYER_JOIN           = ChunkSystemTicketType.create("chunk_system:player_join", (a, b) -> 0, 5 * 20, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE); // Paper PR - Add ticket on player join to avoid chunk load-unload-load cycle
+ 
+     public static final int GENERATED_TICKET_LEVEL = ChunkHolderManager.FULL_LOADED_TICKET_LEVEL;
+     public static final int LOADED_TICKET_LEVEL = ChunkTaskScheduler.getTicketLevel(ChunkStatus.EMPTY);
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index 4f89e3da9d56ec441124d7e3a45c5b961a32d1fe..76c0cae02003a41899d3f94ed90c1ec017b2dbfc 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -337,6 +337,13 @@ public abstract class PlayerList {
+         // this.broadcastAll(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(player))); // CraftBukkit - replaced with loop below
+         // Paper start - Fire PlayerJoinEvent when Player is actually ready; correctly register player BEFORE PlayerJoinEvent, so the entity is valid and doesn't require tick delay hacks
+         player.suppressTrackerForLogin = true;
++        // Paper PR start - Add ticket on player join to avoid chunk load-unload-load cycle
++        serverLevel.moonrise$getChunkTaskScheduler().chunkHolderManager.addTicketAtLevel(
++            ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.PLAYER_JOIN,
++            player.chunkPosition(),
++            ca.spottedleaf.moonrise.patches.chunk_system.player.RegionizedPlayerChunkLoader.TICK_TICKET_LEVEL,
++            net.minecraft.util.Unit.INSTANCE);
++        // Paper PR end - Add ticket on player join to avoid chunk load-unload-load cycle
+         this.sendLevelInfo(player, serverLevel);
+         serverLevel.addNewPlayer(player);
+         this.server.getCustomBossEvents().onPlayerConnect(player); // see commented out section below serverLevel.addPlayerJoin(player);
