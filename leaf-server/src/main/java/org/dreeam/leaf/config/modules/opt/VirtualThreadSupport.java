@@ -40,7 +40,7 @@ public class VirtualThreadSupport extends ConfigModules {
                 "是否为用户验证使用虚拟线程."));
         paperConfigurationPool = config.getBoolean(getBasePath() + ".paper-configuration-pool", paperConfigurationPool,
             config.pickStringRegionBased(
-                "Use the new Virtual Thread introduced in JDK 21 for Paper configuration pool.",
-                "是否为 Paper 配置阶段任务池使用虚拟线程."));
+                "Use the new Virtual Thread introduced in JDK 21 for Paper task pool in configuration phase.",
+                "是否为 Paper 在配置阶段的任务池使用虚拟线程."));
     }
 }
