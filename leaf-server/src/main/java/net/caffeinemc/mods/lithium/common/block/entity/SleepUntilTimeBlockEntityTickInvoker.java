@@ -21,6 +21,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.entity.TickingBlockEntity;
+import org.jetbrains.annotations.NotNull;
 
 public record SleepUntilTimeBlockEntityTickInvoker(BlockEntity sleepingBlockEntity, long sleepUntilTickExclusive,
                                                    TickingBlockEntity delegate) implements TickingBlockEntity {
@@ -41,12 +42,12 @@ public record SleepUntilTimeBlockEntityTickInvoker(BlockEntity sleepingBlockEnti
     }
 
     @Override
-    public BlockPos getPos() {
+    public @NotNull BlockPos getPos() {
         return this.sleepingBlockEntity.getBlockPos();
     }
 
     @Override
-    public String getType() {
+    public @NotNull String getType() {
         //noinspection ConstantConditions
         return BlockEntityType.getKey(this.sleepingBlockEntity.getType()).toString();
     }

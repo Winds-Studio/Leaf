@@ -42,7 +42,7 @@ public class LithiumStackList extends NonNullList<ItemStack> implements LithiumD
 
     LithiumDoubleStackList parent; //only used for double chests
 
-    InventoryChangeTracker inventoryModificationCallback;
+    InventoryChangeTracker nextInventoryModificationCallback;
 
     public LithiumStackList(NonNullList<ItemStack> original, int maxCountPerStack) {
         super(original.list, ItemStack.EMPTY);
@@ -67,14 +67,14 @@ public class LithiumStackList extends NonNullList<ItemStack> implements LithiumD
             }
         }
 
-        this.inventoryModificationCallback = null;
+        this.nextInventoryModificationCallback = null;
     }
 
     public LithiumStackList(int maxCountPerStack) {
         super(null, ItemStack.EMPTY);
         this.maxCountPerStack = maxCountPerStack;
         this.cachedSignalStrength = -1;
-        this.inventoryModificationCallback = null;
+        this.nextInventoryModificationCallback = null;
     }
 
     public long getModCount() {
@@ -89,7 +89,6 @@ public class LithiumStackList extends NonNullList<ItemStack> implements LithiumD
         this.occupiedSlots = 0;
         this.fullSlots = 0;
         int size = this.size();
-        //noinspection ForLoopReplaceableByForEach
         for (int i = 0; i < size; i++) {
             ItemStack stack = this.get(i);
             if (!stack.isEmpty()) {
@@ -118,9 +117,9 @@ public class LithiumStackList extends NonNullList<ItemStack> implements LithiumD
         this.cachedComparatorUpdatePattern = null;
         this.modCount++;
 
-        InventoryChangeTracker inventoryModificationCallback = this.inventoryModificationCallback;
+        InventoryChangeTracker inventoryModificationCallback = this.nextInventoryModificationCallback;
         if (inventoryModificationCallback != null) {
-            this.inventoryModificationCallback = null;
+            this.nextInventoryModificationCallback = null;
             inventoryModificationCallback.lithium$emitContentModified();
         }
     }
@@ -134,8 +133,8 @@ public class LithiumStackList extends NonNullList<ItemStack> implements LithiumD
         // At this point, the LithiumStackList unsubscribed from the stack when it reached 0.
         // Handle: If the previous == element, and the stack is not subscribed, we handle it as if an empty stack was replaced.
         if (previous == element && !element.isEmpty()) {
-            boolean notSubscribed = previous.lithium$isSubscribedWithData(this, index);
-            if (!notSubscribed) {
+            boolean isSubscribed = previous.lithium$isSubscribedWithData(this, index);
+            if (!isSubscribed) {
                 previous = ItemStack.EMPTY;
             }
         }
@@ -271,16 +270,19 @@ public class LithiumStackList extends NonNullList<ItemStack> implements LithiumD
     }
 
 
-    public void setInventoryModificationCallback(@NotNull InventoryChangeTracker inventoryModificationCallback) {
-        if (this.inventoryModificationCallback != null && this.inventoryModificationCallback != inventoryModificationCallback) {
-            this.inventoryModificationCallback.emitCallbackReplaced();
+    /**
+     * Links the stack list to the corresponding block entity to propagate the next inventory change
+     */
+    public void setNextInventoryModificationCallback(@NotNull InventoryChangeTracker nextInventoryModificationCallback) {
+        if (this.nextInventoryModificationCallback != null && this.nextInventoryModificationCallback != nextInventoryModificationCallback) {
+            this.nextInventoryModificationCallback.emitCallbackReplaced();
         }
-        this.inventoryModificationCallback = inventoryModificationCallback;
+        this.nextInventoryModificationCallback = nextInventoryModificationCallback;
     }
 
     public void removeInventoryModificationCallback(@NotNull InventoryChangeTracker inventoryModificationCallback) {
-        if (this.inventoryModificationCallback != null && this.inventoryModificationCallback == inventoryModificationCallback) {
-            this.inventoryModificationCallback = null;
+        if (this.nextInventoryModificationCallback != null && this.nextInventoryModificationCallback == inventoryModificationCallback) {
+            this.nextInventoryModificationCallback = null;
         }
     }
 

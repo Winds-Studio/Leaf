@@ -17,11 +17,13 @@
 
 package net.caffeinemc.mods.lithium.common.hopper;
 
+import net.caffeinemc.mods.lithium.api.inventory.LithiumInventory;
 import net.minecraft.world.CompoundContainer;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Class to allow DoubleInventory to have LithiumStackList optimizations.
@@ -42,13 +44,15 @@ public class LithiumDoubleStackList extends LithiumStackList {
         this.doubleInventory = doubleInventory;
     }
 
-    public static LithiumDoubleStackList getOrCreate(LithiumDoubleInventory doubleInventory, LithiumStackList first, LithiumStackList second, int maxCountPerStack) {
+    public static LithiumDoubleStackList getOrCreate(LithiumInventory firstInv, LithiumInventory secondInv, LithiumStackList first, LithiumStackList second) {
         LithiumDoubleStackList parentStackList = first.parent;
         if (parentStackList == null || parentStackList != second.parent || parentStackList.first != first || parentStackList.second != second) {
             if (parentStackList != null) {
                 parentStackList.doubleInventory.lithium$emitRemoved();
             }
-            parentStackList = new LithiumDoubleStackList(doubleInventory, first, second, maxCountPerStack);
+            LithiumDoubleInventory newDoubleInventory = new LithiumDoubleInventory(firstInv, secondInv);
+            parentStackList = new LithiumDoubleStackList(newDoubleInventory, first, second, newDoubleInventory.getMaxStackSize());
+            newDoubleInventory.setDoubleStackList(parentStackList);
             first.parent = parentStackList;
             second.parent = parentStackList;
         }
@@ -150,13 +154,59 @@ public class LithiumDoubleStackList extends LithiumStackList {
         return this.first.size() + this.second.size();
     }
 
-    public void setInventoryModificationCallback(@NotNull InventoryChangeTracker inventoryModificationCallback) {
-        this.first.setInventoryModificationCallback(inventoryModificationCallback);
-        this.second.setInventoryModificationCallback(inventoryModificationCallback);
+    public void setNextInventoryModificationCallback(@NotNull InventoryChangeTracker nextInventoryModificationCallback) {
+        throw new UnsupportedOperationException("Call setNextInventoryModificationCallback() on the inventory halves only!");
     }
 
     public void removeInventoryModificationCallback(@NotNull InventoryChangeTracker inventoryModificationCallback) {
         this.first.removeInventoryModificationCallback(inventoryModificationCallback);
         this.second.removeInventoryModificationCallback(inventoryModificationCallback);
+    }
+
+    @Override
+    public boolean hasSignalStrengthOverride() {
+        throw new UnsupportedOperationException("Call hasSignalStrengthOverride() on the inventory halves only!");
+    }
+
+    @Override
+    int calculateSignalStrength(int inventorySize) {
+        //Super call is fine here, since only correctly initialized fields are used
+        return super.calculateSignalStrength(inventorySize);
+    }
+
+    @Override
+    public boolean maybeSendsComparatorUpdatesOnFailedExtract() {
+        return this.first.maybeSendsComparatorUpdatesOnFailedExtract() || this.second.maybeSendsComparatorUpdatesOnFailedExtract();
+    }
+
+    @Override
+    public int getOccupiedSlots() {
+        return this.first.getOccupiedSlots() + this.second.getOccupiedSlots();
+    }
+
+    @Override
+    public int getFullSlots() {
+        return this.first.getFullSlots() + this.second.getFullSlots();
+    }
+
+    @Override
+    public void changedInteractionConditions() {
+        this.first.changedInteractionConditions();
+        this.second.changedInteractionConditions();
+    }
+
+    @Override
+    public void lithium$notify(@Nullable ItemStack publisher, int subscriberData) {
+        throw new UnsupportedOperationException("Call lithium$notify() on the inventory halves only!");
+    }
+
+    @Override
+    public void lithium$forceUnsubscribe(ItemStack publisher, int subscriberData) {
+        throw new UnsupportedOperationException("Call lithium$forceUnsubscribe() on the inventory halves only!");
+    }
+
+    @Override
+    public void lithium$notifyCount(ItemStack stack, int index, int newCount) {
+        throw new UnsupportedOperationException("Call lithium$notifyCount() on the inventory halves only!");
     }
 }

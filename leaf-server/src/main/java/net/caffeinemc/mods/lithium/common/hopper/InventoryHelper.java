@@ -20,9 +20,10 @@ package net.caffeinemc.mods.lithium.common.hopper;
 import net.minecraft.core.NonNullList;
 import net.minecraft.world.item.ItemStack;
 import net.caffeinemc.mods.lithium.api.inventory.LithiumInventory;
+import org.jetbrains.annotations.NotNull;
 
 public class InventoryHelper {
-    public static LithiumStackList getLithiumStackList(LithiumInventory inventory) {
+    public static @NotNull LithiumStackList getLithiumStackList(LithiumInventory inventory) {
         NonNullList<ItemStack> stackList = inventory.getInventoryLithium();
         if (stackList instanceof LithiumStackList lithiumStackList) {
             return lithiumStackList;

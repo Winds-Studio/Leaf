@@ -36,4 +36,6 @@ public interface LithiumTransferConditionInventory {
     default boolean lithium$itemInsertionTestRequiresStackSize1() {
         return false;
     }
+
+    //TODO default to true and implement this on all inventories which don't need this for improved mod compatibility
 }
