@@ -12,6 +12,7 @@ public class MCBugFix extends ConfigModules {
     public static boolean mc270656 = false;
     public static boolean mc301114 = false;
     public static int mc301114maxCombatEntries = 10240;
+    public static boolean mc152094 = false;
 
     @Override
     public void onLoaded() {
@@ -41,5 +42,14 @@ public class MCBugFix extends ConfigModules {
         ));
 
         mc301114maxCombatEntries = Math.max(1, mc301114maxCombatEntries);
+
+        mc152094 = config.getBoolean(getBasePath() + ".mc-152094", mc152094, config.pickStringRegionBased(
+            """
+                Whether to fix the bug End City/End Ship generation gets cut at chunk borders.
+                Mojira link: https://mojira.dev/MC-152094""",
+            """
+                是否修复末地城/末地船在区块边缘生成时被截断的问题。
+                漏洞跟踪器链接：https://mojira.dev/MC-152094"""
+        ));
     }
 }
