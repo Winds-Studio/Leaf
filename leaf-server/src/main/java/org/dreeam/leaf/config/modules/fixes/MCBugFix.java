@@ -1,5 +1,7 @@
 package org.dreeam.leaf.config.modules.fixes;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 
@@ -8,6 +10,8 @@ public class MCBugFix extends ConfigModules {
     public String getBasePath() {
         return EnumConfigCategory.FIXES.getBaseKeyName() + ".vanilla-bug-fix";
     }
+
+    public static final Logger LOGGER = LogManager.getLogger("Leaf Vanilla Bug Fix");
 
     public static boolean mc270656 = false;
     public static boolean mc301114 = false;
