@@ -96,6 +96,34 @@ public final class ChunkCache<V> {
         }
     }
 
+    @Nullable V getMiss(long k) {
+        if (k == 0L) {
+            if (this.containsNullKey) {
+                return this.value[this.n];
+            } else {
+                return null;
+            }
+        } else {
+            long curr;
+            final long[] key = this.key;
+            int pos;
+            if ((curr = key[pos = (int) HashCommon.mix(k) & this.mask]) == 0) {
+                return null;
+            } else if (k == curr) {
+                return this.value[pos];
+            } else {
+                while (true) {
+                    if ((curr = key[pos = pos + 1 & this.mask]) == 0) {
+                        return null;
+                    }
+                    if (k == curr) {
+                        return this.value[pos];
+                    }
+                }
+            }
+        }
+    }
+
     /// Removes the mapping for the specified key from this map.
     ///
     /// If the removed key matches the cached key, the single-entry cache is invalidated.
