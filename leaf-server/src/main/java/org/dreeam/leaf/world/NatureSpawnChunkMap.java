@@ -186,7 +186,7 @@ public final class NatureSpawnChunkMap {
         }
         for (int pos = n; pos-- != 0; ) {
             if ((key[pos]) != 0L) {
-                LevelChunk chunk = chunks.get(key[pos]);
+                LevelChunk chunk = chunks.getMiss(key[pos]);
                 if (chunk != null && chunk.moonrise$getChunkHolder().getChunkStatus().isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
                     out.add(chunk);
                 }
