@@ -49,10 +49,10 @@ public class MCBugFix extends ConfigModules {
 
         mc152094 = config.getBoolean(getBasePath() + ".mc-152094", mc152094, config.pickStringRegionBased(
             """
-                Whether to fix the bug End City/End Ship generation gets cut at chunk borders.
+                Whether to fix the bug End City ship generation gets cut at chunk borders.
                 Mojira link: https://mojira.dev/MC-152094""",
             """
-                是否修复末地城/末地船在区块边缘生成时被截断的问题。
+                是否修复末地船在区块边缘生成时被截断的问题。
                 漏洞跟踪器链接：https://mojira.dev/MC-152094"""
         ));
     }
