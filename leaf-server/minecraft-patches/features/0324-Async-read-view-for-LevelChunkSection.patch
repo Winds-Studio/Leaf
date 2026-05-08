@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: duranaaron <aaronduran2107@gmail.com>
+Date: Fri, 8 May 2026 14:41:45 +0200
+Subject: [PATCH] Async-read view for LevelChunkSection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds an opt-in AsyncReadView API on LevelChunkSection that lets a worker
+thread sample BlockState and Biome values from a stable snapshot of a
+section's PalettedContainers without blocking main-thread writes.
+
+acquireAsyncSnapshot deep-clones the live PalettedContainer.Data once,
+publishes the clone as the new live container, and returns the original
+to the caller. Subsequent writes (synchronised or unchecked) mutate the
+published clone in place, so the snapshot held by the caller is never
+touched. The write path stays byte-identical to upstream — no read
+counter, no copy-on-write branch, no race with getAndSetUnchecked.
+
+Cost is one Data clone per acquire, equivalent to LevelChunkSection.copy().
+The win over copy() is API shape: the caller gets a typed AutoCloseable
+view backed by a single Data ref instead of a full LevelChunkSection
+wrapper carrying stale block-count fields, leaving room to evolve a
+smarter sharing scheme later.
+
+diff --git a/net/minecraft/world/level/chunk/LevelChunkSection.java b/net/minecraft/world/level/chunk/LevelChunkSection.java
+index 7442f168e4c0dc0f19e4a7efaaca474358a501b1..bb5a12317b7e3123f3474129b6a877aa64370027 100644
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -355,4 +355,45 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     public LevelChunkSection copy() {
+         return new LevelChunkSection(this);
+     }
++
++    // Leaf start - Async-read view for LevelChunkSection
++    /** Returns a stable snapshot of this section's block-state and biome containers, safe to read off-thread. */
++    public AsyncReadView acquireAsyncReadView() {
++        return new AsyncReadView(this);
++    }
++
++    /**
++     * Snapshot view returned by {@link #acquireAsyncReadView()}. Block counts ({@code nonEmptyBlockCount} /
++     * {@code tickingBlockCount}) are not exposed — those are mutated outside the snapshot boundary by
++     * {@link #setBlockState}.
++     */
++    public static final class AsyncReadView implements AutoCloseable {
++        private final LevelChunkSection section;
++        private final PalettedContainer.Data<BlockState> stateData;
++        private final PalettedContainer.Data<Holder<Biome>> biomeData;
++        private boolean closed;
++
++        AsyncReadView(LevelChunkSection section) {
++            this.section = section;
++            this.stateData = section.states.acquireAsyncSnapshot();
++            this.biomeData = section.biomes.acquireAsyncSnapshot();
++        }
++
++        public BlockState getBlockState(int x, int y, int z) {
++            return this.section.states.getFromSnapshot(this.stateData, x, y, z);
++        }
++
++        public Holder<Biome> getBiome(int x, int y, int z) {
++            return this.section.biomes.getFromSnapshot(this.biomeData, x, y, z);
++        }
++
++        @Override
++        public void close() {
++            if (this.closed) return;
++            this.closed = true;
++            this.section.states.releaseAsyncSnapshot();
++            this.section.biomes.releaseAsyncSnapshot();
++        }
++    }
++    // Leaf end - Async-read view for LevelChunkSection
+ }
+diff --git a/net/minecraft/world/level/chunk/PalettedContainer.java b/net/minecraft/world/level/chunk/PalettedContainer.java
+index 07355d76cdb162b2d200c230e2511aca18babed3..70004739aaaf4c00f23e93fdfd853186911e3b6c 100644
+--- a/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -41,6 +41,35 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+     }
+     // Leaf end - optimize PalettedContainer#get
+ 
++    // Leaf start - Async-read view for LevelChunkSection
++    /**
++     * Returns the previously-live {@link Data} and publishes a fresh clone of it as the new live one.
++     * The returned {@code Data} is no longer referenced by this container; the caller must treat it as read-only.
++     */
++    public synchronized PalettedContainer.Data<T> acquireAsyncSnapshot() {
++        final PalettedContainer.Data<T> frozen = this.data;
++        final BitStorage clonedStorage = frozen.storage().copy();
++        final Palette<T> clonedPalette = frozen.palette.copy();
++        final PalettedContainer.Data<T> liveClone = new PalettedContainer.Data<>(
++            frozen.configuration(), clonedStorage, clonedPalette);
++        this.updateData(liveClone);
++        DATA_HANDLE.setRelease(this, liveClone);
++        return frozen;
++    }
++
++    /** No-op; kept for API symmetry with future implementations that may track active readers. */
++    public void releaseAsyncSnapshot() {
++    }
++
++    public Strategy<T> strategy() {
++        return this.strategy;
++    }
++
++    public T getFromSnapshot(PalettedContainer.Data<T> snap, int x, int y, int z) {
++        return this.readPalette(snap, snap.storage().get(this.strategy.getIndex(x, y, z)));
++    }
++    // Leaf end - Async-read view for LevelChunkSection
++
+     public void acquire() {
+         // this.threadingDetector.checkAndLock(); // Paper - disable this - use proper synchronization
+     }
