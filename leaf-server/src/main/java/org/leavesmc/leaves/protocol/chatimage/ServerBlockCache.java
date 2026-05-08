@@ -27,7 +27,7 @@ public class ServerBlockCache {
             this.fileCount.put(title.url(), title.total());
             return blocks;
         } catch (Exception e) {
-            LeavesLogger.LOGGER.warning("Failed to create block for title " + title.url() + ": " + e);
+            LeavesLogger.LOGGER.warn("Failed to create block for title {}: {}", title.url(), e);
             return null;
         }
     }
@@ -49,7 +49,7 @@ public class ServerBlockCache {
             names.add(uuid);
             this.userCache.put(url, names);
         } catch (Exception e) {
-            LeavesLogger.LOGGER.warning("Failed to add user " + uuid + ": " + e);
+            LeavesLogger.LOGGER.warn("Failed to add user {}: {}", uuid, e);
         }
     }
 

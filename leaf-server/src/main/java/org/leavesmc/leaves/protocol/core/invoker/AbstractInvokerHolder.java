@@ -1,7 +1,9 @@
 package org.leavesmc.leaves.protocol.core.invoker;
 
+import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.protocol.core.LeavesProtocol;
 
 import java.lang.reflect.InvocationTargetException;
@@ -59,10 +61,17 @@ public abstract class AbstractInvokerHolder<T> {
         }
         try {
             return invoker.invoke(owner, args);
-        } catch (InvocationTargetException e) {
-            throw new RuntimeException(e.getTargetException());
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throwOrLog(e);
         }
+        return null;
+    }
+
+    private static <T extends Throwable> void throwOrLog(Exception e) throws T {
+        Throwable t = e instanceof InvocationTargetException ex ? ex.getTargetException() : e;
+        if (ProtocolSupport.strictMode) {
+            throw (T) t;
+        }
+        LeavesLogger.LOGGER.error("Exception on invoking protocol ", t);
     }
 }

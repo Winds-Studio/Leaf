@@ -120,7 +120,7 @@ public class ReplayFile {
                 packetStream.writeInt(data.length);
                 packetStream.write(data);
             } catch (Exception e) {
-                LOGGER.severe("Error saving packet", e);
+                LOGGER.error("Error saving packet", e);
             }
         });
     }
