@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Harold <55301634+ZECHEESELORD@users.noreply.github.com>
+Date: Sat, 25 Apr 2026 12:50:10 -0400
+Subject: [PATCH] Paper: reset pending keepalive state on listener handoff
+ during reconfiguration
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper commit: https://github.com/PaperMC/Paper/commit/c39822ae08040423b7e0e0d66ca1666fee0ae0c4
+
+Backported from Paper 26.1.2
+
+Fixes PaperMC/Velocity#1723. (The backend side)
+
+During mid session reconfiguration behind Velocity, Paper was carrying the same KeepAlive tracker across listener handoff. That allowed a pending PLAY keepalive expectation to survive into the CONFIG listener.
+
+ServerCommonPacketListenerImpl#createCookie(...) now gives the next listener a fresh KeepAlive instance instead of reusing the current listener's pending tracker. This preserves latency/history state, but intentionally resets inflight keepalive challenge state across listener handoff. In other words:
+
+- preserve ping history
+- reset pending keepalive expectations
+
+That restores the expected protocol boundary between PLAY and CONFIG.
+
+diff --git a/io/papermc/paper/util/KeepAlive.java b/io/papermc/paper/util/KeepAlive.java
+index 4a2520f554c2ee74faf86d7c93baccf0f391a6b3..66d6af2833d76af28fbeb2ce70c194a559572460 100644
+--- a/io/papermc/paper/util/KeepAlive.java
++++ b/io/papermc/paper/util/KeepAlive.java
+@@ -15,6 +15,14 @@ public class KeepAlive {
+     public final PingCalculator pingCalculator1m = new PingCalculator(java.util.concurrent.TimeUnit.MINUTES.toNanos(1L));
+     public final PingCalculator pingCalculator5s = new PingCalculator(java.util.concurrent.TimeUnit.SECONDS.toNanos(5L));
+ 
++    public KeepAlive copyForListenerHandoff() {
++        KeepAlive copy = new KeepAlive();
++        copy.lastKeepAliveTx = this.lastKeepAliveTx;
++        copy.pingCalculator1m.copyFrom(this.pingCalculator1m);
++        copy.pingCalculator5s.copyFrom(this.pingCalculator5s);
++        return copy;
++    }
++
+     public static final class PingCalculator {
+ 
+         private final long intervalNS;
+@@ -28,6 +36,15 @@ public class KeepAlive {
+             this.intervalNS = intervalNS;
+         }
+ 
++        private void copyFrom(PingCalculator other) {
++            for (KeepAliveResponse response : other.responses) {
++                this.responses.add(response);
++            }
++            this.timeSumNS = other.timeSumNS;
++            this.timeSumCount = other.timeSumCount;
++            this.lastAverageNS = other.lastAverageNS;
++        }
++
+         public void update(KeepAliveResponse response) {
+             long currTime = response.txTimeNS;
+ 
+diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+index f919f11f5aaf3c0c80869cfa08521b2c263867df..59a5c6bd8da82c293bba739fba43dc12d28fa8a4 100644
+--- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+@@ -547,6 +547,14 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     }
+ 
+     protected CommonListenerCookie createCookie(ClientInformation clientInformation) {
+-        return new CommonListenerCookie(this.playerProfile(), this.latency, clientInformation, this.transferred, this.playerBrand, this.pluginMessagerChannels, this.keepAlive); // Paper
++        return new CommonListenerCookie(
++            this.playerProfile(),
++            this.latency,
++            clientInformation,
++            this.transferred,
++            this.playerBrand,
++            this.pluginMessagerChannels,
++            this.keepAlive.copyForListenerHandoff()
++        ); // Paper - listener handoff should reset pending keepalive expectations
+     }
+ }
