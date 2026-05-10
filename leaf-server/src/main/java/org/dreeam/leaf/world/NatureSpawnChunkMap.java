@@ -4,12 +4,17 @@ import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import com.destroystokyo.paper.event.entity.PlayerNaturallySpawnCreaturesEvent;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import org.dreeam.leaf.util.KDTree3D;
+import org.jspecify.annotations.NullMarked;
 
 import java.util.List;
 
+@NullMarked
 public final class NatureSpawnChunkMap {
     /// breadth-first search
     ///
@@ -29,9 +34,12 @@ public final class NatureSpawnChunkMap {
     private static final int SIZE_RADIUS = 9;
     private static final int REGION_MASK = 7;
     private static final int REGION_SHIFT = 3;
+    private static final ServerPlayer[] EMPTY_PLAYERS = {};
 
     private final LongArrayList[] centersByRadius;
     private final Long2LongOpenHashMap regionBitSets;
+    private final KDTree3D tree;
+    private boolean ready;
 
     public NatureSpawnChunkMap() {
         this.centersByRadius = new LongArrayList[SIZE_RADIUS];
@@ -39,49 +47,52 @@ public final class NatureSpawnChunkMap {
             this.centersByRadius[i] = new LongArrayList();
         }
         this.regionBitSets = new Long2LongOpenHashMap();
+        this.tree = new KDTree3D();
+        this.ready = false;
     }
 
     public void clear() {
+        if (!this.ready) {
+            return;
+        }
         for (LongArrayList chunkPosition : this.centersByRadius) {
             chunkPosition.clear();
         }
         this.regionBitSets.clear();
+        this.ready = false;
     }
 
-    public void addPlayer(ServerPlayer player) {
-        if (player.isSpectator()) {
-            return;
+    ///  empty => `POSITIVE_INFINITY`
+    public double nearest(ServerLevel world, double x, double y, double z) {
+        if (ready) {
+            return tree.nearestSqr(x, y, z, 16384.0);
+        } else {
+            Player player = world.getNearestPlayer(x, y, z, -1.0, world.purpurConfig.mobSpawningIgnoreCreativePlayers);
+            return player == null ? Double.POSITIVE_INFINITY : player.distanceToSqr(x, y, z);
         }
-        PlayerNaturallySpawnCreaturesEvent event = player.playerNaturallySpawnedEvent;
-        if (event == null || event.isCancelled()) {
-            return;
-        }
-        int range = event.getSpawnRadius();
-        if (range > MAX_RADIUS) {
-            range = MAX_RADIUS;
-        } else if (range < 0) {
-            return;
-        }
-        this.centersByRadius[range].add(player.chunkPosition().longKey);
     }
 
-    public void build(ReferenceList<LevelChunk> chunks, List<LevelChunk> out) {
+    public void tick(ServerLevel world, List<LevelChunk> out) {
+        ServerPlayer[] players = initPlayer(world);
         for (int index = 0; index < SIZE_RADIUS; index++) {
-            buildBy(index);
+            buildBfs(index);
         }
 
-        collectSpawningChunks(chunks, regionBitSets, out);
+        buildKdTree(world.purpurConfig.mobSpawningIgnoreCreativePlayers, players);
+        collectSpawningChunks(world.moonrise$getPlayerTickingChunks(), this.regionBitSets, out);
+        this.ready = true;
     }
 
-    private void buildBy(int index) {
+    private void buildBfs(int index) {
         LongArrayList list = this.centersByRadius[index];
+        Long2LongOpenHashMap bitSets = this.regionBitSets;
         int centersSize = deduplicate(list);
         if (centersSize == 0) {
             return;
         }
         long[] centersRaw = list.elements();
         long cachedKey = ChunkPos.asLong(ChunkPos.getX(centersRaw[0]) >> REGION_SHIFT, ChunkPos.getZ(centersRaw[0]) >> REGION_SHIFT);
-        long cachedVal = this.regionBitSets.get(cachedKey);
+        long cachedVal = bitSets.get(cachedKey);
         long[] offsets = TABLE_BFS[index];
         for (int i = 0; i < centersSize; i++) {
             long center = centersRaw[i];
@@ -104,9 +115,9 @@ public final class NatureSpawnChunkMap {
                 long bit = 1L << bitIndex;
 
                 if (regionKey != cachedKey) {
-                    this.regionBitSets.put(cachedKey, cachedVal);
+                    bitSets.put(cachedKey, cachedVal);
                     cachedKey = regionKey;
-                    cachedVal = this.regionBitSets.get(regionKey);
+                    cachedVal = bitSets.get(regionKey);
                 }
 
                 cachedVal |= bit;
@@ -114,11 +125,11 @@ public final class NatureSpawnChunkMap {
         }
 
         if (cachedVal != 0L) {
-            this.regionBitSets.put(cachedKey, cachedVal);
+            bitSets.put(cachedKey, cachedVal);
         }
     }
 
-    private int deduplicate(LongArrayList list) {
+    private static int deduplicate(LongArrayList list) {
         int n = list.size();
         if (n == 0) {
             return 0;
@@ -135,6 +146,47 @@ public final class NatureSpawnChunkMap {
             }
         }
         return size + 1;
+    }
+
+    private ServerPlayer[] initPlayer(ServerLevel world) {
+        ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
+        for (ServerPlayer player : players) {
+            if (player.isSpectator()) {
+                continue;
+            }
+            PlayerNaturallySpawnCreaturesEvent event = player.playerNaturallySpawnedEvent;
+            if (event == null || event.isCancelled()) {
+                continue;
+            }
+            int range = event.getSpawnRadius();
+            if (range > MAX_RADIUS) {
+                range = MAX_RADIUS;
+            } else if (range < 0) {
+                continue;
+            }
+            this.centersByRadius[range].add(player.chunkPosition().longKey);
+        }
+        return players;
+    }
+
+    private void buildKdTree(boolean ignoreCreativePlayers, ServerPlayer[] players) {
+        double[] pxl = new double[players.length];
+        double[] pyl = new double[players.length];
+        double[] pzl = new double[players.length];
+        int i = 0;
+        for (ServerPlayer p : players) {
+            if (!p.isSpectator() && !(ignoreCreativePlayers && p.isCreative())) {
+                pxl[i] = p.getX();
+                pyl[i] = p.getY();
+                pzl[i] = p.getZ();
+                i++;
+            }
+        }
+        final int[] indices = new int[i];
+        for (int j = 0; j < i; j++) {
+            indices[j] = j;
+        }
+        this.tree.build(new double[][]{pxl, pyl, pzl}, indices);
     }
 
     private static void collectSpawningChunks(ReferenceList<LevelChunk> chunks, Long2LongOpenHashMap bitSets, List<LevelChunk> out) {

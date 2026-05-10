@@ -11,6 +11,7 @@ import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import org.dreeam.leaf.config.modules.network.ProtocolSupport;
 import org.jetbrains.annotations.NotNull;
+import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.protocol.core.LeavesProtocol;
 import org.leavesmc.leaves.protocol.core.ProtocolHandler;
 import org.leavesmc.leaves.protocol.syncmatica.exchange.DownloadExchange;
@@ -109,7 +110,7 @@ public class CommunicationManager implements LeavesProtocol {
             try {
                 upload = new UploadExchange(placement, toUpload, source);
             } catch (final FileNotFoundException e) {
-                e.printStackTrace();
+                LeavesLogger.LOGGER.error(e.toString());
                 return;
             }
             startExchange(upload);
@@ -137,7 +138,7 @@ public class CommunicationManager implements LeavesProtocol {
                 try {
                     download(placement, source);
                 } catch (final Exception e) {
-                    e.printStackTrace();
+                    LeavesLogger.LOGGER.error(e.toString());
                 }
                 return;
             }
@@ -169,6 +170,10 @@ public class CommunicationManager implements LeavesProtocol {
         if (id.equals(PacketType.MODIFY_REQUEST.identifier)) {
             final UUID placementId = packetBuf.readUUID();
             final ModifyExchangeServer modifier = new ModifyExchangeServer(placementId, source);
+            if (modifier.getPlacement() == null) {
+                LeavesLogger.LOGGER.warn("Could not find placement for modify request {}", placementId);
+                return;
+            }
             startExchange(modifier);
         }
     }

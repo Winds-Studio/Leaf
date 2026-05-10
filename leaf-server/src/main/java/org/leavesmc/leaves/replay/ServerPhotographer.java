@@ -253,7 +253,7 @@ public class ServerPhotographer extends ServerPlayer {
             try {
                 return createPhotographer(this);
             } catch (IOException e) {
-                e.printStackTrace();
+                LeavesLogger.LOGGER.error(e.toString());
             }
             return null;
         }

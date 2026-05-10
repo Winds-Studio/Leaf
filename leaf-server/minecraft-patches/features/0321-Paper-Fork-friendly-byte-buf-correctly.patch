@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nassim Jahnke <nassim@njahnke.dev>
+Date: Fri, 8 May 2026 19:19:07 +0200
+Subject: [PATCH] Paper: Fork friendly byte buf correctly
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper commit: https://github.com/PaperMC/Paper/commit/8dea6f1761c97da76fa2e42c6f74fb1242c23feb
+
+Backported from Paper 26.1.2
+
+diff --git a/net/minecraft/nbt/NbtAccounter.java b/net/minecraft/nbt/NbtAccounter.java
+index 6f516a6e7d193e53b407ad54a2cb027bee2258df..98185e8382603d08ab74e6da73d266dde6f39203 100644
+--- a/net/minecraft/nbt/NbtAccounter.java
++++ b/net/minecraft/nbt/NbtAccounter.java
+@@ -48,6 +48,16 @@ public class NbtAccounter {
+         }
+     }
+ 
++    // Paper start - Track codec depth
++    public void pushDepth(final int depth) {
++        if (this.depth + depth >= this.maxDepth) {
++            throw new NbtAccounterException("Tried to read NBT tag with too high complexity, depth > " + this.maxDepth);
++        } else {
++            this.depth += depth;
++        }
++    }
++    // Paper end - Track codec depth
++
+     public void pushDepth() {
+         if (this.depth >= this.maxDepth) {
+             throw new NbtAccounterException("Tried to read NBT tag with too high complexity, depth > " + this.maxDepth);
+diff --git a/net/minecraft/network/RegistryFriendlyByteBuf.java b/net/minecraft/network/RegistryFriendlyByteBuf.java
+index e1651db791e55a6621157116359aa9aca6919475..cf8f037dc0926e7cadf41f4341e0476aa3457fc9 100644
+--- a/net/minecraft/network/RegistryFriendlyByteBuf.java
++++ b/net/minecraft/network/RegistryFriendlyByteBuf.java
+@@ -12,6 +12,15 @@ public class RegistryFriendlyByteBuf extends FriendlyByteBuf {
+         this.registryAccess = registryAccess;
+     }
+ 
++    // Paper start - Track codec depth
++    public RegistryFriendlyByteBuf(final ByteBuf source, final RegistryFriendlyByteBuf parent) {
++        super(source);
++        this.registryAccess = parent.registryAccess;
++        this.trackCodecDepth = parent.trackCodecDepth;
++        this.codecDepth = parent.codecDepth;
++    }
++    // Paper end - Track codec depth
++
+     public RegistryAccess registryAccess() {
+         return this.registryAccess;
+     }
+diff --git a/net/minecraft/network/codec/ByteBufCodecs.java b/net/minecraft/network/codec/ByteBufCodecs.java
+index 43270171bf22ed87c015593289380ea05eebfb57..0b7c57cc8cd34e2552f6431576d6fb3ef9125147 100644
+--- a/net/minecraft/network/codec/ByteBufCodecs.java
++++ b/net/minecraft/network/codec/ByteBufCodecs.java
+@@ -334,7 +334,13 @@ public interface ByteBufCodecs {
+         return new StreamCodec<ByteBuf, Tag>() {
+             @Override
+             public Tag decode(ByteBuf buffer) {
+-                Tag nbt = FriendlyByteBuf.readNbt(buffer, accounter.get());
++                // Paper start - Track codec depth
++                final NbtAccounter acc = accounter.get();
++                if (buffer instanceof FriendlyByteBuf friendlyByteBuf && friendlyByteBuf.trackCodecDepth) {
++                    acc.pushDepth(friendlyByteBuf.codecDepth * 3);
++                }
++                Tag nbt = FriendlyByteBuf.readNbt(buffer, acc);
++                // Paper end - Track codec depth
+                 if (nbt == null) {
+                     throw new DecoderException("Expected non-null compound tag");
+                 } else {
+@@ -634,7 +640,7 @@ public interface ByteBufCodecs {
+     }
+ 
+     static <V> StreamCodec.CodecOperation<RegistryFriendlyByteBuf, V, V> registryFriendlyLengthPrefixed(int length) {
+-        return lengthPrefixed(length, (registryFriendlyByteBuf, byteBuf) -> new RegistryFriendlyByteBuf(byteBuf, registryFriendlyByteBuf.registryAccess()));
++        return lengthPrefixed(length, (registryFriendlyByteBuf, byteBuf) -> new RegistryFriendlyByteBuf(byteBuf, registryFriendlyByteBuf)); // Paper - Track codec depth
+     }
+ 
+     static <T> StreamCodec<ByteBuf, T> idMapper(final IntFunction<T> idLookup, final ToIntFunction<T> idGetter) {
