@@ -27,6 +27,6 @@ public class DisableWorldDataSaving extends ConfigModules {
     }
 
     public static boolean shouldSkipSave(ServerLevel serverLevel) {
-        return worlds.contains(serverLevel.getWorld().getName());
+        return !worlds.isEmpty() && worlds.contains(serverLevel.getWorld().getName());
     }
 }
