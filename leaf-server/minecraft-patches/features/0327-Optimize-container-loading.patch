@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DarkCat <realcat@duck.com>
+Date: Tue, 12 May 2026 11:40:43 +0300
+Subject: [PATCH] Optimize container loading
+
+
+diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+index 456de500c3a7043a7f05e8691e8a0839005a2747..9e17d02ae84d8e756ace14bbf3ab53211f427c81 100644
+--- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+@@ -38,6 +38,10 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     public int cooldownTime = -1;
+     private long tickedGameTime;
+     private Direction facing;
++    // Leaf start - Optimize container loading - defer hopper item NBT parsing
++    private net.minecraft.world.level.storage.@Nullable ValueInput leafDeferredItemsInput;
++    private boolean leafItemsLoaded = true;
++    // Leaf end - Optimize container loading
+ 
+     // CraftBukkit start - add fields and methods
+     public List<org.bukkit.entity.HumanEntity> transaction = new java.util.ArrayList<>();
+@@ -45,6 +49,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     @Override
+     public List<ItemStack> getContents() {
++        this.leafEnsureItemsLoaded(); // Leaf - Optimize container loading
+         return this.items;
+     }
+ 
+@@ -83,7 +88,14 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         super.loadAdditional(input);
+         this.items = NonNullList.withSize(this.getContainerSize(), ItemStack.EMPTY);
+         if (!this.tryLoadLootTable(input)) {
+-            ContainerHelper.loadAllItems(input, this.items);
++            // Leaf start - Optimize container loading - defer item NBT parsing until first access
++            if (org.dreeam.leaf.config.modules.opt.OptimizeContainerLoading.lazyLoadHopperItems) {
++                this.leafDeferredItemsInput = input;
++                this.leafItemsLoaded = false;
++            } else {
++                ContainerHelper.loadAllItems(input, this.items);
++            }
++            // Leaf end - Optimize container loading
+         }
+ 
+         this.cooldownTime = input.getIntOr("TransferCooldown", -1);
+@@ -93,6 +105,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     protected void saveAdditional(ValueOutput output) {
+         super.saveAdditional(output);
+         if (!this.trySaveLootTable(output)) {
++            this.leafEnsureItemsLoaded(); // Leaf - Optimize container loading - force load before serialization
+             ContainerHelper.saveAllItems(output, this.items);
+         }
+ 
+@@ -208,6 +221,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     }
+ 
+     private boolean inventoryFull() {
++        this.leafEnsureItemsLoaded(); // Leaf - Optimize container loading
+         for (ItemStack itemStack : this.items) {
+             if (itemStack.isEmpty() || itemStack.getCount() != itemStack.getMaxStackSize()) {
+                 return false;
+@@ -883,14 +897,32 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     @Override
+     protected NonNullList<ItemStack> getItems() {
++        this.leafEnsureItemsLoaded(); // Leaf - Optimize container loading
+         return this.items;
+     }
+ 
+     @Override
+     protected void setItems(NonNullList<ItemStack> items) {
++        // Leaf start - Optimize container loading - wholesale replacement invalidates lazy state
++        this.leafDeferredItemsInput = null;
++        this.leafItemsLoaded = true;
++        // Leaf end - Optimize container loading
+         this.items = items;
+     }
+ 
++    // Leaf start - Optimize container loading - lazy load helper
++    private void leafEnsureItemsLoaded() {
++        if (!this.leafItemsLoaded && this.leafDeferredItemsInput != null) {
++            final net.minecraft.world.level.storage.ValueInput input = this.leafDeferredItemsInput;
++            // Clear state before delegating so reentrant calls don't loop and the
++            // CompoundTag underlying the ValueInput becomes eligible for GC.
++            this.leafDeferredItemsInput = null;
++            this.leafItemsLoaded = true;
++            ContainerHelper.loadAllItems(input, this.items);
++        }
++    }
++    // Leaf end - Optimize container loading
++
+     public static void entityInside(Level level, BlockPos pos, BlockState state, Entity entity, HopperBlockEntity blockEntity) {
+         if (entity instanceof ItemEntity itemEntity
+             && !itemEntity.getItem().isEmpty()
