@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DarkCat <realcat@duck.com>
+Date: Fri, 15 May 2026 00:00:02 +0300
+Subject: [PATCH] Skip-equals fast path for AbstractContainerMenu
+
+broadcastChanges() iterates every menu slot every tick and runs
+ItemStack.matches() against the cached lastSlots copy. For unchanged
+slots the entire triggerSlotListeners + synchronizeSlotToRemote chain
+is redundant. Patch 0327 cuts the equals cost; this patch lets us skip
+the chain entirely when a slot is provably unchanged.
+
+ItemStack and PatchedDataComponentMap gain a small private int counter,
+incremented in setCount(), setItem(), and ensureMapOwnership() (the COW
+gate for every component map mutation). AbstractContainerMenu snapshots
+the ItemStack reference and both counters per slot at each broadcast.
+On the next broadcast: if reference and both counters match, nothing
+ItemStack.matches() can observe has changed, so we continue past the
+slot. Replacement (Slot.set, Container.setItem) yields a different
+reference and falls through to the existing slow path, which refreshes
+the snapshot.
+
+Carried item sync, the dataSlots loop, and broadcastFullState() are
+not touched and still run every tick.
+
+diff --git a/net/minecraft/core/component/PatchedDataComponentMap.java b/net/minecraft/core/component/PatchedDataComponentMap.java
+index 5f71c8f3f74abe1716767b3d58c9db5476760e60..dc7451983b1549716c9a303cc8e11c768c4b566f 100644
+--- a/net/minecraft/core/component/PatchedDataComponentMap.java
++++ b/net/minecraft/core/component/PatchedDataComponentMap.java
+@@ -136,12 +136,19 @@ public final class PatchedDataComponentMap implements DataComponentMap, net.caff
+         }
+     }
+
++    private int leafMutationCounter; // Leaf - Skip-equals fast path for AbstractContainerMenu
++
++    public int leaf$mutationCounter() { // Leaf - Skip-equals fast path for AbstractContainerMenu
++        return this.leafMutationCounter;
++    }
++
+     private void ensureMapOwnership() {
+         // Leaf start - Lithium - equipment tracking
+         if (this.subscriber != null) {
+             this.subscriber.lithium$notify(this, 0);
+         }
+         // Leaf end - Lithium - equipment tracking
++        this.leafMutationCounter++; // Leaf - Skip-equals fast path for AbstractContainerMenu
+         if (this.copyOnWrite) {
+             this.patch = new Reference2ObjectArrayMap<>(this.patch);
+             this.copyOnWrite = false;
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index 6f34f71d64febca49ffd52d9df2fac657434737d..a173a038793c3f9b6e5b99f34f315c8f6241ec7c 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -161,9 +161,28 @@ public abstract class AbstractContainerMenu {
+         this.slots.add(slot);
+         this.lastSlots.add(ItemStack.EMPTY);
+         this.remoteSlots.add(this.synchronizer != null ? this.synchronizer.createSlot() : RemoteSlot.PLACEHOLDER);
++        // Leaf start - Skip-equals fast path: parallel trackers per slot
++        this.leafLastSlotOriginals.add(ItemStack.EMPTY);
++        this.leafLastCountMutations.add(LEAF_FAST_PATH_SENTINEL);
++        this.leafLastComponentMutations.add(LEAF_FAST_PATH_SENTINEL);
++        // Leaf end - Skip-equals fast path
+         return slot;
+     }
+
++    // Leaf start - Skip-equals fast path: parallel trackers per slot
++    // Three parallel arrays sized like this.slots. They cache per slot:
++    //   leafLastSlotOriginals[i] - the ItemStack reference seen at the previous broadcast
++    //   leafLastCountMutations[i] - that ItemStack's leaf$mutationCounter() at the time
++    //   leafLastComponentMutations[i] - that ItemStack's components.leaf$mutationCounter() at the time
++    // If on the next broadcast all three still match, the slot is provably unchanged
++    // and the entire triggerSlotListeners + synchronizeSlotToRemote chain (which would
++    // otherwise call ItemStack.matches -> PatchedDataComponentMap.equals etc.) is skipped.
++    private static final int LEAF_FAST_PATH_SENTINEL = -1;
++    private final NonNullList<ItemStack> leafLastSlotOriginals = NonNullList.create();
++    private final IntList leafLastCountMutations = new IntArrayList();
++    private final IntList leafLastComponentMutations = new IntArrayList();
++    // Leaf end - Skip-equals fast path
++
+     protected DataSlot addDataSlot(DataSlot slot) {
+         this.dataSlots.add(slot);
+         this.remoteDataSlots.add(0);
+@@ -266,11 +285,38 @@ public abstract class AbstractContainerMenu {
+     public void broadcastChanges() {
+         for (int i = 0; i < this.slots.size(); i++) {
+             ItemStack item = this.slots.get(i).getItem();
++            // Leaf start - Skip-equals fast path
++            // If the slot still holds the exact same ItemStack reference AND neither its count
++            // nor its components have been mutated since the last broadcast, nothing about this
++            // slot can have changed. Skipping triggerSlotListeners + synchronizeSlotToRemote in
++            // this case is equivalent to running them: ItemStack.matches would have returned true,
++            // RemoteSlot.matches would have returned true, no listener would have fired, no packet
++            // would have been sent. The subsequent triggerSlotListeners call (when we DO take the
++            // slow path) updates lastSlots + remoteSlots as before, so cache state stays correct.
++            if (item == this.leafLastSlotOriginals.get(i)
++                && item.leaf$mutationCounter() == this.leafLastCountMutations.getInt(i)
++                && item.getComponents() instanceof net.minecraft.core.component.PatchedDataComponentMap leafPdcm
++                && leafPdcm.leaf$mutationCounter() == this.leafLastComponentMutations.getInt(i)) {
++                continue;
++            }
++            // Leaf end - Skip-equals fast path
+             // Leaf start - Reduce AbstractContainerMenu allocations
+             this.broadcastCarried.reset(item);
+             this.triggerSlotListeners(i, item, this.broadcastCarried);
+             this.synchronizeSlotToRemote(i, item, this.broadcastCarried);
+             // Leaf end - Reduce AbstractContainerMenu allocations
++            // Leaf start - Skip-equals fast path: refresh trackers AFTER processing
++            this.leafLastSlotOriginals.set(i, item);
++            this.leafLastCountMutations.set(i, item.leaf$mutationCounter());
++            if (item.getComponents() instanceof net.minecraft.core.component.PatchedDataComponentMap leafPdcm) {
++                this.leafLastComponentMutations.set(i, leafPdcm.leaf$mutationCounter());
++            } else {
++                // Non-PatchedDataComponentMap implementations (e.g. immutable defaults) cannot mutate
++                // through ensureMapOwnership, so we anchor the counter to the sentinel to force
++                // re-evaluation on every broadcast for safety.
++                this.leafLastComponentMutations.set(i, LEAF_FAST_PATH_SENTINEL);
++            }
++            // Leaf end - Skip-equals fast path
+         }
+
+         this.synchronizeCarriedToRemote();
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index 336b0256476df6d5f7c8120c4e6a5498948cae5d..16487c15e6cf68b200df1a237842f230987eb04d 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -1344,6 +1344,7 @@ public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods
+     public void setItem(Item item) {
+         this.bukkitStack = null; // Paper
+         this.item = item;
++        this.leafMutationCounter++; // Leaf - Skip-equals fast path for AbstractContainerMenu (defensive: applyComponents below also bumps the components map counter)
+         // Paper start - change base component prototype
+         final DataComponentPatch patch = this.getComponentsPatch();
+         this.components = new PatchedDataComponentMap(this.item.components());
+@@ -1392,6 +1393,12 @@ public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods
+         return this.isEmpty() ? 0 : this.count;
+     }
+
++    private int leafMutationCounter; // Leaf - Skip-equals fast path for AbstractContainerMenu
++
++    public int leaf$mutationCounter() { // Leaf - Skip-equals fast path for AbstractContainerMenu
++        return this.leafMutationCounter;
++    }
++
+     public void setCount(int count) {
+         // Leaf start - Lithium - equipment tracking
+         if (count != this.count) {
+@@ -1406,6 +1413,7 @@ public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods
+                     this.subscriberData = 0;
+                 }
+             }
++            this.leafMutationCounter++; // Leaf - Skip-equals fast path for AbstractContainerMenu
+         }
+         // Leaf end - Lithium - equipment tracking
+         this.count = count;
