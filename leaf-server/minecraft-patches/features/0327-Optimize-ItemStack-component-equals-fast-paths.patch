@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DarkCat <realcat@duck.com>
+Date: Fri, 15 May 2026 00:00:00 +0300
+Subject: [PATCH] Optimize ItemStack component equals fast paths
+
+Two independent fast paths in the ItemStack.matches equals chain that
+broadcastChanges() walks every tick.
+
+1. PatchedDataComponentMap.equals - move the patch-reference equality
+   check to the top, before prototype.equals(). After ItemStack.copy()
+   the original and the copy share the same patch instance via COW, so
+   unchanged items return in O(1) and skip the containsAll walk. The
+   previous optimisation ran this check LAST.
+
+2. ItemContainerContents.equals - use the already-cached hashCode as a
+   pre-filter before recursing into ItemStack.listMatches, short-circuiting
+   the nested matches() chain when contents differ.
+
+   The vanilla hashCode was broken: the (int size) and (List<ItemStack>)
+   constructors hashed an EMPTY-filled NonNullList before fromSlots/
+   fromItems mutated it, so the cached value depended only on size. We
+   now build a fully populated NonNullList BEFORE delegating to the
+   canonical (NonNullList<ItemStack>) constructor so the hash reflects
+   real contents.
+
+diff --git a/net/minecraft/core/component/PatchedDataComponentMap.java b/net/minecraft/core/component/PatchedDataComponentMap.java
+index 285aabb234463e34ed426be04eb7cc582d3e9ba1..5f71c8f3f74abe1716767b3d58c9db5476760e60 100644
+--- a/net/minecraft/core/component/PatchedDataComponentMap.java
++++ b/net/minecraft/core/component/PatchedDataComponentMap.java
+@@ -249,13 +249,21 @@ public final class PatchedDataComponentMap implements DataComponentMap, net.caff
+         // Leaf start - Optimize PatchedDataComponentMap equals
+         if (this == other) return true;
+         if (!(other instanceof PatchedDataComponentMap that)) return false;
++        // Leaf start - Reorder PatchedDataComponentMap equals fast path
++        // Identical patch reference (very common via copy-on-write) means identical content;
++        // only the prototype still needs to match.
++        if (this.patch == that.patch) {
++            return this.prototype == that.prototype || this.prototype.equals(that.prototype);
++        }
++        // Leaf end - Reorder PatchedDataComponentMap equals fast path
+         if (this.patch.size() != that.patch.size()) {
+             return false;
+         }
+-        if (!this.prototype.equals(that.prototype)) {
++        // Leaf start - Reorder PatchedDataComponentMap equals fast path
++        if (this.prototype != that.prototype && !this.prototype.equals(that.prototype)) {
+             return false;
+         }
+-        if (this.patch == that.patch) return true;
++        // Leaf end - Reorder PatchedDataComponentMap equals fast path
+         return this.patch.equals(that.patch);
+         // Leaf end - Optimize PatchedDataComponentMap equals
+     }
+diff --git a/net/minecraft/world/item/component/ItemContainerContents.java b/net/minecraft/world/item/component/ItemContainerContents.java
+index ecf794f94177fc7b6df483516d920719fbc6fa43..0bf19bcbe69db3d0c2ffef4dfb2c0e187e1b2235 100644
+--- a/net/minecraft/world/item/component/ItemContainerContents.java
++++ b/net/minecraft/world/item/component/ItemContainerContents.java
+@@ -42,30 +42,38 @@ public final class ItemContainerContents implements TooltipProvider {
+         }
+     }
+
+-    private ItemContainerContents(int size) {
+-        this(NonNullList.withSize(size, ItemStack.EMPTY));
+-    }
+-
+-    private ItemContainerContents(List<ItemStack> size) {
+-        this(size.size());
+-
+-        for (int i = 0; i < size.size(); i++) {
+-            this.items.set(i, size.get(i));
++    // Leaf start - Make cached hashCode reflect real contents
++    // The previous (int size) and (List<ItemStack> size) constructors built the object
++    // with an empty NonNullList, computed the hash on that empty list, and only then
++    // mutated the items field. The cached hashCode therefore depended only on size,
++    // not on the actual contents. We now fully populate the NonNullList before
++    // delegating to the canonical (NonNullList<ItemStack>) constructor so the hash
++    // is consistent with the contents and can be used as a fast path in equals().
++    private ItemContainerContents(List<ItemStack> input) {
++        this(populated(input));
++    }
++
++    private static NonNullList<ItemStack> populated(List<ItemStack> input) {
++        NonNullList<ItemStack> list = NonNullList.withSize(input.size(), ItemStack.EMPTY);
++        for (int i = 0; i < input.size(); i++) {
++            list.set(i, input.get(i));
+         }
++        return list;
+     }
++    // Leaf end - Make cached hashCode reflect real contents
+
+     private static ItemContainerContents fromSlots(List<ItemContainerContents.Slot> slots) {
+         OptionalInt optionalInt = slots.stream().mapToInt(ItemContainerContents.Slot::index).max();
+         if (optionalInt.isEmpty()) {
+             return EMPTY;
+         } else {
+-            ItemContainerContents itemContainerContents = new ItemContainerContents(optionalInt.getAsInt() + 1);
+-
++            // Leaf start - Make cached hashCode reflect real contents
++            NonNullList<ItemStack> items = NonNullList.withSize(optionalInt.getAsInt() + 1, ItemStack.EMPTY);
+             for (ItemContainerContents.Slot slot : slots) {
+-                itemContainerContents.items.set(slot.index(), slot.item());
++                items.set(slot.index(), slot.item());
+             }
+-
+-            return itemContainerContents;
++            return new ItemContainerContents(items);
++            // Leaf end - Make cached hashCode reflect real contents
+         }
+     }
+
+@@ -74,13 +82,13 @@ public final class ItemContainerContents implements TooltipProvider {
+         if (i == -1) {
+             return EMPTY;
+         } else {
+-            ItemContainerContents itemContainerContents = new ItemContainerContents(i + 1);
+-
++            // Leaf start - Make cached hashCode reflect real contents
++            NonNullList<ItemStack> list = NonNullList.withSize(i + 1, ItemStack.EMPTY);
+             for (int i1 = 0; i1 <= i; i1++) {
+-                itemContainerContents.items.set(i1, items.get(i1).copy());
++                list.set(i1, items.get(i1).copy());
+             }
+-
+-            return itemContainerContents;
++            return new ItemContainerContents(list);
++            // Leaf end - Make cached hashCode reflect real contents
+         }
+     }
+
+@@ -136,7 +144,12 @@ public final class ItemContainerContents implements TooltipProvider {
+
+     @Override
+     public boolean equals(Object other) {
+-        return this == other || other instanceof ItemContainerContents itemContainerContents && ItemStack.listMatches(this.items, itemContainerContents.items);
++        // Leaf start - Use cached hash as a fast path
++        if (this == other) return true;
++        if (!(other instanceof ItemContainerContents that)) return false;
++        if (this.hashCode != that.hashCode) return false;
++        return ItemStack.listMatches(this.items, that.items);
++        // Leaf end - Use cached hash as a fast path
+     }
+
+     @Override
