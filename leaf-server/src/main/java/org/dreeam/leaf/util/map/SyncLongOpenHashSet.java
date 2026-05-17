@@ -5,6 +5,8 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSpliterator;
 
+import it.unimi.dsi.fastutil.longs.LongIterators;
+import it.unimi.dsi.fastutil.longs.LongSpliterators;
 import java.io.Serial;
 import java.util.Collection;
 import java.util.function.Consumer;
@@ -108,7 +110,9 @@ public class SyncLongOpenHashSet extends LongOpenHashSet {
 
     @Override
     public boolean removeIf(Predicate<? super Long> filter) {
-        return super.removeIf(filter);
+        synchronized (this) {
+            return super.removeIf(filter);
+        }
     }
 
     @Override
@@ -144,22 +148,30 @@ public class SyncLongOpenHashSet extends LongOpenHashSet {
 
     @Override
     public LongIterator longIterator() {
-        return super.longIterator();
+        synchronized (this) {
+            return LongIterators.wrap(super.toLongArray());
+        }
     }
 
     @Override
     public LongSpliterator longSpliterator() {
-        return super.longSpliterator();
+        synchronized (this) {
+            return LongSpliterators.wrap(super.toLongArray());
+        }
     }
 
     @Override
     public java.util.stream.LongStream longStream() {
-        return super.longStream();
+        synchronized (this) {
+            return java.util.stream.LongStream.of(super.toLongArray());
+        }
     }
 
     @Override
     public java.util.stream.LongStream longParallelStream() {
-        return super.longParallelStream();
+        synchronized (this) {
+            return java.util.stream.LongStream.of(super.toLongArray()).parallel();
+        }
     }
 
     @Override
@@ -178,24 +190,32 @@ public class SyncLongOpenHashSet extends LongOpenHashSet {
 
     @Override
     public LongIterator iterator() {
-        return super.iterator();
+        synchronized (this) {
+            return LongIterators.wrap(super.toLongArray());
+        }
     }
 
     @Override
     public LongSpliterator spliterator() {
-        return super.spliterator();
+        synchronized (this) {
+            return LongSpliterators.wrap(super.toLongArray());
+        }
     }
 
     @Deprecated
     @Override
     public java.util.stream.Stream<Long> stream() {
-        return super.stream();
+        synchronized (this) {
+            return java.util.stream.LongStream.of(super.toLongArray()).boxed();
+        }
     }
 
     @Deprecated
     @Override
     public java.util.stream.Stream<Long> parallelStream() {
-        return super.parallelStream();
+        synchronized (this) {
+            return java.util.stream.LongStream.of(super.toLongArray()).parallel().boxed();
+        }
     }
 
     @Override

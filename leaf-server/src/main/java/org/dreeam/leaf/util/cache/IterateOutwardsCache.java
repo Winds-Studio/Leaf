@@ -5,8 +5,8 @@ import it.unimi.dsi.fastutil.longs.LongList;
 import net.minecraft.core.BlockPos;
 
 import java.util.Iterator;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * @author 2No2Name, original implemenation by SuperCoder7979 and Gegy1000
@@ -19,12 +19,10 @@ public class IterateOutwardsCache {
 
     private final ConcurrentHashMap<Long, LongArrayList> table;
     private final int capacity;
-    private final Random random;
 
     public IterateOutwardsCache(int capacity) {
         this.capacity = capacity;
         this.table = new ConcurrentHashMap<>(31);
-        this.random = new Random();
     }
 
     private void fillPositionsWithIterateOutwards(LongList entry, int xRange, int yRange, int zRange) {
@@ -61,8 +59,7 @@ public class IterateOutwardsCache {
             //prevent an unlikely infinite loop caused by another thread filling the table concurrently using counting
             for (int i = -this.capacity; iterator.hasNext() && i < 5; i++) {
                 Long key2 = iterator.next();
-                //random is not threadsafe, but it doesn't matter here, because we don't need quality random numbers
-                if (this.random.nextInt(8) == 0 && key2 != key) {
+                if (ThreadLocalRandom.current().nextInt(8) == 0 && key2 != key) { // Leaf - use ThreadLocalRandom
                     iterator.remove();
                 }
             }

@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Naw0ke <nawoke@trprac.net>
+Date: Sun, 17 May 2026 12:00:00 +0300
+Subject: [PATCH] Optimize EndCrystal tick
+
+Cache ServerLevel and EndDragonFight lookups in tick() to avoid redundant
+level() calls and casts. This reduces method call overhead in the hot tick path.
+
+diff --git a/net/minecraft/world/entity/boss/enderdragon/EndCrystal.java b/net/minecraft/world/entity/boss/enderdragon/EndCrystal.java
+index 21d67800..38c2153d 100644
+--- a/net/minecraft/world/entity/boss/enderdragon/EndCrystal.java
++++ b/net/minecraft/world/entity/boss/enderdragon/EndCrystal.java
+@@ -79,54 +79,57 @@ public class EndCrystal extends Entity {
+         this.time++;
+         this.applyEffectsFromBlocks();
+         this.handlePortal();
+-        if (this.level() instanceof ServerLevel) {
++        if (this.level() instanceof ServerLevel serverLevel) { // Leaf - Optimize EndCrystal tick
+             BlockPos blockPos = this.blockPosition();
+-            if (((ServerLevel)this.level()).getDragonFight() != null && this.level().getBlockState(blockPos).isAir()) {
+-                if (!org.bukkit.craftbukkit.event.CraftEventFactory.callBlockIgniteEvent(this.level(), blockPos, this).isCancelled()) { // Paper
+-                this.level().setBlockAndUpdate(blockPos, BaseFireBlock.getState(this.level(), blockPos));
+-                } // Paper
++            EndDragonFight dragonFight = serverLevel.getDragonFight(); // Leaf - Optimize EndCrystal tick
++            if (dragonFight != null && serverLevel.getBlockState(blockPos).isAir()) {
++                if (!org.bukkit.craftbukkit.event.CraftEventFactory.callBlockIgniteEvent(serverLevel, blockPos, this).isCancelled()) {
++                    serverLevel.setBlockAndUpdate(blockPos, BaseFireBlock.getState(serverLevel, blockPos));
++                }
+             }
+-        }
+ 
+-        // Paper start - Fix invulnerable end crystals
+-        if (this.level().paperConfig().unsupportedSettings.fixInvulnerableEndCrystalExploit && this.generatedByDragonFight && this.isInvulnerable()) {
+-            if (!java.util.Objects.equals(((ServerLevel) this.level()).uuid, this.originWorld)
+-                || ((ServerLevel) this.level()).getDragonFight() == null
+-                || ((ServerLevel) this.level()).getDragonFight().respawnStage == null
+-                || ((ServerLevel) this.level()).getDragonFight().respawnStage.ordinal() > net.minecraft.world.level.dimension.end.DragonRespawnAnimation.SUMMONING_DRAGON.ordinal()) {
+-                this.setInvulnerable(false);
+-                this.setBeamTarget(null);
++            // Paper start - Fix invulnerable end crystals
++            if (serverLevel.paperConfig().unsupportedSettings.fixInvulnerableEndCrystalExploit && this.generatedByDragonFight && this.isInvulnerable()) {
++                if (!java.util.Objects.equals(serverLevel.uuid, this.originWorld)
++                    || dragonFight == null
++                    || dragonFight.respawnStage == null
++                    || dragonFight.respawnStage.ordinal() > net.minecraft.world.level.dimension.end.DragonRespawnAnimation.SUMMONING_DRAGON.ordinal()) {
++                    this.setInvulnerable(false);
++                    this.setBeamTarget(null);
++                }
++            }
++            // Paper end - Fix invulnerable end crystals
++            if (serverLevel.purpurConfig.endCrystalCramming > 0 && serverLevel.getEntitiesOfClass(EndCrystal.class, getBoundingBox()).size() > serverLevel.purpurConfig.endCrystalCramming) {
++                this.hurt(this.damageSources().cramming(), 6.0F);
++            } // Purpur - End Crystal Cramming
++
++            // Purpur start - Phantoms attracted to crystals and crystals shoot phantoms
++            if (serverLevel.purpurConfig.phantomAttackedByCrystalRadius <= 0 || --idleCooldown > 0) {
++                return;
+             }
+-        }
+-        // Paper end - Fix invulnerable end crystals
+-        if (this.level().purpurConfig.endCrystalCramming > 0 && this.level().getEntitiesOfClass(EndCrystal.class, getBoundingBox()).size() > this.level().purpurConfig.endCrystalCramming) this.hurt(this.damageSources().cramming(), 6.0F); // Purpur - End Crystal Cramming
+-
+-        // Purpur start - Phantoms attracted to crystals and crystals shoot phantoms
+-        if (level().purpurConfig.phantomAttackedByCrystalRadius <= 0 || --idleCooldown > 0) {
+-            return; // on cooldown
+-        }
+ 
+-        if (targetPhantom == null) {
+-            for (net.minecraft.world.entity.monster.Phantom phantom : level().getEntitiesOfClass(net.minecraft.world.entity.monster.Phantom.class, getBoundingBox().inflate(level().purpurConfig.phantomAttackedByCrystalRadius))) {
+-                if (phantom.hasLineOfSight(this)) {
+-                    attackPhantom(phantom);
+-                    break;
++            if (targetPhantom == null) {
++                for (net.minecraft.world.entity.monster.Phantom phantom : serverLevel.getEntitiesOfClass(net.minecraft.world.entity.monster.Phantom.class, getBoundingBox().inflate(serverLevel.purpurConfig.phantomAttackedByCrystalRadius))) {
++                    if (phantom.hasLineOfSight(this)) {
++                        attackPhantom(phantom);
++                        break;
++                    }
+                 }
+-            }
+-        } else {
+-            setBeamTarget(new BlockPos(targetPhantom).offset(0, -2, 0));
+-            if (--phantomBeamTicks > 0 && targetPhantom.isAlive()) {
+-                phantomDamageCooldown--;
+-                if (targetPhantom.hasLineOfSight(this)) {
+-                    if (phantomDamageCooldown <= 0) {
+-                        phantomDamageCooldown = 20;
+-                        targetPhantom.hurt(targetPhantom.damageSources().indirectMagic(this, this), level().purpurConfig.phantomAttackedByCrystalDamage);
++            } else {
++                setBeamTarget(new BlockPos(targetPhantom).offset(0, -2, 0));
++                if (--phantomBeamTicks > 0 && targetPhantom.isAlive()) {
++                    phantomDamageCooldown--;
++                    if (targetPhantom.hasLineOfSight(this)) {
++                        if (phantomDamageCooldown <= 0) {
++                            phantomDamageCooldown = 20;
++                            targetPhantom.hurt(targetPhantom.damageSources().indirectMagic(this, this), serverLevel.purpurConfig.phantomAttackedByCrystalDamage);
++                        }
++                    } else {
++                        forgetPhantom();
+                     }
+                 } else {
+-                    forgetPhantom(); // no longer in sight
++                    forgetPhantom();
+                 }
+-            } else {
+-                forgetPhantom(); // attacked long enough
+             }
+         }
+     }
