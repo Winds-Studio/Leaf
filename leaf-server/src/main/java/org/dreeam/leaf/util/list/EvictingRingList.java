@@ -117,22 +117,37 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
     }
 
     @Override
-    public E remove(int index) { // TODO Can be further optimized, but do we really need it?
+    public E remove(int index) {
         Objects.checkIndex(index, size);
         modCount++;
         int realIndex = (head + index) & mask;
         E oldValue = (E) elements[realIndex];
 
-        for (int i = index; i < size - 1; i++) {
-            int current = (head + i) & mask;
-            int next = (head + i + 1) & mask;
-            elements[current] = elements[next];
+        if (index == size - 1) {
+            // Leaf - Last element: just clear it, no shift needed
+            elements[realIndex] = null;
+            tail = (tail - 1) & mask;
+        } else if (index < size / 2) {
+            // Leaf - Shift elements before index forward
+            for (int i = index; i > 0; i--) {
+                int current = (head + i) & mask;
+                int prev = (head + i - 1) & mask;
+                elements[current] = elements[prev];
+            }
+            elements[head] = null;
+            head = (head + 1) & mask;
+        } else {
+            // Leaf - Shift elements after index backward
+            for (int i = index; i < size - 1; i++) {
+                int current = (head + i) & mask;
+                int next = (head + i + 1) & mask;
+                elements[current] = elements[next];
+            }
+            int lastIndex = (head + size - 1) & mask;
+            elements[lastIndex] = null;
+            tail = (tail - 1) & mask;
         }
 
-        int lastIndex = (head + size - 1) & mask;
-        elements[lastIndex] = null;
-
-        tail = (tail - 1) & mask;
         size--;
 
         return oldValue;
@@ -294,7 +309,7 @@ public final class EvictingRingList<E> extends AbstractList<E> implements Random
 
                 EvictingRingList.this.remove(logicalIndex);
 
-                cursor = lastRet;
+                cursor = (head + logicalIndex) & mask;
                 lastRet = -1;
                 expectedModCount = modCount;
             } catch (IndexOutOfBoundsException e) {

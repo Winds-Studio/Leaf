@@ -31,8 +31,10 @@ import java.util.Date;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -68,6 +70,7 @@ public class LeafConfig {
                 long begin = System.nanoTime();
 
                 ConfigModules.clearModules();
+                clearCachedClasses(); // Leaf - clear cached class list on reload
                 loadConfig(false);
                 ConfigModules.loadAfterBootstrap();
 
@@ -121,9 +124,16 @@ public class LeafConfig {
         }
     }
 
-    /* Scan classes under package */
+    /* Scan classes under package - cached */
+
+    private static final Map<String, Set<Class<?>>> CACHED_CLASSES = new ConcurrentHashMap<>();
 
     public static Set<Class<?>> getClasses(String pack) {
+        Set<Class<?>> cached = CACHED_CLASSES.get(pack);
+        if (cached != null) {
+            return cached;
+        }
+
         Set<Class<?>> classes = new LinkedHashSet<>();
         String packageDirName = pack.replace('.', '/');
         Enumeration<URL> dirs;
@@ -151,7 +161,12 @@ public class LeafConfig {
             throw new RuntimeException(e);
         }
 
+        CACHED_CLASSES.put(pack, classes);
         return classes;
+    }
+
+    public static void clearCachedClasses() {
+        CACHED_CLASSES.clear();
     }
 
     private static void findClassesInPackageByFile(String packageName, String packagePath, Set<Class<?>> classes) {
