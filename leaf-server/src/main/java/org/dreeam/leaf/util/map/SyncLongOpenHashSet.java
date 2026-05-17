@@ -149,14 +149,14 @@ public class SyncLongOpenHashSet extends LongOpenHashSet {
     @Override
     public LongIterator longIterator() {
         synchronized (this) {
-            return LongIterators.wrap(super.toLongArray());
+            return LongIterators.synchronize(super.longIterator(), this);
         }
     }
 
     @Override
     public LongSpliterator longSpliterator() {
         synchronized (this) {
-            return LongSpliterators.wrap(super.toLongArray());
+            return LongSpliterators.synchronize(super.longSpliterator(), this);
         }
     }
 
@@ -191,14 +191,14 @@ public class SyncLongOpenHashSet extends LongOpenHashSet {
     @Override
     public LongIterator iterator() {
         synchronized (this) {
-            return LongIterators.wrap(super.toLongArray());
+            return LongIterators.synchronize(super.longIterator(), this);
         }
     }
 
     @Override
     public LongSpliterator spliterator() {
         synchronized (this) {
-            return LongSpliterators.wrap(super.toLongArray());
+            return LongSpliterators.synchronize(super.longSpliterator(), this);
         }
     }
 
