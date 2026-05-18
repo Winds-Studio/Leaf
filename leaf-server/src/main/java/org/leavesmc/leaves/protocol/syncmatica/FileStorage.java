@@ -58,7 +58,9 @@ public class FileStorage {
     private boolean hashCompare(final File localFile, final ServerPlacement placement) {
         UUID hash = null;
         try {
-            hash = SyncmaticaProtocol.createChecksum(new FileInputStream(localFile));
+            try (FileInputStream in = new FileInputStream(localFile)) {
+                hash = SyncmaticaProtocol.createChecksum(in);
+            }
         } catch (final Exception e) {
             e.printStackTrace();
         }
