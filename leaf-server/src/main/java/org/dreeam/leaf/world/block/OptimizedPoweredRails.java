@@ -20,8 +20,6 @@ public class OptimizedPoweredRails {
 
     private static final int UPDATE_FORCE_PLACE = UPDATE_MOVE_BY_PISTON | UPDATE_KNOWN_SHAPE | UPDATE_CLIENTS;
 
-    private static final Object2BooleanOpenHashMap<BlockPos> CHECKED_POS_POOL = new Object2BooleanOpenHashMap<>();
-
     private static void giveShapeUpdate(Level level, BlockState state, BlockPos pos, BlockPos fromPos, Direction direction) {
         BlockState oldState = level.getBlockState(pos);
         Block.updateOrDestroy(
@@ -35,9 +33,10 @@ public class OptimizedPoweredRails {
     }
 
     public static void updateState(PoweredRailBlock self, BlockState state, Level level, BlockPos pos) {
+        var checkedPos = new Object2BooleanOpenHashMap<BlockPos>();
         boolean shouldBePowered = level.hasNeighborSignal(pos) ||
-            findPoweredRailSignalFaster(self, level, pos, state, true, 0, CHECKED_POS_POOL) ||
-            findPoweredRailSignalFaster(self, level, pos, state, false, 0, CHECKED_POS_POOL);
+            findPoweredRailSignalFaster(self, level, pos, state, true, 0, checkedPos) ||
+            findPoweredRailSignalFaster(self, level, pos, state, false, 0, checkedPos);
         if (shouldBePowered != state.getValue(POWERED)) {
             RailShape railShape = state.getValue(SHAPE);
             if (railShape.isSlope()) {
@@ -156,8 +155,7 @@ public class OptimizedPoweredRails {
     private static void powerLane(PoweredRailBlock self, Level level, BlockPos pos,
                                   BlockState mainState, RailShape railShape) {
         level.setBlock(pos, mainState.setValue(POWERED, true), UPDATE_FORCE_PLACE);
-        Object2BooleanOpenHashMap<BlockPos> checkedPos = CHECKED_POS_POOL;
-        checkedPos.clear();
+        var checkedPos = new Object2BooleanOpenHashMap<BlockPos>();
         checkedPos.put(pos, true);
         int[] count = new int[2];
         if (railShape == RailShape.NORTH_SOUTH) { // Order: +z, -z
@@ -171,7 +169,6 @@ public class OptimizedPoweredRails {
             }
             updateRails(self, true, level, pos, mainState, count);
         }
-        checkedPos.clear();
     }
 
     private static void dePowerLane(PoweredRailBlock self, Level level, BlockPos pos,
@@ -218,8 +215,7 @@ public class OptimizedPoweredRails {
 
     private static void setRailPositionsDePower(PoweredRailBlock self, Level level, BlockPos pos,
         int[] count, int i, Direction dir) {
-        Object2BooleanOpenHashMap<BlockPos> checkedPos = CHECKED_POS_POOL;
-        checkedPos.clear();
+        var checkedPos = new Object2BooleanOpenHashMap<BlockPos>();
         final int railPowerLimit = level.purpurConfig.railActivationRange;
         for (int z = 1; z < railPowerLimit; z++) {
             BlockPos newPos = pos.relative(dir, z);
@@ -233,7 +229,6 @@ public class OptimizedPoweredRails {
             }
             count[i]++;
         }
-        checkedPos.clear();
     }
 
     private static void shapeUpdateEnd(PoweredRailBlock self, Level level, BlockPos pos, BlockState mainState,
