@@ -33,7 +33,7 @@ public class OptimizedPoweredRails {
     }
 
     public static void updateState(PoweredRailBlock self, BlockState state, Level level, BlockPos pos) {
-        var checkedPos = new Object2BooleanOpenHashMap<BlockPos>();
+        Object2BooleanOpenHashMap<BlockPos> checkedPos = new Object2BooleanOpenHashMap<>();
         boolean shouldBePowered = level.hasNeighborSignal(pos) ||
             findPoweredRailSignalFaster(self, level, pos, state, true, 0, checkedPos) ||
             findPoweredRailSignalFaster(self, level, pos, state, false, 0, checkedPos);
@@ -155,7 +155,7 @@ public class OptimizedPoweredRails {
     private static void powerLane(PoweredRailBlock self, Level level, BlockPos pos,
                                   BlockState mainState, RailShape railShape) {
         level.setBlock(pos, mainState.setValue(POWERED, true), UPDATE_FORCE_PLACE);
-        var checkedPos = new Object2BooleanOpenHashMap<BlockPos>();
+        Object2BooleanOpenHashMap<BlockPos> checkedPos = new Object2BooleanOpenHashMap<>();
         checkedPos.put(pos, true);
         int[] count = new int[2];
         if (railShape == RailShape.NORTH_SOUTH) { // Order: +z, -z
@@ -215,7 +215,7 @@ public class OptimizedPoweredRails {
 
     private static void setRailPositionsDePower(PoweredRailBlock self, Level level, BlockPos pos,
         int[] count, int i, Direction dir) {
-        var checkedPos = new Object2BooleanOpenHashMap<BlockPos>();
+        Object2BooleanOpenHashMap<BlockPos> checkedPos = new Object2BooleanOpenHashMap<>();
         final int railPowerLimit = level.purpurConfig.railActivationRange;
         for (int z = 1; z < railPowerLimit; z++) {
             BlockPos newPos = pos.relative(dir, z);
