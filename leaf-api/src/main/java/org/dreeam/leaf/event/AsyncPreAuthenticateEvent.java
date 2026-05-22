@@ -3,7 +3,7 @@ package org.dreeam.leaf.event;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
-import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.NullMarked;
 
 import java.net.SocketAddress;
 import java.util.UUID;
@@ -13,23 +13,24 @@ import java.util.UUID;
  * If the event is cancelled, the server won't start authentication for the player.
  * This will make the server behave like an offline server.
  */
+@NullMarked
 public class AsyncPreAuthenticateEvent extends Event implements Cancellable {
 
-    public static final HandlerList HANDLERS = new HandlerList();
+    private static final HandlerList HANDLERS = new HandlerList();
 
     private final String username;
     private final UUID uuid;
     private final SocketAddress address;
     private boolean cancelled;
 
-    public AsyncPreAuthenticateEvent(@NonNull String username, @NonNull UUID uuid, SocketAddress address) {
+    public AsyncPreAuthenticateEvent(String username, UUID uuid, SocketAddress address) {
         super(true);
         this.username = username;
         this.uuid = uuid;
         this.address = address;
     }
 
-    public AsyncPreAuthenticateEvent(@NonNull String username, @NonNull UUID uuid, SocketAddress address, boolean cancelled) {
+    public AsyncPreAuthenticateEvent(String username, UUID uuid, SocketAddress address, boolean cancelled) {
         this(username, uuid, address);
         this.cancelled = cancelled;
     }
@@ -69,7 +70,7 @@ public class AsyncPreAuthenticateEvent extends Event implements Cancellable {
     }
 
     @Override
-    public @NonNull HandlerList getHandlers() {
+    public HandlerList getHandlers() {
         return HANDLERS;
     }
 
