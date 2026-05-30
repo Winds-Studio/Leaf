@@ -18,7 +18,6 @@ public class RegionFormatConfig extends ConfigModules {
     public static @HotReloadUnsupported int compressionLevel = 1;
     public static @HotReloadUnsupported int ioThreadCount = 6;
     public static @HotReloadUnsupported int ioFlushDelay = -1;
-    public static @HotReloadUnsupported boolean throwOnUnknownExtension = false;
     public static @HotReloadUnsupported boolean linearUseVirtualThread = true;
 
     public static @DoNotLoad EnumRegionFormat regionFormat = EnumRegionFormat.MCA;
@@ -27,11 +26,11 @@ public class RegionFormatConfig extends ConfigModules {
     @Override
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
-                Linear is a region file format that uses ZSTD compression instead of ZLIB.
+                Linear is a region format that uses zstd compression instead of zlib.
                 This format saves about 50% of disk space.
-                Read Leaf Docs before using!""",
+                Read Leaf docs before using!""",
             """
-                Linear 是一种使用 ZSTD 压缩而非 ZLIB 的区域文件格式.
+                Linear 是一种使用 zstd 压缩而非 ZLIB 的区域格式.
                 该格式可节省约 50% 的磁盘空间.
                 使用前请阅读 Leaf 文档!""");
 
@@ -42,14 +41,10 @@ public class RegionFormatConfig extends ConfigModules {
         compressionLevel = config.getInt(getBasePath() + ".compress-level", compressionLevel);
         ioThreadCount = config.getInt(getBasePath() + ".io-thread-count", ioThreadCount);
         ioFlushDelay = config.getInt(getBasePath() + ".io-flush-delay", ioFlushDelay);
-        throwOnUnknownExtension = config.getBoolean(getBasePath() + ".throw-on-unknown-extension", throwOnUnknownExtension);
         linearUseVirtualThread =  config.getBoolean(getBasePath() + ".linear-use-virtual-thread", linearUseVirtualThread);
 
         regionFormat = EnumRegionFormat.fromString(regionFormatName);
         if (regionFormat == EnumRegionFormat.UNKNOWN) {
-            if (throwOnUnknownExtension) {
-                throw new RuntimeException("Unknown region format type: " + regionFormatName);
-            }
             LOGGER.error("Unknown region format type {}! Falling back to MCA format.", regionFormatName);
             regionFormat = EnumRegionFormat.MCA;
             return;
