@@ -70,7 +70,7 @@ public class RegionFormatConfig extends ConfigModules {
     }
 
     private static void checkCompressionLevel() {
-        if (compressionLevel > 23 || compressionLevel < 1) {
+        if (compressionLevel > 22 || compressionLevel < 1) {
             LOGGER.error("Linear or BufferedLinear region compression level should be between 1 and 22, but got {} in config", compressionLevel);
             LOGGER.error("Falling back to compression level 1.");
             compressionLevel = 1;
