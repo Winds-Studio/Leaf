@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Sat, 9 Aug 2025 15:44:06 +0900
+Subject: [PATCH] optimize entity in fluid
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 06745483f0e30b17edce80913c39368a84b4b94b..f0bfd55be864e767c2460e1aa7e7a6b15736dd59 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -4947,7 +4947,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         final int minChunkZ = minBlockZ >> 4;
+         final int maxChunkZ = maxBlockZ >> 4;
+ 
+-        final net.minecraft.world.level.chunk.ChunkSource chunkSource = world.getChunkSource();
++        final net.minecraft.server.level.ServerChunkCache chunkSource = ((ServerLevel) world).chunkSource; // Leaf - optimize entity in fluid
+ 
+         final int chunkLenX = maxChunkX - minChunkX + 1;
+         // chunk index = (x - minX) + (maxX-minX+1)*(z - minZ)
+@@ -4959,15 +4959,20 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         // init chunks
+         for (int currChunkZ = minChunkZ; currChunkZ <= maxChunkZ; ++currChunkZ) {
+             for (int currChunkX = minChunkX; currChunkX <= maxChunkX; ++currChunkX) {
+-                sections[currChunkX + chunkLenX*currChunkZ + chunkOffset] = chunkSource.getChunk(currChunkX, currChunkZ, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false).getSections();
++                sections[currChunkX + chunkLenX*currChunkZ + chunkOffset] = chunkSource.fullChunksNonSync.get(ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkKey(currChunkX, currChunkZ)).getSections(); // Leaf - optimize entity in fluid
+             }
+         }
+ 
+         for (int currX = minBlockX; currX <= maxBlockX; ++currX) {
+             for (int currY = minBlockY; currY <= maxBlockY; ++currY) {
+                 for (int currZ = minBlockZ; currZ <= maxBlockZ; ++currZ) {
+-                    final FluidState fluidState = sections[(currX >> 4) + chunkLenX*(currZ >> 4) + chunkOffset][(currY >> 4) - minSection]
+-                        .states.get((currX & 15) | ((currZ & 15) << 4) | ((currY & 15) << 8)).getFluidState();
++                    // Leaf start - optimize entity in fluid
++                    final net.minecraft.world.level.chunk.LevelChunkSection section = sections[(currX >> 4) + chunkLenX*(currZ >> 4) + chunkOffset][(currY >> 4) - minSection];
++                    if (section.fluidCount <= 0) {
++                        continue;
++                    }
++                    final FluidState fluidState = section.states.get((currX & 15) | ((currZ & 15) << 4) | ((currY & 15) << 8)).getFluidState();
++                    // Leaf end - optimize entity in fluid
+ 
+                     if (fluidState.isEmpty() || !fluidState.is(fluid)) {
+                         continue;
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 0d14b344bd6f89d115dc0c396c99502a58109542..309e40fb518e1394d152f33672db7cd070a0b7e3 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3191,7 +3191,14 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+     }
+ 
+     public void travel(Vec3 travelVector) {
+-        if (this.shouldTravelInFluid(this.level().getFluidState(this.blockPosition()))) {
++        // Leaf start - optimize entity in fluid
++        BlockPos blockPos = this.blockPosition();
++        FluidState fluidState = this.level().getFluidStateIfLoadedUnchecked(blockPos.getX(), blockPos.getY(), blockPos.getZ());
++        if (fluidState == null) {
++            this.level().getFluidState(blockPos);
++        }
++        // Leaf end - optimize entity in fluid
++        if (this.shouldTravelInFluid(fluidState)) {
+             this.travelInFluid(travelVector);
+         } else if (this.isFallFlying()) {
+             this.travelFallFlying(travelVector);

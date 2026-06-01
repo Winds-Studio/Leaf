@@ -14,9 +14,12 @@ import org.bukkit.event.player.PlayerVelocityEvent;
 import org.dreeam.leaf.async.FixedThreadExecutor;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
 import org.dreeam.leaf.util.EntitySlice;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 import java.util.concurrent.*;
 
+@NullMarked
 public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
     public static final boolean ENABLED = MultithreadedTracker.enabled;
@@ -29,7 +32,7 @@ public final class AsyncTracker {
         THREAD_NAME
     ) : null;
 
-    private Future<TrackerCtx>[] fut;
+    private Future<TrackerCtx> @Nullable [] fut;
     private final TrackerCtx local;
 
     public AsyncTracker(ServerLevel world) {
@@ -99,7 +102,7 @@ public final class AsyncTracker {
     }
 
     public void onEntitiesTickEnd() {
-        Future<TrackerCtx>[] task = this.fut;
+        Future<TrackerCtx> @org.jetbrains.annotations.Nullable [] task = this.fut;
         TrackerCtx local = this.local;
         if (task == null) {
             return;
@@ -112,20 +115,17 @@ public final class AsyncTracker {
         this.fut = null;
         handle(task, local);
         local.reset();
-        // for (ServerPlayer player : world.players()) {
-        //     player.connection.connection.flushChannel();
-        // }
     }
 
     public void onTickEnd() {
-        Future<TrackerCtx>[] task = this.fut;
+        Future<TrackerCtx> @org.jetbrains.annotations.Nullable [] task = this.fut;
         TrackerCtx local = this.local;
         this.fut = null;
         handle(task, local);
         local.reset();
     }
 
-    private static void handle(Future<TrackerCtx>[] futures, TrackerCtx local) {
+    private static void handle(Future<TrackerCtx> @Nullable [] futures, TrackerCtx local) {
         try {
             if (futures == null) {
                 local.handle(new Object2ObjectOpenHashMap[0]);
