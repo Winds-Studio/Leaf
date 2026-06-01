@@ -20,6 +20,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
@@ -461,28 +462,27 @@ public class LinearRegionFile implements IRegionFile {
     public synchronized void write(ChunkPos pos, ByteBuffer buffer) {
         openRegionFile();
         openBucket(pos.x, pos.z);
-        try {
-            byte[] b = toByteArray(new ByteArrayInputStream(buffer.array()));
-            int uncompressedSize = b.length;
 
-            if (uncompressedSize > MAX_CHUNK_SIZE) {
-                LOGGER.error("Chunk dupe attempt " + this.regionFile);
-                clear(pos);
-            } else {
-                int maxCompressedLength = this.compressor.maxCompressedLength(b.length);
-                byte[] compressed = new byte[maxCompressedLength];
-                int compressedLength = this.compressor.compress(b, 0, b.length, compressed, 0, maxCompressedLength);
-                b = new byte[compressedLength];
-                System.arraycopy(compressed, 0, b, 0, compressedLength);
+        int uncompressedSize = buffer.remaining();
+        byte[] b = new byte[uncompressedSize];
+        buffer.get(b);
 
-                int index = getChunkIndex(pos.x, pos.z);
-                this.buffer[index] = b;
-                this.chunkTimestamps[index] = getTimestamp();
-                this.bufferUncompressedSize[getChunkIndex(pos.x, pos.z)] = uncompressedSize;
-            }
-        } catch (IOException e) {
-            LOGGER.error("Chunk write IOException " + e + " " + this.regionFile);
+        if (uncompressedSize > MAX_CHUNK_SIZE) {
+            LOGGER.error("Chunk dupe attempt " + this.regionFile);
+            clear(pos);
+        } else {
+            int maxCompressedLength = this.compressor.maxCompressedLength(uncompressedSize);
+            byte[] compressed = new byte[maxCompressedLength];
+            int compressedLength = this.compressor.compress(b, 0, uncompressedSize, compressed, 0, maxCompressedLength);
+            b = new byte[compressedLength];
+            System.arraycopy(compressed, 0, b, 0, compressedLength);
+
+            int index = getChunkIndex(pos.x, pos.z);
+            this.buffer[index] = Arrays.copyOf(compressed, compressedLength);;
+            this.chunkTimestamps[index] = getTimestamp();
+            this.bufferUncompressedSize[index] = uncompressedSize;
         }
+
         markToSave();
     }
 
@@ -515,18 +515,6 @@ public class LinearRegionFile implements IRegionFile {
             ByteBuffer bytebuffer = ByteBuffer.wrap(this.buf, 0, this.count);
             LinearRegionFile.this.write(this.pos, bytebuffer);
         }
-    }
-
-    private byte[] toByteArray(InputStream in) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] tempBuffer = new byte[4096];
-
-        int length;
-        while ((length = in.read(tempBuffer)) >= 0) {
-            out.write(tempBuffer, 0, length);
-        }
-
-        return out.toByteArray();
     }
 
     @Nullable
