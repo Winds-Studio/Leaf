@@ -892,10 +892,10 @@ public class BufferedLinearRegionFile implements IRegionFile {
             final int chunkIndex = getChunkIndex(this.pos.x, this.pos.z);
 
             BufferedLinearRegionFile.this.ensureBucketLoaded(chunkIndex);
-            BufferedLinearRegionFile.this.writeChunk(this.pos.x, this.pos.z, bytebuffer);
-            BufferedLinearRegionFile.this.flushInternal();
-
             BufferedLinearRegionFile.this.makeBucketDirty(chunkIndex);
+            BufferedLinearRegionFile.this.writeChunk(this.pos.x, this.pos.z, bytebuffer);
+
+            BufferedLinearRegionFile.this.flushInternal();
         }
     }
 
@@ -1351,11 +1351,11 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
                         bucket.dirty = true;
 
-                        BufferedLinearRegionFile.this.writeChunk(x, z, chunkDataNioBuffer);
-
                         synchronized (bucket.lock) {
                             bucket.loaded = true;
                         }
+
+                        BufferedLinearRegionFile.this.writeChunk(x, z, chunkDataNioBuffer);
                     }
                 }
             }
