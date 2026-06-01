@@ -23,6 +23,8 @@ public class RegionFormatConfig extends ConfigModules {
     public static @DoNotLoad EnumRegionFormat regionFormat = EnumRegionFormat.MCA;
     public static @DoNotLoad BufferedLinearRegionFileFlusher blinearFlusher = null;
 
+    private static boolean regionFormatLoaded = false;
+
     @Override
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
@@ -33,6 +35,12 @@ public class RegionFormatConfig extends ConfigModules {
                 Linear 是一种使用 zstd 压缩而非 ZLIB 的区域格式.
                 该格式可节省约 50% 的磁盘空间.
                 使用前请阅读 Leaf 文档!""");
+
+        if (regionFormatLoaded) {
+            config.getConfigSection(getBasePath());
+            return;
+        }
+        regionFormatLoaded = true;
 
         regionFormatName = config.getString(getBasePath() + ".format-name", regionFormatName,
             config.pickStringRegionBased(
@@ -52,6 +60,7 @@ public class RegionFormatConfig extends ConfigModules {
 
         if (regionFormat == EnumRegionFormat.LINEAR_V2) {
             checkCompressionLevel();
+            LOGGER.warn("Linear v2 region format is unstable and not recommended to use, beware of data loss and take backups.");
 
             LinearRegionFile.SAVE_DELAY_MS = ioFlushDelay <= 0 ? 100 : ioFlushDelay;
             LinearRegionFile.SAVE_THREAD_MAX_COUNT = ioThreadCount;

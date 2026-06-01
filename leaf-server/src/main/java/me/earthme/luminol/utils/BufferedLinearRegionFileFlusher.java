@@ -43,7 +43,7 @@ public class BufferedLinearRegionFileFlusher implements Runnable {
         this.flusherChecker.cancel(false);
 
         ((ExecutorService) this.ioWorkerPool).shutdown();
-        for (; ; ) {
+        for (;;) {
             try {
                 if (((ExecutorService) this.ioWorkerPool).awaitTermination(100, TimeUnit.MILLISECONDS)) {
                     break;
