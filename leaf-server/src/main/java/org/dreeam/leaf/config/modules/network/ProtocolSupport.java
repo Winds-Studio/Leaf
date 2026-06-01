@@ -13,6 +13,7 @@ public class ProtocolSupport extends ConfigModules {
         return EnumConfigCategory.NETWORK.getBaseKeyName() + ".protocol-support";
     }
 
+    public static boolean strictMode = false;
     public static boolean jadeProtocol = false;
     public static boolean appleskinProtocol = false;
     public static int appleskinSyncTickInterval = 20;
@@ -32,6 +33,7 @@ public class ProtocolSupport extends ConfigModules {
 
     @Override
     public void onLoaded() {
+        strictMode = config.getBoolean(getBasePath() + ".strict-mode", strictMode);
         jadeProtocol = config.getBoolean(getBasePath() + ".jade-protocol", jadeProtocol);
         appleskinProtocol = config.getBoolean(getBasePath() + ".appleskin-protocol", appleskinProtocol);
         appleskinSyncTickInterval = config.getInt(getBasePath() + ".appleskin-protocol-sync-tick-interval", appleskinSyncTickInterval);

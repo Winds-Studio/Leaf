@@ -20,8 +20,6 @@ public class OptimizedPoweredRails {
 
     private static final int UPDATE_FORCE_PLACE = UPDATE_MOVE_BY_PISTON | UPDATE_KNOWN_SHAPE | UPDATE_CLIENTS;
 
-    private static final Object2BooleanOpenHashMap<BlockPos> CHECKED_POS_POOL = new Object2BooleanOpenHashMap<>();
-
     private static void giveShapeUpdate(Level level, BlockState state, BlockPos pos, BlockPos fromPos, Direction direction) {
         BlockState oldState = level.getBlockState(pos);
         Block.updateOrDestroy(
@@ -36,8 +34,8 @@ public class OptimizedPoweredRails {
 
     public static void updateState(PoweredRailBlock self, BlockState state, Level level, BlockPos pos) {
         boolean shouldBePowered = level.hasNeighborSignal(pos) ||
-            findPoweredRailSignalFaster(self, level, pos, state, true, 0, CHECKED_POS_POOL) ||
-            findPoweredRailSignalFaster(self, level, pos, state, false, 0, CHECKED_POS_POOL);
+            self.findPoweredRailSignal(level, pos, state, true, 0) ||
+            self.findPoweredRailSignal(level, pos, state, false, 0);
         if (shouldBePowered != state.getValue(POWERED)) {
             RailShape railShape = state.getValue(SHAPE);
             if (railShape.isSlope()) {
@@ -87,7 +85,8 @@ public class OptimizedPoweredRails {
     private static boolean findPoweredRailSignalFaster(PoweredRailBlock self, Level level,
                                                        BlockPos pos, BlockState state, boolean searchForward, int distance,
                                                        Object2BooleanOpenHashMap<BlockPos> checkedPos) {
-        if (distance >= level.purpurConfig.railActivationRange) return false;
+        if (distance >= level.purpurConfig.railActivationRange)
+            return false; // Purpur - Config for powered rail activation distance
         int x = pos.getX();
         int y = pos.getY();
         int z = pos.getZ();
@@ -95,50 +94,50 @@ public class OptimizedPoweredRails {
         RailShape railShape = state.getValue(SHAPE);
         switch (railShape.ordinal()) {
             case 0 -> {
-                if (searchForward) ++z;
-                else --z;
+                if (searchForward) z++;
+                else z--;
             }
             case 1 -> {
-                if (searchForward) --x;
-                else ++x;
+                if (searchForward) x--;
+                else x++;
             }
             case 2 -> {
                 if (searchForward) {
-                    --x;
+                    x--;
                 } else {
-                    ++x;
-                    ++y;
+                    x++;
+                    y++;
                     flag = false;
                 }
                 railShape = RailShape.EAST_WEST;
             }
             case 3 -> {
                 if (searchForward) {
-                    --x;
-                    ++y;
+                    x--;
+                    y++;
                     flag = false;
                 } else {
-                    ++x;
+                    x++;
                 }
                 railShape = RailShape.EAST_WEST;
             }
             case 4 -> {
                 if (searchForward) {
-                    ++z;
+                    z++;
                 } else {
-                    --z;
-                    ++y;
+                    z--;
+                    y++;
                     flag = false;
                 }
                 railShape = RailShape.NORTH_SOUTH;
             }
             case 5 -> {
                 if (searchForward) {
-                    ++z;
-                    ++y;
+                    z++;
+                    y++;
                     flag = false;
                 } else {
-                    --z;
+                    z--;
                 }
                 railShape = RailShape.NORTH_SOUTH;
             }
@@ -156,8 +155,7 @@ public class OptimizedPoweredRails {
     private static void powerLane(PoweredRailBlock self, Level level, BlockPos pos,
                                   BlockState mainState, RailShape railShape) {
         level.setBlock(pos, mainState.setValue(POWERED, true), UPDATE_FORCE_PLACE);
-        Object2BooleanOpenHashMap<BlockPos> checkedPos = CHECKED_POS_POOL;
-        checkedPos.clear();
+        Object2BooleanOpenHashMap<BlockPos> checkedPos = new Object2BooleanOpenHashMap<>();
         checkedPos.put(pos, true);
         int[] count = new int[2];
         if (railShape == RailShape.NORTH_SOUTH) { // Order: +z, -z
@@ -171,7 +169,6 @@ public class OptimizedPoweredRails {
             }
             updateRails(self, true, level, pos, mainState, count);
         }
-        checkedPos.clear();
     }
 
     private static void dePowerLane(PoweredRailBlock self, Level level, BlockPos pos,
@@ -192,7 +189,7 @@ public class OptimizedPoweredRails {
     }
 
     private static void setRailPositionsPower(PoweredRailBlock self, Level level, BlockPos pos,
-            Object2BooleanOpenHashMap<BlockPos> checkedPos, int[] count, int i, Direction dir) {
+                                              Object2BooleanOpenHashMap<BlockPos> checkedPos, int[] count, int i, Direction dir) {
         final int railPowerLimit = level.purpurConfig.railActivationRange;
         for (int z = 1; z < railPowerLimit; z++) {
             BlockPos newPos = pos.relative(dir, z);
@@ -202,8 +199,8 @@ public class OptimizedPoweredRails {
                     break;
                 count[i]++;
             } else if (!state.is(self) || state.getValue(POWERED) || !(level.hasNeighborSignal(newPos) ||
-                    findPoweredRailSignalFaster(self, level, newPos, state, true, 0, checkedPos) ||
-                    findPoweredRailSignalFaster(self, level, newPos, state, false, 0, checkedPos))) {
+                findPoweredRailSignalFaster(self, level, newPos, state, true, 0, checkedPos) ||
+                findPoweredRailSignalFaster(self, level, newPos, state, false, 0, checkedPos))) {
                 checkedPos.put(newPos, false);
                 break;
             } else {
@@ -217,23 +214,20 @@ public class OptimizedPoweredRails {
     }
 
     private static void setRailPositionsDePower(PoweredRailBlock self, Level level, BlockPos pos,
-        int[] count, int i, Direction dir) {
-        Object2BooleanOpenHashMap<BlockPos> checkedPos = CHECKED_POS_POOL;
-        checkedPos.clear();
+                                                int[] count, int i, Direction dir) {
         final int railPowerLimit = level.purpurConfig.railActivationRange;
         for (int z = 1; z < railPowerLimit; z++) {
             BlockPos newPos = pos.relative(dir, z);
             BlockState state = level.getBlockState(newPos);
             if (!state.is(self) || !state.getValue(POWERED) || level.hasNeighborSignal(newPos) ||
-                    findPoweredRailSignalFaster(self, level, newPos, state, true, 0, checkedPos) ||
-                    findPoweredRailSignalFaster(self, level, newPos, state, false, 0, checkedPos))
+                self.findPoweredRailSignal(level, newPos, state, true, 0) ||
+                self.findPoweredRailSignal(level, newPos, state, false, 0))
                 break;
             if (state.getValue(POWERED)) {
                 level.setBlock(newPos, state.setValue(POWERED, false), UPDATE_FORCE_PLACE);
             }
             count[i]++;
         }
-        checkedPos.clear();
     }
 
     private static void shapeUpdateEnd(PoweredRailBlock self, Level level, BlockPos pos, BlockState mainState,

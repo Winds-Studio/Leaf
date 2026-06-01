@@ -34,7 +34,11 @@ public class Knockback extends ConfigModules {
                 "Make players can knockback zombie.",
                 "使玩家可以击退僵尸."
             ));
-        flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback);
+        flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback,
+            config.pickStringRegionBased(
+                "Synchronize player immediately when knocked back.",
+                "被击退时立即同步玩家."
+            ));
         oldBlastProtectionKnockbackBehavior = config.getBoolean(getBasePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
     }
 }

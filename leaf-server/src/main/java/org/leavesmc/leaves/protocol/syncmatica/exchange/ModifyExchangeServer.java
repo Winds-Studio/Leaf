@@ -75,6 +75,9 @@ public class ModifyExchangeServer extends AbstractExchange {
 
     @Override
     protected void onClose() {
+        if (placement == null) {
+            return;
+        }
         if (CommunicationManager.getModifier(placement) == this) {
             CommunicationManager.setModifier(placement, null);
         }

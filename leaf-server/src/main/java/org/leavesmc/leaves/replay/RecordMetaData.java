@@ -1,8 +1,8 @@
 package org.leavesmc.leaves.replay;
 
-import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RecordMetaData {
 
@@ -19,5 +19,5 @@ public class RecordMetaData {
     public String generator;
     public int selfId = -1;
 
-    public Set<UUID> players = new HashSet<>();
+    public Set<UUID> players = ConcurrentHashMap.newKeySet();
 }

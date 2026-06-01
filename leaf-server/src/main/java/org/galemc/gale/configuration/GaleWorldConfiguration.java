@@ -60,47 +60,8 @@ public class GaleWorldConfiguration extends ConfigurationPart {
 
         public class ReducedIntervals extends ConfigurationPart {
 
-            public int acquirePoiForStuckEntity = 60; // Gale - Airplane - reduce acquire POI for stuck entities
             public int checkStuckInWall = 10; // Gale - Pufferfish - reduce in wall checks
             public int villagerItemRepickup = 100; // Gale - EMC - reduce villager item re-pickup
-
-            public CheckNearbyItem checkNearbyItem;
-
-            public class CheckNearbyItem extends ConfigurationPart {
-
-                // Gale start - EMC - reduce hopper item checks
-                public Hopper hopper;
-
-                public class Hopper extends ConfigurationPart {
-
-                    public int interval = 1;
-
-                    public Minecart minecart;
-
-                    public class Minecart extends ConfigurationPart {
-
-                        public int interval = 1;
-
-                        public TemporaryImmunity temporaryImmunity;
-
-                        public class TemporaryImmunity extends ConfigurationPart {
-                            public int duration = 100;
-                            public int nearbyItemMaxAge = 1200;
-                            public int checkForMinecartNearItemInterval = 20;
-                            // Still recommend to turn-off `checkForMinecartNearItemWhileActive`
-                            // Since `Reduce-hopper-item-checks.patch` will cause lag under massive dropped items
-                            public boolean checkForMinecartNearItemWhileActive = false; // Leaf - Reduce active items finding hopper nearby check
-                            public boolean checkForMinecartNearItemWhileInactive = true;
-                            public double maxItemHorizontalDistance = 24.0;
-                            public double maxItemVerticalDistance = 4.0;
-                        }
-
-                    }
-
-                }
-                // Gale end - EMC - reduce hopper item checks
-
-            }
 
         }
 
