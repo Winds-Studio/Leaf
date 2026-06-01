@@ -8,7 +8,7 @@ public record ReferenceBounds(int minX, int maxX, int minZ, int maxZ) {
     public static ReferenceBounds around(BlockPos startPos) {
         int startChunkX = SectionPos.blockToSectionCoord(startPos.getX());
         int startChunkZ = SectionPos.blockToSectionCoord(startPos.getZ());
-        int radius = 8;
+        int radius = 8; // ChunkStatus#MAX_STRUCTURE_DISTANCE
 
         return new ReferenceBounds(
             SectionPos.sectionToBlockCoord(startChunkX - radius),
