@@ -9,6 +9,8 @@ Changes:
 - Avoid getChunk calls if its position is same as the chunk used for mob spawning
 - Don't sync load chunks for mob spawning checks
 - Fix data race in async mob spawning by adding chunk position to the mob count map then apply result on server thread.
+- Reduce random calls
+- Use kd-tree for player search
 
 Generally faster than the non-async approach
 iterate over all entities, get their chunk, and increment the count
@@ -212,7 +214,7 @@ index 484a4dbe3b164c56e7bf67a2e5ab6495b0efd45f..d639dbef9131ccfd2c6bfceea7b9aa64
          final net.minecraft.world.level.levelgen.BitRandomSource simpleRandom = this.simpleRandom; // Paper - optimise random ticking // Leaf - Faster random generator - upcasting
          ChunkPos pos = chunk.getPos();
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a8ce12048 100644
+index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..9372c4171abe5db712b47db0e2c19c697f8a6f55 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
 @@ -73,6 +73,7 @@ public final class NaturalSpawner {
@@ -231,7 +233,17 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
          for (MobCategory mobCategory : categories) {
              // Paper start - Optional per player mob spawns
              final boolean canSpawn;
-@@ -201,7 +203,7 @@ public final class NaturalSpawner {
+@@ -171,7 +173,8 @@ public final class NaturalSpawner {
+                 long ticksPerSpawn = level.ticksPerSpawnCategory.getLong(spawnCategory);
+                 long ticksPerSpawnTmp = ticksPerSpawn;
+                 io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.SpawningThrottle spawningThrottle = level.paperConfig().entities.spawning.spawningThrottle;
+-                if (spawningThrottle.failedAttemptsThreshold.test(threshold -> chunk.failedSpawnAttempts[mobCategory.ordinal()] > threshold)) {
++                java.util.OptionalInt failedAttemptsThreshold = spawningThrottle.failedAttemptsThreshold.value(); // Leaf - optimize mob spawning
++                if (failedAttemptsThreshold.isPresent() && chunk.failedSpawnAttempts[mobCategory.ordinal()] > failedAttemptsThreshold.getAsInt()) { // Leaf - optimize mob spawning
+                     ticksPerSpawn = Math.max(ticksPerSpawn, spawningThrottle.throttledTicksPerSpawn.getOrDefault(mobCategory, -1));
+                 }
+                 // Paper PR end - throttle failed spawn attempts
+@@ -201,7 +204,7 @@ public final class NaturalSpawner {
              if (canSpawn) {
                  // Paper PR start - throttle failed spawn attempts
                  int spawnCount = spawnCategoryForChunk(mobCategory, level, chunk, spawnState::canSpawn, spawnState::afterSpawn,
@@ -240,7 +252,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
                  if (spawnCount == 0) {
                      chunk.failedSpawnAttempts[mobCategory.ordinal()]++;
                  } else {
-@@ -235,16 +237,16 @@ public final class NaturalSpawner {
+@@ -235,16 +238,16 @@ public final class NaturalSpawner {
          MobCategory category, ServerLevel level, LevelChunk chunk, NaturalSpawner.SpawnPredicate filter, NaturalSpawner.AfterSpawnCallback callback, final int maxSpawns, final Consumer<Entity> trackEntity
          // Paper PR start - throttle failed spawn attempts
      ) {
@@ -260,7 +272,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
          }
  
          return 0; // Paper PR - throttle failed spawn attempts
-@@ -269,44 +271,83 @@ public final class NaturalSpawner {
+@@ -269,44 +272,83 @@ public final class NaturalSpawner {
          MobCategory category, ServerLevel level, ChunkAccess chunk, BlockPos pos, NaturalSpawner.SpawnPredicate filter, NaturalSpawner.AfterSpawnCallback callback, final int maxSpawns, final @Nullable Consumer<Entity> trackEntity
          // Paper PR start - throttle failed spawn attempts
      ) {
@@ -360,7 +372,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
                                  );
                                  if (randomSpawnMobAt.isEmpty()) {
                                      break;
-@@ -317,7 +358,7 @@ public final class NaturalSpawner {
+@@ -317,7 +359,7 @@ public final class NaturalSpawner {
                              }
  
                              // Paper start - PreCreatureSpawnEvent
@@ -369,7 +381,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
                              // Paper start - per player mob count backoff
                              if (doSpawning == PreSpawnStatus.ABORT || doSpawning == PreSpawnStatus.CANCELLED) {
                                  level.getChunkSource().chunkMap.updateFailurePlayerMobTypeMap(mutableBlockPos.getX() >> 4, mutableBlockPos.getZ() >> 4, category);
-@@ -477,7 +518,11 @@ public final class NaturalSpawner {
+@@ -477,7 +519,11 @@ public final class NaturalSpawner {
      }
  
      public static boolean isInNetherFortressBounds(BlockPos pos, ServerLevel level, MobCategory category, StructureManager structureManager) {
@@ -382,7 +394,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
              Structure structure = structureManager.registryAccess().lookupOrThrow(Registries.STRUCTURE).getValue(BuiltinStructures.FORTRESS);
              return structure != null && structureManager.getStructureAt(pos, structure).isValid();
          } else {
-@@ -486,11 +531,12 @@ public final class NaturalSpawner {
+@@ -486,11 +532,12 @@ public final class NaturalSpawner {
      }
  
      private static BlockPos getRandomPosWithin(Level level, LevelChunk chunk) {
@@ -398,7 +410,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
          return new BlockPos(i, i3, i1);
      }
  
-@@ -611,6 +657,116 @@ public final class NaturalSpawner {
+@@ -611,6 +658,116 @@ public final class NaturalSpawner {
          boolean test(EntityType<?> entityType, BlockPos pos, ChunkAccess chunk);
      }
  
@@ -515,7 +527,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
      public static class SpawnState {
          private final int spawnableChunkCount;
          private final Object2IntOpenHashMap<MobCategory> mobCategoryCounts;
-@@ -620,18 +776,31 @@ public final class NaturalSpawner {
+@@ -620,18 +777,31 @@ public final class NaturalSpawner {
          private @Nullable BlockPos lastCheckedPos;
          private @Nullable EntityType<?> lastCheckedType;
          private double lastCharge;
@@ -547,7 +559,7 @@ index 0cb3e9f4e51f30fc21c50eeb96ff1bb8a8894ca5..d49df249e3da312aa78f98f86d37d99a
          }
  
          private boolean canSpawn(EntityType<?> entityType, BlockPos pos, ChunkAccess chunk) {
-@@ -688,5 +857,32 @@ public final class NaturalSpawner {
+@@ -688,5 +858,32 @@ public final class NaturalSpawner {
          boolean canSpawnForCategoryLocal(MobCategory category, ChunkPos chunkPos) {
              return this.localMobCapCalculator.canSpawn(category, chunkPos) || SharedConstants.DEBUG_IGNORE_LOCAL_MOB_CAP;
          }
