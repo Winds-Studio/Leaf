@@ -300,12 +300,20 @@ public class LeafConfig {
         }
     }
 public static boolean pvpOptimizeEnabled = true;
+public static boolean pvpOptimizeEnabled = true;
     public static boolean disableFallingBlocks = true;
 
     static {
         try {
             java.io.File configFile = new java.io.File("config/leaf.yml");
             if (configFile.exists()) {
+                org.simpleyaml.configuration.file.YamlConfiguration config = org.simpleyaml.configuration.file.YamlConfiguration.loadConfiguration(configFile);
+                pvpOptimizeEnabled = config.getBoolean("plugins.pvp-optimize.enabled", true);
+                disableFallingBlocks = config.getBoolean("plugins.pvp-optimize.disable-falling-blocks", true);
+            }
+        } catch (Exception ignored) {}
+    }
+}
                 org.simpleyaml.configuration.file.YamlConfiguration config = org.simpleyaml.configuration.file.YamlConfiguration.loadConfiguration(configFile);
                 pvpOptimizeEnabled = config.getBoolean("plugins.pvp-optimize.enabled", true);
                 disableFallingBlocks = config.getBoolean("plugins.pvp-optimize.disable-falling-blocks", true);
