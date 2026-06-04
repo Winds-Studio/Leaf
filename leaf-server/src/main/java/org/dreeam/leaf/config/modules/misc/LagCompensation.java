@@ -10,7 +10,6 @@ public class LagCompensation extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    public static boolean enableForWater = false;
     public static boolean enableForLava = false;
 
     @Override
@@ -23,7 +22,6 @@ public class LagCompensation extends ConfigModules {
                 可以在卡顿情况下保障基本游戏体验.""");
 
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        enableForWater = config.getBoolean(getBasePath() + ".enable-for-water", enableForWater);
         enableForLava = config.getBoolean(getBasePath() + ".enable-for-lava", enableForLava);
     }
 }
