@@ -26,6 +26,10 @@ public class RegionFormatConfig extends ConfigModules {
 
     private static boolean regionFormatLoaded = false;
 
+    public static boolean isReadOnlyMode() {
+        return regionFormat == EnumRegionFormat.LINEAR_V2 && LeafConstants.LINEAR_V2_READ_ONLY;
+    }
+
     @Override
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
@@ -61,17 +65,19 @@ public class RegionFormatConfig extends ConfigModules {
 
         if (regionFormat == EnumRegionFormat.LINEAR_V2) {
             checkCompressionLevel();
-            if (!LeafConstants.LINEAR_V2_ALLOW_WRITE) {
-                LOGGER.error("LINEAR_V2 is write-locked by default.");
-                LOGGER.error("This is intentional because LINEAR_V2 is unstable and may cause world data loss.");
-                LOGGER.error("If you understand the risk, have backups, and still want to write to LINEAR_V2 regions, add JVM flag: -D{}=true", LeafConstants.LINEAR_V2_ALLOW_WRITE_FLAG);
-
-                throw new IllegalStateException(
-                    "LINEAR_V2 requires explicit write unlock: -D" + LeafConstants.LINEAR_V2_ALLOW_WRITE_FLAG + "=true"
-                );
-            }
-
             LOGGER.warn("Linear v2 region format is unstable and not recommended to use, beware of data loss and take backups.");
+            if (isReadOnlyMode()) {
+                LOGGER.error("============================================================");
+                LOGGER.error("                  LINEAR_V2 READ-ONLY MODE                 ");
+                LOGGER.error("============================================================");
+                LOGGER.error("Linear v2 read-only mode is enabled.");
+                LOGGER.error("Any world changes in Linear v2 regions will NOT be saved.");
+                LOGGER.error("Chunk, entity, player data and POI changes will be discarded.");
+                LOGGER.error("This mode is intended for inspection, testing, migration, or emergency recovery.");
+                LOGGER.error("To enable LINEAR_V2 writing, stop the server, take backups,");
+                LOGGER.error("then remove the JVM flag: -D{}=true", LeafConstants.LINEAR_V2_READ_ONLY);
+                LOGGER.error("============================================================");
+            }
             LinearRegionFile.SAVE_DELAY_MS = ioFlushDelay <= 0 ? 100 : ioFlushDelay;
             LinearRegionFile.SAVE_THREAD_MAX_COUNT = ioThreadCount;
             LinearRegionFile.USE_VIRTUAL_THREAD = linearUseVirtualThread;
