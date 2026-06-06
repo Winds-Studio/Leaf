@@ -27,7 +27,7 @@ public class RegionFormatConfig extends ConfigModules {
     private static boolean regionFormatLoaded = false;
 
     public static boolean isReadOnlyMode() {
-        return regionFormat == EnumRegionFormat.LINEAR_V2 && LeafConstants.LINEAR_V2_READ_ONLY;
+        return LeafConstants.LINEAR_V2_READ_ONLY && regionFormat == EnumRegionFormat.LINEAR_V2;
     }
 
     @Override
