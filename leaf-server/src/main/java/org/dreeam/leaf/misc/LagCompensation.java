@@ -24,10 +24,10 @@ public class LagCompensation {
         return false;
     }
 
-    public static int fluidDelay(Level level, BlockPos pos, int vanillaDelay, boolean enabledForThisFluid, TagKey<Fluid> oppositeTag) {
+    public static int fluidDelay(Level level, BlockPos pos, int rawDelay, boolean enabledForThisFluid, TagKey<Fluid> oppositeTag) {
         return org.dreeam.leaf.config.modules.misc.LagCompensation.enabled && enabledForThisFluid && !isTouchingFluid(level, pos, oppositeTag)
-            ? tt20(vanillaDelay, true)
-            : vanillaDelay;
+            ? tt20(rawDelay, true)
+            : rawDelay;
     }
 
     public static float tt20(float ticks, boolean limitZero) {
