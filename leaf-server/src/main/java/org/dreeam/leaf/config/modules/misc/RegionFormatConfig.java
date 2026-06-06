@@ -7,6 +7,7 @@ import org.dreeam.leaf.config.ConfigModules;
 import org.dreeam.leaf.config.EnumConfigCategory;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
+import org.dreeam.leaf.util.LeafConstants;
 
 public class RegionFormatConfig extends ConfigModules {
 
@@ -60,8 +61,17 @@ public class RegionFormatConfig extends ConfigModules {
 
         if (regionFormat == EnumRegionFormat.LINEAR_V2) {
             checkCompressionLevel();
-            LOGGER.warn("Linear v2 region format is unstable and not recommended to use, beware of data loss and take backups.");
+            if (!LeafConstants.LINEAR_V2_ALLOW_WRITE) {
+                LOGGER.error("LINEAR_V2 is write-locked by default.");
+                LOGGER.error("This is intentional because LINEAR_V2 is unstable and may cause world data loss.");
+                LOGGER.error("If you understand the risk, have backups, and still want to write to LINEAR_V2 regions, add JVM flag: -D{}=true", LeafConstants.LINEAR_V2_ALLOW_WRITE_FLAG);
 
+                throw new IllegalStateException(
+                    "LINEAR_V2 requires explicit write unlock: -D" + LeafConstants.LINEAR_V2_ALLOW_WRITE_FLAG + "=true"
+                );
+            }
+
+            LOGGER.warn("Linear v2 region format is unstable and not recommended to use, beware of data loss and take backups.");
             LinearRegionFile.SAVE_DELAY_MS = ioFlushDelay <= 0 ? 100 : ioFlushDelay;
             LinearRegionFile.SAVE_THREAD_MAX_COUNT = ioThreadCount;
             LinearRegionFile.USE_VIRTUAL_THREAD = linearUseVirtualThread;
