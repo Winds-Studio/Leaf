@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -64,7 +65,8 @@ public class BufferedLinearRegionFile implements IRegionFile {
     private static final class Bucket {
         private final Object lock = new Object();
 
-        private volatile boolean dirty = false;
+        private final AtomicLong writeEpoch = new AtomicLong();
+        private final AtomicLong syncedEpoch = new AtomicLong();
         private volatile boolean loaded = false;
     }
 
@@ -152,23 +154,38 @@ public class BufferedLinearRegionFile implements IRegionFile {
         }
     }
 
-    private void makeBucketDirty(int chunkIndex) {
-        final int bucketIndex = chunkIndex >> BUCKET_SHIFT;
-        final Bucket bucket = this.buckets[bucketIndex];
-
-        bucket.dirty = true;
+    private long markBucketDirty(int chunkIndex) {
+        return this.markBucketDirtyByIndex(chunkIndex >> BUCKET_SHIFT);
     }
 
-    private void cleanBucketDirty(int bucketIndex) {
+    private long markBucketDirtyByIndex(int bucketIndex) {
         final Bucket bucket = this.buckets[bucketIndex];
 
-        bucket.dirty = false;
+        return bucket.writeEpoch.incrementAndGet();
+    }
+
+    private long getBucketWriteEpoch(int bucketIndex) {
+        final Bucket bucket = this.buckets[bucketIndex];
+
+        return bucket.writeEpoch.get();
+    }
+
+    private long getBucketSyncedEpoch(int bucketIndex) {
+        final Bucket bucket = this.buckets[bucketIndex];
+
+        return bucket.syncedEpoch.get();
+    }
+
+    private void markBucketSynced(int bucketIndex, long syncedEpoch) {
+        final Bucket bucket = this.buckets[bucketIndex];
+
+        bucket.syncedEpoch.accumulateAndGet(syncedEpoch, Math::max);
     }
 
     private boolean isBucketDirty(int bucketIndex) {
         final Bucket bucket = this.buckets[bucketIndex];
 
-        return bucket.dirty;
+        return bucket.writeEpoch.get() != bucket.syncedEpoch.get();
     }
 
     public boolean markAsBeingSynced() {
@@ -514,6 +531,9 @@ public class BufferedLinearRegionFile implements IRegionFile {
             final Sector sector = this.sectors[index];
 
             sector.store(committed, this.swapFileChannel);
+            if (!skipSync) {
+                this.markBucketDirty(index);
+            }
         } finally {
             this.regionObjectLock.writeLock().unlock();
         }
@@ -556,11 +576,11 @@ public class BufferedLinearRegionFile implements IRegionFile {
             final Sector sector = this.sectors[index];
 
             sector.clear();
+            this.markBucketDirty(index);
         } finally {
             this.regionObjectLock.writeLock().unlock();
         }
 
-        this.makeBucketDirty(index);
         this.markAsToSync();
     }
 
@@ -690,8 +710,6 @@ public class BufferedLinearRegionFile implements IRegionFile {
         this.ensureBucketLoaded(chunkIndex);
 
         this.writeChunk(pos.x, pos.z, buf);
-
-        this.makeBucketDirty(chunkIndex);
     }
 
     // MCC 的玩意,这东西也用不上给Linear了()
@@ -892,7 +910,6 @@ public class BufferedLinearRegionFile implements IRegionFile {
             final int chunkIndex = getChunkIndex(this.pos.x, this.pos.z);
 
             BufferedLinearRegionFile.this.ensureBucketLoaded(chunkIndex);
-            BufferedLinearRegionFile.this.makeBucketDirty(chunkIndex);
             BufferedLinearRegionFile.this.writeChunk(this.pos.x, this.pos.z, bytebuffer);
 
             BufferedLinearRegionFile.this.flushInternal();
@@ -912,7 +929,7 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
         public void writeMainFileBucketed(@NotNull Path mainFile) throws IOException {
             final Path tmpFilePath = Path.of(mainFile + ".tmp");
-            final boolean[] syncedBuckets = new boolean[BUCKET_COUNT];
+            final long[] syncedBucketEpochs = new long[BUCKET_COUNT];
             final long[] newPositionTable = new long[BUCKET_COUNT];
 
             // note: there is no necessary hold the write lock for this stuff
@@ -974,7 +991,8 @@ public class BufferedLinearRegionFile implements IRegionFile {
                     long dataOffset = V3_DATA_AREA_OFFSET;
 
                     for (int bucketIndex = 0; bucketIndex < BUCKET_COUNT; bucketIndex++) {
-                        final boolean isBucketDirty = BufferedLinearRegionFile.this.isBucketDirty(bucketIndex);
+                        final long bucketWriteEpoch = BufferedLinearRegionFile.this.getBucketWriteEpoch(bucketIndex);
+                        final boolean isBucketDirty = bucketWriteEpoch != BufferedLinearRegionFile.this.getBucketSyncedEpoch(bucketIndex);
 
                         if (isBucketDirty) {
                             final int baseChunk = bucketIndex << BUCKET_SHIFT;
@@ -1015,7 +1033,7 @@ public class BufferedLinearRegionFile implements IRegionFile {
                             }
                             // else: newPositionTable[bucketIndex] stays 0
 
-                            syncedBuckets[bucketIndex] = true;
+                            syncedBucketEpochs[bucketIndex] = bucketWriteEpoch;
                         } else {
                             // Not dirty: copy bytes from old file if available
                             if (oldPositionTable != null && oldPositionTable[bucketIndex] != 0) {
@@ -1076,9 +1094,10 @@ public class BufferedLinearRegionFile implements IRegionFile {
                 this.masterFileLock.writeLock().unlock();
             }
 
-            for (int i = 0; i < syncedBuckets.length; i++) {
-                if (syncedBuckets[i]) {
-                    BufferedLinearRegionFile.this.cleanBucketDirty(i);
+            for (int i = 0; i < syncedBucketEpochs.length; i++) {
+                final long syncedEpoch = syncedBucketEpochs[i];
+                if (syncedEpoch != 0L) {
+                    BufferedLinearRegionFile.this.markBucketSynced(i, syncedEpoch);
                 }
             }
         }
@@ -1234,11 +1253,9 @@ public class BufferedLinearRegionFile implements IRegionFile {
                                     byte[] chunkData = new byte[dataLen];
                                     bucketBuffer.get(chunkData);
 
-                                    // Mark bucket as loaded and dirty so it gets synced to new master format
+                                    // Mark bucket as loaded. writeChunk() bumps the bucket epoch so it gets synced to the new master format.
                                     final int blinearBucketIndex = chunkIndex >> BUCKET_SHIFT;
                                     final Bucket bucket = BufferedLinearRegionFile.this.buckets[blinearBucketIndex];
-
-                                    bucket.dirty = true;
 
                                     synchronized (bucket.lock) {
                                         bucket.loaded = true;
@@ -1296,8 +1313,6 @@ public class BufferedLinearRegionFile implements IRegionFile {
                             bucket.loaded = true;
                         }
 
-                        bucket.dirty = true;
-
                         BufferedLinearRegionFile.this.writeChunkDataRaw(index, sectorDataNioBuffer, false);
                     }
                 }
@@ -1348,8 +1363,6 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
                         final int bucketIndex = i >> BUCKET_SHIFT;
                         final Bucket bucket = BufferedLinearRegionFile.this.buckets[bucketIndex];
-
-                        bucket.dirty = true;
 
                         synchronized (bucket.lock) {
                             bucket.loaded = true;
