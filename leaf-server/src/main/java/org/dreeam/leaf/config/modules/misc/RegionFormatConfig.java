@@ -75,7 +75,7 @@ public class RegionFormatConfig extends ConfigModules {
                 LOGGER.error("Chunk, entity, player data and POI changes will be discarded.");
                 LOGGER.error("This mode is intended for inspection, testing, migration, or emergency recovery.");
                 LOGGER.error("To enable LINEAR_V2 writing, stop the server, take backups,");
-                LOGGER.error("then remove the JVM flag: -D{}=true", LeafConstants.LINEAR_V2_READ_ONLY);
+                LOGGER.error("then remove the JVM flag: -D{}=true", LeafConstants.LINEAR_V2_READ_ONLY_FLAG);
                 LOGGER.error("============================================================");
             }
             LinearRegionFile.SAVE_DELAY_MS = ioFlushDelay <= 0 ? 100 : ioFlushDelay;
