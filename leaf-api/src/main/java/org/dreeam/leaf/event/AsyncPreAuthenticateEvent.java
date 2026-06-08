@@ -23,14 +23,14 @@ public class AsyncPreAuthenticateEvent extends Event implements Cancellable {
     private final SocketAddress address;
     private boolean cancelled;
 
-    public AsyncPreAuthenticateEvent(String username, UUID uuid, SocketAddress address) {
+    public AsyncPreAuthenticateEvent(final String username, final UUID uuid, final SocketAddress address) {
         super(true);
         this.username = username;
         this.uuid = uuid;
         this.address = address;
     }
 
-    public AsyncPreAuthenticateEvent(String username, UUID uuid, SocketAddress address, boolean cancelled) {
+    public AsyncPreAuthenticateEvent(final String username, final UUID uuid, final SocketAddress address, final boolean cancelled) {
         this(username, uuid, address);
         this.cancelled = cancelled;
     }
@@ -41,7 +41,7 @@ public class AsyncPreAuthenticateEvent extends Event implements Cancellable {
     }
 
     @Override
-    public void setCancelled(boolean cancel) {
+    public void setCancelled(final boolean cancel) {
         this.cancelled = cancel;
     }
 
