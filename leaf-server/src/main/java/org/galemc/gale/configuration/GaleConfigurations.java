@@ -12,33 +12,27 @@ import io.papermc.paper.configuration.NestedSetting;
 import io.papermc.paper.configuration.PaperConfigurations;
 import io.papermc.paper.configuration.legacy.RequiresSpigotInitialization;
 import io.papermc.paper.configuration.mapping.InnerClassFieldDiscoverer;
-import io.papermc.paper.configuration.serializer.ComponentSerializer;
-import io.papermc.paper.configuration.serializer.EnumValueSerializer;
-import io.papermc.paper.configuration.serializer.ServerboundPacketClassSerializer;
-import io.papermc.paper.configuration.serializer.StringRepresentableSerializer;
+import io.papermc.paper.configuration.serializer.*;
 import io.papermc.paper.configuration.serializer.collection.TableSerializer;
 import io.papermc.paper.configuration.serializer.collection.map.FastutilMapSerializer;
 import io.papermc.paper.configuration.serializer.collection.map.MapSerializer;
 import io.papermc.paper.configuration.serializer.registry.RegistryHolderSerializer;
 import io.papermc.paper.configuration.serializer.registry.RegistryValueSerializer;
 import io.papermc.paper.configuration.transformation.Transformations;
-import io.papermc.paper.configuration.type.BooleanOrDefault;
-import io.papermc.paper.configuration.type.Duration;
-import io.papermc.paper.configuration.type.EngineMode;
+import io.papermc.paper.configuration.type.*;
 import io.papermc.paper.configuration.type.fallback.FallbackValueSerializer;
 import io.papermc.paper.configuration.type.number.DoubleOr;
 import io.papermc.paper.configuration.type.number.IntOr;
-import it.unimi.dsi.fastutil.objects.Reference2IntMap;
-import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
-import it.unimi.dsi.fastutil.objects.Reference2LongMap;
-import it.unimi.dsi.fastutil.objects.Reference2LongOpenHashMap;
+import it.unimi.dsi.fastutil.objects.*;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
@@ -103,10 +97,9 @@ public class GaleConfigurations extends Configurations<GaleGlobalConfiguration, 
             This is a world configuration file for Gale.
             This file may start empty but can be filled with settings to override ones in the %s/%s
             
-            World: %s (%s)""",
+            World: %s""",
         CONFIG_DIR,
         WORLD_DEFAULTS_CONFIG_FILE_NAME,
-        map.require(WORLD_NAME),
         map.require(WORLD_KEY)
     );
 
@@ -133,6 +126,15 @@ public class GaleConfigurations extends Configurations<GaleGlobalConfiguration, 
             .register(MapSerializer.TYPE, new MapSerializer(false))
             .register(new EnumValueSerializer())
             .register(new ComponentSerializer())
+            .register(IntOr.Default.SERIALIZER)
+            .register(IntOr.Disabled.SERIALIZER)
+            .register(DoubleOr.Default.SERIALIZER)
+            .register(DoubleOr.Disabled.SERIALIZER)
+            .register(BooleanOrDefault.SERIALIZER)
+            .register(Duration.SERIALIZER)
+            .register(DurationOrDisabled.SERIALIZER)
+            .register(NbtPathSerializer.SERIALIZER)
+            .register(IdentifierSerializer.INSTANCE)
         );
     }
 
@@ -185,17 +187,12 @@ public class GaleConfigurations extends Configurations<GaleGlobalConfiguration, 
         final RegistryAccess access = contextMap.require(REGISTRY_ACCESS);
         return super.createWorldConfigLoaderBuilder(contextMap)
             .defaultOptions(options -> options
-                .header(contextMap.require(WORLD_NAME).equals(WORLD_DEFAULTS) ? WORLD_DEFAULTS_HEADER : WORLD_HEADER.apply(contextMap))
+                .header(contextMap.require(WORLD_KEY).equals(WORLD_DEFAULTS_KEY) ? WORLD_DEFAULTS_HEADER : WORLD_HEADER.apply(contextMap))
                 .serializers(serializers -> serializers
                     .register(new TypeToken<Reference2IntMap<?>>() {}, new FastutilMapSerializer.SomethingToPrimitive<Reference2IntMap<?>>(Reference2IntOpenHashMap::new, Integer.TYPE))
                     .register(new TypeToken<Reference2LongMap<?>>() {}, new FastutilMapSerializer.SomethingToPrimitive<Reference2LongMap<?>>(Reference2LongOpenHashMap::new, Long.TYPE))
                     .register(new TypeToken<Table<?, ?, ?>>() {}, new TableSerializer())
-                    .register(new StringRepresentableSerializer())
-                    .register(IntOr.Default.SERIALIZER)
-                    .register(IntOr.Disabled.SERIALIZER)
-                    .register(DoubleOr.Default.SERIALIZER)
-                    .register(BooleanOrDefault.SERIALIZER)
-                    .register(Duration.SERIALIZER)
+                    .register(StringRepresentableSerializer::isValidFor, new StringRepresentableSerializer())
                     .register(EngineMode.SERIALIZER)
                     .register(FallbackValueSerializer.create(contextMap.require(PaperConfigurations.SPIGOT_WORLD_CONFIG_CONTEXT_KEY).get(), MinecraftServer::getServer))
                     .register(new RegistryValueSerializer<>(new TypeToken<EntityType<?>>() {}, access, Registries.ENTITY_TYPE, true))
@@ -209,9 +206,9 @@ public class GaleConfigurations extends Configurations<GaleGlobalConfiguration, 
     @Override
     protected void applyWorldConfigTransformations(final ContextMap contextMap, final ConfigurationNode node, final @Nullable ConfigurationNode defaultsNode) throws ConfigurateException {
         final ConfigurationNode version = node.node(Configuration.VERSION_FIELD);
-        final String world = contextMap.require(WORLD_NAME);
+        final Identifier worldKey = contextMap.require(WORLD_KEY);
         if (version.virtual()) {
-            LOGGER.warn("The Gale world config file for {} didn't have a version set, assuming latest", world);
+            LOGGER.warn("The Gale world config file for {} didn't have a version set, assuming latest", worldKey);
             version.raw(GaleWorldConfiguration.CURRENT_VERSION);
         }
         if (GaleRemovedConfigurations.REMOVED_WORLD_PATHS.length > 0) {
@@ -255,11 +252,11 @@ public class GaleConfigurations extends Configurations<GaleGlobalConfiguration, 
 
     @Override
     public GaleWorldConfiguration createWorldConfig(final ContextMap contextMap) {
-        final String levelName = contextMap.require(WORLD_NAME);
+        final String levelKey = contextMap.require(WORLD_KEY).toString();
         try {
             return super.createWorldConfig(contextMap);
         } catch (IOException exception) {
-            throw new RuntimeException("Could not create Gale world config for " + levelName, exception);
+            throw new RuntimeException("Could not create Gale world config for " + levelKey, exception);
         }
     }
 

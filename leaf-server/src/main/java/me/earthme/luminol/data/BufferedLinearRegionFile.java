@@ -56,10 +56,10 @@ public class BufferedLinearRegionFile implements IRegionFile {
     private static final long MAX_SIZE_PER_CHUNK = RegionFile.MAX_CHUNK_SIZE;
 
     private static final StandardOpenOption[] SWAP_FILE_CHANNEL_OPTIONS = new StandardOpenOption[]{
-            StandardOpenOption.CREATE,
-            StandardOpenOption.WRITE,
-            StandardOpenOption.READ,
-            StandardOpenOption.DELETE_ON_CLOSE
+        StandardOpenOption.CREATE,
+        StandardOpenOption.WRITE,
+        StandardOpenOption.READ,
+        StandardOpenOption.DELETE_ON_CLOSE
     };
 
     private static final class Bucket {
@@ -261,8 +261,8 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
     private void initSwapFile() throws IOException {
         this.swapFileChannel = FileChannel.open(
-                this.swapFilePath,
-                SWAP_FILE_CHANNEL_OPTIONS
+            this.swapFilePath,
+            SWAP_FILE_CHANNEL_OPTIONS
         );
 
         // fill default sectors
@@ -417,11 +417,11 @@ public class BufferedLinearRegionFile implements IRegionFile {
         final Path targetTemp = new File(this.swapFilePath.toString() + ".tmp").toPath();
 
         try (FileChannel tempChannel = FileChannel.open(
-                targetTemp,
-                StandardOpenOption.CREATE_NEW,
-                StandardOpenOption.WRITE,
-                StandardOpenOption.READ,
-                StandardOpenOption.TRUNCATE_EXISTING
+            targetTemp,
+            StandardOpenOption.CREATE_NEW,
+            StandardOpenOption.WRITE,
+            StandardOpenOption.READ,
+            StandardOpenOption.TRUNCATE_EXISTING
         )) {
             long offsetPointer = this.headerSize();
             tempChannel.position(offsetPointer);
@@ -461,18 +461,18 @@ public class BufferedLinearRegionFile implements IRegionFile {
         // replace swap file
         try {
             Files.move(
-                    targetTemp,
-                    this.swapFilePath,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE
+                targetTemp,
+                this.swapFilePath,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE
             );
         } catch (Throwable e) {
             // atomic move might be unsupported on some file systems, so give it an attempt to retry without atomic move
             try {
                 Files.move(
-                        targetTemp,
-                        this.swapFilePath,
-                        StandardCopyOption.REPLACE_EXISTING
+                    targetTemp,
+                    this.swapFilePath,
+                    StandardCopyOption.REPLACE_EXISTING
                 );
             } catch (Throwable ex) {
                 // now we are totally failed
@@ -518,8 +518,8 @@ public class BufferedLinearRegionFile implements IRegionFile {
         }
 
         this.swapFileChannel = FileChannel.open(
-                this.swapFilePath,
-                SWAP_FILE_CHANNEL_OPTIONS
+            this.swapFilePath,
+            SWAP_FILE_CHANNEL_OPTIONS
         );
     }
 
@@ -669,7 +669,7 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
     @Override
     public DataInputStream getChunkDataInputStream(@NotNull ChunkPos pos) throws IOException {
-        final ByteBuffer data = this.readChunk(pos.x, pos.z);
+        final ByteBuffer data = this.readChunk(pos.x(), pos.z());
 
         if (data == null) {
             return null;
@@ -680,7 +680,7 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
     @Override
     public boolean doesChunkExist(@NotNull ChunkPos pos) throws IOException {
-        return this.hasData(getChunkIndex(pos.x, pos.z));
+        return this.hasData(getChunkIndex(pos.x(), pos.z()));
     }
 
     @Override
@@ -690,13 +690,13 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
     @Override
     public void clear(@NotNull ChunkPos pos) throws IOException {
-        this.clearChunkData(getChunkIndex(pos.x, pos.z));
+        this.clearChunkData(getChunkIndex(pos.x(), pos.z()));
     }
 
     @Override
     public boolean hasChunk(@NotNull ChunkPos pos) {
         try {
-            return this.hasData(getChunkIndex(pos.x, pos.z));
+            return this.hasData(getChunkIndex(pos.x(), pos.z()));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -705,11 +705,11 @@ public class BufferedLinearRegionFile implements IRegionFile {
     @Override
     public void write(@NotNull ChunkPos pos, ByteBuffer buf) throws IOException {
 
-        final int chunkIndex = getChunkIndex(pos.x, pos.z);
+        final int chunkIndex = getChunkIndex(pos.x(), pos.z());
 
         this.ensureBucketLoaded(chunkIndex);
 
-        this.writeChunk(pos.x, pos.z, buf);
+        this.writeChunk(pos.x(), pos.z(), buf);
     }
 
     // MCC 的玩意,这东西也用不上给Linear了()
@@ -739,8 +739,8 @@ public class BufferedLinearRegionFile implements IRegionFile {
         final DataOutputStream out = this.getChunkDataOutputStream(pos);
 
         return new MoonriseRegionFileIO.RegionDataController.WriteData(
-                data, MoonriseRegionFileIO.RegionDataController.WriteData.WriteResult.WRITE,
-                out, regionFile -> out.close()
+            data, MoonriseRegionFileIO.RegionDataController.WriteData.WriteResult.WRITE,
+            out, regionFile -> out.close()
         );
     }
 
@@ -824,9 +824,9 @@ public class BufferedLinearRegionFile implements IRegionFile {
             long transferred = 0;
             while (transferred < this.length) {
                 transferred += source.transferTo(
-                        this.offset + transferred,
-                        this.length - transferred,
-                        target);
+                    this.offset + transferred,
+                    this.length - transferred,
+                    target);
             }
         }
 
@@ -907,10 +907,10 @@ public class BufferedLinearRegionFile implements IRegionFile {
         public void close() throws IOException {
             ByteBuffer bytebuffer = ByteBuffer.wrap(this.buf, 0, this.count);
 
-            final int chunkIndex = getChunkIndex(this.pos.x, this.pos.z);
+            final int chunkIndex = getChunkIndex(this.pos.x(), this.pos.z());
 
             BufferedLinearRegionFile.this.ensureBucketLoaded(chunkIndex);
-            BufferedLinearRegionFile.this.writeChunk(this.pos.x, this.pos.z, bytebuffer);
+            BufferedLinearRegionFile.this.writeChunk(this.pos.x(), this.pos.z(), bytebuffer);
 
             BufferedLinearRegionFile.this.flushInternal();
         }
@@ -974,7 +974,7 @@ public class BufferedLinearRegionFile implements IRegionFile {
 
                 BufferedLinearRegionFile.this.regionObjectLock.readLock().lock();
                 try (FileChannel outChannel = FileChannel.open(tmpFilePath,
-                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
 
                     // Write header (14 bytes)
                     final ByteBuffer header = ByteBuffer.allocate(14);

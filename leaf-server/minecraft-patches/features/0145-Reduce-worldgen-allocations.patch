@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Fri, 14 Jun 2024 23:19:55 +0800
+Subject: [PATCH] Reduce worldgen allocations
+
+This change optimizes the way SurfaceRules update their biome supplier,avoiding unnecessary object creations and thus reducing memory allocations
+during world generation. The update method now reuses the existing PositionalBiomeGetter object if it's already present, otherwise it
+initializes a new one.
+Additionally, the tryApply method in SurfaceRules now avoids iterator
+allocation by directly accessing the rules list, which further contributes
+to reducing garbage collection pressure during world generation.
+
+diff --git a/net/minecraft/world/level/levelgen/SurfaceRules.java b/net/minecraft/world/level/levelgen/SurfaceRules.java
+index 766452f7b5935d435eafc7089297a482bda9a980..2f54b16fb0c34f54cf640a70b897b75e0d459816 100644
+--- a/net/minecraft/world/level/levelgen/SurfaceRules.java
++++ b/net/minecraft/world/level/levelgen/SurfaceRules.java
+@@ -324,7 +324,14 @@ public class SurfaceRules {
+             final int stoneDepthAbove, final int stoneDepthBelow, final int waterHeight, final int blockX, final int blockY, final int blockZ
+         ) {
+             this.lastUpdateY++;
+-            this.biome = Suppliers.memoize(() -> this.biomeGetter.apply(this.pos.set(blockX, blockY, blockZ)));
++            // Leaf start - Reduce worldgen allocations
++            // Reuse supplier object instead of creating new ones every time
++            Supplier<Holder<Biome>> getter = this.biome;
++            if (getter == null) {
++                this.biome = getter = new org.dreeam.leaf.world.biome.PositionalBiomeGetter(this.biomeGetter, this.pos);
++            }
++            ((org.dreeam.leaf.world.biome.PositionalBiomeGetter) getter).update(blockX, blockY, blockZ);
++            // Leaf end - Reduce worldgen allocations
+             this.blockY = blockY;
+             this.waterHeight = waterHeight;
+             this.stoneDepthBelow = stoneDepthBelow;
+@@ -592,8 +599,12 @@ public class SurfaceRules {
+     private record SequenceRule(List<SurfaceRules.SurfaceRule> rules) implements SurfaceRules.SurfaceRule {
+         @Override
+         public @Nullable BlockState tryApply(final int blockX, final int blockY, final int blockZ) {
+-            for (SurfaceRules.SurfaceRule rule : this.rules) {
+-                BlockState state = rule.tryApply(blockX, blockY, blockZ);
++            // Leaf start - Reduce worldgen allocations
++            // Avoid iterator allocation
++            //noinspection ForLoopReplaceableByForEach
++            for (int i = 0, size = this.rules.size(); i < size; i++) {
++                BlockState state = this.rules.get(i).tryApply(blockX, blockY, blockZ);
++                // Leaf end - Reduce worldgen allocations
+                 if (state != null) {
+                     return state;
+                 }

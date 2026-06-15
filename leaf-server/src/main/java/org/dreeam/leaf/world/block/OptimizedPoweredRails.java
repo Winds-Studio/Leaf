@@ -24,7 +24,7 @@ public class OptimizedPoweredRails {
         BlockState oldState = level.getBlockState(pos);
         Block.updateOrDestroy(
             oldState,
-            oldState.updateShape(level, level, pos, direction.getOpposite(), fromPos, state, level.random),
+            oldState.updateShape(level, level, pos, direction.getOpposite(), fromPos, state, level.getRandom()),
             level,
             pos,
             UPDATE_CLIENTS & -34,

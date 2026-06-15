@@ -47,6 +47,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -202,8 +203,18 @@ public class Recorder extends Connection {
             }
         }
 
-        if (recorderOption.forceDayTime != -1 && packet instanceof ClientboundSetTimePacket packet1) {
-            packet = new ClientboundSetTimePacket(packet1.dayTime(), recorderOption.forceDayTime, false);
+        if (recorderOption.forceDayTime != -1 && packet instanceof ClientboundSetTimePacket setTimePacket) {
+            packet = new ClientboundSetTimePacket(
+                setTimePacket.gameTime(),
+                net.minecraft.util.Util.mapValues(
+                    setTimePacket.clockUpdates(),
+                    state -> new net.minecraft.world.clock.ClockNetworkState(
+                        state.totalTicks() - (state.totalTicks() % net.minecraft.SharedConstants.TICKS_PER_GAME_DAY) + recorderOption.forceDayTime,
+                        0.0F,
+                        0.0F
+                    )
+                )
+            );
         }
 
         if (recorderOption.forceWeather != null && packet instanceof ClientboundGameEventPacket packet1) {

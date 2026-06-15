@@ -2,7 +2,7 @@
 <div align="center">
 
 [![Download](https://img.shields.io/badge/releases-blue?label=download&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/download)⠀
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-12111.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-2612.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 [![Docs](https://img.shields.io/badge/leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs/getting-started)
 
@@ -47,13 +47,30 @@ Documentation about how to use/configure Leaf: [Leaf Docs](https://www.leafmc.on
 ## 📦 Building
 Building a Paperclip JAR for distribution:
 ```bash
-./gradlew applyAllPatches && ./gradlew createMojmapPaperclipJar
+./gradlew applyAllPatches && ./gradlew createPaperclipJar
 ```
 
 
 ## 📦 API
 <details>
 <summary>Click to expand</summary>
+
+### Gradle
+```kotlin
+repositories {
+  maven {
+    url = uri("https://maven.leafmc.one/snapshots/")
+  }
+}
+
+dependencies {
+    compileOnly("cn.dreeam.leaf:leaf-api:26.1.2.build.+")
+}
+
+java {
+  toolchain.languageVersion.set(JavaLanguageVersion.of(25))
+}
+```
 
 ### Maven
 ```xml
@@ -66,25 +83,9 @@ Building a Paperclip JAR for distribution:
 <dependency>
     <groupId>cn.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>1.21.11-R0.1-SNAPSHOT</version>
+    <version>[26.1.2.build,)</version>
     <scope>provided</scope>
 </dependency>
-```
-### Gradle
-```kotlin
-repositories {
-  maven {
-    url = uri("https://maven.leafmc.one/snapshots/")
-  }
-}
-
-dependencies {
-    compileOnly("cn.dreeam.leaf:leaf-api:1.21.11-R0.1-SNAPSHOT")
-}
-
-java {
-  toolchain.languageVersion.set(JavaLanguageVersion.of(21))
-}
 ```
 </details>
 

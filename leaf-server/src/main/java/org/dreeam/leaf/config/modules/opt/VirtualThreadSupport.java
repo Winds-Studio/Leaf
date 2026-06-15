@@ -13,8 +13,6 @@ public class VirtualThreadSupport extends ConfigModules {
     public static boolean foliaAsyncScheduler = false;
     public static boolean asyncChatExecutor = true;
     public static boolean downloadPool = false;
-    public static boolean authPool = true;
-    public static boolean paperConfigurationPool = true;
 
     @Override
     public void onLoaded() {
@@ -34,13 +32,5 @@ public class VirtualThreadSupport extends ConfigModules {
             config.pickStringRegionBased(
                 "Use the new Virtual Thread introduced in JDK 21 for profile fetching executor.",
                 "是否为档案查询执行器使用虚拟线程。"));
-        authPool = config.getBoolean(getBasePath() + ".auth-pool", authPool,
-            config.pickStringRegionBased(
-                "Use the new Virtual Thread introduced in JDK 21 for user authentication.",
-                "是否为用户验证使用虚拟线程."));
-        paperConfigurationPool = config.getBoolean(getBasePath() + ".paper-configuration-pool", paperConfigurationPool,
-            config.pickStringRegionBased(
-                "Use the new Virtual Thread introduced in JDK 21 for Paper task pool in configuration phase.",
-                "是否为 Paper 在配置阶段的任务池使用虚拟线程."));
     }
 }

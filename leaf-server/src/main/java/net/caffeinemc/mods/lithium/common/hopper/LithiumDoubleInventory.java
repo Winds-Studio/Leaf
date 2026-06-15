@@ -18,16 +18,16 @@
 package net.caffeinemc.mods.lithium.common.hopper;
 
 import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
-import net.minecraft.core.Direction;
-import net.minecraft.core.NonNullList;
-import net.minecraft.world.CompoundContainer;
-import net.minecraft.world.Container;
-import net.minecraft.world.item.ItemStack;
 import net.caffeinemc.mods.lithium.api.inventory.LithiumInventory;
 import net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeEmitter;
 import net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener;
 import net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker;
 import net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracker;
+import net.minecraft.core.Direction;
+import net.minecraft.core.NonNullList;
+import net.minecraft.world.CompoundContainer;
+import net.minecraft.world.Container;
+import net.minecraft.world.item.ItemStack;
 
 public class LithiumDoubleInventory extends CompoundContainer implements LithiumInventory, InventoryChangeTracker, InventoryChangeEmitter, InventoryChangeListener, ComparatorTracker {
 
@@ -51,7 +51,6 @@ public class LithiumDoubleInventory extends CompoundContainer implements Lithium
         Container vanillaFirst = doubleInventory.container1;
         Container vanillaSecond = doubleInventory.container2;
         if (vanillaFirst != vanillaSecond && vanillaFirst instanceof LithiumInventory first && vanillaSecond instanceof LithiumInventory second) {
-            LithiumDoubleInventory newDoubleInventory = new LithiumDoubleInventory(first, second);
             LithiumDoubleStackList doubleStackList = LithiumDoubleStackList.getOrCreate(
                 first, second,
                 InventoryHelper.getLithiumStackList(first),
@@ -81,36 +80,31 @@ public class LithiumDoubleInventory extends CompoundContainer implements Lithium
 
     @Override
     public void lithium$emitStackListReplaced() {
-        ReferenceOpenHashSet<InventoryChangeListener> listeners = this.inventoryHandlingTypeListeners;
-        this.inventoryHandlingTypeListeners = null; //Prevent concurrent modification
-        if (listeners != null && !listeners.isEmpty()) {
-            listeners.forEach(inventoryChangeListener -> inventoryChangeListener.handleStackListReplaced(this));
-        }
-        if (this.inventoryHandlingTypeListeners == null) {
-            this.inventoryHandlingTypeListeners = listeners;
-        }
-
         this.invalidateChangeListening();
     }
 
     @Override
     public void lithium$emitRemoved() {
-        ReferenceOpenHashSet<InventoryChangeListener> listeners = this.inventoryHandlingTypeListeners;
-        this.inventoryHandlingTypeListeners = null; //Prevent concurrent modification
-        if (listeners != null && !listeners.isEmpty()) {
-            listeners.forEach(listener -> listener.lithium$handleInventoryRemoved(this));
-        }
-        if (this.inventoryHandlingTypeListeners == null) {
-            this.inventoryHandlingTypeListeners = listeners;
-        }
-
         this.invalidateChangeListening();
     }
 
     private void invalidateChangeListening() {
+        //Invalidate listeners to this inventory
+        ReferenceOpenHashSet<InventoryChangeListener> listeners = this.inventoryHandlingTypeListeners;
+        this.inventoryHandlingTypeListeners = null; //Prevent concurrent modification
+        if (listeners != null && !listeners.isEmpty()) {
+            listeners.forEach(listener -> listener.lithium$handleInventoryRemoved(this));
+            listeners.clear();
+            this.inventoryHandlingTypeListeners = listeners;
+        }
+
         if (this.inventoryChangeListeners != null) {
             this.inventoryChangeListeners.clear();
         }
+
+        //Invalidate own listening
+        ((InventoryChangeTracker) this.first).stopListenForMajorInventoryChanges(this);
+        ((InventoryChangeTracker) this.second).stopListenForMajorInventoryChanges(this);
 
         LithiumStackList lithiumStackList = this.doubleStackList;
         if (lithiumStackList != null) {

@@ -461,7 +461,7 @@ public class LinearRegionFile implements IRegionFile {
 
     public synchronized void write(ChunkPos pos, ByteBuffer buffer) {
         openRegionFile();
-        openBucket(pos.x, pos.z);
+        openBucket(pos.x(), pos.z());
 
         int uncompressedSize = buffer.remaining();
         byte[] b = new byte[uncompressedSize];
@@ -477,7 +477,7 @@ public class LinearRegionFile implements IRegionFile {
             b = new byte[compressedLength];
             System.arraycopy(compressed, 0, b, 0, compressedLength);
 
-            int index = getChunkIndex(pos.x, pos.z);
+            int index = getChunkIndex(pos.x(), pos.z());
             this.buffer[index] = Arrays.copyOf(compressed, compressedLength);;
             this.chunkTimestamps[index] = getTimestamp();
             this.bufferUncompressedSize[index] = uncompressedSize;
@@ -488,7 +488,7 @@ public class LinearRegionFile implements IRegionFile {
 
     public DataOutputStream getChunkDataOutputStream(ChunkPos pos) {
         openRegionFile();
-        openBucket(pos.x, pos.z);
+        openBucket(pos.x(), pos.z());
         return new DataOutputStream(new BufferedOutputStream(new LinearRegionFile.ChunkBuffer(pos)));
     }
 
@@ -520,11 +520,11 @@ public class LinearRegionFile implements IRegionFile {
     @Nullable
     public synchronized DataInputStream getChunkDataInputStream(ChunkPos pos) {
         openRegionFile();
-        openBucket(pos.x, pos.z);
+        openBucket(pos.x(), pos.z());
 
-        if (this.bufferUncompressedSize[getChunkIndex(pos.x, pos.z)] != 0) {
-            byte[] content = new byte[bufferUncompressedSize[getChunkIndex(pos.x, pos.z)]];
-            this.decompressor.decompress(this.buffer[getChunkIndex(pos.x, pos.z)], 0, content, 0, bufferUncompressedSize[getChunkIndex(pos.x, pos.z)]);
+        if (this.bufferUncompressedSize[getChunkIndex(pos.x(), pos.z())] != 0) {
+            byte[] content = new byte[bufferUncompressedSize[getChunkIndex(pos.x(), pos.z())]];
+            this.decompressor.decompress(this.buffer[getChunkIndex(pos.x(), pos.z())], 0, content, 0, bufferUncompressedSize[getChunkIndex(pos.x(), pos.z())]);
             return new DataInputStream(new ByteArrayInputStream(content));
         }
         return null;
@@ -532,8 +532,8 @@ public class LinearRegionFile implements IRegionFile {
 
     public synchronized void clear(ChunkPos pos) {
         openRegionFile();
-        openBucket(pos.x, pos.z);
-        int i = getChunkIndex(pos.x, pos.z);
+        openBucket(pos.x(), pos.z());
+        int i = getChunkIndex(pos.x(), pos.z());
         this.buffer[i] = null;
         this.bufferUncompressedSize[i] = 0;
         this.chunkTimestamps[i] = 0;
@@ -542,8 +542,8 @@ public class LinearRegionFile implements IRegionFile {
 
     public synchronized boolean hasChunk(ChunkPos pos) {
         openRegionFile();
-        openBucket(pos.x, pos.z);
-        return this.bufferUncompressedSize[getChunkIndex(pos.x, pos.z)] > 0;
+        openBucket(pos.x(), pos.z());
+        return this.bufferUncompressedSize[getChunkIndex(pos.x(), pos.z())] > 0;
     }
 
     public synchronized void close() throws IOException {

@@ -39,3 +39,15 @@ for (name in listOf("leaf-api", "leaf-server")) {
     val projName = name.lowercase(Locale.ENGLISH)
     include(projName)
 }
+
+gradle.lifecycle.beforeProject {
+    val mcVersion = providers.gradleProperty("mcVersion").get().trim()
+    val paperVersionChannel = providers.gradleProperty("channel").get().trim()
+    val paperBuildNumber = providers.environmentVariable("BUILD_NUMBER").orNull?.trim()?.toInt()
+    val versionString = if (paperBuildNumber == null) {
+        "$mcVersion.local-SNAPSHOT"
+    } else {
+        "$mcVersion.build.$paperBuildNumber-${paperVersionChannel.lowercase()}"
+    }
+    version = versionString
+}

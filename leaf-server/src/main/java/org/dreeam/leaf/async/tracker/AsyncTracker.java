@@ -81,14 +81,14 @@ public final class AsyncTracker {
             player.hurtMarked = false;
             boolean cancelled = false;
 
-            org.bukkit.entity.Player player1 = player.getBukkitEntity();
-            org.bukkit.util.Vector velocity = player1.getVelocity();
+            org.bukkit.entity.Player craftPlayer = player.getBukkitEntity();
+            org.bukkit.util.Vector velocity = craftPlayer.getVelocity();
 
-            PlayerVelocityEvent event = new PlayerVelocityEvent(player1, velocity.clone());
+            PlayerVelocityEvent event = new PlayerVelocityEvent(craftPlayer, velocity.clone());
             if (!event.callEvent()) {
                 cancelled = true;
             } else if (velocity != event.getVelocity() && !velocity.equals(event.getVelocity())) {
-                player1.setVelocity(event.getVelocity());
+                craftPlayer.setVelocity(event.getVelocity());
             }
             if (cancelled) {
                 continue;

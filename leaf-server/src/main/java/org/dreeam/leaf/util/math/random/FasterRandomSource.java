@@ -117,4 +117,8 @@ public final class FasterRandomSource implements BitRandomSource {
     public double nextGaussian() {
         return delegate.nextGaussian();
     }
+
+    public double nextGaussian(double mean, double stddev) {
+        return delegate.nextGaussian(mean, stddev);
+    }
 }

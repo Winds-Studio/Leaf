@@ -105,15 +105,15 @@ public final class TrackerCtx {
     }
 
     public void sendToTrackingPlayers(ChunkMap.TrackedEntity entity, Packet<? super ClientGamePacketListener> packet) {
-        for (ServerPlayerConnection serverPlayerConnection : entity.seenBy()) {
-            send(serverPlayerConnection, packet);
+        for (ServerPlayerConnection connection : entity.seenBy()) {
+            send(connection, packet);
         }
     }
 
-    public void sendToTrackingPlayersFiltered(ChunkMap.TrackedEntity entity, Packet<? super ClientGamePacketListener> packet, Predicate<ServerPlayer> filter) {
-        for (ServerPlayerConnection serverPlayerConnection : entity.seenBy()) {
-            if (filter.test(serverPlayerConnection.getPlayer())) {
-                send(serverPlayerConnection, packet);
+    public void sendToTrackingPlayersFiltered(ChunkMap.TrackedEntity entity, Packet<? super ClientGamePacketListener> packet, Predicate<ServerPlayer> targetPredicate) {
+        for (ServerPlayerConnection connection : entity.seenBy()) {
+            if (targetPredicate.test(connection.getPlayer())) {
+                send(connection, packet);
             }
         }
     }
@@ -250,7 +250,7 @@ public final class TrackerCtx {
         ItemStack item = itemFrame.getItem();
         for (ServerPlayerConnection connection : tracker.seenBy()) {
             ServerPlayer serverPlayer = connection.getPlayer(); // Paper
-            savedData.tickCarriedBy(serverPlayer, item);
+            savedData.tickCarriedBy(serverPlayer, item, itemFrame);
             Packet<?> updatePacket = savedData.getUpdatePacket(mapId, serverPlayer);
             if (updatePacket != null) {
                 send(serverPlayer.connection, updatePacket);

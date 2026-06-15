@@ -148,7 +148,7 @@ public final class NatureSpawnChunkMap {
             } else if (range < 0) {
                 continue;
             }
-            this.centersByRadius[range].add(player.chunkPosition().longKey);
+            this.centersByRadius[range].add(player.chunkPosition().longKey());
         }
         return players;
     }

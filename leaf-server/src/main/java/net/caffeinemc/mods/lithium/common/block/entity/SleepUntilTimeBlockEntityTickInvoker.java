@@ -18,8 +18,8 @@
 package net.caffeinemc.mods.lithium.common.block.entity;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.entity.TickingBlockEntity;
 import org.jetbrains.annotations.NotNull;
 
@@ -49,6 +49,6 @@ public record SleepUntilTimeBlockEntityTickInvoker(BlockEntity sleepingBlockEnti
     @Override
     public @NotNull String getType() {
         //noinspection ConstantConditions
-        return BlockEntityType.getKey(this.sleepingBlockEntity.getType()).toString();
+        return BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(this.sleepingBlockEntity.getType()).toString();
     }
 }

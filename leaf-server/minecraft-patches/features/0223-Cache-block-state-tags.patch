@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Fri, 23 May 2025 12:01:42 +0900
+Subject: [PATCH] Cache block state tags
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Dreeam Note:
+Init path type under `ReloadableServerResources#updateStaticRegistryTags` on the server starts is too eraly，
+so that things injected by plugins, CraftEngine for example, will not be applied to the cache.
+So that we need to init it again after the plugin loads (Double init but doesn't matter)
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 8737dd844d77361b88fd72db5c4d97210a381566..e9a3e8e1ed101862c8766ff233f78a79ebaca42e 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1390,6 +1390,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             // Paper end
+             org.spigotmc.WatchdogThread.hasStarted = true; // Paper
+             org.dreeam.leaf.config.LeafConfig.regSparkExtraConfig(); // Leaf - Leaf config
++            net.minecraft.world.level.block.Blocks.initPathType(); // Leaf - Cache block state tags
+             // Paper start - Add onboarding message for initial server start
+             if (io.papermc.paper.configuration.GlobalConfiguration.isFirstStart) {
+                 LOGGER.info("*************************************************************************************");
+diff --git a/net/minecraft/server/ReloadableServerResources.java b/net/minecraft/server/ReloadableServerResources.java
+index 285f651d5363eef4d81eb0a3dc3c6d7283134506..6ab0158661a863de829a79381a524d6333bc47d3 100644
+--- a/net/minecraft/server/ReloadableServerResources.java
++++ b/net/minecraft/server/ReloadableServerResources.java
+@@ -127,5 +127,9 @@ public class ReloadableServerResources {
+     public void updateComponentsAndStaticRegistryTags() {
+         this.postponedTags.forEach(Registry.PendingTags::apply);
+         this.newComponents.forEach(DataComponentInitializers.PendingComponents::apply);
++        // Leaf start - Cache block state tags
++        net.minecraft.world.level.block.Blocks.initPathType();
++        net.minecraft.world.level.block.Blocks.initTagFlag();
++        // Leaf end - Cache block state tags
+     }
+ }
+diff --git a/net/minecraft/world/entity/vehicle/DismountHelper.java b/net/minecraft/world/entity/vehicle/DismountHelper.java
+index be60491d99edcd763ff62f316c6f1dc0d92bc87f..f50fbcbe0f3d423c6519e9ecef933bc4d50a2b41 100644
+--- a/net/minecraft/world/entity/vehicle/DismountHelper.java
++++ b/net/minecraft/world/entity/vehicle/DismountHelper.java
+@@ -54,7 +54,7 @@ public class DismountHelper {
+ 
+     public static VoxelShape nonClimbableShape(final BlockGetter level, final BlockPos pos) {
+         BlockState blockState = level.getBlockState(pos);
+-        return !blockState.is(BlockTags.CLIMBABLE) && (!(blockState.getBlock() instanceof TrapDoorBlock) || !blockState.getValue(TrapDoorBlock.OPEN))
++        return ((blockState.tagFlag & (org.dreeam.leaf.util.BlockMasks.TRAP_DOOR_CL_OPEN | org.dreeam.leaf.util.BlockMasks.CLIMBABLE_TAG)) == 0) // Leaf - Cache block state tags
+             ? blockState.getCollisionShape(level, pos)
+             : Shapes.empty();
+     }
+diff --git a/net/minecraft/world/level/block/Blocks.java b/net/minecraft/world/level/block/Blocks.java
+index 43591b32ac106ea39bb09c40b9a7beca39b4145d..49ec98ce9c4cfd5f97e57b9054c7dbba63283685 100644
+--- a/net/minecraft/world/level/block/Blocks.java
++++ b/net/minecraft/world/level/block/Blocks.java
+@@ -7232,4 +7232,21 @@ public class Blocks {
+             }
+         }
+     }
++
++    // Leaf start - Cache block state tags
++    public static void initTagFlag() {
++        for (Block block : BuiltInRegistries.BLOCK) {
++            for (BlockState blockState : block.getStateDefinition().getPossibleStates()) {
++                blockState.initTagFlag();
++            }
++        }
++    }
++    public static void initPathType() {
++        for (Block block : BuiltInRegistries.BLOCK) {
++            for (BlockState blockState : block.getStateDefinition().getPossibleStates()) {
++                blockState.initPathType();
++            }
++        }
++    }
++    // Leaf end - Cache block state tags
+ }
+diff --git a/net/minecraft/world/level/block/state/BlockBehaviour.java b/net/minecraft/world/level/block/state/BlockBehaviour.java
+index f7db25dc71eaa5c0a2d2f7e1618f63b201f68969..fe9a956857313b45bc2aaa4249dde884b8af5360 100644
+--- a/net/minecraft/world/level/block/state/BlockBehaviour.java
++++ b/net/minecraft/world/level/block/state/BlockBehaviour.java
+@@ -489,6 +489,8 @@ public abstract class BlockBehaviour implements FeatureElement {
+         private boolean emptyCollisionShape;
+         private boolean emptyConstantCollisionShape;
+         private VoxelShape constantCollisionShape;
++        public byte pathType; // Leaf - Cache block state tags
++        public int tagFlag; // Leaf - Cache block state tags
+ 
+         private static void initCaches(final VoxelShape shape, final boolean neighbours) {
+             ((ca.spottedleaf.moonrise.patches.collisions.shape.CollisionVoxelShape)shape).moonrise$isFullBlock();
+@@ -659,6 +661,15 @@ public abstract class BlockBehaviour implements FeatureElement {
+             // Paper end - optimise collisions
+         }
+ 
++        // Leaf start - Cache block state tags
++        public void initPathType() {
++            pathType = (byte) net.minecraft.world.level.pathfinder.WalkNodeEvaluator.getPathTypeFromState(this.asState()).ordinal();
++        }
++        public void initTagFlag() {
++            tagFlag = org.dreeam.leaf.util.BlockMasks.init(asState());
++        }
++        // Leaf end - Cache block state tags
++
+         public Block getBlock() {
+             return this.owner;
+         }
+diff --git a/net/minecraft/world/level/pathfinder/PathTypeCache.java b/net/minecraft/world/level/pathfinder/PathTypeCache.java
+index 1a50ec0d56bb4b9c3b0958a0281028c8eff1000c..24c97627f3d6848729a6985d253838747e1ad2d1 100644
+--- a/net/minecraft/world/level/pathfinder/PathTypeCache.java
++++ b/net/minecraft/world/level/pathfinder/PathTypeCache.java
+@@ -23,7 +23,7 @@ public class PathTypeCache {
+     }
+ 
+     private PathType compute(final BlockGetter level, final BlockPos pos, final int index, final long key) {
+-        PathType pathType = WalkNodeEvaluator.getPathTypeFromState(level, pos);
++        PathType pathType = WalkNodeEvaluator.leaf$pathType(level, pos); // Leaf - Cache block state tags
+         this.positions[index] = key;
+         this.pathTypes[index] = pathType;
+         return pathType;
+diff --git a/net/minecraft/world/level/pathfinder/PathfindingContext.java b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+index 5d2f56999657cc9b0d5892ddc7897d96610a0dbd..864681a98d963575acb0d88c710e68f249578d32 100644
+--- a/net/minecraft/world/level/pathfinder/PathfindingContext.java
++++ b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+@@ -26,7 +26,7 @@ public class PathfindingContext {
+ 
+     public PathType getPathTypeFromState(final int x, final int y, final int z) {
+         BlockPos pos = this.mutablePos.set(x, y, z);
+-        return this.cache == null ? WalkNodeEvaluator.getPathTypeFromState(this.level, pos) : this.cache.getOrCompute(this.level, pos);
++        return this.cache == null ? WalkNodeEvaluator.leaf$pathType(this.level, pos) : this.cache.getOrCompute(this.level, pos); // Leaf - Cache block state tags
+     }
+ 
+     public BlockState getBlockState(final BlockPos pos) {
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+index 88b131b1cb859e8579e1697173020a4dcd2f03a6..922ce7b568376001a01fba3befd3a86b24059a11 100644
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -513,6 +513,17 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+         return blockPathType;
+     }
+ 
++    // Leaf start - Cache block state tags
++    private static final PathType[] PATH_TYPES = PathType.values();
++    public static PathType leaf$pathType(final BlockGetter level, final BlockPos pos) {
++        BlockState blockState = level.getBlockStateIfLoaded(pos);
++        if (blockState == null) {
++            return PathType.BLOCKED;
++        }
++        return PATH_TYPES[blockState.pathType];
++    }
++    // Leaf end - Cache block state tags
++
+     protected static PathType getPathTypeFromState(final BlockGetter level, final BlockPos pos) {
+         // Paper start - Do not load chunks during pathfinding
+         BlockState blockState = level.getBlockStateIfLoaded(pos);
+@@ -520,6 +531,11 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+             return PathType.BLOCKED;
+         }
+         // Paper end
++        // Leaf start - Cache block state tags
++        return getPathTypeFromState(blockState);
++    }
++    public static PathType getPathTypeFromState(final BlockState blockState) {
++        // Leaf end - Cache block state tags
+         Block block = blockState.getBlock();
+         if (blockState.isAir()) {
+             return PathType.OPEN;

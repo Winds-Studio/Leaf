@@ -1,0 +1,237 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Mon, 14 Apr 2025 20:07:52 +0200
+Subject: [PATCH] Optimise chunkUnloads
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java b/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
+index 5c7b3804cdbcb0a873a0d195325c2658760a8914..057c8f3ec1ff993f650dbdee392c4aefde991185 100644
+--- a/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
++++ b/ca/spottedleaf/moonrise/patches/starlight/light/SWMRNibbleArray.java
+@@ -25,9 +25,15 @@ public final class SWMRNibbleArray {
+     private static final int INIT_STATE_INIT   = 2; // initialised
+     private static final int INIT_STATE_HIDDEN = 3; // initialised, but conversion to Vanilla data should be treated as if NULL
+ 
++    // Leaf start - Optimize chunkUnload
++    private volatile boolean cachedIsAllZero = false;
++    private boolean cachedIsAllZeroValid = false;
++
++    private static final ThreadLocal<SaveState[]> SAVE_STATE_CACHE = ThreadLocal.withInitial(() -> new SaveState[4]);
++
+     public static final int ARRAY_SIZE = 16 * 16 * 16 / (8/4); // blocks / bytes per block
+     // this allows us to maintain only 1 byte array when we're not updating
+-    private static final ThreadLocal<ArrayDeque<byte[]>> WORKING_BYTES_POOL = ThreadLocal.withInitial(ArrayDeque::new);
++    private static final ThreadLocal<ArrayDeque<byte[]>> WORKING_BYTES_POOL = ThreadLocal.withInitial(() -> new ArrayDeque<>(8)); // Leaf - Optimize chunkUnload - Limit pool size to avoid memory leaks
+ 
+     private static byte[] allocateBytes() {
+         final byte[] inPool = WORKING_BYTES_POOL.get().pollFirst();
+@@ -39,7 +45,12 @@ public final class SWMRNibbleArray {
+     }
+ 
+     private static void freeBytes(final byte[] bytes) {
+-        WORKING_BYTES_POOL.get().addFirst(bytes);
++        // Leaf start - Optimize chunkUnload
++        final ArrayDeque<byte[]> queue = WORKING_BYTES_POOL.get();
++        if (queue.size() < 8) {  // Limit pool size to prevent memory leaks
++            queue.addFirst(bytes);
++        }
++        // Leaf end - Optimize chunkUnload
+     }
+ 
+     public static SWMRNibbleArray fromVanilla(final DataLayer nibble) {
+@@ -134,15 +145,44 @@ public final class SWMRNibbleArray {
+     public SaveState getSaveState() {
+         synchronized (this) {
+             final int state = this.stateVisible;
+-            final byte[] data = this.storageVisible;
+             if (state == INIT_STATE_NULL) {
+                 return null;
+             }
+             if (state == INIT_STATE_UNINIT) {
+-                return new SaveState(null, state);
++                // Leaf start - Optimize chunkUnload
++                // Use array-based cache instead of WeakHashMap
++                SaveState[] cache = SAVE_STATE_CACHE.get();
++                SaveState cachedState = cache[INIT_STATE_UNINIT];
++                if (cachedState == null) {
++                    cachedState = new SaveState(null, state);
++                    cache[INIT_STATE_UNINIT] = cachedState;
++                }
++                return cachedState;
++            }
++
++            // Check if we need to test for all zeros
++            final byte[] data = this.storageVisible;
++            boolean zero;
++            if (cachedIsAllZeroValid) {
++                zero = cachedIsAllZero;
++            } else {
++                zero = isAllZero(data);
++                cachedIsAllZero = zero;
++                cachedIsAllZeroValid = true;
+             }
+-            final boolean zero = isAllZero(data);
+             if (zero) {
++                // Use array-based cache instead of WeakHashMap
++                SaveState[] cache = SAVE_STATE_CACHE.get();
++                int cacheKey = state == INIT_STATE_INIT ? INIT_STATE_UNINIT : -1;
++                if (cacheKey >= 0) {
++                    SaveState cachedState = cache[cacheKey];
++                    if (cachedState == null) {
++                        cachedState = new SaveState(null, cacheKey);
++                        cache[cacheKey] = cachedState;
++                    }
++                    return cachedState;
++                }
++                // Leaf end - Optimize chunkUnload
+                 return state == INIT_STATE_INIT ? new SaveState(null, INIT_STATE_UNINIT) : null;
+             } else {
+                 return new SaveState(data.clone(), state);
+@@ -350,6 +390,7 @@ public final class SWMRNibbleArray {
+             }
+             this.updatingDirty = false;
+             this.stateVisible = this.stateUpdating;
++            this.cachedIsAllZeroValid = false; // Leaf - Optimize chunkUnload - Invalidate cache on update
+         }
+ 
+         return true;
+@@ -425,7 +466,16 @@ public final class SWMRNibbleArray {
+         final int shift = (index & 1) << 2;
+         final int i = index >>> 1;
+ 
+-        this.storageUpdating[i] = (byte)((this.storageUpdating[i] & (0xF0 >>> shift)) | (value << shift));
++        // Leaf start - Optimize chunkUnload
++        byte oldValue = this.storageUpdating[i];
++        byte newValue = (byte)((oldValue & (0xF0 >>> shift)) | (value << shift));
++
++        // Only invalidate cache if the value actually changes
++        if (oldValue != newValue) {
++            this.storageUpdating[i] = newValue;
++            this.cachedIsAllZeroValid = false;
++        }
++        // Leaf end - Optimize chunkUnload
+     }
+ 
+     public static final class SaveState {
+diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+index c23dac3a7cafe33e67b04cd913f592c5bedb677d..fd8ead168c7bb85a8599bcb5e1e997003aa76e49 100644
+--- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
++++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+@@ -471,12 +471,17 @@ public record SerializableChunkData(
+         }
+ 
+         ChunkPos pos = chunk.getPos();
+-        List<SerializableChunkData.SectionData> sectionData = new ArrayList<>();
+         // Paper start - starlight
+         final int minLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinLightSection(level);
+         final int maxLightSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMaxLightSection(level);
+         final int minBlockSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(level);
+ 
++        // Leaf start - Optimize chunkUnload
++        // Pre-allocate with correct capacity to avoid resizing
++        final int expectedSectionCount = maxLightSection - minLightSection + 1;
++        List<SerializableChunkData.SectionData> sectionData = new ArrayList<>(expectedSectionCount);
++        // Leaf end - Optimize chunkUnload
++
+         final LevelChunkSection[] chunkSections = chunk.getSections();
+         final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles = ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)chunk).starlight$getBlockNibbles();
+         final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] skyNibbles = ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)chunk).starlight$getSkyNibbles();
+@@ -493,10 +498,20 @@ public record SerializableChunkData(
+                 continue;
+             }
+ 
++            // Leaf start - Optimize chunkUnload
++            DataLayer blockDataLayer = null;
++            if (blockNibble != null && blockNibble.data != null) {
++                blockDataLayer = new DataLayer(blockNibble.data);
++            }
++
++            DataLayer skyDataLayer = null;
++            if (skyNibble != null && skyNibble.data != null) {
++                skyDataLayer = new DataLayer(skyNibble.data);
++            }
++            // Leaf end - Optimize chunkUnload
++
+             final SerializableChunkData.SectionData section = new SerializableChunkData.SectionData(
+-                lightSection, chunkSection,
+-                blockNibble == null ? null : (blockNibble.data == null ? null : new DataLayer(blockNibble.data)),
+-                skyNibble == null ? null : (skyNibble.data == null ? null : new DataLayer(skyNibble.data))
++                lightSection, chunkSection, blockDataLayer, skyDataLayer // Leaf - Optimize chunkUnload
+             );
+ 
+             if (blockNibble != null) {
+@@ -507,12 +522,16 @@ public record SerializableChunkData(
+                 ((ca.spottedleaf.moonrise.patches.starlight.storage.StarlightSectionData)(Object)section).starlight$setSkyLightState(skyNibble.state);
+             }
+ 
+-            sectionData.add(section);
++            sectionData.add(section); // Leaf - Optimize chunkUnload - diff on change
+         }
+         // Paper end - starlight
+ 
+-        List<CompoundTag> blockEntities = new ArrayList<>(chunk.getBlockEntitiesPos().size());
++        // Leaf start - Optimize chunkUnload
++        // Pre-allocate block entities list with exact size needed
++        final int blockEntityCount = chunk.getBlockEntitiesPos().size();
++        List<CompoundTag> blockEntities = blockEntityCount > 0 ? new ArrayList<>(blockEntityCount) : java.util.Collections.emptyList();
+ 
++        if (blockEntityCount > 0) // Leaf - Optimize chunkUnload
+         for (BlockPos blockPos : chunk.getBlockEntitiesPos()) {
+             CompoundTag blockEntityTag = chunk.getBlockEntityNbtForSaving(blockPos, level.registryAccess());
+             if (blockEntityTag != null) {
+@@ -520,15 +539,27 @@ public record SerializableChunkData(
+             }
+         }
+ 
+-        List<CompoundTag> entities = new ArrayList<>();
++        // Leaf start - Optimize chunkUnload
++        // For entities, use an initial estimated capacity if it's a ProtoChunk
++        List<CompoundTag> entities;
+         long[] carvingMask = null;
+         if (chunk.getPersistedStatus().getChunkType() == ChunkType.PROTOCHUNK) {
+             ProtoChunk protoChunk = (ProtoChunk)chunk;
+-            entities.addAll(protoChunk.getEntities());
++            // Leaf start - Optimize chunkUnload
++            int entitySize = protoChunk.getEntities().size();
++            if (entitySize > 0) {
++                entities = new ArrayList<>(Math.max(16, entitySize));
++                entities.addAll(protoChunk.getEntities());
++            } else {
++                entities = java.util.Collections.emptyList();
++            }
++            // Leaf end - Optimize chunkUnload
+             CarvingMask existingMask = protoChunk.getCarvingMask();
+             if (existingMask != null) {
+                 carvingMask = existingMask.toArray();
+             }
++        } else {
++            entities = java.util.Collections.emptyList(); // Leaf - Optimize chunkUnload
+         }
+ 
+         Map<Heightmap.Types, long[]> heightmaps = new EnumMap<>(Heightmap.Types.class);
+@@ -536,14 +567,21 @@ public record SerializableChunkData(
+         for (Entry<Heightmap.Types, Heightmap> entry : chunk.getHeightmaps()) {
+             if (chunk.getPersistedStatus().heightmapsAfter().contains(entry.getKey())) {
+                 long[] data = entry.getValue().getRawData();
+-                heightmaps.put(entry.getKey(), (long[])data.clone());
++                heightmaps.put(entry.getKey(), Arrays.copyOf(data, data.length)); // Leaf - Optimize chunkUnload
+             }
+         }
+ 
+         ChunkAccess.PackedTicks ticksForSerialization = chunk.getTicksForSerialization(level.getGameTime());
+-        ShortList[] postProcessingSections = Arrays.stream(chunk.getPostProcessing())
+-            .map(shorts -> shorts != null && !shorts.isEmpty() ? new ShortArrayList(shorts) : null)
+-            .toArray(ShortList[]::new);
++        // Leaf start - Optimize chunkUnload - remove stream
++        ShortList[] postProcessing = chunk.getPostProcessing();
++        ShortList[] postProcessingSections = new ShortList[postProcessing.length];
++        for (int i = 0; i < postProcessing.length; i++) {
++            ShortList shorts = postProcessing[i];
++            if (shorts != null && !shorts.isEmpty()) {
++                postProcessingSections[i] = new ShortArrayList(shorts);
++            }
++        }
++        // Leaf end - Optimize chunkUnload - remove stream
+         CompoundTag structureData = packStructureData(StructurePieceSerializationContext.fromLevel(level), pos, chunk.getAllStarts(), chunk.getAllReferences());
+         // CraftBukkit start - store chunk persistent data in nbt
+         CompoundTag persistentDataContainer = null;
