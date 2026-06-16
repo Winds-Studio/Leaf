@@ -1,7 +1,7 @@
 package org.leavesmc.leaves.protocol.jade.util;
 
 import com.google.common.collect.Lists;
-import net.minecraft.advancements.criterion.ItemPredicate;
+import net.minecraft.advancements.predicates.ItemPredicate;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderGetter;
 import net.minecraft.core.registries.BuiltInRegistries;
