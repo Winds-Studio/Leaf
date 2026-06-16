@@ -2,7 +2,7 @@
 <div align="center">
 
 [![Download](https://img.shields.io/badge/releases-blue?label=download&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/download)⠀
-[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-2612.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
+[![Github Actions Build](https://img.shields.io/github/actions/workflow/status/Winds-Studio/Leaf/build-262.yml?&style=for-the-badge&colorA=19201a&colorB=298046)](https://github.com/Winds-Studio/Leaf/actions)⠀
 [![Discord](https://img.shields.io/discord/1145991395388162119?label=discord&style=for-the-badge&colorA=19201a&colorB=298046)](https://discord.gg/gfgAwdSEuM)
 [![Docs](https://img.shields.io/badge/leafmc.one/docs/-blue?label=docs&style=for-the-badge&colorA=19201a&colorB=298046)](https://www.leafmc.one/docs/getting-started)
 
@@ -64,7 +64,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("cn.dreeam.leaf:leaf-api:26.1.2.build.+")
+    compileOnly("cn.dreeam.leaf:leaf-api:26.2.build.+")
 }
 
 java {
@@ -83,7 +83,7 @@ java {
 <dependency>
     <groupId>cn.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>[26.1.2.build,)</version>
+    <version>[26.2.build,)</version>
     <scope>provided</scope>
 </dependency>
 ```

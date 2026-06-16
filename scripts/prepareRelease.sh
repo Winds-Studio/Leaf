@@ -2,8 +2,8 @@
 set -e
 
 IS_EOL=false
-IS_UNSUPPORTED=true
-IS_DEV=false
+IS_UNSUPPORTED=false
+IS_DEV=true
 
 JAR_NAME="leaf-${MC_VERSION}"
 CURRENT_TAG="ver-${MC_VERSION}"
