@@ -142,7 +142,7 @@ public final class DespawnMap implements Consumer<Entity> {
 
         if (dist > this.sort[category]) {
             return mob.noActionTime > 600
-                && mob.random.nextInt(800) == 0
+                && mob.getRandom().nextInt(800) == 0
                 && mob.removeWhenFarAway(dist);
         }
 

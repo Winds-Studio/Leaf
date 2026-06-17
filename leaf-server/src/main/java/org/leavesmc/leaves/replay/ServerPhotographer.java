@@ -75,7 +75,7 @@ public class ServerPhotographer extends ServerPlayer {
             getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
         }
         // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
-        photographer.level().chunkSource.move(photographer);
+        photographer.level().getChunkSource().move(photographer);
         photographer.setInvisible(true);
         photographers.add(photographer);
 
@@ -93,7 +93,7 @@ public class ServerPhotographer extends ServerPlayer {
 
         if (getServer().getTickCount() % 10 == 0) {
             connection.resetPosition();
-            this.level().chunkSource.move(this);
+            this.level().getChunkSource().move(this);
         }
 
         if (this.followPlayer != null) {
