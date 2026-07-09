@@ -280,6 +280,9 @@ public final class TrackerCtx {
             connection.send(new ClientboundBundlePacket(list)); // #startTrackingEntity call after #send
             world.debugSynchronizers().startTrackingEntity(player, startSeen.e);
         }
+        if (tracker.leaf$exclude != null) {
+            tracker.leaf$exclude.clear();
+        }
     }
 
     private void handleStopTrack(StopSeen untrack) {

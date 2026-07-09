@@ -26,6 +26,7 @@ public final class AsyncTracker {
     public static final int QUEUE = 1024;
     public static final int MIN_CHUNK = 16;
     public static final int THREADS = MultithreadedTracker.threads;
+    @Nullable
     public static final FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
         THREADS,
         QUEUE,
@@ -102,7 +103,7 @@ public final class AsyncTracker {
     }
 
     public void onEntitiesTickEnd() {
-        Future<TrackerCtx> @org.jetbrains.annotations.Nullable [] task = this.fut;
+        Future<TrackerCtx>[] task = this.fut;
         TrackerCtx local = this.local;
         if (task == null) {
             return;
@@ -118,7 +119,7 @@ public final class AsyncTracker {
     }
 
     public void onTickEnd() {
-        Future<TrackerCtx> @org.jetbrains.annotations.Nullable [] task = this.fut;
+        Future<TrackerCtx>[] task = this.fut;
         TrackerCtx local = this.local;
         this.fut = null;
         handle(task, local);
