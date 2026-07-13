@@ -1,18 +1,19 @@
 package org.dreeam.leaf.util.map;
 
-import it.unimi.dsi.fastutil.objects.AbstractObject2DoubleMap;
 import it.unimi.dsi.fastutil.objects.AbstractObjectSet;
+import it.unimi.dsi.fastutil.objects.AbstractReference2ObjectMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import it.unimi.dsi.fastutil.objects.ObjectSet;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.TagKey;
+import net.minecraft.world.entity.EntityFluidInteraction;
 import net.minecraft.world.level.material.Fluid;
 
 import java.util.NoSuchElementException;
 
-public final class FluidHeightMap extends AbstractObject2DoubleMap<TagKey<Fluid>> {
-    private double water = 0.0;
-    private double lava = 0.0;
+public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<Fluid>, EntityFluidInteraction.Tracker> {
+    private EntityFluidInteraction.Tracker water = null;
+    private EntityFluidInteraction.Tracker lava = null;
 
     @Override
     public int size() {
@@ -20,38 +21,48 @@ public final class FluidHeightMap extends AbstractObject2DoubleMap<TagKey<Fluid>
     }
 
     @Override
-    public ObjectSet<Entry<TagKey<Fluid>>> object2DoubleEntrySet() {
+    public ObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> reference2ObjectEntrySet() {
         return new EntrySet();
     }
 
     @Override
-    public double getDouble(Object k) {
-        return k == FluidTags.WATER ? water : k == FluidTags.LAVA ? lava : 0.0;
+    public EntityFluidInteraction.Tracker get(Object k) {
+        return k == FluidTags.WATER ? water : k == FluidTags.LAVA ? lava : null;
     }
 
     @Override
-    public double put(TagKey<Fluid> k, double v) {
+    public EntityFluidInteraction.Tracker put(TagKey<Fluid> k, EntityFluidInteraction.Tracker v) {
         if (k == FluidTags.WATER) {
-            double prev = this.water;
+            EntityFluidInteraction.Tracker prev = this.water;
             this.water = v;
             return prev;
         } else if (k == FluidTags.LAVA) {
-            double prev = this.lava;
+            EntityFluidInteraction.Tracker prev = this.lava;
             this.lava = v;
             return prev;
         }
-        return 0.0;
+        return null;
     }
 
     @Override
     public void clear() {
-        this.water = 0.0;
-        this.lava = 0.0;
+        this.water = null;
+        this.lava = null;
     }
 
-    private final class EntrySet extends AbstractObjectSet<Entry<TagKey<Fluid>>> {
+    public void init () {
+        this.water = new EntityFluidInteraction.Tracker();
+        this.lava = new EntityFluidInteraction.Tracker();
+    }
+
+    public void reset() {
+        this.water.reset();
+        this.lava.reset();
+    }
+
+    private final class EntrySet extends AbstractObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> {
         @Override
-        public ObjectIterator<Entry<TagKey<Fluid>>> iterator() {
+        public ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> iterator() {
             return new EntryIterator();
         }
 
@@ -62,38 +73,38 @@ public final class FluidHeightMap extends AbstractObject2DoubleMap<TagKey<Fluid>
 
         @Override
         public boolean contains(Object o) {
-            if (!(o instanceof Entry<?> entry)) {
+            if (!(o instanceof Entry<?, ?> entry)) {
                 return false;
             }
             Object key = entry.getKey();
             if (key == FluidTags.WATER) {
-                return entry.getDoubleValue() == water;
+                return entry.getValue() == water;
             } else if (key == FluidTags.LAVA) {
-                return entry.getDoubleValue() == lava;
+                return entry.getValue() == lava;
             }
             return false;
         }
 
         @Override
         public boolean remove(final Object o) {
-            if (!(o instanceof Entry<?> entry)) {
+            if (!(o instanceof Entry<?, ?> entry)) {
                 return false;
             }
             Object key = entry.getKey();
             if (key == FluidTags.WATER) {
-                water = 0.0;
+                water = null;
                 return true;
             } else if (key == FluidTags.LAVA) {
-                lava = 0.0;
+                lava = null;
                 return true;
             }
             return false;
         }
     }
 
-    private final class EntryIterator implements ObjectIterator<Entry<TagKey<Fluid>>> {
+    private final class EntryIterator implements ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> {
         private int index = 0;
-        private Entry<TagKey<Fluid>> entry = null;
+        private Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> entry = null;
 
         @Override
         public boolean hasNext() {
@@ -101,16 +112,16 @@ public final class FluidHeightMap extends AbstractObject2DoubleMap<TagKey<Fluid>
         }
 
         @Override
-        public Entry<TagKey<Fluid>> next() {
+        public Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> next() {
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
             if (index == 0) {
                 index++;
-                return entry = new DoubleEntry(FluidTags.WATER);
+                return entry = new TrackerEntry(FluidTags.WATER);
             } else {
                 index++;
-                return entry = new DoubleEntry(FluidTags.LAVA);
+                return entry = new TrackerEntry(FluidTags.LAVA);
             }
         }
 
@@ -121,18 +132,18 @@ public final class FluidHeightMap extends AbstractObject2DoubleMap<TagKey<Fluid>
             }
             TagKey<Fluid> key = entry.getKey();
             if (key == FluidTags.WATER) {
-                water = 0.0;
+                water = null;
             } else if (key == FluidTags.LAVA) {
-                lava = 0.0;
+                lava = null;
             }
             entry = null;
         }
     }
 
-    private final class DoubleEntry implements Entry<TagKey<Fluid>> {
+    private final class TrackerEntry implements Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> {
         private final TagKey<Fluid> key;
 
-        public DoubleEntry(TagKey<Fluid> key) {
+        public TrackerEntry(TagKey<Fluid> key) {
             this.key = key;
         }
 
@@ -142,13 +153,13 @@ public final class FluidHeightMap extends AbstractObject2DoubleMap<TagKey<Fluid>
         }
 
         @Override
-        public double getDoubleValue() {
+        public EntityFluidInteraction.Tracker getValue() {
             return key == FluidTags.WATER ? water : lava;
         }
 
         @Override
-        public double setValue(double value) {
-            double prev;
+        public EntityFluidInteraction.Tracker setValue(EntityFluidInteraction.Tracker value) {
+            EntityFluidInteraction.Tracker prev;
             if (key == FluidTags.WATER) {
                 prev = water;
                 water = value;
