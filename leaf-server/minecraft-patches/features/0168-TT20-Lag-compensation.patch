@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Mon, 1 Nov 2077 00:00:00 +0800
+Subject: [PATCH] TT20: Lag compensation
+
+Original license: AGPL-3.0-only
+Original project: https://github.com/snackbag/TT20
+
+Co-authored-by: MrlingXD <90316914+wling-art@users.noreply.github.com>
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index bf8456b9455d0825a74116381abc5da7c7a354df..9077a799f5113ce598d1f5c6c72bfec8cfb8f747 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1699,6 +1699,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+         this.server.spark.tickStart(); // Paper - spark
+         new com.destroystokyo.paper.event.server.ServerTickStartEvent(this.tickCount+1).callEvent(); // Paper - Server Tick Events
++        if (org.dreeam.leaf.config.modules.misc.LagCompensation.enabled) org.dreeam.leaf.misc.LagCompensation.TPSCalculator.onTick(); // Leaf - TT20 - Lag compensation - tick hook
+         this.tickCount++;
+         this.tickRateManager.tick();
+         this.tickChildren(haveTime);
+diff --git a/net/minecraft/world/level/block/LiquidBlock.java b/net/minecraft/world/level/block/LiquidBlock.java
+index d735fb016fec424aab2d5082e4b1b4f33f6cbebe..3babcfe0f543238aa1c7cc895c9443397a54d2c4 100644
+--- a/net/minecraft/world/level/block/LiquidBlock.java
++++ b/net/minecraft/world/level/block/LiquidBlock.java
+@@ -179,7 +179,7 @@ public class LiquidBlock extends Block implements BucketPickup {
+                 return level.paperConfig().environment.waterOverLavaFlowSpeed;
+             }
+         }
+-        return this.fluid.getTickDelay(level);
++        return this.fluid.getCompensatedTickDelay(level, pos); // Leaf - TT20 - Lag compensation
+     }
+ 
+     private static boolean isLava(Level level, BlockPos pos) {
+@@ -200,7 +200,10 @@ public class LiquidBlock extends Block implements BucketPickup {
+         final RandomSource random
+     ) {
+         if ((level.getWorldBorder().world == null || level.getWorldBorder().world.purpurConfig.tickFluids) && state.getFluidState().isSource() || neighbourState.getFluidState().isSource()) { // Purpur - Tick fluids config
+-            ticks.scheduleTick(pos, state.getFluidState().getType(), this.fluid.getTickDelay(level));
++            // Leaf start - TT20 - Lag compensation
++            int delay = level instanceof Level realLevel ? this.fluid.getCompensatedTickDelay(realLevel, pos) : this.fluid.getTickDelay(level);
++            ticks.scheduleTick(pos, state.getFluidState().getType(), delay);
++            // Leaf end - TT20 - Lag compensation
+         }
+ 
+         if (directionToNeighbour == Direction.DOWN && shouldBubbleColumnOccupy(state)) {
+diff --git a/net/minecraft/world/level/material/FlowingFluid.java b/net/minecraft/world/level/material/FlowingFluid.java
+index ae0621d22911927596dba0d52e06868372428be1..ee8386abbf2322297afd24a98928f7cc539feb85 100644
+--- a/net/minecraft/world/level/material/FlowingFluid.java
++++ b/net/minecraft/world/level/material/FlowingFluid.java
+@@ -498,6 +498,12 @@ public abstract class FlowingFluid extends Fluid {
+         return this.getTickDelay(level);
+     }
+ 
++    // Leaf start - TT20 - Lag compensation - pos-aware delay, overridden to keep vanilla timing at fluid interfaces
++    public int getCompensatedTickDelay(Level level, BlockPos pos) {
++        return this.getTickDelay(level);
++    }
++    // Leaf end - TT20 - Lag compensation
++
+     @Override
+     public void tick(final ServerLevel level, final BlockPos pos, BlockState blockState, FluidState fluidState) {
+         if (!fluidState.isSource()) {
+diff --git a/net/minecraft/world/level/material/LavaFluid.java b/net/minecraft/world/level/material/LavaFluid.java
+index a99bea7ac0610fbf9427568d57c554fd26f35f9d..fe1b319e63b85331c44d31e99c2119edd21e2e5d 100644
+--- a/net/minecraft/world/level/material/LavaFluid.java
++++ b/net/minecraft/world/level/material/LavaFluid.java
+@@ -191,12 +191,29 @@ public abstract class LavaFluid extends FlowingFluid {
+ 
+     @Override
+     public int getTickDelay(final LevelReader level) {
++        // Leaf start - TT20 - Lag compensation
++        int delay = this.getRawTickDelay(level);
++        if (org.dreeam.leaf.config.modules.misc.LagCompensation.enabled && org.dreeam.leaf.config.modules.misc.LagCompensation.enableForLava) {
++            delay = org.dreeam.leaf.misc.LagCompensation.tt20(delay, true);
++        }
++        return delay;
++        // Leaf end - TT20 - Lag compensation
++    }
++
++    // Leaf start - TT20 - Lag compensation
++    private int getRawTickDelay(LevelReader level) {
+         return level.getWorldBorder().world != null ? (isFastLava(level) ? level.getWorldBorder().world.purpurConfig.lavaSpeedNether : level.getWorldBorder().world.purpurConfig.lavaSpeedNotNether) : (isFastLava(level) ? 10 : 30); // Purpur - Make lava flow speed configurable
+     }
+ 
++    @Override
++    public int getCompensatedTickDelay(Level level, BlockPos pos) {
++        return org.dreeam.leaf.misc.LagCompensation.fluidDelay(level, pos, this.getRawTickDelay(level), org.dreeam.leaf.config.modules.misc.LagCompensation.enableForLava, FluidTags.WATER);
++    }
++    // Leaf end - TT20 - Lag compensation
++
+     @Override
+     public int getSpreadDelay(final Level level, final BlockPos pos, final FluidState oldFluidState, final FluidState newFluidState) {
+-        int result = this.getTickDelay(level);
++        int result = this.getCompensatedTickDelay(level, pos); // Leaf - TT20 - Lag compensation
+         if (!oldFluidState.isEmpty()
+             && !newFluidState.isEmpty()
+             && !oldFluidState.getValue(FALLING)
+diff --git a/net/minecraft/world/level/material/WaterFluid.java b/net/minecraft/world/level/material/WaterFluid.java
+index e52362ae20646f0311262853af0cdc690a603b52..afc74ce10ca0a52eab8640c78033649694dae8be 100644
+--- a/net/minecraft/world/level/material/WaterFluid.java
++++ b/net/minecraft/world/level/material/WaterFluid.java
+@@ -125,9 +125,21 @@ public abstract class WaterFluid extends FlowingFluid {
+ 
+     @Override
+     public int getTickDelay(final LevelReader level) {
+-        return 5;
++        return org.dreeam.leaf.config.modules.misc.LagCompensation.enabled && org.dreeam.leaf.config.modules.misc.LagCompensation.enableForWater ? org.dreeam.leaf.misc.LagCompensation.tt20(5, true) : 5; // Leaf - TT20 - Lag compensation
+     }
+ 
++    // Leaf start - TT20 - Lag compensation
++    @Override
++    public int getCompensatedTickDelay(Level level, BlockPos pos) {
++        return org.dreeam.leaf.misc.LagCompensation.fluidDelay(level, pos, 5, org.dreeam.leaf.config.modules.misc.LagCompensation.enableForWater, FluidTags.LAVA); // 5 = vanilla water delay
++    }
++
++    @Override
++    protected int getSpreadDelay(Level level, BlockPos pos, FluidState currentState, FluidState newState) {
++        return this.getCompensatedTickDelay(level, pos);
++    }
++    // Leaf end - TT20 - Lag compensation
++
+     @Override
+     public boolean canBeReplacedWith(final FluidState state, final BlockGetter level, final BlockPos pos, final Fluid other, final Direction direction) {
+         return direction == Direction.DOWN && !other.is(FluidTags.WATER);

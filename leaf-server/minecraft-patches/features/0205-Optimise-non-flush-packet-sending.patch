@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spottedleaf <Spottedleaf@users.noreply.github.com>
+Date: Tue, 22 Sep 2020 01:49:19 -0700
+Subject: [PATCH] Optimise non-flush packet sending
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/10172
+
+Places like entity tracking make heavy use of packet sending,
+and internally netty will use some very expensive thread wakeup
+calls when scheduling.
+
+Thanks to various hacks in ProtocolLib as well as other
+plugins, we cannot simply use a queue of packets to group
+send on execute. We have to call execute for each packet.
+
+Tux's suggestion here is exactly what was needed - tag
+the Runnable indicating it should not make a wakeup call.
+
+Big thanks to Tux for making this possible as I had given
+up on this optimisation before he came along.
+
+Locally this patch drops the entity tracker tick by a full 1.5x.
+
+Co-authored-by: Quang Tran <3d7777456@gmail.com>
+
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 87dff5306c79b7f0fc940d9e85e523fa0c2f4ea6..6860b978a8151347999e4bf1d100b4cb85193d25 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -128,6 +128,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     public boolean isPending = true;
+     public boolean queueImmunity;
+     // Paper end - Optimize network
++    private io.netty.channel.SingleThreadEventLoop eventLoop; // Paper - optimise packets that are not flushed
+ 
+     public Connection(final PacketFlow receiving) {
+         this.receiving = receiving;
+@@ -137,6 +138,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     public void channelActive(final ChannelHandlerContext ctx) throws Exception {
+         super.channelActive(ctx);
+         this.channel = ctx.channel();
++        this.eventLoop = (io.netty.channel.SingleThreadEventLoop) this.channel.eventLoop(); // Paper - optimise packets that are not flushed
+         this.address = this.channel.remoteAddress();
+         this.preparing = false; // Spigot
+         if (this.delayedDisconnect != null) {
+@@ -446,6 +448,11 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         if (this.channel.eventLoop().inEventLoop()) {
+             this.doSendPacket(packet, listener, flush);
+         } else {
++            // Paper start - optimise packets that are not flushed
++            if (!flush && org.dreeam.leaf.config.modules.network.OptimizeNonFlushPacketSending.enabled) {
++                this.eventLoop.lazyExecute(() -> this.doSendPacket(packet, listener, false));
++            } else
++                // Paper end - optimise packets that are not flushed
+             this.channel.eventLoop().execute(() -> this.doSendPacket(packet, listener, flush));
+         }
+     }

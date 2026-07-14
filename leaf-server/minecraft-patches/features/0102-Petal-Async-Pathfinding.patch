@@ -1,0 +1,1133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: peaches94 <peachescu94@gmail.com>
+Date: Sun, 26 Jun 2022 16:51:37 -0500
+Subject: [PATCH] Petal: Async Pathfinding
+
+Fixed & Updated by KaiijuMC
+Original license: GPL-3.0-only
+Original project:  https://github.com/KaiijuMC/Kaiiju
+
+Original license: GPL-3.0-only
+Original project: https://github.com/Bloom-host/Petal
+
+Co-authored-by: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Co-authored-by: Taiyou06 <kaandindar21@gmail.com>
+Co-authored-by: Altiami <yoshimo.kristin@gmail.com>
+
+This patch was ported downstream from the Petal fork.
+
+Makes most pathfinding-related work happen asynchronously
+
+diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
+index 790e14523d60cf30438a21cf1ff39107301238b7..e175bb2b4fd8f80996e14a409ea3b4bb6e1de10f 100644
+--- a/net/minecraft/world/entity/Mob.java
++++ b/net/minecraft/world/entity/Mob.java
+@@ -254,10 +254,12 @@ public abstract class Mob extends LivingEntity implements Targeting, EquipmentUs
+ 
+     @Override
+     public @Nullable LivingEntity getTarget() {
++        //if (Thread.currentThread().getName().contains("petal-async-pathfinding-thread")) return this.target; // Kaiiju - petal - async path processing - Don't reset target when async pathfinding! // Leaf - Don't need this
+         return this.asValidTarget(this.target);
+     }
+ 
+     public @Nullable LivingEntity getTargetUnchecked() {
++        //if (Thread.currentThread().getName().contains("petal-async-pathfinding-thread")) return this.target; // Kaiiju - petal - async path processing - Don't reset target when async pathfinding! // Leaf - Don't need this
+         return this.target;
+     }
+ 
+diff --git a/net/minecraft/world/entity/ai/behavior/AcquirePoi.java b/net/minecraft/world/entity/ai/behavior/AcquirePoi.java
+index 9bc602112d3bc2eb17620aff4d888ac0d6658e33..26caa2cf6b8527dccd167ea1af4829ed92e770c7 100644
+--- a/net/minecraft/world/entity/ai/behavior/AcquirePoi.java
++++ b/net/minecraft/world/entity/ai/behavior/AcquirePoi.java
+@@ -54,31 +54,68 @@ public class AcquirePoi {
+         final Optional<Byte> onPoiAcquisitionEvent,
+         final BiPredicate<ServerLevel, BlockPos> validPoi
+     ) {
+-        int batchSize = 5;
+-        int rate = 20;
+-        MutableLong nextScheduledStart = new MutableLong(0L);
+-        Long2ObjectMap<AcquirePoi.JitteredLinearRetry> batchCache = new Long2ObjectOpenHashMap<>();
+-        OneShot<PathfinderMob> acquirePoi = BehaviorBuilder.create(
+-            i -> i.group(i.absent(memoryToAcquire))
+-                .apply(
+-                    i,
+-                    toAcquire -> (level, body, timestamp) -> {
++        return new AcquirePoiBehavior(poiType, memoryToValidate, memoryToAcquire, onPoiAcquisitionEvent, validPoi, onlyIfAdult);
++    }
++
++                // Kaiiju start - petal - async path processing
++                private static final class AcquirePoiBehavior extends OneShot<PathfinderMob> {
++                    private final Predicate<Holder<PoiType>> poiType;
++                    private final MemoryModuleType<GlobalPos> memoryToValidate;
++                    private final MemoryModuleType<GlobalPos> memoryToAcquire;
++                    private final boolean onlyIfAdult;
++                    private final Optional<Byte> onPoiAcquisitionEvent;
++                    private final BiPredicate<ServerLevel, BlockPos> validPoi;
++                    private final Long2ObjectMap<AcquirePoi.JitteredLinearRetry> batchCache = new Long2ObjectOpenHashMap<>();
++                    private long nextScheduledStart;
++                    private @org.jspecify.annotations.Nullable Path pending;
++                    private @org.jspecify.annotations.Nullable Set<Pair<Holder<PoiType>, BlockPos>> stateSet;
++
++                    private AcquirePoiBehavior(final Predicate<Holder<PoiType>> poiType, final MemoryModuleType<GlobalPos> memoryToValidate, final MemoryModuleType<GlobalPos> memoryToAcquire, final Optional<Byte> onPoiAcquisitionEvent, final BiPredicate<ServerLevel, BlockPos> validPoi, final boolean onlyIfAdult) {
++                        this.poiType = poiType;
++                        this.memoryToValidate = memoryToValidate;
++                        this.memoryToAcquire = memoryToAcquire;
++                        this.onPoiAcquisitionEvent = onPoiAcquisitionEvent;
++                        this.onlyIfAdult = onlyIfAdult;
++                        this.validPoi = validPoi;
++                    }
++
++                    @Override
++                    public Set<MemoryModuleType<?>> getRequiredMemories() {
++                        return memoryToAcquire == memoryToValidate ? Set.of(memoryToAcquire) : Set.of(memoryToValidate);
++                    }
++
++                    @Override
++                    public boolean trigger(final ServerLevel level, final PathfinderMob body, final long timestamp) {
++                        if (!body.getBrain().checkMemory(memoryToValidate, net.minecraft.world.entity.ai.memory.MemoryStatus.VALUE_ABSENT)) {
++                            return false;
++                        }
++                        if (memoryToValidate != memoryToAcquire) {
++                            if (!body.getBrain().checkMemory(memoryToAcquire, net.minecraft.world.entity.ai.memory.MemoryStatus.VALUE_ABSENT)) {
++                                return false;
++                            }
++                        }
++                        RandomSource random = level.getRandom();
++                        if (pending != null && stateSet != null && pending.isProcessed()) {
++                            processPath(poiType, onPoiAcquisitionEvent, batchCache, level, body, memoryToAcquire, timestamp, level.getPoiManager(), stateSet, pending, random);
++                            pending = null;
++                            stateSet = null;
++                        }
++
+                         if (onlyIfAdult && body.isBaby()) {
+                             return false;
+                         }
+ 
+-                        RandomSource random = level.getRandom();
+-                        if (nextScheduledStart.longValue() == 0L) {
+-                            nextScheduledStart.setValue(level.getGameTime() + random.nextInt(20));
++                        if (nextScheduledStart == 0L) {
++                            nextScheduledStart = level.getGameTime() + random.nextInt(20);
+                             return false;
+                         }
+ 
+-                        if (level.getGameTime() < nextScheduledStart.longValue()) {
++                        if (level.getGameTime() < nextScheduledStart) {
+                             return false;
+                         }
+ 
+-                        nextScheduledStart.setValue(timestamp + 20L + random.nextInt(20));
+-                        if (level.paperConfig().entities.behavior.stuckEntityPoiRetryDelay.enabled() && body.getNavigation().isStuck()) nextScheduledStart.add(level.paperConfig().entities.behavior.stuckEntityPoiRetryDelay.intValue()); // Paper - Next stuck check delay config
++                        nextScheduledStart = timestamp + 20L + random.nextInt(20);
++                        if (level.paperConfig().entities.behavior.stuckEntityPoiRetryDelay.enabled() && body.getNavigation().isStuck()) nextScheduledStart += level.paperConfig().entities.behavior.stuckEntityPoiRetryDelay.intValue(); // Paper - Next stuck check delay config
+                         PoiManager poiManager = level.getPoiManager();
+                         batchCache.long2ObjectEntrySet().removeIf(entry -> !entry.getValue().isStillValid(timestamp));
+                         Predicate<BlockPos> cacheTest = pos -> {
+@@ -104,30 +141,49 @@ public class AcquirePoi {
+                             }
+                         }
+                         // Paper end - optimise POI searches
++                        // Kaiiju start - petal - async path processing
+                         Path path = findPathToPois(body, poiPositions);
+-                        if (path != null && path.canReach()) {
+-                            BlockPos targetPos = path.getTarget();
+-                            poiManager.getType(targetPos).ifPresent(type -> {
+-                                poiManager.take(poiType, (t, poiPos) -> poiPos.equals(targetPos), targetPos, 1);
+-                                toAcquire.set(GlobalPos.of(level.dimension(), targetPos));
+-                                onPoiAcquisitionEvent.ifPresent(event -> level.broadcastEntityEvent(body, event));
+-                                batchCache.clear();
+-                                level.debugSynchronizers().updatePoi(targetPos);
+-                            });
++                        if (path != null && !path.isProcessed()) {
++                            this.pending = path;
++                            this.stateSet = poiPositions;
+                         } else {
+-                            for (Pair<Holder<PoiType>, BlockPos> p : poiPositions) {
+-                                batchCache.computeIfAbsent(p.getSecond().asLong(), key -> new AcquirePoi.JitteredLinearRetry(random, timestamp));
+-                            }
++                            processPath(poiType, onPoiAcquisitionEvent, batchCache, level, body, memoryToAcquire, timestamp, poiManager, poiPositions, path, random);
+                         }
+-
++                        // Kaiiju end - petal - async path processing
+                         return true;
+                     }
+-                )
+-        );
+-        return memoryToAcquire == memoryToValidate
+-            ? acquirePoi
+-            : BehaviorBuilder.create(i -> i.group(i.absent(memoryToValidate)).apply(i, toValidate -> acquirePoi));
++                }
++    // Kaiiju end - petal - async path processing
++
++    // Kaiiju start - petal - async path processing
++    // Extracted from `AcquirePoi#create`
++    private static void processPath(final Predicate<Holder<PoiType>> poiType,
++                                    final Optional<Byte> onPoiAcquisitionEvent,
++                                    final Long2ObjectMap<JitteredLinearRetry> batchCache,
++                                    final ServerLevel level,
++                                    final PathfinderMob walkTarget,
++                                    final MemoryModuleType<GlobalPos> memoryToAcquire,
++                                    final long timestamp,
++                                    final PoiManager poiManager,
++                                    final Set<Pair<Holder<PoiType>, BlockPos>> poiPositions,
++                                    final @org.jspecify.annotations.Nullable Path path,
++                                    final RandomSource random) {
++        if (path != null && path.canReach()) {
++            BlockPos targetPos = path.getTarget();
++            poiManager.getType(targetPos).ifPresent(type -> {
++                poiManager.take(poiType, (t, poiPos) -> poiPos.equals(targetPos), targetPos, 1);
++                walkTarget.getBrain().setMemory(memoryToAcquire, GlobalPos.of(level.dimension(), targetPos));
++                onPoiAcquisitionEvent.ifPresent(event -> level.broadcastEntityEvent(walkTarget, event));
++                batchCache.clear();
++                level.debugSynchronizers().updatePoi(targetPos);
++            });
++        } else {
++            for (Pair<Holder<PoiType>, BlockPos> p : poiPositions) {
++                batchCache.computeIfAbsent(p.getSecond().asLong(), key -> new AcquirePoi.JitteredLinearRetry(random, timestamp));
++            }
++        }
+     }
++    // Kaiiju end - petal - async path processing
+ 
+     public static @Nullable Path findPathToPois(final Mob body, final Set<Pair<Holder<PoiType>, BlockPos>> pois) {
+         if (pois.isEmpty()) {
+diff --git a/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java b/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
+index b40da004b5281a041ee896ae176bfb9c4660f353..bf7dc0f29e452d878756a10d97475721fd6a5747 100644
+--- a/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
++++ b/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
+@@ -20,6 +20,7 @@ public class MoveToTargetSink extends Behavior<Mob> {
+     private static final int MAX_COOLDOWN_BEFORE_RETRYING = 40;
+     private int remainingCooldown;
+     private @Nullable Path path;
++    private boolean finishedProcessing; // Kaiiju - petal - async path processing - track when path is processed
+     private @Nullable BlockPos lastTargetPos;
+     private float speedModifier;
+ 
+@@ -52,9 +53,10 @@ public class MoveToTargetSink extends Behavior<Mob> {
+         Brain<?> brain = body.getBrain();
+         WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get();
+         boolean reachedTarget = this.reachedTarget(body, walkTarget);
+-        if (!reachedTarget && this.tryComputePath(body, walkTarget, level.getGameTime())) {
++        if (!org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled && !reachedTarget && this.tryComputePath(body, walkTarget, level.getGameTime())) { // Kaiiju - petal - async path processing - Async path processing means we can't know if the path is reachable here
+             this.lastTargetPos = walkTarget.getTarget().currentBlockPosition();
+             return true;
++        } else if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled && !reachedTarget) { return true; // Kaiiju - petal - async path processing
+         }
+ 
+         brain.eraseMemory(MemoryModuleType.WALK_TARGET);
+@@ -67,6 +69,7 @@ public class MoveToTargetSink extends Behavior<Mob> {
+ 
+     @Override
+     protected boolean canStillUse(final ServerLevel level, final Mob body, final long timestamp) {
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled && !this.finishedProcessing) return true; // Kaiiju - petal - async path processing - wait for processing
+         if (this.path != null && this.lastTargetPos != null) {
+             Optional<WalkTarget> walkTarget = body.getBrain().getMemory(MemoryModuleType.WALK_TARGET);
+             boolean isSpectator = walkTarget.map(MoveToTargetSink::isWalkTargetSpectator).orElse(false);
+@@ -93,12 +96,68 @@ public class MoveToTargetSink extends Behavior<Mob> {
+ 
+     @Override
+     protected void start(final ServerLevel level, final Mob body, final long timestamp) {
++        // Kaiiju start - petal - async path processing - start processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            Brain<?> brain = body.getBrain();
++            WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get();
++
++            this.finishedProcessing = false;
++            this.lastTargetPos = walkTarget.getTarget().currentBlockPosition();
++            this.path = this.computePath(body, walkTarget);
++            return;
++        }
++        // Kaiiju end - petal - async path processing
+         body.getBrain().setMemory(MemoryModuleType.PATH, this.path);
+         body.getNavigation().moveTo(this.path, this.speedModifier);
+     }
+ 
+     @Override
+     protected void tick(final ServerLevel level, final Mob body, final long timestamp) {
++        // Kaiiju start - petal - async path processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            if (this.path != null && !this.path.isProcessed()) return; // wait for processing
++
++            if (!this.finishedProcessing) {
++                this.finishedProcessing = true;
++
++                Brain<?> brain = body.getBrain();
++                boolean canReach = this.path != null && this.path.canReach();
++                if (canReach) {
++                    brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
++                } else if (!brain.hasMemoryValue(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE)) {
++                    brain.setMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE, timestamp);
++                }
++
++                if (!canReach) {
++                    Optional<WalkTarget> walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET);
++
++                    if (walkTarget.isEmpty()) return;
++
++                    BlockPos blockPos = walkTarget.get().getTarget().currentBlockPosition();
++                    Vec3 vec3 = DefaultRandomPos.getPosTowards((PathfinderMob) body, 10, 7, Vec3.atBottomCenterOf(blockPos), (float) Math.PI / 2F);
++                    if (vec3 != null) {
++                        // try recalculating the path using a random position
++                        this.path = body.getNavigation().createPath(vec3.x, vec3.y, vec3.z, 0);
++                        this.finishedProcessing = false;
++                        return;
++                    }
++                }
++
++                body.getBrain().setMemory(MemoryModuleType.PATH, this.path);
++                body.getNavigation().moveTo(this.path, this.speedModifier);
++            }
++
++            Path path = body.getNavigation().getPath();
++            Brain<?> brain = body.getBrain();
++
++            if (path != null && this.lastTargetPos != null && brain.hasMemoryValue(MemoryModuleType.WALK_TARGET)) {
++                WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get(); // we know isPresent = true
++                if (walkTarget.getTarget().currentBlockPosition().distSqr(this.lastTargetPos) > 4.0D) {
++                    this.start(level, body, timestamp);
++                }
++            }
++        } else {
++            // Kaiiju end - petal - async path processing
+         Path newPath = body.getNavigation().getPath();
+         Brain<?> brain = body.getBrain();
+         if (this.path != newPath) {
+@@ -113,7 +172,22 @@ public class MoveToTargetSink extends Behavior<Mob> {
+                 this.start(level, body, timestamp);
+             }
+         }
++        } // Kaiiju - petal - async path processing
++    }
++
++    // Kaiiju start - petal - async path processing
++    private @Nullable Path computePath(Mob body, WalkTarget walkTarget) {
++        BlockPos targetPos = walkTarget.getTarget().currentBlockPosition();
++        // don't pathfind outside region
++        //if (!io.papermc.paper.util.TickThread.isTickThreadFor((ServerLevel) body.level(), targetPos)) return null; // Leaf - Don't need this
++        this.speedModifier = walkTarget.getSpeedModifier();
++        Brain<?> brain = body.getBrain();
++        if (this.reachedTarget(body, walkTarget)) {
++            brain.eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
++        }
++        return body.getNavigation().createPath(targetPos, 0);
+     }
++    // Kaiiju end - petal - async path processing
+ 
+     private boolean tryComputePath(final Mob body, final WalkTarget walkTarget, final long timestamp) {
+         BlockPos targetPos = walkTarget.getTarget().currentBlockPosition();
+diff --git a/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java b/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java
+index 5bd7473b0db1a87f905c01c19ddf99e3a447bcfa..57e8552ccd4af1bfe6f9e65fe26674cb61b1ac78 100644
+--- a/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java
++++ b/net/minecraft/world/entity/ai/behavior/SetClosestHomeAsWalkTarget.java
+@@ -27,24 +27,50 @@ public class SetClosestHomeAsWalkTarget {
+     private static final int OK_DISTANCE_SQR = 4;
+ 
+     public static BehaviorControl<PathfinderMob> create(final float speedModifier) {
+-        Long2LongMap batchCache = new Long2LongOpenHashMap();
+-        MutableLong lastUpdate = new MutableLong(0L);
+-        return BehaviorBuilder.create(
+-            i -> i.group(i.absent(MemoryModuleType.WALK_TARGET), i.absent(MemoryModuleType.HOME))
+-                .apply(
+-                    i,
+-                    (walkTarget, home) -> (level, body, timestamp) -> {
+-                        if (level.getGameTime() - lastUpdate.longValue() < RATE) {
++        return new SetClosestHomeAsWalkTargetBehavior(speedModifier);
++    }
++
++                // Kaiiju start - petal - async path processing
++                private static final class SetClosestHomeAsWalkTargetBehavior extends OneShot<PathfinderMob> {
++                    private final Long2LongMap batchCache = new Long2LongOpenHashMap();
++                    private long lastUpdate = 0L;
++                    private final float speedModifier;
++                    private  @org.jspecify.annotations.Nullable Path pending;
++                    private int stateInt;
++
++                    private SetClosestHomeAsWalkTargetBehavior(final float speedModifier) {
++                        this.speedModifier = speedModifier;
++                    }
++
++                    @Override
++                    public Set<MemoryModuleType<?>> getRequiredMemories() {
++                        return Set.of(MemoryModuleType.WALK_TARGET, MemoryModuleType.HOME);
++                    }
++
++                    @Override
++                    public boolean trigger(final net.minecraft.server.level.ServerLevel level, final PathfinderMob body, final long gameTime) {
++                        if (!body.getBrain().checkMemory(MemoryModuleType.WALK_TARGET, net.minecraft.world.entity.ai.memory.MemoryStatus.VALUE_ABSENT)) {
++                            return false;
++                        }
++                        if (!body.getBrain().checkMemory(MemoryModuleType.HOME, net.minecraft.world.entity.ai.memory.MemoryStatus.VALUE_ABSENT)) {
+                             return false;
+                         }
+ 
++                        if (pending != null && pending.isProcessed()) {
++                            processPath(speedModifier, batchCache, lastUpdate, body, level, level.getPoiManager(), stateInt, pending);
++                            pending = null;
++                        }
++
++                        if (level.getGameTime() - lastUpdate < RATE) {
++                            return false;
++                        } else {
+                         PoiManager poiManager = level.getPoiManager();
+                         Optional<BlockPos> closest = poiManager.findClosest(
+                             p -> p.is(PoiTypes.HOME), body.blockPosition(), AcquirePoi.SCAN_RANGE, PoiManager.Occupancy.ANY
+                         );
+                         if (!closest.isEmpty() && !(closest.get().distSqr(body.blockPosition()) <= OK_DISTANCE_SQR)) {
+                             MutableInt triedCount = new MutableInt(0);
+-                            lastUpdate.setValue(level.getGameTime() + level.getRandom().nextInt(RATE));
++                            lastUpdate = (level.getGameTime() + level.getRandom().nextInt(20));
+                             Predicate<BlockPos> cacheTest = pos -> {
+                                 long key = pos.asLong();
+                                 if (batchCache.containsKey(key)) {
+@@ -55,7 +81,7 @@ public class SetClosestHomeAsWalkTarget {
+                                     return false;
+                                 }
+ 
+-                                batchCache.put(key, lastUpdate.longValue() + CACHE_TIMEOUT);
++                                batchCache.put(key, lastUpdate + CACHE_TIMEOUT);
+                                 return true;
+                             };
+                             Set<Pair<Holder<PoiType>, BlockPos>> pois = poiManager.findAllWithType(
+@@ -63,23 +89,44 @@ public class SetClosestHomeAsWalkTarget {
+                                 )
+                                 .collect(Collectors.toSet());
+                             Path path = AcquirePoi.findPathToPois(body, pois);
+-                            if (path != null && path.canReach()) {
+-                                BlockPos targetPos = path.getTarget();
+-                                Optional<Holder<PoiType>> type = poiManager.getType(targetPos);
+-                                if (type.isPresent()) {
+-                                    walkTarget.set(new WalkTarget(targetPos, speedModifier, 1));
+-                                    level.debugSynchronizers().updatePoi(targetPos);
+-                                }
+-                            } else if (triedCount.intValue() < BATCH_SIZE) {
+-                                batchCache.long2LongEntrySet().removeIf(entry -> entry.getLongValue() < lastUpdate.longValue());
++                            // Kaiiju start - petal - Async path processing
++                            if (path != null && !path.isProcessed()) {
++                                this.pending = path;
++                                this.stateInt = triedCount.intValue();
++                            } else {
++                                processPath(speedModifier, batchCache, lastUpdate, body, level, poiManager, triedCount.intValue(), path);
+                             }
++                            // Kaiiju end - petal - Async path processing
+ 
+                             return true;
+                         } else {
+                             return false;
+                         }
+                     }
+-                )
+-        );
++                    }
++                }
++                // Kaiiju end - petal - async path processing
++
++    // Kaiiju start - petal - async path processing
++    // Extracted from `SetClosestHomeAsWalkTarget#create`
++    private static void processPath(final float speedModifier,
++                                    final Long2LongMap batchCache,
++                                    final long lastUpdate,
++                                    final PathfinderMob walkTarget,
++                                    final net.minecraft.server.level.ServerLevel level,
++                                    final PoiManager poiManager,
++                                    final int triedCount,
++                                    final @org.jspecify.annotations.Nullable Path path) {
++        if (path != null && path.canReach()) {
++            BlockPos targetPos = path.getTarget();
++            Optional<Holder<PoiType>> type = poiManager.getType(targetPos);
++            if (type.isPresent()) {
++                walkTarget.getBrain().setMemory(MemoryModuleType.WALK_TARGET, new WalkTarget(targetPos, speedModifier, 1));
++                level.debugSynchronizers().updatePoi(targetPos);
++            }
++        } else if (triedCount < BATCH_SIZE) {
++            batchCache.long2LongEntrySet().removeIf(entry -> entry.getLongValue() < lastUpdate);
++        }
+     }
++    // Kaiiju end - petal - async path processing
+ }
+diff --git a/net/minecraft/world/entity/ai/goal/DoorInteractGoal.java b/net/minecraft/world/entity/ai/goal/DoorInteractGoal.java
+index 0b383b16145d44e5dc29b8de123546656b4793dd..436e44f2d508035353e23d0c979ee637faf37d98 100644
+--- a/net/minecraft/world/entity/ai/goal/DoorInteractGoal.java
++++ b/net/minecraft/world/entity/ai/goal/DoorInteractGoal.java
+@@ -57,7 +57,7 @@ public abstract class DoorInteractGoal extends Goal {
+         }
+ 
+         Path path = this.mob.getNavigation().getPath();
+-        if (path != null && !path.isDone()) {
++        if (path != null && path.isProcessed() && !path.isDone()) { // Kaiiju - petal - async path processing - ensure path is processed
+             for (int i = 0; i < Math.min(path.getNextNodeIndex() + 2, path.getNodeCount()); i++) {
+                 Node node = path.getNode(i);
+                 this.doorPos = new BlockPos(node.x, node.y + 1, node.z);
+diff --git a/net/minecraft/world/entity/ai/navigation/AmphibiousPathNavigation.java b/net/minecraft/world/entity/ai/navigation/AmphibiousPathNavigation.java
+index 45942481a972f2308eae80f6f0f8b886e47016ec..35545cf0fa78c7c6e443aedc7b6e4b59c815a2f1 100644
+--- a/net/minecraft/world/entity/ai/navigation/AmphibiousPathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/AmphibiousPathNavigation.java
+@@ -12,9 +12,25 @@ public class AmphibiousPathNavigation extends PathNavigation {
+         super(mob, level);
+     }
+ 
++    // Kaiiju start - petal - async path processing
++    private static final org.dreeam.leaf.async.path.NodeEvaluatorGenerator NODE_EVALUATOR_GENERATOR = (org.dreeam.leaf.async.path.NodeEvaluatorFeatures nodeEvaluatorFeatures) -> {
++        AmphibiousNodeEvaluator nodeEvaluator = new AmphibiousNodeEvaluator(false);
++        nodeEvaluator.setCanPassDoors(nodeEvaluatorFeatures.canPassDoors());
++        nodeEvaluator.setCanFloat(nodeEvaluatorFeatures.canFloat());
++        nodeEvaluator.setCanWalkOverFences(nodeEvaluatorFeatures.canWalkOverFences());
++        nodeEvaluator.setCanOpenDoors(nodeEvaluatorFeatures.canOpenDoors());
++        return nodeEvaluator;
++    };
++    // Kaiiju end - petal - async path processing
++
+     @Override
+     protected PathFinder createPathFinder(final int maxVisitedNodes) {
+         this.nodeEvaluator = new AmphibiousNodeEvaluator(false);
++        // Kaiiju start - petal - async path processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            return new PathFinder(this.nodeEvaluator, maxVisitedNodes, NODE_EVALUATOR_GENERATOR);
++        }
++        // Kaiiju end - petal - async path processing
+         return new PathFinder(this.nodeEvaluator, maxVisitedNodes);
+     }
+ 
+diff --git a/net/minecraft/world/entity/ai/navigation/FlyingPathNavigation.java b/net/minecraft/world/entity/ai/navigation/FlyingPathNavigation.java
+index e44814cfb6afb594456b8215bd13a92e93de2c85..9a1d57b68c912b73ffa5f7d986ded6c9f9076680 100644
+--- a/net/minecraft/world/entity/ai/navigation/FlyingPathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/FlyingPathNavigation.java
+@@ -15,9 +15,25 @@ public class FlyingPathNavigation extends PathNavigation {
+         super(mob, level);
+     }
+ 
++    // Kaiiju start - petal - async path processing
++    private static final org.dreeam.leaf.async.path.NodeEvaluatorGenerator NODE_EVALUATOR_GENERATOR = (org.dreeam.leaf.async.path.NodeEvaluatorFeatures nodeEvaluatorFeatures) -> {
++        FlyNodeEvaluator nodeEvaluator = new FlyNodeEvaluator();
++        nodeEvaluator.setCanPassDoors(nodeEvaluatorFeatures.canPassDoors());
++        nodeEvaluator.setCanFloat(nodeEvaluatorFeatures.canFloat());
++        nodeEvaluator.setCanWalkOverFences(nodeEvaluatorFeatures.canWalkOverFences());
++        nodeEvaluator.setCanOpenDoors(nodeEvaluatorFeatures.canOpenDoors());
++        return nodeEvaluator;
++    };
++    // Kaiiju end - petal - async path processing
++
+     @Override
+     protected PathFinder createPathFinder(final int maxVisitedNodes) {
+         this.nodeEvaluator = new FlyNodeEvaluator();
++        // Kaiiju start - petal - async path processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            return new PathFinder(this.nodeEvaluator, maxVisitedNodes, NODE_EVALUATOR_GENERATOR);
++        }
++        // Kaiiju end - petal - async path processing
+         return new PathFinder(this.nodeEvaluator, maxVisitedNodes);
+     }
+ 
+@@ -47,6 +63,7 @@ public class FlyingPathNavigation extends PathNavigation {
+         if (this.hasDelayedRecomputation) {
+             this.recomputePath();
+         }
++        if (this.path != null && !this.path.isProcessed()) return; // Kaiiju - petal - async path processing
+ 
+         if (!this.isDone()) {
+             if (this.canUpdatePath()) {
+diff --git a/net/minecraft/world/entity/ai/navigation/GroundPathNavigation.java b/net/minecraft/world/entity/ai/navigation/GroundPathNavigation.java
+index de82fe68fabd0a0c1b425cb0ba7b2e244cfc8eb8..70c7bef14d3559d09f80f40c9719980161a5ac84 100644
+--- a/net/minecraft/world/entity/ai/navigation/GroundPathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/GroundPathNavigation.java
+@@ -24,9 +24,25 @@ public class GroundPathNavigation extends PathNavigation {
+         super(mob, level);
+     }
+ 
++    // Kaiiju start - petal - async path processing
++    protected static final org.dreeam.leaf.async.path.NodeEvaluatorGenerator NODE_EVALUATOR_GENERATOR = (org.dreeam.leaf.async.path.NodeEvaluatorFeatures nodeEvaluatorFeatures) -> {
++        WalkNodeEvaluator nodeEvaluator = new WalkNodeEvaluator();
++        nodeEvaluator.setCanPassDoors(nodeEvaluatorFeatures.canPassDoors());
++        nodeEvaluator.setCanFloat(nodeEvaluatorFeatures.canFloat());
++        nodeEvaluator.setCanWalkOverFences(nodeEvaluatorFeatures.canWalkOverFences());
++        nodeEvaluator.setCanOpenDoors(nodeEvaluatorFeatures.canOpenDoors());
++        return nodeEvaluator;
++    };
++    // Kaiiju end - petal - async path processing
++
+     @Override
+     protected PathFinder createPathFinder(final int maxVisitedNodes) {
+         this.nodeEvaluator = new WalkNodeEvaluator();
++        // Kaiiju start - petal - async path processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            return new PathFinder(this.nodeEvaluator, maxVisitedNodes, NODE_EVALUATOR_GENERATOR);
++        }
++        // Kaiiju end - petal - async path processing
+         return new PathFinder(this.nodeEvaluator, maxVisitedNodes);
+     }
+ 
+diff --git a/net/minecraft/world/entity/ai/navigation/PathNavigation.java b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+index 862224dfc003bf02ee0d7c1d804549210d6c8ffa..54ac707d37e2701bb2563df06b9430a858dbb700 100644
+--- a/net/minecraft/world/entity/ai/navigation/PathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+@@ -167,6 +167,12 @@ public abstract class PathNavigation {
+             return null;
+         }
+ 
++        // Kaiiju start - petal - async path processing - catch early if it's still processing these positions let it keep processing
++        if (this.path instanceof org.dreeam.leaf.async.path.AsyncPath asyncPath && !asyncPath.isProcessed() && asyncPath.hasSameProcessingPositions(targets)) {
++            return this.path;
++        }
++        // Kaiiju end - petal - async path processing
++
+         if (this.path != null && !this.path.isDone() && targets.contains(this.targetPos)) {
+             return this.path;
+         }
+@@ -195,11 +201,29 @@ public abstract class PathNavigation {
+         PathNavigationRegion region = new PathNavigationRegion(this.level, fromPos.offset(-radius, -radius, -radius), fromPos.offset(radius, radius, radius));
+         Path path = this.pathFinder.findPath(region, this.mob, targets, maxPathLength, reachRange, this.maxVisitedNodesMultiplier);
+         profiler.pop();
++        // Kaiiju start - petal - async path processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            // assign early a target position. most calls will only have 1 position
++            if (!targets.isEmpty()) this.targetPos = targets.iterator().next();
++
++            org.dreeam.leaf.async.path.AsyncPathProcessor.awaitProcessing(path, processedPath -> {
++                // check that processing didn't take so long that we calculated a new path
++                if (processedPath != this.path) return;
++
++                if (processedPath != null && processedPath.getTarget() != null) {
++                    this.targetPos = processedPath.getTarget();
++                    this.reachRange = reachRange;
++                    this.resetStuckTimeout();
++                }
++            });
++        } else {
++            // Kaiiju end - petal - async path processing
+         if (path != null && path.getTarget() != null) {
+             this.targetPos = path.getTarget();
+             this.reachRange = reachRange;
+             this.resetStuckTimeout();
+         }
++        } // Kaiiju - petal - async path processing
+ 
+         return path;
+     }
+@@ -251,8 +275,8 @@ public abstract class PathNavigation {
+             return false;
+         }
+ 
+-        this.trimPath();
+-        if (this.path.getNodeCount() <= 0) {
++        if (path.isProcessed()) this.trimPath(); // Kaiiju - petal - async path processing - only trim if processed
++        if (path.isProcessed() && this.path.getNodeCount() <= 0) { // Kaiiju - petal - async path processing - only check node count if processed
+             return false;
+         }
+ 
+@@ -272,6 +296,7 @@ public abstract class PathNavigation {
+         if (this.hasDelayedRecomputation) {
+             this.recomputePath();
+         }
++        if (this.path != null && !this.path.isProcessed()) return; // Kaiiju - petal - async path processing - skip pathfinding if we're still processing
+ 
+         if (!this.isDone()) {
+             if (this.canUpdatePath()) {
+@@ -297,6 +322,7 @@ public abstract class PathNavigation {
+     }
+ 
+     protected void followThePath() {
++        if (!this.path.isProcessed()) return; // Kaiiju - petal - async path processing - skip if not processed
+         Vec3 mobPos = this.getTempMobPos();
+         this.maxDistanceToWaypoint = this.mob.getBbWidth() > 0.75F ? this.mob.getBbWidth() / 2.0F : 0.75F - this.mob.getBbWidth() / 2.0F;
+         Vec3i currentNodePos = this.path.getNextNodePos();
+@@ -457,7 +483,7 @@ public abstract class PathNavigation {
+     public boolean shouldRecomputePath(final BlockPos pos) {
+         if (this.hasDelayedRecomputation) {
+             return false;
+-        } else if (this.path != null && !this.path.isDone() && this.path.getNodeCount() != 0) {
++        } else if (this.path != null && this.path.isProcessed() && !this.path.isDone() && this.path.getNodeCount() != 0) { // Kaiiju - petal - async path processing - Skip if not processed
+             Node target = this.path.getEndNode();
+             Vec3 middlePos = new Vec3((target.x + this.mob.getX()) / 2.0, (target.y + this.mob.getY()) / 2.0, (target.z + this.mob.getZ()) / 2.0);
+             return pos.closerToCenterThan(middlePos, this.path.getNodeCount() - this.path.getNextNodeIndex());
+diff --git a/net/minecraft/world/entity/ai/navigation/WaterBoundPathNavigation.java b/net/minecraft/world/entity/ai/navigation/WaterBoundPathNavigation.java
+index 87ccac321c3a087158602d87e4d05b3273545cf1..1b0a45bda5a59c291f93fa663a419029a49becd6 100644
+--- a/net/minecraft/world/entity/ai/navigation/WaterBoundPathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/WaterBoundPathNavigation.java
+@@ -15,11 +15,27 @@ public class WaterBoundPathNavigation extends PathNavigation {
+         super(mob, level);
+     }
+ 
++    // Kaiiju start - petal - async path processing
++    private static final org.dreeam.leaf.async.path.NodeEvaluatorGenerator NODE_EVALUATOR_GENERATOR = (org.dreeam.leaf.async.path.NodeEvaluatorFeatures nodeEvaluatorFeatures) -> {
++        SwimNodeEvaluator nodeEvaluator = new SwimNodeEvaluator(nodeEvaluatorFeatures.allowBreaching());
++        nodeEvaluator.setCanPassDoors(nodeEvaluatorFeatures.canPassDoors());
++        nodeEvaluator.setCanFloat(nodeEvaluatorFeatures.canFloat());
++        nodeEvaluator.setCanWalkOverFences(nodeEvaluatorFeatures.canWalkOverFences());
++        nodeEvaluator.setCanOpenDoors(nodeEvaluatorFeatures.canOpenDoors());
++        return nodeEvaluator;
++    };
++    // Kaiiju end - petal - async path processing
++
+     @Override
+     protected PathFinder createPathFinder(final int maxVisitedNodes) {
+         this.allowBreaching = this.mob.is(EntityTypes.DOLPHIN);
+         this.nodeEvaluator = new SwimNodeEvaluator(this.allowBreaching);
+         this.nodeEvaluator.setCanPassDoors(false);
++        // Kaiiju start - petal - async path processing
++        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++            return new PathFinder(this.nodeEvaluator, maxVisitedNodes, NODE_EVALUATOR_GENERATOR);
++        }
++        // Kaiiju end - petal - async path processing
+         return new PathFinder(this.nodeEvaluator, maxVisitedNodes);
+     }
+ 
+diff --git a/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java b/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java
+index 535cdcd8266dced3aca0e6b71806bbbd80c70228..017f6c04afc277fd5d06caaa93103638f1bdfe88 100644
+--- a/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java
++++ b/net/minecraft/world/entity/ai/sensing/NearestBedSensor.java
+@@ -26,6 +26,7 @@ public class NearestBedSensor extends Sensor<Mob> {
+     private final Long2LongMap batchCache = new Long2LongOpenHashMap();
+     private int triedCount;
+     private long lastUpdate;
++    @org.jspecify.annotations.Nullable Path pending;  // Kaiiju - petal - async path processing
+ 
+     public NearestBedSensor() {
+         super(20);
+@@ -38,6 +39,12 @@ public class NearestBedSensor extends Sensor<Mob> {
+ 
+     @Override
+     protected void doTick(final ServerLevel level, final Mob body) {
++        // Kaiiju start - petal - async path processing
++        if (pending != null && pending.isProcessed()) {
++            processPath(body, level.getPoiManager(), pending);
++            pending = null;
++        }
++        // Kaiiju end - petal - async path processing
+         if (body.isBaby()) {
+             this.triedCount = 0;
+             this.lastUpdate = level.getGameTime() + level.getRandom().nextInt(20);
+@@ -59,16 +66,29 @@ public class NearestBedSensor extends Sensor<Mob> {
+                     e -> e.is(PoiTypes.HOME), cacheTest, body.blockPosition(), level.purpurConfig.villagerNearestBedSensorSearchRadius, PoiManager.Occupancy.ANY // Purpur - Configurable villager search radius
+                 )
+                 .collect(Collectors.toSet());
++
+             Path path = AcquirePoi.findPathToPois(body, pois);
+-            if (path != null && path.canReach()) {
+-                BlockPos targetPos = path.getTarget();
+-                Optional<Holder<PoiType>> type = poiManager.getType(targetPos);
+-                if (type.isPresent()) {
+-                    body.getBrain().setMemory(MemoryModuleType.NEAREST_BED, targetPos);
+-                }
+-            } else if (this.triedCount < 5) {
+-                this.batchCache.long2LongEntrySet().removeIf(entry -> entry.getLongValue() < this.lastUpdate);
++            // Kaiiju start - petal - async path processing
++            if (path != null && !path.isProcessed()) {
++                this.pending = path;
++            } else {
++                processPath(body, poiManager, path);
++            }
++        }
++    }
++    // Kaiiju end - petal - async path processing
++
++    // Kaiiju start - petal - async path processing
++    private void processPath(final Mob body, final PoiManager poiManager, final @org.jspecify.annotations.Nullable Path path) {
++        if (path != null && path.canReach()) {
++            BlockPos targetPos = path.getTarget();
++            Optional<Holder<PoiType>> type = poiManager.getType(targetPos);
++            if (type.isPresent()) {
++                body.getBrain().setMemory(MemoryModuleType.NEAREST_BED, targetPos);
+             }
++        } else if (this.triedCount < 5) {
++            this.batchCache.long2LongEntrySet().removeIf(entry -> entry.getLongValue() < this.lastUpdate);
+         }
+     }
++    // Kaiiju end - petal - async path processing
+ }
+diff --git a/net/minecraft/world/entity/animal/bee/Bee.java b/net/minecraft/world/entity/animal/bee/Bee.java
+index f4483f893c301e338595cc2e79e9fe9915b7bedd..2709a0387b29b30e137381bee663932910f15035 100644
+--- a/net/minecraft/world/entity/animal/bee/Bee.java
++++ b/net/minecraft/world/entity/animal/bee/Bee.java
+@@ -940,6 +940,13 @@ public class Bee extends Animal implements NeutralMob {
+                             Bee.this.pathfindRandomlyTowards(Bee.this.hivePos);
+                         }
+                     } else {
++                        // Kaiiju start - petal - async path processing - async path processing fix
++                        // Wait for path processing before making navigation decisions
++                        Path currentPath = Bee.this.navigation.getPath();
++                        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled && currentPath != null && !currentPath.isProcessed()) {
++                            return;
++                        }
++                        // Kaiiju end - petal - async path processing - async path processing fix
+                         boolean canReachAllTheWayToTarget = this.pathfindDirectlyTowards(Bee.this.hivePos);
+                         if (!canReachAllTheWayToTarget) {
+                             this.dropAndBlacklistHive();
+@@ -994,7 +1001,7 @@ public class Bee extends Animal implements NeutralMob {
+             }
+ 
+             Path path = Bee.this.navigation.getPath();
+-            return path != null && path.getTarget().equals(targetPos) && path.canReach() && path.isDone();
++            return path != null && path.isProcessed() && path.getTarget().equals(targetPos) && path.canReach() && path.isDone(); // Kaiiju - petal - async path processing - ensure path is processed
+         }
+     }
+ 
+diff --git a/net/minecraft/world/entity/animal/frog/Frog.java b/net/minecraft/world/entity/animal/frog/Frog.java
+index 814bd26dfca0acd77d77477e4a2794c7d42340fb..5fb636adc6de280255d6ceac96a89ca7b9ef2a9f 100644
+--- a/net/minecraft/world/entity/animal/frog/Frog.java
++++ b/net/minecraft/world/entity/animal/frog/Frog.java
+@@ -447,9 +447,25 @@ public class Frog extends Animal {
+             return pathType != PathType.WATER_BORDER && super.canCutCorner(pathType);
+         }
+ 
++        // Kaiiju start - petal - async path processing
++        private static final org.dreeam.leaf.async.path.NodeEvaluatorGenerator NODE_EVALUATOR_GENERATOR = (org.dreeam.leaf.async.path.NodeEvaluatorFeatures nodeEvaluatorFeatures) -> {
++            Frog.FrogNodeEvaluator nodeEvaluator = new Frog.FrogNodeEvaluator(true);
++            nodeEvaluator.setCanPassDoors(nodeEvaluatorFeatures.canPassDoors());
++            nodeEvaluator.setCanFloat(nodeEvaluatorFeatures.canFloat());
++            nodeEvaluator.setCanWalkOverFences(nodeEvaluatorFeatures.canWalkOverFences());
++            nodeEvaluator.setCanOpenDoors(nodeEvaluatorFeatures.canOpenDoors());
++            return nodeEvaluator;
++        };
++        // Kaiiju end - petal - async path processing
++
+         @Override
+         protected PathFinder createPathFinder(final int maxVisitedNodes) {
+             this.nodeEvaluator = new Frog.FrogNodeEvaluator(true);
++            // Kaiiju start - petal - async path processing
++            if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++                return new PathFinder(this.nodeEvaluator, maxVisitedNodes, NODE_EVALUATOR_GENERATOR);
++            }
++            // Kaiiju end - petal - async path processing
+             return new PathFinder(this.nodeEvaluator, maxVisitedNodes);
+         }
+     }
+diff --git a/net/minecraft/world/entity/animal/rabbit/Rabbit.java b/net/minecraft/world/entity/animal/rabbit/Rabbit.java
+index e48446be1ba64a46232966efcd9e5d1e90d7938a..666c5ea55f218aa2966533a7eb5324190331d6b3 100644
+--- a/net/minecraft/world/entity/animal/rabbit/Rabbit.java
++++ b/net/minecraft/world/entity/animal/rabbit/Rabbit.java
+@@ -659,6 +659,14 @@ public class Rabbit extends Animal {
+ 
+         @Override
+         public void vanillaTick() { // Purpur - Ridables
++            // Kaiiju start - petal - async path processing - don't make movement decisions with unprocessed paths
++            if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++                Path path = this.mob.getNavigation().getPath();
++                if (path != null && !path.isProcessed()) {
++                    return; // Wait for path processing before making movement decisions
++                }
++            }
++            // Kaiiju end - petal - async path processing
+             if (this.mob.onGround() && !this.mob.jumping && !((Rabbit.RabbitJumpControl)this.mob.jumpControl).wantJump()) {
+                 this.mob.setSpeedModifier(0.0);
+             } else if (this.hasWanted() || this.operation == MoveControl.Operation.JUMPING) {
+diff --git a/net/minecraft/world/entity/monster/Strider.java b/net/minecraft/world/entity/monster/Strider.java
+index 929bd327f01ed28462c4ce4e7d2f3e1886aa4157..8494adcc4b6c977480ad102b3f763d8b001ffccd 100644
+--- a/net/minecraft/world/entity/monster/Strider.java
++++ b/net/minecraft/world/entity/monster/Strider.java
+@@ -577,9 +577,25 @@ public class Strider extends Animal implements ItemSteerable {
+             super(mob, level);
+         }
+ 
++        // Kaiiju start - petal - async path processing
++        private static final org.dreeam.leaf.async.path.NodeEvaluatorGenerator NODE_EVALUATOR_GENERATOR = (org.dreeam.leaf.async.path.NodeEvaluatorFeatures nodeEvaluatorFeatures) -> {
++            WalkNodeEvaluator nodeEvaluator = new WalkNodeEvaluator();
++            nodeEvaluator.setCanPassDoors(nodeEvaluatorFeatures.canPassDoors());
++            nodeEvaluator.setCanFloat(nodeEvaluatorFeatures.canFloat());
++            nodeEvaluator.setCanWalkOverFences(nodeEvaluatorFeatures.canWalkOverFences());
++            nodeEvaluator.setCanOpenDoors(nodeEvaluatorFeatures.canOpenDoors());
++            return nodeEvaluator;
++        };
++        // Kaiiju end - petal - async path processing
++
+         @Override
+         protected PathFinder createPathFinder(final int maxVisitedNodes) {
+             this.nodeEvaluator = new WalkNodeEvaluator();
++            // Kaiiju start - petal - async path processing
++            if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++                return new PathFinder(this.nodeEvaluator, maxVisitedNodes, NODE_EVALUATOR_GENERATOR);
++            }
++            // Kaiiju end - petal - async path processing
+             return new PathFinder(this.nodeEvaluator, maxVisitedNodes);
+         }
+ 
+diff --git a/net/minecraft/world/entity/monster/warden/Warden.java b/net/minecraft/world/entity/monster/warden/Warden.java
+index 35f9aa1d8276f07dea4e21c01eba8b5ec1c0e7c4..91efaa6bd3253e3263de11846c554ff719f52621 100644
+--- a/net/minecraft/world/entity/monster/warden/Warden.java
++++ b/net/minecraft/world/entity/monster/warden/Warden.java
+@@ -587,6 +587,16 @@ public class Warden extends Monster implements VibrationSystem {
+             @Override
+             protected PathFinder createPathFinder(final int maxVisitedNodes) {
+                 this.nodeEvaluator = new WalkNodeEvaluator();
++                // Kaiiju start - petal - async path processing
++                if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
++                    return new PathFinder(this.nodeEvaluator, maxVisitedNodes, GroundPathNavigation.NODE_EVALUATOR_GENERATOR) {
++                        @Override
++                        protected float distance(final Node from, final Node to) {
++                            return from.distanceToXZ(to);
++                        }
++                    };
++                }
++                // Kaiiju end - petal - async path processing
+                 return new PathFinder(this.nodeEvaluator, maxVisitedNodes) {
+                     @Override
+                     protected float distance(final Node from, final Node to) {
+diff --git a/net/minecraft/world/entity/monster/zombie/Drowned.java b/net/minecraft/world/entity/monster/zombie/Drowned.java
+index 936369cc110899ac074221be0972bbf6dc7c5847..5f359095bd4981dd74c2916bbb13f4d89af274c6 100644
+--- a/net/minecraft/world/entity/monster/zombie/Drowned.java
++++ b/net/minecraft/world/entity/monster/zombie/Drowned.java
+@@ -344,7 +344,7 @@ public class Drowned extends Zombie implements RangedAttackMob {
+ 
+     protected boolean closeToNextPos() {
+         Path path = this.getNavigation().getPath();
+-        if (path != null) {
++        if (path != null && path.isProcessed()) { // Kaiiju - petal - async path processing - ensure path is processed
+             BlockPos pos = path.getTarget();
+             if (pos != null) {
+                 double sqrDistToNextPos = this.distanceToSqr(pos.getX(), pos.getY(), pos.getZ());
+diff --git a/net/minecraft/world/level/block/ShulkerBoxBlock.java b/net/minecraft/world/level/block/ShulkerBoxBlock.java
+index 69fa661e60d42fb928f67f17451fcda560d0bf81..80efd05f0de5297309877b9aa914262bfc15ff65 100644
+--- a/net/minecraft/world/level/block/ShulkerBoxBlock.java
++++ b/net/minecraft/world/level/block/ShulkerBoxBlock.java
+@@ -166,9 +166,17 @@ public class ShulkerBoxBlock extends BaseEntityBlock {
+ 
+     @Override
+     protected VoxelShape getShape(final BlockState state, final BlockGetter level, final BlockPos pos, final CollisionContext context) {
++        //if (Thread.currentThread().getName().contains("petal-async-pathfinding-thread")) return Shapes.block(); // Kaiiju - petal - async path processing - we cannot get block entities // Leaf - Don't need this
+         return level.getBlockEntity(pos) instanceof ShulkerBoxBlockEntity shulkerBoxBlockEntity
+             ? Shapes.create(shulkerBoxBlockEntity.getBoundingBox(state))
+             : Shapes.block();
++        // Kaiiju start - petal - async path processing - workaround // Leaf - Don't need this
++        /*
++        } catch (NullPointerException e) {
++            return Shapes.block();
++        }
++        */
++        // Kaiiju end - petal - async path processing - workaround
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/level/pathfinder/NodeEvaluator.java b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
+index f4a30761483c4032b5942f84df7706b10976cb5d..12db6ea0d9ac6fbf764ad7bf3120d7c35c4b3a86 100644
+--- a/net/minecraft/world/level/pathfinder/NodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
+@@ -37,6 +37,17 @@ public abstract class NodeEvaluator {
+         this.mob = null;
+     }
+ 
++    // Kaiiju start - petal - async path processing
++    public void invalidateCache() {
++        if (this.currentContext != null) {
++            this.currentContext.cache = null;
++        }
++    }
++    public void clearNodes() {
++        this.nodes.clear();
++    }
++    // Kaiiju end - petal - async path processing
++
+     protected Node getNode(final BlockPos pos) {
+         return this.getNode(pos.getX(), pos.getY(), pos.getZ());
+     }
+diff --git a/net/minecraft/world/level/pathfinder/Path.java b/net/minecraft/world/level/pathfinder/Path.java
+index ce536d07512c3cb9a8f56a1c4f6506db50161f8b..110ec34b143a2ff92b03f339da58c03b0a5e2889 100644
+--- a/net/minecraft/world/level/pathfinder/Path.java
++++ b/net/minecraft/world/level/pathfinder/Path.java
+@@ -11,12 +11,12 @@ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public final class Path {
++public class Path { // Kaiiju - petal - async path processing - public -> public-f
+     public static final StreamCodec<FriendlyByteBuf, Path> STREAM_CODEC = StreamCodec.of((output, value) -> value.writeToStream(output), Path::createFromStream);
+-    public final List<Node> nodes;
++    public List<Node> nodes; // Kaiiju - petal - async path processing - public -> public-f
+     private Path.@Nullable DebugData debugData;
+     private int nextNodeIndex;
+-    private final BlockPos target;
++    public BlockPos target; // Kaiiju - petal - async path processing - public -> public-f
+     private final float distToTarget;
+     private final boolean reached;
+ 
+@@ -27,6 +27,17 @@ public final class Path {
+         this.reached = reached;
+     }
+ 
++    // Kaiiju start - petal - async path processing
++    /**
++     * checks if the path is completely processed in the case of it being computed async
++     *
++     * @return true if the path is processed
++     */
++    public boolean isProcessed() {
++        return true;
++    }
++    // Kaiiju end - petal - async path processing
++
+     public void advance() {
+         this.nextNodeIndex++;
+     }
+@@ -98,7 +109,7 @@ public final class Path {
+     }
+ 
+     public boolean sameAs(final @Nullable Path path) {
+-        return path != null && this.nodes.equals(path.nodes);
++        return path == this || (path != null && this.isProcessed() && path.isProcessed() && this.nodes.equals(path.nodes)); // Kaiiju - petal - async path processing
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/level/pathfinder/PathFinder.java b/net/minecraft/world/level/pathfinder/PathFinder.java
+index 253074a0a14115cd3d18aaae6fa5822cf32346c9..a7c0c7c94e7a04f798e0fb93559b3f4202ef2cf0 100644
+--- a/net/minecraft/world/level/pathfinder/PathFinder.java
++++ b/net/minecraft/world/level/pathfinder/PathFinder.java
+@@ -26,8 +26,15 @@ public class PathFinder {
+     public final NodeEvaluator nodeEvaluator;
+     private final BinaryHeap openSet = new BinaryHeap();
+     private BooleanSupplier captureDebug = () -> false;
++    private final org.dreeam.leaf.async.path.@Nullable NodeEvaluatorGenerator nodeEvaluatorGenerator; // Kaiiju - petal - async path processing - we use this later to generate an evaluator
+ 
+     public PathFinder(final NodeEvaluator nodeEvaluator, final int maxVisitedNodes) {
++        // Kaiiju start - petal - async path processing - support nodeEvaluatorgenerators
++        this(nodeEvaluator, maxVisitedNodes, null);
++    }
++    public PathFinder(final NodeEvaluator nodeEvaluator, final int maxVisitedNodes, final org.dreeam.leaf.async.path.@Nullable NodeEvaluatorGenerator nodeEvaluatorGenerator) {
++        this.nodeEvaluatorGenerator = nodeEvaluatorGenerator;
++        // Kaiiju end - petal - async path processing - support nodeEvaluatorgenerators
+         this.nodeEvaluator = nodeEvaluator;
+         this.maxVisitedNodes = maxVisitedNodes;
+     }
+@@ -49,26 +56,62 @@ public class PathFinder {
+         final float maxVisitedNodesMultiplier
+     ) {
+         this.openSet.clear();
+-        this.nodeEvaluator.prepare(level, entity);
+-        Node from = this.nodeEvaluator.getStart();
++        // Kaiiju start - petal - async path processing
++        // Use a generated evaluator if we have one otherwise run sync
++        NodeEvaluator nodeEvaluator = this.nodeEvaluatorGenerator == null
++            ? this.nodeEvaluator
++            : org.dreeam.leaf.async.path.NodeEvaluatorCache.takeNodeEvaluator(this.nodeEvaluatorGenerator, this.nodeEvaluator);
++        nodeEvaluator.prepare(level, entity);
++        Node from = nodeEvaluator.getStart();
+         if (from == null) {
++            if (this.nodeEvaluatorGenerator != null) {
++                org.dreeam.leaf.async.path.NodeEvaluatorCache.removeNodeEvaluator(nodeEvaluator); // Kaiiju - petal - async path processing - handle nodeEvaluatorGenerator
++            }
++            // Kaiiju end - petal - async path processing
+             return null;
+         }
+ 
+         // Paper start - Perf: remove streams and optimize collection
+         List<Map.Entry<Target, BlockPos>> tos = Lists.newArrayList();
+         for (BlockPos pos : targets) {
+-            tos.add(new java.util.AbstractMap.SimpleEntry<>(this.nodeEvaluator.getTarget(pos.getX(), pos.getY(), pos.getZ()), pos));
++            tos.add(new java.util.AbstractMap.SimpleEntry<>(nodeEvaluator.getTarget(pos.getX(), pos.getY(), pos.getZ()), pos)); // Kaiiju - petal - async path processing - handle nodeEvaluatorGenerator
+         }
+         // Paper end - Perf: remove streams and optimize collection
+-        Path path = this.findPath(from, tos, maxPathLength, reachRange, maxVisitedNodesMultiplier);
+-        this.nodeEvaluator.done();
+-        return path;
++        // Kaiiju start - petal - async path processing
++        if (this.nodeEvaluatorGenerator == null) {
++            Path path = this.findPath(from, tos, maxPathLength, reachRange, maxVisitedNodesMultiplier);
++            this.nodeEvaluator.done();
++            return path;
++        }
++
++        final int maxVisitedNodes = this.maxVisitedNodes;
++        final BooleanSupplier captureDebug = this.captureDebug;
++        return new org.dreeam.leaf.async.path.AsyncPath(this, Lists.newArrayList(), targets, finder -> {
++            try {
++                nodeEvaluator.invalidateCache();
++                return finder.findPath(nodeEvaluator,
++                    org.dreeam.leaf.async.path.NodeEvaluatorCache.HEAP_LOCAL.get(),
++                    org.dreeam.leaf.async.path.NodeEvaluatorCache.NEIGHBORS_LOCAL.get(),
++                    maxVisitedNodes,
++                    captureDebug,
++                    from, tos, maxPathLength, reachRange, maxVisitedNodesMultiplier);
++            } finally {
++                nodeEvaluator.done();
++                nodeEvaluator.clearNodes();
++                org.dreeam.leaf.async.path.NodeEvaluatorCache.returnNodeEvaluator(nodeEvaluator);
++            }
++        });
++        // Kaiiju end - petal - async path processing
+     }
+ 
++    // Kaiiju start - petal - async path processing
+     private @Nullable Path findPath(
+         final Node from, final List<Map.Entry<Target, BlockPos>> targets, final float maxPathLength, final int reachRange, final float maxVisitedNodesMultiplier // Paper - optimize collection
+     ) {
++        return findPath(this.nodeEvaluator, this.openSet, this.neighbors, this.maxVisitedNodes, this.captureDebug, from, targets, maxPathLength, reachRange, maxVisitedNodesMultiplier);
++    }
++    private Path findPath(final NodeEvaluator localNodeEvaluator, final BinaryHeap localOpenSet, final Node[] localNeighbors, final int localMaxVisitedNodes, final BooleanSupplier localCaptureDebug, final Node from, final List<Map.Entry<Target, BlockPos>> targets, final float maxPathLength, final int reachRange, final float maxVisitedNodesMultiplier) { // sync to only use the caching functions in this class on a single thread
++        // Kaiiju end - petal - async path processing
+         ProfilerFiller profiler = Profiler.get();
+         profiler.push("find_path");
+         profiler.markForCharting(MetricCategory.PATH_FINDING);
+@@ -76,20 +119,20 @@ public class PathFinder {
+         from.g = 0.0F;
+         from.h = this.getBestH(from, targets);
+         from.f = from.h;
+-        this.openSet.clear();
+-        this.openSet.insert(from);
+-        boolean captureDebug = this.captureDebug.getAsBoolean();
++        localOpenSet.clear(); // Kaiiju - petal - async path processing
++        localOpenSet.insert(from); // Kaiiju - petal - async path processing
++        boolean captureDebug = localCaptureDebug.getAsBoolean(); // Kaiiju - petal - async path processing
+         Set<Node> closedSet = captureDebug ? new HashSet<>() : Set.of();
+         int count = 0;
+         List<Map.Entry<Target, BlockPos>> reachedTargets = Lists.newArrayListWithExpectedSize(targets.size()); // Paper - optimize collection
+-        int maxVisitedNodesAdjusted = (int)(this.maxVisitedNodes * maxVisitedNodesMultiplier);
++        int maxVisitedNodesAdjusted = (int)(localMaxVisitedNodes * maxVisitedNodesMultiplier); // Kaiiju - petal - async path processing
+ 
+-        while (!this.openSet.isEmpty()) {
++        while (!localOpenSet.isEmpty()) { // Kaiiju - petal - async path processing
+             if (++count >= maxVisitedNodesAdjusted) {
+                 break;
+             }
+ 
+-            Node current = this.openSet.pop();
++            Node current = localOpenSet.pop(); // Kaiiju - petal - async path processing
+             current.closed = true;
+ 
+             // Paper start - Perf: remove streams and optimize collection
+@@ -112,10 +155,10 @@ public class PathFinder {
+             }
+ 
+             if (!(current.distanceTo(from) >= maxPathLength)) {
+-                int neighborCount = this.nodeEvaluator.getNeighbors(this.neighbors, current);
++                int neighborCount = localNodeEvaluator.getNeighbors(localNeighbors, current); // Kaiiju - petal - async path processing
+ 
+                 for (int i = 0; i < neighborCount; i++) {
+-                    Node neighbor = this.neighbors[i];
++                    Node neighbor = localNeighbors[i]; // Kaiiju - petal - async path processing
+                     float distance = this.distance(current, neighbor);
+                     neighbor.walkedDistance = current.walkedDistance + distance;
+                     float tentativeGScore = current.g + distance + neighbor.costMalus;
+@@ -124,10 +167,10 @@ public class PathFinder {
+                         neighbor.g = tentativeGScore;
+                         neighbor.h = this.getBestH(neighbor, targets) * 1.5F;
+                         if (neighbor.inOpenSet()) {
+-                            this.openSet.changeCost(neighbor, neighbor.g + neighbor.h);
++                            localOpenSet.changeCost(neighbor, neighbor.g + neighbor.h); // Kaiiju - petal - async path processing
+                         } else {
+                             neighbor.f = neighbor.g + neighbor.h;
+-                            this.openSet.insert(neighbor);
++                            localOpenSet.insert(neighbor); // Kaiiju - petal - async path processing
+                         }
+                     }
+                 }
+@@ -152,9 +195,9 @@ public class PathFinder {
+             for(Map.Entry<Target, BlockPos> entry : targets) {
+                 set.add(entry.getKey());
+             }
+-            best.setDebug(this.openSet.getHeap(), closedSet.toArray(Node[]::new), set);
++            best.setDebug(localOpenSet.getHeap(), closedSet.toArray(Node[]::new), set); // Kaiiju - petal - async path processing
+         }
+-        return best;
++        return java.util.Objects.requireNonNull(best); // Kaiiju - petal - async path processing
+         // Paper end - Perf: remove streams and optimize collection
+     }
+ 
+diff --git a/net/minecraft/world/level/pathfinder/PathfindingContext.java b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+index 64e1a34de133beccb90486f247e7e74d6535941f..5d2f56999657cc9b0d5892ddc7897d96610a0dbd 100644
+--- a/net/minecraft/world/level/pathfinder/PathfindingContext.java
++++ b/net/minecraft/world/level/pathfinder/PathfindingContext.java
+@@ -9,7 +9,7 @@ import org.jspecify.annotations.Nullable;
+ 
+ public class PathfindingContext {
+     private final CollisionGetter level;
+-    private final @Nullable PathTypeCache cache;
++    public @Nullable PathTypeCache cache; // Kaiiju - petal - async path processing - private -> public-f
+     private final BlockPos mobPosition;
+     private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+ 

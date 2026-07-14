@@ -35,7 +35,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.RegistryLayer;
 import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.tags.TagNetworkSerialization;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.flag.FeatureFlags;
 import org.jetbrains.annotations.NotNull;
@@ -97,7 +97,7 @@ public class Recorder extends Connection {
         metaData.mcversion = SharedConstants.getCurrentVersion().name();
 
         // TODO start event
-        this.savePacket(new ClientboundLoginFinishedPacket(photographer.getGameProfile()), ConnectionProtocol.LOGIN);
+        this.savePacket(new ClientboundLoginFinishedPacket(photographer.getGameProfile(), photographer.getSessionId()), ConnectionProtocol.LOGIN);
         this.startConfiguration();
 
         savePacket(ClientboundPlayerPositionPacket.of(photographer.getId(), PositionMoveRotation.of(photographer), Collections.emptySet()));
@@ -188,7 +188,7 @@ public class Recorder extends Connection {
                 return;
             }
             case ClientboundAddEntityPacket packet1 -> {
-                if (packet1.getType() == EntityType.PLAYER) {
+                if (packet1.getType() == EntityTypes.PLAYER) {
                     metaData.players.add(packet1.getUUID());
                     saveMetadata();
                 }

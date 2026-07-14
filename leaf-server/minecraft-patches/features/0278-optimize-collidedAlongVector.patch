@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Tue, 21 Oct 2025 10:45:21 +0900
+Subject: [PATCH] optimize collidedAlongVector
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index b8e528ef25f33bbb3e8587e3b2f4dbf6f5b032ac..77d051450174cc7b1d549ca34c4ac38523f4c8fc 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1945,7 +1945,7 @@ public abstract class Entity
+                 } else {
+                     VoxelShape intersectShape = state.getEntityInsideCollisionShape(level, blockIntersection, this);
+                     boolean insideBlock = intersectShape == Shapes.block()
+-                        || this.collidedWithShapeMovingFrom(from, to, intersectShape.move(new Vec3(blockIntersection)).toAabbs());
++                        || this.collidedWithShapeMovingFrom(from, to, intersectShape.move(new Vec3(blockIntersection))); // Leaf - optimize collidedAlongVector
+                     final FluidState fluidState = state.getFluidState();
+                     boolean insideFluid = !fluidState.isEmpty() && this.collidedWithFluid(fluidState, blockIntersection, from, to);
+                     if ((insideBlock || insideFluid) && visitedBlocks.add(blockIntersection.asLong())) {
+@@ -2000,15 +2000,30 @@ public abstract class Entity
+ 
+     public boolean collidedWithFluid(final FluidState fluidState, final BlockPos blockPos, final Vec3 from, final Vec3 to) {
+         AABB fluidAABB = fluidState.getAABB(this.level(), blockPos);
+-        return fluidAABB != null && this.collidedWithShapeMovingFrom(from, to, List.of(fluidAABB));
++        return fluidAABB != null && this.collidedWithShapeMovingFrom(from, to, fluidAABB); // Leaf - optimize collidedAlongVector
+     }
+ 
+     public boolean collidedWithShapeMovingFrom(final Vec3 from, final Vec3 to, final List<AABB> aabbs) {
++        // Leaf - optimize collidedAlongVector - diff on change
+         AABB boundingBoxAtFrom = this.makeBoundingBox(from);
+         Vec3 travelVector = to.subtract(from);
+         return boundingBoxAtFrom.collidedAlongVector(travelVector, aabbs);
+     }
+ 
++    // Leaf start - optimize collidedAlongVector
++    public final boolean collidedWithShapeMovingFrom(final Vec3 from, final Vec3 to, final AABB aabbs) {
++        AABB boundingBoxAtFrom = this.makeBoundingBox(from);
++        Vec3 travelVector = to.subtract(from);
++        return boundingBoxAtFrom.collidedAlongVector(travelVector, aabbs);
++    }
++    public final boolean collidedWithShapeMovingFrom(final Vec3 from, final Vec3 to, final VoxelShape aabbs) {
++        AABB boundingBoxAtFrom = this.makeBoundingBox(from);
++        Vec3 travelVector = to.subtract(from);
++        AABB aabb = aabbs.moonrise$getSingleAABBRepresentation();
++        return aabb != null ? boundingBoxAtFrom.collidedAlongVector(travelVector, aabb) : boundingBoxAtFrom.collidedAlongVector(travelVector, aabbs.toAabbs());
++    }
++    // Leaf end - optimize collidedAlongVector
++
+     protected void onInsideBlock(final BlockState state) {
+     }
+ 
+diff --git a/net/minecraft/world/entity/monster/Ghast.java b/net/minecraft/world/entity/monster/Ghast.java
+index 9c8efe9eba76ba601d2aa440461e7eb6b6a1e663..ecf39a23514b0fb18a4920aeffc81fb4e84a4ed4 100644
+--- a/net/minecraft/world/entity/monster/Ghast.java
++++ b/net/minecraft/world/entity/monster/Ghast.java
+@@ -364,7 +364,7 @@ public class Ghast extends Mob implements Enemy {
+ 
+             boolean preciseBlockCollisions = start != null && end != null;
+             boolean pathNoCollisions = preciseBlockCollisions
+-                ? !this.mob.collidedWithShapeMovingFrom(start, end, state.getCollisionShape(level, pos).move(new Vec3(pos)).toAabbs())
++                ? !this.mob.collidedWithShapeMovingFrom(start, end, state.getCollisionShape(level, pos).move(new Vec3(pos))) // Leaf - optimize collidedAlongVector
+                 : state.getCollisionShape(level, pos).isEmpty();
+             if (!this.careful) {
+                 return pathNoCollisions;
+diff --git a/net/minecraft/world/phys/AABB.java b/net/minecraft/world/phys/AABB.java
+index 72099130eb22c815ffcdf9e75d2fd7b41af1944a..15a1f52d58615650046277b3794213e29c1980e7 100644
+--- a/net/minecraft/world/phys/AABB.java
++++ b/net/minecraft/world/phys/AABB.java
+@@ -408,21 +408,34 @@ public class AABB {
+         }
+     }
+ 
++    // Leaf start - optimize collidedAlongVector
++    public final boolean collidedAlongVector(final Vec3 vector, final AABB aabb) {
++        Vec3 from = this.getCenter();
++        Vec3 to = from.add(vector);
++        AABB inflated = aabb.inflate(this.getXsize() * 0.5 - 1.0E-7, this.getYsize() * 0.5 - 1.0E-7, this.getZsize() * 0.5 - 1.0E-7);
++        return inflated.contains(to) || inflated.contains(from) || inflated.clip(from, to).isPresent();
++    }
++    // Leaf end - optimize collidedAlongVector
++
+     public boolean collidedAlongVector(final Vec3 vector, final List<AABB> aabbs) {
++        // Leaf - optimize collidedAlongVector - diff on change
+         Vec3 from = this.getCenter();
+         Vec3 to = from.add(vector);
+ 
+         for (AABB shapePart : aabbs) {
++            // Leaf - optimize collidedAlongVector - diff on change
+             AABB inflated = shapePart.inflate(this.getXsize() * 0.5 - 1.0E-7, this.getYsize() * 0.5 - 1.0E-7, this.getZsize() * 0.5 - 1.0E-7);
+             if (inflated.contains(to) || inflated.contains(from)) {
+                 return true;
+             }
+ 
++            // Leaf - optimize collidedAlongVector - diff on change
+             if (inflated.clip(from, to).isPresent()) {
+                 return true;
+             }
+         }
+ 
++        // Leaf - optimize collidedAlongVector - diff on change
+         return false;
+     }
+ 

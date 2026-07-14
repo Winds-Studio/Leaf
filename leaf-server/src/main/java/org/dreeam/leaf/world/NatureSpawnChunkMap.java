@@ -91,7 +91,7 @@ public final class NatureSpawnChunkMap {
             buildBfs(index);
         }
         buildKdTree(world.purpurConfig.mobSpawningIgnoreCreativePlayers, players);
-        collectSpawningChunks(world.chunkSource.fullChunksNonSync, this.set, out);
+        collectSpawningChunks(world.getChunkSource().fullChunksNonSync, this.set, out);
         this.ready = true;
     }
 

@@ -35,6 +35,7 @@ public class ServerPhotographer extends ServerPlayer {
     private Recorder recorder;
     private File saveFile;
     private Vec3 lastPosVec3;
+    private UUID sessionId;
 
     private final ServerStatsCounter stats;
 
@@ -44,6 +45,7 @@ public class ServerPhotographer extends ServerPlayer {
         this.followPlayer = null;
         this.stats = new BotStatsCounter(server);
         this.lastPosVec3 = this.position();
+        this.sessionId = server.getConnection().getSessionId();
     }
 
     public static ServerPhotographer createPhotographer(@NotNull PhotographerCreateState state) throws IOException {
@@ -73,7 +75,7 @@ public class ServerPhotographer extends ServerPlayer {
             getServer().getPlayerList().placeNewPhotographer(photographer.recorder, photographer, world);
         }
         // Leaf end - SparklyPaper - parallel world ticking mod (make configurable)
-        photographer.level().chunkSource.move(photographer);
+        photographer.level().getChunkSource().move(photographer);
         photographer.setInvisible(true);
         photographers.add(photographer);
 
@@ -91,7 +93,7 @@ public class ServerPhotographer extends ServerPlayer {
 
         if (getServer().getTickCount() % 10 == 0) {
             connection.resetPosition();
-            this.level().chunkSource.move(this);
+            this.level().getChunkSource().move(this);
         }
 
         if (this.followPlayer != null) {
@@ -227,6 +229,10 @@ public class ServerPhotographer extends ServerPlayer {
     @NotNull
     public CraftPhotographer getBukkitEntity() {
         return (CraftPhotographer) super.getBukkitEntity();
+    }
+
+    public UUID getSessionId() {
+        return sessionId;
     }
 
     public static boolean isCreateLegal(@NotNull String name) {

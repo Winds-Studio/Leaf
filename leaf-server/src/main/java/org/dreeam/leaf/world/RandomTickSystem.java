@@ -243,7 +243,7 @@ public final class RandomTickSystem {
         int size = list.size();
         if (size == 0) return;
         short location = list.getRaw(boundedNextInt(random, size));
-        BlockState state = section.states.get(location);
+        BlockState state = section.getStates().get(location);
         pos.set((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
         state.randomTick(world, pos, random);
         if (doubleTickFluids) {
@@ -260,7 +260,7 @@ public final class RandomTickSystem {
         int size = list.size();
         if (size == 0) return;
         short location = list.getRaw(boundedNextInt(random, size));
-        BlockState state = section.states.get(location);
+        BlockState state = section.getStates().get(location);
         BlockPos pos = new BlockPos((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
         state.randomTick(world, pos, random);
         if (doubleTickFluids) {

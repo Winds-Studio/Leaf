@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Tue, 31 Mar 2026 05:23:16 -0400
+Subject: [PATCH] Optimize respawn anchor explosion
+
+- Remove stream
+- Use faster method to get fluid state
+(Since we can assume the chunk is loaded when a respawn anchor exploded.)
+
+diff --git a/net/minecraft/world/level/block/RespawnAnchorBlock.java b/net/minecraft/world/level/block/RespawnAnchorBlock.java
+index 1c39cbcb21fbbcce4c989ea54742cebc179cfc28..df956f991ac4e63418df40364037ea2b2d3068a5 100644
+--- a/net/minecraft/world/level/block/RespawnAnchorBlock.java
++++ b/net/minecraft/world/level/block/RespawnAnchorBlock.java
+@@ -142,7 +142,8 @@ public class RespawnAnchorBlock extends Block {
+     }
+ 
+     private static boolean isWaterThatWouldFlow(final BlockPos pos, final Level level) {
+-        FluidState fluid = level.getFluidState(pos);
++        FluidState fluid = level.getFluidStateIfLoadedUnchecked(pos.getX(), pos.getY(), pos.getZ()); // Leaf - Optimize respawn anchor explosion
++        if (fluid == null) return false; // Leaf - Optimize respawn anchor explosion
+         if (!fluid.is(FluidTags.WATER)) {
+             return false;
+         }
+@@ -156,21 +157,19 @@ public class RespawnAnchorBlock extends Block {
+             return false;
+         }
+ 
+-        FluidState fluidBelow = level.getFluidState(pos.below());
+-        return !fluidBelow.is(FluidTags.WATER);
++        FluidState fluidBelow = level.getFluidStateIfLoadedUnchecked(pos.getX(), pos.getY() - 1, pos.getZ()); // Leaf - Optimize respawn anchor explosion
++        return fluidBelow != null && !fluidBelow.is(FluidTags.WATER); // Leaf - Optimize respawn anchor explosion
+     }
+ 
+     private void explode(final BlockState state, final ServerLevel level, final BlockPos pos) {
+         org.bukkit.block.BlockState blockState = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos).getState(); // CraftBukkit - capture BlockState before remove block
+         level.removeBlock(pos, false);
+-        boolean anyWaterNeighbors = Direction.Plane.HORIZONTAL.stream().map(pos::relative).anyMatch(neighborPos -> isWaterThatWouldFlow(neighborPos, level));
+-        final boolean inWater = anyWaterNeighbors || level.getFluidState(pos.above()).is(FluidTags.WATER);
+         ExplosionDamageCalculator damageCalculator = new ExplosionDamageCalculator() {
+             @Override
+             public Optional<Float> getBlockExplosionResistance(
+                 final Explosion explosion, final BlockGetter levelx, final BlockPos testPos, final BlockState block, final FluidState fluid
+             ) {
+-                return testPos.equals(pos) && inWater
++                return testPos.equals(pos) && hasWaterFlow(level, pos) // Leaf - Optimize respawn anchor explosion
+                     ? Optional.of(Blocks.WATER.getExplosionResistance())
+                     : super.getBlockExplosionResistance(explosion, levelx, testPos, block, fluid);
+             }
+@@ -179,6 +178,21 @@ public class RespawnAnchorBlock extends Block {
+         level.explode(null, level.damageSources().badRespawnPointExplosion(boomPos).causingBlockSnapshot(blockState), damageCalculator, boomPos, (float) level.purpurConfig.respawnAnchorExplosionPower, level.purpurConfig.respawnAnchorExplosionFire, level.purpurConfig.respawnAnchorExplosionEffect); // CraftBukkit - add state // Purpur - Implement respawn anchor explosion options
+     }
+ 
++    // Leaf start - Optimize respawn anchor explosion
++    private static boolean hasWaterFlow(final Level level, final BlockPos secondPos) {
++        for (Direction direction : Direction.Plane.HORIZONTAL.faces) {
++            final BlockPos neighborPos = secondPos.relative(direction);
++            if (isWaterThatWouldFlow(neighborPos, level)) {
++                return true;
++            }
++        }
++
++        final FluidState fluidStateAbove = level.getFluidStateIfLoadedUnchecked(secondPos.getX(), secondPos.getY() + 1, secondPos.getZ());
++
++        return fluidStateAbove != null && fluidStateAbove.is(FluidTags.WATER);
++    }
++    // Leaf end - Optimize respawn anchor explosion
++
+     public static boolean canSetSpawn(final ServerLevel level, final BlockPos pos) {
+         return level.environmentAttributes().getValue(EnvironmentAttributes.RESPAWN_ANCHOR_WORKS, pos);
+     }
