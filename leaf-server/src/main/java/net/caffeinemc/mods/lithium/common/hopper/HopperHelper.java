@@ -101,16 +101,20 @@ public class HopperHelper {
         float contentWeight = 0f;
         int numOccupiedSlots = 0;
 
-        for (int j = 0; j < from.getContainerSize(); ++j) {
+        // Leaf - cache method call results to avoid repeated interface dispatch
+        int containerSize = from.getContainerSize();
+        int containerMaxStackSize = from.getMaxStackSize();
+
+        for (int j = 0; j < containerSize; ++j) {
             ItemStack itemStack = from.getItem(j);
             if (!itemStack.isEmpty()) {
-                int maxStackSize = Math.min(from.getMaxStackSize(), itemStack.getMaxStackSize());
+                int maxStackSize = Math.min(containerMaxStackSize, itemStack.getMaxStackSize());
                 contentWeight += itemStack.getCount() / (float) maxStackSize;
                 ++numOccupiedSlots;
             }
         }
         float f = contentWeight;
-        f /= (float) from.getContainerSize();
+        f /= (float) containerSize;
         int originalSignalStrength = Mth.floor(f * 14.0F) + (numOccupiedSlots > 0 ? 1 : 0);
 
 
@@ -118,12 +122,12 @@ public class HopperHelper {
         //check the signal strength change when failing to extract from each slot
         int[] availableSlots = from instanceof WorldlyContainer ? ((WorldlyContainer) from).getSlotsForFace(Direction.DOWN) : null;
         WorldlyContainer sidedInventory = from instanceof WorldlyContainer ? (WorldlyContainer) from : null;
-        int fromSize = availableSlots != null ? availableSlots.length : from.getContainerSize();
+        int fromSize = availableSlots != null ? availableSlots.length : containerSize;
         for (int i = 0; i < fromSize; i++) {
             int fromSlot = availableSlots != null ? availableSlots[i] : i;
             ItemStack itemStack = fromStackList.get(fromSlot);
             if (!itemStack.isEmpty() && (sidedInventory == null || sidedInventory.canTakeItemThroughFace(fromSlot, itemStack, Direction.DOWN))) {
-                int newSignalStrength = calculateReducedSignalStrength(contentWeight, from.getContainerSize(), from.getMaxStackSize(), numOccupiedSlots, itemStack.getCount(), itemStack.getMaxStackSize());
+                int newSignalStrength = calculateReducedSignalStrength(contentWeight, containerSize, containerMaxStackSize, numOccupiedSlots, itemStack.getCount(), itemStack.getMaxStackSize());
                 if (newSignalStrength != originalSignalStrength) {
                     updatePattern = updatePattern.thenDecrementUpdateIncrementUpdate();
                 } else {
