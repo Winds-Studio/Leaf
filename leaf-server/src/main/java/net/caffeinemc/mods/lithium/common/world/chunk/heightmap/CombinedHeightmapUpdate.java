@@ -95,11 +95,11 @@ public final class CombinedHeightmapUpdate {
             return;
         }
 
-        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, y - 1, z); // Leaf - init with x/z only Y changes in loop
         int bottomY = worldChunk.getMinY();
 
         for (int searchY = y - 1; searchY >= bottomY && heightmapsToUpdate > 0; --searchY) {
-            mutable.set(x, searchY, z);
+            mutable.setY(searchY); // Leaf - only Y changes avoid redundant x/z writes
             BlockState blockState = worldChunk.getBlockState(mutable);
             if (heightmap0 != null && blockPredicate0.test(blockState)) {
                 heightmap0.setHeight(x, z, searchY + 1);
