@@ -31,10 +31,16 @@ public class ComparatorTracking {
 
     public static void notifyNearbyBlockEntitiesAboutNewComparator(Level world, BlockPos pos) {
         BlockPos.MutableBlockPos searchPos = new BlockPos.MutableBlockPos();
+        final int posX = pos.getX();
+        final int posY = pos.getY();
+        final int posZ = pos.getZ();
+
         for (Direction searchDirection : DirectionConstants.HORIZONTAL) {
+            final int stepX = searchDirection.getStepX();
+            final int stepZ = searchDirection.getStepZ();
+
             for (int searchOffset = 1; searchOffset <= 2; searchOffset++) {
-                searchPos.set(pos);
-                searchPos.move(searchDirection, searchOffset);
+                searchPos.set(posX + stepX * searchOffset, posY, posZ + stepZ * searchOffset);
                 BlockState blockState = world.getBlockState(searchPos);
                 if (blockState.getBlock() instanceof EntityBlock) {
                     BlockEntity blockEntity = world.lithium$getLoadedExistingBlockEntity(searchPos);
@@ -48,10 +54,16 @@ public class ComparatorTracking {
 
     public static boolean findNearbyComparators(Level world, BlockPos pos) {
         BlockPos.MutableBlockPos searchPos = new BlockPos.MutableBlockPos();
+        final int posX = pos.getX();
+        final int posY = pos.getY();
+        final int posZ = pos.getZ();
+
         for (Direction searchDirection : DirectionConstants.HORIZONTAL) {
+            final int stepX = searchDirection.getStepX();
+            final int stepZ = searchDirection.getStepZ();
+
             for (int searchOffset = 1; searchOffset <= 2; searchOffset++) {
-                searchPos.set(pos);
-                searchPos.move(searchDirection, searchOffset);
+                searchPos.set(posX + stepX * searchOffset, posY, posZ + stepZ * searchOffset);
                 BlockState blockState = world.getBlockState(searchPos);
                 if (blockState.is(Blocks.COMPARATOR)) {
                     return true;
