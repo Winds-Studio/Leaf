@@ -49,7 +49,10 @@ public class ChunkSectionItemEntityMovementTracker extends ChunkSectionEntityMov
             ));
         }
 
-        List<ChunkSectionItemEntityMovementTracker> trackers = new ArrayList<>();
+        int sizeX = worldSectionBox.chunkX2() - worldSectionBox.chunkX1() + 1;
+        int sizeY = worldSectionBox.chunkY2() - worldSectionBox.chunkY1() + 1;
+        int sizeZ = worldSectionBox.chunkZ2() - worldSectionBox.chunkZ1() + 1;
+        List<ChunkSectionItemEntityMovementTracker> trackers = new ArrayList<>(sizeX * sizeY * sizeZ);
 
         for (int x = worldSectionBox.chunkX1(); x <= worldSectionBox.chunkX2(); x++) {
             for (int y = worldSectionBox.chunkY1(); y <= worldSectionBox.chunkY2(); y++) {
