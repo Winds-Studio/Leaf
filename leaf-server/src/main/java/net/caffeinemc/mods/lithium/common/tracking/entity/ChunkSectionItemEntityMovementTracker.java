@@ -8,6 +8,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.NotNull;
 import net.caffeinemc.mods.lithium.common.util.tuples.WorldSectionBox;
+import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,24 +37,24 @@ public class ChunkSectionItemEntityMovementTracker extends ChunkSectionEntityMov
         return level.getEntitiesOfClass((Class) ItemEntity.class, boundingBox, EntitySelector.ENTITY_STILL_ALIVE);
     }
 
-    public static @NotNull List<ChunkSectionItemEntityMovementTracker> registerAt(ServerLevel world, AABB interactionArea) {
+    public static it.unimi.dsi.fastutil.objects.@NotNull ObjectArrayList<ChunkSectionItemEntityMovementTracker> registerAt(ServerLevel world, AABB interactionArea) {
         WorldSectionBox worldSectionBox = WorldSectionBox.entityAccessBox(world, interactionArea);
         UUID levelId = world.uuid;
 
         if (worldSectionBox.chunkX1() == worldSectionBox.chunkX2() &&
             worldSectionBox.chunkY1() == worldSectionBox.chunkY2() &&
             worldSectionBox.chunkZ1() == worldSectionBox.chunkZ2()) {
-            return Collections.singletonList(registerAt(
+            return new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(Collections.singletonList(registerAt(
                 CoordinateUtils.getChunkSectionKey(worldSectionBox.chunkX1(), worldSectionBox.chunkY1(), worldSectionBox.chunkZ1()),
                 levelId
-            ));
+            )));
         }
 
         // Leaf start - pre-size ArrayList to avoid grow allocations
         int sizeX = worldSectionBox.chunkX2() - worldSectionBox.chunkX1() + 1;
         int sizeY = worldSectionBox.chunkY2() - worldSectionBox.chunkY1() + 1;
         int sizeZ = worldSectionBox.chunkZ2() - worldSectionBox.chunkZ1() + 1;
-        List<ChunkSectionItemEntityMovementTracker> trackers = new ArrayList<>(sizeX * sizeY * sizeZ);
+        it.unimi.dsi.fastutil.objects.ObjectArrayList<ChunkSectionItemEntityMovementTracker> trackers = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(sizeX * sizeY * sizeZ);
         // Leaf end - pre-size ArrayList to avoid grow allocations
 
         for (int x = worldSectionBox.chunkX1(); x <= worldSectionBox.chunkX2(); x++) {
