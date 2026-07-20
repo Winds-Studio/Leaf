@@ -1,0 +1,1553 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrPowerGamerBR <git@mrpowergamerbr.com>
+Date: Sun, 25 May 2025 21:39:32 -0300
+Subject: [PATCH] SparklyPaper: Parallel world ticking
+
+Original project: https://github.com/SparklyPower/SparklyPaper
+
+Co-authored-by: Altiami <yoshimo.kristin@gmail.com>
+Co-authored-by: Taiyou06 <kaandindar21@gmail.com>
+Co-authored-by: MrlingXD <90316914+wling-art@users.noreply.github.com>
+
+Commit: a274e6617255a93d567efdf00762e492aa2df535
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
+index 617d428102d65f129689dfcbca1c00b97e14a2a0..f5935b07b36cd2e8f6ad51cb567ce27e03bac001 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
+@@ -1129,7 +1129,7 @@ public final class ChunkHolderManager {
+         if (changedFullStatus.isEmpty()) {
+             return;
+         }
+-        if (!TickThread.isTickThread()) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && !TickThread.isTickThreadFor(world) || !TickThread.isTickThread()) { // Leaf - SparklyPaper - parallel world ticking
+             // These will be handled on the next ServerChunkCache$MainThreadExecutor#pollTask, as it runs the distance manager update
+             // which will invoke processTicketUpdates
+             this.offThreadPendingFullLoadUpdate.addAll(changedFullStatus);
+@@ -1150,7 +1150,13 @@ public final class ChunkHolderManager {
+ 
+     // note: never call while inside the chunk system, this will absolutely break everything
+     public void processUnloads() {
+-        TickThread.ensureTickThread("Cannot unload chunks off-main");
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            TickThread.ensureTickThread(world, "Cannot unload chunks off-main");
++        } else {
++            TickThread.ensureTickThread("Cannot unload chunks off-main");
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+ 
+         if (BLOCK_TICKET_UPDATES.get() == Boolean.TRUE) {
+             throw new IllegalStateException("Cannot unload chunks recursively");
+@@ -1405,6 +1411,8 @@ public final class ChunkHolderManager {
+         return Boolean.FALSE;
+     });
+ 
++    public boolean areTicketUpdatesBlocked() { return BLOCK_TICKET_UPDATES.get() == Boolean.TRUE; } // Leaf - SparklyPaper - parallel world ticking
++
+     public Boolean blockTicketUpdates() {
+         final Boolean ret = BLOCK_TICKET_UPDATES.get();
+         BLOCK_TICKET_UPDATES.set(Boolean.TRUE);
+@@ -1419,7 +1427,7 @@ public final class ChunkHolderManager {
+         if (BLOCK_TICKET_UPDATES.get() == Boolean.TRUE) {
+             throw new IllegalStateException("Cannot update ticket level while unloading chunks or updating entity manager");
+         }
+-        final boolean isTickThread = TickThread.isTickThread();
++        final boolean isTickThread = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? TickThread.isTickThreadFor(world) : TickThread.isTickThread(); // Leaf - SparklyPaper - parallel world ticking
+ 
+         if (!PlatformHooks.get().allowAsyncTicketUpdates() && isTickThread) {
+             TickThread.ensureTickThread("Cannot asynchronously process ticket updates");
+diff --git a/io/papermc/paper/entity/activation/ActivationRange.java b/io/papermc/paper/entity/activation/ActivationRange.java
+index 12aa35a4a07ec328cf6702e01a8e2f7b8273a902..c4194b1921f4741b5452259c0ab87fd94977c7f3 100644
+--- a/io/papermc/paper/entity/activation/ActivationRange.java
++++ b/io/papermc/paper/entity/activation/ActivationRange.java
+@@ -134,7 +134,7 @@ public final class ActivationRange {
+      *
+      * @param world
+      */
+-    public static void activateEntities(final Level world) {
++    public synchronized static void activateEntities(final Level world) { // Leaf - SparklyPaper - parallel world ticking
+         final int miscActivationRange = world.spigotConfig.miscActivationRange;
+         final int raiderActivationRange = world.spigotConfig.raiderActivationRange;
+         final int animalActivationRange = world.spigotConfig.animalActivationRange;
+diff --git a/io/papermc/paper/redstone/RedstoneWireTurbo.java b/io/papermc/paper/redstone/RedstoneWireTurbo.java
+index 8e03419df1469c6fecfaa82fcb319a58635b39f3..ccc8a5b5a5353e624e86d69617599cc3ac118a9d 100644
+--- a/io/papermc/paper/redstone/RedstoneWireTurbo.java
++++ b/io/papermc/paper/redstone/RedstoneWireTurbo.java
+@@ -827,14 +827,22 @@ public final class RedstoneWireTurbo {
+         j = getMaxCurrentStrength(upd, j);
+         int l = 0;
+ 
+-        wire.shouldSignal = false;
+-        // Unfortunately, World.isBlockIndirectlyGettingPowered is complicated,
+-        // and I'm not ready to try to replicate even more functionality from
+-        // elsewhere in Minecraft into this accelerator.  So sadly, we must
+-        // suffer the performance hit of this very expensive call.  If there
+-        // is consistency to what this call returns, we may be able to cache it.
+-        final int k = worldIn.getBestNeighborSignal(upd.self);
+-        wire.shouldSignal = true;
++        // Leaf start - SparklyPaper - parallel world ticking
++        final int k;
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            // This now correctly calls the (conditionally) thread-safe method in RedStoneWireBlock
++            k = wire.getBlockSignal(worldIn, upd.self);
++        } else {
++            wire.shouldSignal = false;
++            // Unfortunately, World.isBlockIndirectlyGettingPowered is complicated,
++            // and I'm not ready to try to replicate even more functionality from
++            // elsewhere in Minecraft into this accelerator.  So sadly, we must
++            // suffer the performance hit of this very expensive call.  If there
++            // is consistency to what this call returns, we may be able to cache it.
++            k = worldIn.getBestNeighborSignal(upd.self);
++            wire.shouldSignal = true;
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+ 
+         // The variable 'k' holds the maximum redstone power value of any adjacent blocks.
+         // If 'k' has the highest level of all neighbors, then the power level of this
+diff --git a/net/minecraft/core/dispenser/DispenseItemBehavior.java b/net/minecraft/core/dispenser/DispenseItemBehavior.java
+index aa5bebc293a73468cadf7939fd0a64822953e452..eb5d5b31329a5c6420556966e7fd1ac1afba0792 100644
+--- a/net/minecraft/core/dispenser/DispenseItemBehavior.java
++++ b/net/minecraft/core/dispenser/DispenseItemBehavior.java
+@@ -307,8 +307,8 @@ public interface DispenseItemBehavior {
+                     capturedBlockStates = new java.util.ArrayList<>(level.capturedBlockStates.values());
+                     level.capturedBlockStates.clear();
+ 
+-                    treeType = net.minecraft.world.level.block.SaplingBlock.treeType;
+-                    net.minecraft.world.level.block.SaplingBlock.treeType = null;
++                    treeType = net.minecraft.world.level.block.SaplingBlock.getTreeTypeRT(); // Leaf - SparklyPaper - parallel world ticking
++                    net.minecraft.world.level.block.SaplingBlock.setTreeTypeRT(null); // Leaf - SparklyPaper - parallel world ticking
+                 }
+                 // Paper end
+                 // CraftBukkit start
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 9077a799f5113ce598d1f5c6c72bfec8cfb8f747..973d8dd59356ab02775840d82eda11bf9eec62ba 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -340,6 +340,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     public boolean lagging = false; // Purpur - Lagging threshold
+     protected boolean upnp = false; // Purpur - UPnP Port Forwarding
+     public gg.pufferfish.pufferfish.util.AsyncExecutor mobSpawnExecutor = new gg.pufferfish.pufferfish.util.AsyncExecutor("Leaf Async Mob Spawn Thread"); // Pufferfish - optimize mob spawning // Leaf - Fix Pufferfish and Purpur patches - Unify thread name
++    public java.util.concurrent.Semaphore serverLevelTickingSemaphore = null; // Leaf - SparklyPaper - parallel world ticking
+     // Paper start - improve tick loop
+     public final ca.spottedleaf.common.time.TickData tickTimes1s  = new ca.spottedleaf.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(1L));
+     public final ca.spottedleaf.common.time.TickData tickTimes5s  = new ca.spottedleaf.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(5L));
+@@ -481,21 +482,32 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     private long lastMidTickExecute;
+     private long lastMidTickExecuteFailure;
+ 
++    // Leaf start - SparklyPaper - parallel world ticking
++    private boolean pwt$tickLevelMidTickTasks(final ServerLevel world) {
++        long currTime = System.nanoTime();
++        if (currTime - world.moonrise$getLastMidTickFailure() <= TASK_EXECUTION_FAILURE_BACKOFF) {
++            return false;
++        }
++        if (!world.getChunkSource().pollTask()) {
++            // we need to back off if this fails
++            world.moonrise$setLastMidTickFailure(currTime);
++            return false;
++        }
++        return true;
++    }
++    // Leaf end - SparklyPaper - parallel world ticking
++
+     private boolean tickMidTickTasks() {
+         // give all worlds a fair chance at by targeting them all.
+         // if we execute too many tasks, that's fine - we have logic to correctly handle overuse of allocated time.
++        // Leaf start - SparklyPaper - parallel world ticking - only mid-tick the level for the current thread
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread levelThread) {
++            return this.pwt$tickLevelMidTickTasks(levelThread.currentTickingServerLevel);
++        }
++        // Leaf end - SparklyPaper - parallel world ticking - only mid-tick the level for the current thread
+         boolean executed = false;
+         for (final ServerLevel world : this.getAllLevels()) {
+-            long currTime = System.nanoTime();
+-            if (currTime - ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel)world).moonrise$getLastMidTickFailure() <= TASK_EXECUTION_FAILURE_BACKOFF) {
+-                continue;
+-            }
+-            if (!world.getChunkSource().pollTask()) {
+-                // we need to back off if this fails
+-                ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel)world).moonrise$setLastMidTickFailure(currTime);
+-            } else {
+-                executed = true;
+-            }
++            executed = executed || this.pwt$tickLevelMidTickTasks(world); // Leaf end - SparklyPaper - parallel world ticking - extracts method
+         }
+ 
+         return executed;
+@@ -987,6 +999,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             }
+ 
+             level.save(null, flush, SharedConstants.DEBUG_DONT_SAVE_WORLD || level.noSave && !force, close); // Paper - add close param
++            // Leaf start - SparklyPaper - parallel world ticking - Shutdown handling for async reads
++            // Only prepare shutdown if 'close' is true, indicating this save is part of server shutdown
++            if (close && org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                level.prepareShutdown();
++            }
++            // Leaf end - SparklyPaper - parallel world ticking - Shutdown handling for async reads
+             result = true;
+         }
+ 
+@@ -1848,6 +1866,18 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+     public final io.papermc.paper.threadedregions.EntityScheduler.EntitySchedulerTickList entitySchedulerTickList = new io.papermc.paper.threadedregions.EntityScheduler.EntitySchedulerTickList(); // Paper - optimise Folia entity scheduler
+ 
++    // Leaf start - SparklyPaper - parallel world ticking - move level ticking logic out for branch convergence
++    private void tickLevel(final ServerLevel level, final BooleanSupplier haveTime) {
++        try {
++            level.tick(haveTime);
++        } catch (Throwable t) {
++            CrashReport report = CrashReport.forThrowable(t, "Exception ticking world");
++            level.fillReportDetails(report);
++            throw new ReportedException(report);
++        }
++    }
++    // Leaf end - SparklyPaper - parallel world ticking - move level ticking logic out for branch convergence
++
+     protected void tickChildren(final BooleanSupplier haveTime) {
+         ProfilerFiller profiler = Profiler.get();
+         this.getPlayerList().getPlayers().forEach(playerx -> playerx.connection.suspendFlushing());
+@@ -1898,6 +1928,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         this.updateEffectiveRespawnData();
+ 
+         this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
++        // Leaf start - SparklyPaper - parallel world ticking
++        java.util.ArrayDeque<java.util.concurrent.Future<ServerLevel>> tasks = new java.util.ArrayDeque<>();
++        try {
+         for (ServerLevel level : this.getAllLevels()) {
+             level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
+             level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
+@@ -1907,18 +1940,34 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             profiler.push(() -> level + " " + level.dimension().identifier());
+             profiler.push("tick");
+ 
+-            try {
+-                level.tick(haveTime);
+-            } catch (Throwable t) {
+-                CrashReport report = CrashReport.forThrowable(t, "Exception ticking world");
+-                level.fillReportDetails(report);
+-                throw new ReportedException(report);
++            if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                serverLevelTickingSemaphore.acquire();
++                tasks.add(
++                    level.tickExecutor.submit(() -> {
++                        ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread currentThread = (ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread) Thread.currentThread();
++                        currentThread.currentTickingServerLevel = level;
++                        try {
++                            tickLevel(level, haveTime); // Leaf - SparklyPaper - parallel world ticking - move level ticking logic out for branch convergence
++                        } finally {
++                            serverLevelTickingSemaphore.release();
++                        }
++                    }, level)
++                );
++            } else {
++                tickLevel(level, haveTime);
+             }
+ 
+             profiler.pop();
+             profiler.pop();
+             level.explosionDensityCache.clear(); // Paper - Optimize explosions
+         }
++            while (!tasks.isEmpty()) {
++                tasks.poll().get();
++            }
++        } catch (java.lang.InterruptedException | java.util.concurrent.ExecutionException e) {
++            throw new RuntimeException(e); // Propagate exception
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+         this.isIteratingOverLevels = false; // Paper - Throw exception on world create while being ticked
+ 
+         profiler.popPush("connection");
+@@ -2011,6 +2060,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         Map<ResourceKey<Level>, ServerLevel> oldLevels = this.levels;
+         Map<ResourceKey<Level>, ServerLevel> newLevels = Maps.newLinkedHashMap(oldLevels);
+         newLevels.remove(level.dimension());
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) level.tickExecutor.shutdown(); // Leaf - SparklyPaper - parallel world ticking (We remove it in here instead of ServerLevel.close() because ServerLevel.close() is never called!)
+         this.levels = Collections.unmodifiableMap(newLevels);
+     }
+     // CraftBukkit end
+diff --git a/net/minecraft/server/PlayerAdvancements.java b/net/minecraft/server/PlayerAdvancements.java
+index aa00d3e22fa4c941c124770c50b298301aaadd14..5a8937740f7779f971c2a13ec580eed7bcc26395 100644
+--- a/net/minecraft/server/PlayerAdvancements.java
++++ b/net/minecraft/server/PlayerAdvancements.java
+@@ -53,8 +53,10 @@ public class PlayerAdvancements {
+     private AdvancementTree tree;
+     private final Map<AdvancementHolder, AdvancementProgress> progress = new LinkedHashMap<>();
+     private final Set<AdvancementHolder> visible = new HashSet<>();
+-    private final Set<AdvancementHolder> progressChanged = new HashSet<>();
+-    private final Set<AdvancementNode> rootsToUpdate = new HashSet<>();
++    // Leaf start - SparklyPaper - parallel world ticking
++    private final Set<AdvancementHolder> progressChanged = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? java.util.concurrent.ConcurrentHashMap.newKeySet() : new HashSet<>();
++    private final Set<AdvancementNode> rootsToUpdate = new HashSet<>(); // Always managed on player tick thread
++    // Leaf end - SparklyPaper - parallel world ticking
+     private ServerPlayer player;
+     private @Nullable AdvancementHolder lastSelectedTab;
+     private boolean isFirstPacket = true;
+@@ -149,7 +151,7 @@ public class PlayerAdvancements {
+                 if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().logToConsole.ignoredAdvancements) LOGGER.warn("Ignored advancement '{}' in progress file {} - it doesn't exist anymore?", id, this.playerSavePath); // Gale - Purpur - do not log ignored advancements
+             } else {
+                 this.startProgress(advancement, progress);
+-                this.progressChanged.add(advancement);
++                this.progressChanged.add(advancement); // Leaf - SparklyPaper - parallel world ticking - Always add to non-concurrent set during load, flushDirty will handle sync
+                 this.markForVisibilityUpdate(advancement);
+             }
+         });
+@@ -223,7 +225,7 @@ public class PlayerAdvancements {
+             result = true;
+         }
+ 
+-        if (wasDone && !progress.isDone()) {
++        if (wasDone && !progress.isDone()) { // Leaf - SparklyPaper - parallel world ticking - If the advancement was just un-completed
+             this.markForVisibilityUpdate(advancement);
+         }
+ 
+@@ -261,6 +263,7 @@ public class PlayerAdvancements {
+     }
+ 
+     public void flushDirty(final ServerPlayer player, final boolean showAdvancements) {
++        final boolean isConcurrent = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled; // Leaf - SparklyPaper - parallel world ticking
+         if (this.isFirstPacket || !this.rootsToUpdate.isEmpty() || !this.progressChanged.isEmpty()) {
+             Map<Identifier, AdvancementProgress> progress = new HashMap<>();
+             Set<AdvancementHolder> added = new java.util.TreeSet<>(java.util.Comparator.comparing(adv -> adv.id().toString())); // Paper - Changed from HashSet to TreeSet ordered alphabetically.
+@@ -272,13 +275,23 @@ public class PlayerAdvancements {
+ 
+             this.rootsToUpdate.clear();
+ 
+-            for (AdvancementHolder holder : this.progressChanged) {
++                // Leaf start - SparklyPaper - parallel world ticking
++            if (!this.progressChanged.isEmpty()) {
++                Set<AdvancementHolder> toProcess = isConcurrent ? new HashSet<>(this.progressChanged) : this.progressChanged;
++
++                for (AdvancementHolder holder : toProcess) {
+                 if (this.visible.contains(holder)) {
+                     progress.put(holder.id(), this.progress.get(holder));
+                 }
+             }
+ 
+-            this.progressChanged.clear();
++                if (isConcurrent) {
++                    this.progressChanged.removeAll(toProcess); // Remove processed items from concurrent set
++                } else {
++                    this.progressChanged.clear();
++                }
++            }
++            // Leaf end - SparklyPaper - parallel world ticking
+             if (!progress.isEmpty() || !added.isEmpty() || !removed.isEmpty()) {
+                 player.connection.send(new ClientboundUpdateAdvancementsPacket(this.isFirstPacket, added, removed, progress, showAdvancements));
+             }
+diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
+index d69c08d277084b6ab3a74038156fb2490d46388d..6f87cf1dde2506e9b9e668940dc6c8af9b3a574e 100644
+--- a/net/minecraft/server/dedicated/DedicatedServer.java
++++ b/net/minecraft/server/dedicated/DedicatedServer.java
+@@ -274,6 +274,12 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+         org.purpurmc.purpur.PurpurConfig.registerCommands();
+         */// Purpur end - Purpur config files // Purpur end - Migrate Setting to reintroduce end void rings
+         org.dreeam.leaf.command.LeafCommands.registerCommands(this); // Leaf - Leaf commands
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            serverLevelTickingSemaphore = new java.util.concurrent.Semaphore(org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.threads);
++            DedicatedServer.LOGGER.info("Using {} permits for parallel world ticking", serverLevelTickingSemaphore.availablePermits());
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+         com.destroystokyo.paper.VersionHistoryManager.INSTANCE.getClass(); // Paper - load version history now
+ 
+         // Gale start - Pufferfish - SIMD support
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index aa30556730b3c924f72ccd8702a88c380d42c6a9..d9d0a7693e86c244af47513ae1a3e39e2bb63a31 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -175,6 +175,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+             // call mid-tick tasks for chunk system
+             if ((i & 7) == 0) {
++                if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
+                 ((ca.spottedleaf.moonrise.patches.chunk_system.server.ChunkSystemMinecraftServer)this.level.getServer()).moonrise$executeMidTickTasks();
+                 continue;
+             }
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 629faaf62709163b817783c67e40aa6f591d1a54..07fc6636477fa0a5020234b970c3c2852fb2a8a7 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -196,7 +196,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final ServerChunkCache chunkSource;
+     private final MinecraftServer server;
+     public final io.papermc.paper.world.saveddata.PaperLevelOverrides serverLevelData; // Paper - type
+-    private final EntityTickList entityTickList = new EntityTickList();
++    private final EntityTickList entityTickList = new EntityTickList(this); // Leaf - SparklyPaper - parallel world ticking
+     private final ServerWaypointManager waypointManager;
+     private EnvironmentAttributeSystem environmentAttributes;
+     // Paper - rewrite chunk system
+@@ -221,6 +221,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final StructureCheck structureCheck;
+     private final boolean tickTime;
+     private final LevelDebugSynchronizers debugSynchronizers = new LevelDebugSynchronizers(this);
++    // Leaf start - SparklyPaper - parallel world ticking
++    public final java.util.concurrent.ExecutorService tickExecutor;
++    public final java.util.concurrent.ConcurrentLinkedQueue<org.dreeam.leaf.async.world.WorldReadRequest> asyncReadRequestQueue;
++    private volatile boolean isShuttingDown = false; // Shutdown handling for async reads
++    // Leaf end - SparklyPaper - parallel world ticking
+ 
+     // CraftBukkit start
+     private final ResourceKey<LevelStem> typeKey;
+@@ -763,6 +768,15 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         // Paper end - rewrite chunk system
+         this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
+         this.realPlayers = Lists.newArrayList(); // Leaves - skip
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            this.tickExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(new org.dreeam.leaf.async.world.SparklyPaperServerLevelTickExecutorThreadFactory(getWorld().getName()));
++            this.asyncReadRequestQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
++        } else {
++            this.tickExecutor = null;
++            this.asyncReadRequestQueue = null;
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+     }
+ 
+     // Paper start
+@@ -816,10 +830,147 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         return previous;
+     }
+ 
++    // Leaf start - SparklyPaper - parallel world ticking - Shutdown handling for async reads
++    public boolean isShuttingDown() {
++        return this.isShuttingDown;
++    }
++
++    public void prepareShutdown() {
++        this.isShuttingDown = true;
++        org.dreeam.leaf.async.world.WorldReadRequest req;
++        int clearedRequests = 0;
++        while ((req = this.asyncReadRequestQueue.poll()) != null) {
++            req.future().completeExceptionally(new IllegalStateException("World " + this.getWorld().getName() + " is shutting down. Cannot process buffered read: " + req.type()));
++            clearedRequests++;
++        }
++        if (clearedRequests > 0) {
++            MinecraftServer.LOGGER.info("PWT: Cleared {} pending async read requests for world {} during shutdown.", clearedRequests, this.getWorld().getName());
++        }
++    }
++    // Leaf end - SparklyPaper - parallel world ticking - Shutdown handling for async reads
++
++    // Leaf start - SparklyPaper - parallel world ticking
++    private void processAsyncReadRequests() {
++        // Clear queue if buffering gets disabled to prevent memory leaks
++        if (org.dreeam.leaf.async.world.UnsafeReadPolicy.BUFFERED != org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.asyncUnsafeReadHandling && !this.asyncReadRequestQueue.isEmpty()) {
++            org.dreeam.leaf.async.world.WorldReadRequest req;
++            while ((req = this.asyncReadRequestQueue.poll()) != null) {
++                req.future().completeExceptionally(new IllegalStateException("Async read buffering disabled while request was pending."));
++            }
++            return;
++        }
++
++        org.dreeam.leaf.async.world.WorldReadRequest request;
++        int processed = 0;
++        // Limit processing per tick to avoid stalling the tick loop
++        int maxToProcess = 16384; // Consider making this configurable
++
++        while (processed < maxToProcess && (request = this.asyncReadRequestQueue.poll()) != null) {
++            processed++;
++            // Ensure we are on the correct thread before executing
++            // This check might be redundant if called correctly from tick(), but good for safety
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Processing async read request off-thread");
++
++            try {
++                Object result = executeReadRequest(request);
++                request.future().complete(result);
++            } catch (Throwable t) {
++                // Log the error from the tick thread side
++                org.bukkit.Bukkit.getLogger().log(java.util.logging.Level.SEVERE, "Exception processing buffered async world read for type " + request.type(), t);
++                request.future().completeExceptionally(t);
++            }
++        }
++    }
++
++    // Executes the actual read operation based on the request type
++    public Object executeReadRequest(final org.dreeam.leaf.async.world.WorldReadRequest request) {
++        Object[] params = request.params();
++        BlockPos pos; // Declare pos outside the switch
++
++        switch (request.type()) {
++            case BLOCK_GET_NMS_STATE: { //
++                pos = (BlockPos) params[0];
++                return this.getBlockState(pos);
++            }
++            case BLOCK_GET_BIOME: {
++                pos = (BlockPos) params[0];
++                return this.getNoiseBiome(pos.getX() >> 2, pos.getY() >> 2, pos.getZ() >> 2);
++            }
++            case BLOCK_GET_COMPUTED_BIOME: {
++                pos = (BlockPos) params[0];
++                return this.getBiome(pos);
++            }
++            case BLOCK_IS_INDIRECTLY_POWERED: {
++                pos = (BlockPos) params[0];
++                return this.hasNeighborSignal(pos);
++            }
++            case BLOCK_GET_BLOCK_POWER: {
++                pos = (BlockPos) params[0];
++                org.bukkit.block.BlockFace face = (org.bukkit.block.BlockFace) params[1];
++                boolean searchSelfIncluded = face == org.bukkit.block.BlockFace.SELF;
++                Direction onlyFace = org.bukkit.craftbukkit.block.CraftBlock.blockFaceToNotch(face);
++
++                int power = net.minecraft.world.level.redstone.Redstone.SIGNAL_NONE;
++                for (Direction direction : net.minecraft.world.level.SignalGetter.DIRECTIONS) {
++                    if (!searchSelfIncluded && direction != onlyFace) {
++                        continue;
++                    }
++
++                    BlockPos neighborPos = pos.relative(direction);
++                    if (this.hasSignal(neighborPos, direction)) {
++                        BlockState state = this.getBlockState(neighborPos);
++                        if (state.hasProperty(net.minecraft.world.level.block.RedStoneWireBlock.POWER)) {
++                            power = Math.max(state.getValue(net.minecraft.world.level.block.RedStoneWireBlock.POWER), power);
++                            if (power == net.minecraft.world.level.redstone.Redstone.SIGNAL_MAX) {
++                                return power;
++                            }
++                        }
++                    }
++                }
++
++                if (power != net.minecraft.world.level.redstone.Redstone.SIGNAL_NONE) {
++                    return power;
++                }
++
++                // Simplified indirect check for faces
++                if (searchSelfIncluded) {
++                    return this.hasNeighborSignal(pos) ? net.minecraft.world.level.redstone.Redstone.SIGNAL_MAX : net.minecraft.world.level.redstone.Redstone.SIGNAL_MIN;
++                }
++                return this.getSignal(pos, onlyFace) > 0 ? net.minecraft.world.level.redstone.Redstone.SIGNAL_MAX : net.minecraft.world.level.redstone.Redstone.SIGNAL_MIN;
++            }
++            case BLOCK_RAY_TRACE: {
++                pos = (BlockPos) params[0];
++                org.bukkit.Location start = (org.bukkit.Location) params[1];
++                org.bukkit.util.Vector direction = (org.bukkit.util.Vector) params[2];
++                double maxDistance = (double) params[3];
++                org.bukkit.FluidCollisionMode fluidCollisionMode = (org.bukkit.FluidCollisionMode) params[4];
++
++                org.bukkit.util.Vector dir = direction.clone().normalize().multiply(maxDistance);
++                Vec3 startPos = org.bukkit.craftbukkit.util.CraftLocation.toVec3(start);
++                Vec3 endPos = startPos.add(dir.getX(), dir.getY(), dir.getZ());
++
++                return this.clip(new net.minecraft.world.level.ClipContext(startPos, endPos, net.minecraft.world.level.ClipContext.Block.OUTLINE, org.bukkit.craftbukkit.CraftFluidCollisionMode.toFluid(fluidCollisionMode), net.minecraft.world.phys.shapes.CollisionContext.empty()), pos); // Pass block pos
++            }
++            case BLOCK_CAN_PLACE: {
++                pos = (BlockPos) params[0];
++                org.bukkit.block.data.BlockData data = (org.bukkit.block.data.BlockData) params[1];
++                net.minecraft.world.level.block.state.BlockState nmsData = ((org.bukkit.craftbukkit.block.data.CraftBlockData) data).getState();
++                return nmsData.canSurvive(this, pos);
++            }
++            // Add cases for other ReadOperationType values here...
++            // case GET_ENTITIES_IN_BOX: ... (complex, needs careful list handling)
++
++            default:
++                throw new UnsupportedOperationException("Unsupported buffered read type: " + request.type());
++        }
++    }
++    // Leaf end - SparklyPaper - parallel world ticking
++
+     public void tick(final BooleanSupplier haveTime) {
+         ProfilerFiller profiler = Profiler.get();
+         this.handlingTick = true;
+         this.environmentAttributes().invalidateTickCache();
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) this.processAsyncReadRequests(); // Leaf - SparklyPaper - parallel world ticking
+         TickRateManager tickRateManager = this.tickRateManager();
+         boolean runs = tickRateManager.runsNormally();
+         if (runs) {
+@@ -830,6 +981,12 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             profiler.pop();
+         }
+ 
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && (++this.tickedBlocksOrFluids & 7L) != 0L) { // Execute mid-tick tasks if PWT is enabled
++            this.moonrise$midTickTasks();
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
++
+         int percentage = this.getGameRules().get(GameRules.PLAYERS_SLEEPING_PERCENTAGE);
+         if (this.purpurConfig.playersSkipNight && this.sleepStatus.areEnoughSleeping(percentage) && this.sleepStatus.areEnoughDeepSleeping(percentage, this.players)) { // Purpur - Config for skipping night
+             Optional<Holder<WorldClock>> defaultClock = this.dimensionType().defaultClock();
+@@ -935,6 +1092,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                                         entity.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DISCARD);
+                                         // Paper end - Prevent block entity and entity crashes
+                                     }
++                                    if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
+                                     this.moonrise$midTickTasks(); // Paper - rewrite chunk system
+                                     // Gale end - Airplane - remove lambda from ticking guard - copied from guardEntityTick
+                                     profiler.pop();
+@@ -1443,7 +1601,10 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             fluidState.tick(this, pos, blockState);
+         }
+         // Paper start - rewrite chunk system
+-        if ((++this.tickedBlocksOrFluids & 7L) != 0L) {
++        // Leaf start - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
++        ++this.tickedBlocksOrFluids;
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && (this.tickedBlocksOrFluids & 7L) != 0L) {
++            // Leaf end - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
+             ((ca.spottedleaf.moonrise.patches.chunk_system.server.ChunkSystemMinecraftServer)this.server).moonrise$executeMidTickTasks();
+         }
+         // Paper end - rewrite chunk system
+@@ -1456,7 +1617,10 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             state.tick(this, pos, this.random);
+         }
+         // Paper start - rewrite chunk system
+-        if ((++this.tickedBlocksOrFluids & 7L) != 0L) {
++        // Leaf start - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
++        ++this.tickedBlocksOrFluids;
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && (this.tickedBlocksOrFluids & 7L) != 0L) {
++            // Leaf end - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
+             ((ca.spottedleaf.moonrise.patches.chunk_system.server.ChunkSystemMinecraftServer)this.server).moonrise$executeMidTickTasks();
+         }
+         // Paper end - rewrite chunk system
+@@ -1708,6 +1872,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     }
+ 
+     private void addPlayer(final ServerPlayer player) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Cannot add player off-main"); // Leaf - SparklyPaper - parallel world ticking (async is no longer safe; schedule on main; additional concurrency issues logs)
+         Entity existing = this.getEntity(player.getUUID());
+         if (existing != null) {
+             LOGGER.warn("Force-added player with duplicate UUID {}", player.getUUID());
+@@ -1720,7 +1885,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     // CraftBukkit start
+     private boolean addEntity(final Entity entity, final org.bukkit.event.entity.CreatureSpawnEvent.@Nullable SpawnReason spawnReason) {
+-        org.spigotmc.AsyncCatcher.catchOp("entity add"); // Spigot
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, "Cannot add entity off-main"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
++        } else {
++            org.spigotmc.AsyncCatcher.catchOp("entity add"); // Spigot
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+         entity.generation = false; // Paper - Don't fire sync event during generation; Reset flag if it was added during a ServerLevel generation process
+         // Paper start - extra debug info
+         if (entity.valid) {
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index f6320f534137f33c3dc21e470bf6f427e207af6a..286572cec2746ea41b34fcdb72f91dcfb8771793 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -478,6 +478,8 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+     }
+     // Paper end - rewrite chunk system
+ 
++    public boolean hasTickedAtLeastOnceInNewWorld = false; // Leaf - SparklyPaper - parallel world ticking (fixes bug in DreamResourceReset where the inventory is opened AFTER the player has changed worlds, if you click with the quick tp torch in a chest, because the inventory is opened AFTER the player has teleported)
++
+     public ServerPlayer(final MinecraftServer server, final ServerLevel level, final GameProfile gameProfile, final ClientInformation clientInformation) {
+         super(level, gameProfile);
+         this.server = server;
+@@ -729,6 +731,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+ 
+     @Override
+     public void tick() {
++        hasTickedAtLeastOnceInNewWorld = true; // Leaf - SparklyPaper - parallel world ticking (see: PARALLEL_NOTES.md - Opening an inventory after a world switch)
+         // CraftBukkit start
+         if (this.joining) {
+             this.joining = false;
+@@ -1597,6 +1600,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+             return this;
+         }
+ 
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureOnlyTickThread("Cannot change dimension of a player off-main, from world[" + oldLevel.getWorld().getName() + "] to world[" + newLevel.getWorld().getName() + "]"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         this.isChangingDimension = true;
+         LevelData levelData = newLevel.getLevelData();
+         this.connection.send(new ClientboundRespawnPacket(this.createCommonSpawnInfo(newLevel), ClientboundRespawnPacket.KEEP_ALL_DATA));
+@@ -1932,6 +1936,12 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+             return OptionalInt.empty();
+         } else {
+             // CraftBukkit start
++            // Leaf start - SparklyPaper - parallel world ticking (see: PARALLEL_NOTES.md - Opening an inventory after a world switch)
++            if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && !hasTickedAtLeastOnceInNewWorld) {
++                MinecraftServer.LOGGER.warn("Ignoring request to open container {} because we haven't ticked in the current world yet!", menu, new Throwable());
++                return OptionalInt.empty();
++            }
++            // Leaf end - SparklyPaper - parallel world ticking (see: PARALLEL_NOTES.md - Opening an inventory after a world switch)
+             this.containerMenu = menu; // Moved up
+             if (!this.isImmobile()) {
+                 this.connection.send(new ClientboundOpenScreenPacket(menu.containerId, menu.getType(), java.util.Objects.requireNonNullElseGet(title, menu::getTitle))); // Paper - Add titleOverride to InventoryOpenEven
+@@ -2026,6 +2036,11 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+     }
+     @Override
+     public void closeContainer(org.bukkit.event.inventory.InventoryCloseEvent.Reason reason) {
++        // Leaf start - SparklyPaper - parallel world ticking (debugging)
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.logContainerCreationStacktraces) {
++            MinecraftServer.LOGGER.warn("Closing {} inventory that was created at", this.getBukkitEntity().getName(), this.containerMenu.containerCreationStacktrace);
++        }
++        // Leaf end - SparklyPaper - parallel world ticking (debugging)
+         org.bukkit.craftbukkit.event.CraftEventFactory.handleInventoryCloseEvent(this, reason); // CraftBukkit
+         // Paper end - Inventory close reason
+         this.connection.send(new ClientboundContainerClosePacket(this.containerMenu.containerId));
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index b2cdb549615e9f5a96578003ca286dc005edfe05..36509483ff7fea1bcd32793906de768c243326d9 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -278,6 +278,7 @@ public abstract class PlayerList {
+     // Leaves end - replay mod api
+ 
+     public void placeNewPlayer(final Connection connection, final ServerPlayer player, final CommonListenerCookie cookie) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureOnlyTickThread("Cannot place new player off-main"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         player.isRealPlayer = true; // Paper
+         player.loginTime = System.currentTimeMillis(); // Paper - Replace OfflinePlayer#getLastPlayed
+         NameAndId gameProfile = player.nameAndId();
+@@ -778,6 +779,14 @@ public abstract class PlayerList {
+ 
+     // Paper start - respawn event
+     public ServerPlayer respawn(final ServerPlayer serverPlayer, final boolean keepAllPlayerData, final Entity.RemovalReason removalReason, final org.bukkit.event.player.PlayerRespawnEvent.RespawnReason respawnReason) {
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && !this.server.isSameThread()) {
++            // Respawning is a complex operation that modifies global player lists and can interact with multiple
++            // worlds. It must be executed on the main server thread to ensure thread safety. We block the
++            // calling (world) thread to wait for the result, preserving the synchronous API contract of this method.
++            return this.server.submit(() -> this.respawn(serverPlayer, keepAllPlayerData, removalReason, respawnReason)).join();
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+         ServerPlayer.RespawnResult result = serverPlayer.findRespawnPositionAndUseSpawnBlock0(!keepAllPlayerData, TeleportTransition.DO_NOTHING, respawnReason);
+         if (result == null) { // disconnected player during the respawn event
+             return serverPlayer;
+@@ -791,6 +800,7 @@ public abstract class PlayerList {
+         serverPlayer.level().removePlayerImmediately(serverPlayer, removalReason);
+         ServerLevel level = respawnInfo.newLevel();
+         ServerPlayer player = serverPlayer; // Paper - TODO - recreate instance
++        player.hasTickedAtLeastOnceInNewWorld = false; // Leaf - SparklyPaper - parallel world ticking (see: PARALLEL_NOTES.md - Opening an inventory after a world switch)
+         player.connection = serverPlayer.connection;
+         player.restoreFrom(serverPlayer, keepAllPlayerData);
+         player.setId(serverPlayer.getId());
+diff --git a/net/minecraft/server/waypoints/ServerWaypointManager.java b/net/minecraft/server/waypoints/ServerWaypointManager.java
+index b9748a392c9f76e61a1b673085b4dd74c007c70d..6774051521794990278d5ef5cf6b3dab05d3337e 100644
+--- a/net/minecraft/server/waypoints/ServerWaypointManager.java
++++ b/net/minecraft/server/waypoints/ServerWaypointManager.java
+@@ -22,13 +22,17 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     // Paper start - optimize ServerWaypointManager with locator bar disabled
+     public boolean locatorBarEnabled; // Avoid a gamerule lookup for each player
+ 
++    // Leaf start - SparklyPaper - parallel world ticking
++    private final net.minecraft.server.level.ServerLevel level;
+     public ServerWaypointManager(net.minecraft.server.level.ServerLevel serverLevel) {
+         this.locatorBarEnabled = serverLevel.getGameRules().get(GameRules.LOCATOR_BAR);
++        this.level = serverLevel; // Leaf - SparklyPaper - parallel world ticking
+     }
+     // Paper end - optimize ServerWaypointManager with locator bar disabled
+ 
+     @Override
+     public void trackWaypoint(final WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot track waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.waypoints.add(waypoint);
+ 
+         if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+@@ -40,6 +44,7 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     @Override
+     public void updateWaypoint(final WaypointTransmitter waypoint) {
+         if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         if (this.waypoints.contains(waypoint)) {
+             Map<ServerPlayer, WaypointTransmitter.Connection> playerConnection = Tables.transpose(this.connections).row(waypoint);
+             SetView<ServerPlayer> potentialPlayers = Sets.difference(this.players, playerConnection.keySet());
+@@ -56,12 +61,14 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+ 
+     @Override
+     public void untrackWaypoint(final WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot untrack waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.connections.column(waypoint).forEach((player, connection) -> connection.disconnect());
+         Tables.transpose(this.connections).row(waypoint).clear();
+         this.waypoints.remove(waypoint);
+     }
+ 
+     public void addPlayer(final ServerPlayer player) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot add player to waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.players.add(player);
+ 
+         if (this.locatorBarEnabled) { // Paper - optimize ServerWaypointManager with locator bar disabled
+@@ -77,6 +84,7 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+ 
+     public void updatePlayer(final ServerPlayer player) {
+         if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update player for waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         Map<WaypointTransmitter, WaypointTransmitter.Connection> waypointConnections = this.connections.row(player);
+         SetView<WaypointTransmitter> potentialWaypoints = Sets.difference(this.waypoints, waypointConnections.keySet());
+ 
+@@ -90,6 +98,7 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void removePlayer(final ServerPlayer player) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot remove player from waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.connections.row(player).values().removeIf(connection -> {
+             connection.disconnect();
+             return true;
+@@ -99,11 +108,13 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void breakAllConnections() {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot break all waypoint connections off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.connections.values().forEach(WaypointTransmitter.Connection::disconnect);
+         this.connections.clear();
+     }
+ 
+     public void remakeConnections(final WaypointTransmitter waypoint) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) { ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot remake waypoint connections off-main"); } // Leaf - SparklyPaper - parallel world ticking
+         if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         for (ServerPlayer player : this.players) {
+             this.createConnection(player, waypoint);
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 35888fa7adeabf54fe9a44f69c79b7c5ac247d49..02f02a8a36a4fcf28bf137393f6b6ac0cb8fd535 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -3667,13 +3667,7 @@ public abstract class Entity
+                     ProfilerFiller profiler = Profiler.get();
+                     profiler.push("portal");
+                     this.setPortalCooldown();
+-                    TeleportTransition teleportTransition = this.portalProcess.getPortalDestination(level, this);
+-                    if (teleportTransition != null) {
+-                        ServerLevel newLevel = teleportTransition.newLevel();
+-                        if (level.isAllowedToEnterPortal(newLevel) && (newLevel.dimension() == level.dimension() || this.canTeleport(level, newLevel))) {
+-                            this.teleport(teleportTransition);
+-                        }
+-                    }
++                    handleTeleport(level); // Leaf - SparklyPaper - parallel world ticking
+ 
+                     profiler.pop();
+                 } else if (this.portalProcess.hasExpired()) {
+@@ -3683,6 +3677,55 @@ public abstract class Entity
+         }
+     }
+ 
++    // Leaf start - SparklyPaper - parallel world ticking - mark pending teleport to prevent clearing portal process
++    private void handleTeleport(final ServerLevel level) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            pwt$handleTeleport(level);
++        } else {
++            TeleportTransition teleportTransition = this.portalProcess.getPortalDestination(level, this);
++            if (teleportTransition != null) {
++                ServerLevel newLevel = teleportTransition.newLevel();
++                if (level.isAllowedToEnterPortal(newLevel) && (newLevel.dimension() == level.dimension() || this.canTeleport(level, newLevel))) {
++                    this.teleport(teleportTransition);
++                }
++            }
++        }
++    }
++
++    private void pwt$handleTeleport(final ServerLevel level) {
++        java.util.function.Consumer<Entity> portalEntityTask = entity -> {
++            assert entity.portalProcess != null;
++            // Fix NPE when portalProcess becomes null before task execution
++            // Portal process was likely nulled out (e.g., expired) between scheduling and execution.
++            if (entity.portalProcess == null) {
++                return;
++            }
++
++            if (entity.portalProcess.isParallelCancelledByPlugin()) {
++                entity.portalProcess = null;
++                return;
++            }
++
++            TeleportTransition portalDestination = entity.portalProcess.getPortalDestination(level, entity);
++            if (portalDestination != null) {
++                ServerLevel newLevel = portalDestination.newLevel();
++                if (level.isAllowedToEnterPortal(newLevel) && (newLevel.dimension() == level.dimension() || this.canTeleport(level, newLevel))
++                ) {
++                    entity.teleport(portalDestination);
++                }
++            }
++            // Add another null check here just in case teleport() somehow nulled it (defensive)
++            if (entity.portalProcess != null) {
++                entity.portalProcess.confirmParallelAsHandled();
++            }
++        };
++
++        this.portalProcess.setParallelAsScheduled();
++        this.getBukkitEntity().taskScheduler.schedule(portalEntityTask, entity -> {
++        }, 0);
++    }
++    // Leaf start - SparklyPaper - parallel world ticking - mark pending teleport to prevent clearing portal process
++
+     public int getDimensionChangingDelay() {
+         Entity firstPassenger = this.getFirstPassenger();
+         return firstPassenger instanceof ServerPlayer ? firstPassenger.getDimensionChangingDelay() : 300;
+@@ -4258,6 +4301,7 @@ public abstract class Entity
+     }
+ 
+     private @Nullable Entity teleportCrossDimension(final ServerLevel oldLevel, final ServerLevel newLevel, final TeleportTransition transition) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(newLevel, "Cannot teleport entity to another world off-main, from world[" + oldLevel.getWorld().getName() + "] to world[" + newLevel.getWorld().getName() + "]"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         List<Entity> oldPassengers = this.getPassengers();
+         List<Entity> newPassengers = new ArrayList<>(oldPassengers.size());
+         this.ejectPassengers();
+diff --git a/net/minecraft/world/entity/PortalProcessor.java b/net/minecraft/world/entity/PortalProcessor.java
+index 7ec15f3d3a770e1e9e2fbac29dd38e947bb07091..a7570cee21e4767dd5a3de37cae717730c87acb7 100644
+--- a/net/minecraft/world/entity/PortalProcessor.java
++++ b/net/minecraft/world/entity/PortalProcessor.java
+@@ -11,6 +11,7 @@ public class PortalProcessor {
+     private BlockPos entryPosition;
+     private int portalTime;
+     private boolean insidePortalThisTick;
++    private ParallelPendingTeleportState pendingTeleport = ParallelPendingTeleportState.INACTIVE; // Leaf - SparklyPaper - parallel world ticking - prevent clearing portal process
+ 
+     public PortalProcessor(final Portal portal, final BlockPos portalEntryPosition) {
+         this.portal = portal;
+@@ -19,6 +20,7 @@ public class PortalProcessor {
+     }
+ 
+     public boolean processPortalTeleportation(final ServerLevel serverLevel, final Entity entity, final boolean allowedToTeleport) {
++        if (this.isParallelTeleportScheduled()) return false; // Leaf - SparklyPaper - parallel world ticking - prevent clearing portal process
+         if (!this.insidePortalThisTick) {
+             this.decayTick();
+             return false;
+@@ -41,7 +43,7 @@ public class PortalProcessor {
+     }
+ 
+     public boolean hasExpired() {
+-        return this.portalTime <= 0;
++        return !this.isParallelTeleportScheduled() && this.portalTime <= 0; // Leaf - SparklyPaper - parallel world ticking - prevent clearing portal process
+     }
+ 
+     public BlockPos getEntryPosition() {
+@@ -67,4 +69,36 @@ public class PortalProcessor {
+     public boolean isSamePortal(final Portal portal) {
+         return this.portal == portal;
+     }
++
++    // Leaf start - SparklyPaper - parallel world ticking - prevent clearing portal process
++    public boolean isParallelTeleportPending() {
++        return this.pendingTeleport == ParallelPendingTeleportState.PENDING;
++    }
++
++    public boolean isParallelTeleportScheduled() {
++        return this.pendingTeleport != ParallelPendingTeleportState.INACTIVE;
++    }
++
++    public boolean isParallelCancelledByPlugin() {
++        return this.pendingTeleport == ParallelPendingTeleportState.CANCELLED;
++    }
++
++    public void setParallelAsScheduled() {
++        this.pendingTeleport = ParallelPendingTeleportState.PENDING;
++    }
++
++    public void confirmParallelAsHandled() {
++        this.pendingTeleport = ParallelPendingTeleportState.INACTIVE;
++    }
++
++    public void setParallelAsCancelled() {
++        this.pendingTeleport = ParallelPendingTeleportState.CANCELLED;
++    }
++
++    private enum ParallelPendingTeleportState {
++        INACTIVE,
++        PENDING,
++        CANCELLED
++    }
++    // Leaf end - SparklyPaper - parallel world ticking - prevent clearing portal process
+ }
+diff --git a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
+index ba61762e09ace201173999b3984046f930ccfe57..2ec5283bdab7f533edeab8812a9033f0925be18f 100644
+--- a/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
++++ b/net/minecraft/world/entity/ai/behavior/GoToPotentialJobSite.java
+@@ -43,15 +43,39 @@ public class GoToPotentialJobSite extends Behavior<Villager> {
+         Optional<GlobalPos> potentialJobSitePos = body.getBrain().getMemory(MemoryModuleType.POTENTIAL_JOB_SITE);
+         potentialJobSitePos.ifPresent(globalPos -> {
+             BlockPos pos = globalPos.pos();
+-            ServerLevel serverLevel = level.getServer().getLevel(globalPos.dimension());
+-            if (serverLevel != null) {
+-                PoiManager manager = serverLevel.getPoiManager();
+-                if (manager.exists(pos, p -> true)) {
+-                    manager.release(pos);
++            // Leaf start - SparklyPaper - parallel world ticking
++            if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                ServerLevel entityLevel = level; // Villager's current level
++                ServerLevel poiLevel = entityLevel.getServer().getLevel(globalPos.dimension()); // POI's actual level
++
++                if (poiLevel != null) {
++                    Runnable poiOperationsTask = () -> {
++                        PoiManager manager = poiLevel.getPoiManager();
++                        if (manager.exists(pos, p -> true)) {
++                            manager.release(pos);
++                        }
++                    };
++
++                    // DebugPackets.sendPoiTicketCountPacket uses the entity's level for its PoiManager context.
++                    Runnable debugPacketTask = () -> level.debugSynchronizers().updatePoi(pos);
++
++                    // Schedule POI operations on the POI's level thread, using POI's chunk coordinates for locality
++                    poiLevel.moonrise$getChunkTaskScheduler().scheduleChunkTask(pos.getX() >> 4, pos.getZ() >> 4, poiOperationsTask, ca.spottedleaf.concurrentutil.util.Priority.BLOCKING);
++                    // Schedule debug packet on the entity's level thread, using entity's chunk coordinates for locality
++                    entityLevel.moonrise$getChunkTaskScheduler().scheduleChunkTask(body.chunkPosition().x(), body.chunkPosition().z(), debugPacketTask, ca.spottedleaf.concurrentutil.util.Priority.BLOCKING);
+                 }
++            } else {
++                ServerLevel serverLevel = level.getServer().getLevel(globalPos.dimension());
++                if (serverLevel != null) {
++                    PoiManager manager = serverLevel.getPoiManager();
++                    if (manager.exists(pos, p -> true)) {
++                        manager.release(pos);
++                    }
+ 
+-                level.debugSynchronizers().updatePoi(pos);
++                    level.debugSynchronizers().updatePoi(pos);
++                }
+             }
++            // Leaf end - SparklyPaper - parallel world ticking
+         });
+         body.getBrain().eraseMemory(MemoryModuleType.POTENTIAL_JOB_SITE);
+     }
+diff --git a/net/minecraft/world/entity/npc/villager/Villager.java b/net/minecraft/world/entity/npc/villager/Villager.java
+index 6dbf1292d7fc91ba8cf3610fa3dba3fd4d452319..7ce2b390319e5e01f7b6e4ed3c31ce744dc426ab 100644
+--- a/net/minecraft/world/entity/npc/villager/Villager.java
++++ b/net/minecraft/world/entity/npc/villager/Villager.java
+@@ -796,13 +796,29 @@ public class Villager extends AbstractVillager implements VillagerDataHolder, Re
+             this.brain.getMemory(memoryType).ifPresent(memory -> {
+                 ServerLevel poiLevel = server.getLevel(memory.dimension());
+                 if (poiLevel != null) {
+-                    PoiManager poiManager = poiLevel.getPoiManager();
+-                    Optional<Holder<PoiType>> type = poiManager.getType(memory.pos());
+-                    BiPredicate<Villager, Holder<PoiType>> poiTypePredicate = POI_MEMORIES.get(memoryType);
+-                    if (type.isPresent() && poiTypePredicate.test(this, type.get())) {
+-                        poiManager.release(memory.pos());
+-                        poiLevel.debugSynchronizers().updatePoi(memory.pos());
++                    // Leaf start - SparklyPaper - parallel world ticking - handling for releasing poi cross-dimension
++                    if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                        Runnable releasePoiTask = () -> {
++                            PoiManager poiManager = poiLevel.getPoiManager();
++                            Optional<Holder<PoiType>> type = poiManager.getType(memory.pos());
++                            BiPredicate<Villager, Holder<PoiType>> poiTypePredicate = POI_MEMORIES.get(memoryType);
++                            if (type.isPresent() && poiTypePredicate.test(this, type.get())) {
++                                poiManager.release(memory.pos());
++                                poiLevel.debugSynchronizers().updatePoi(memory.pos());
++                            }
++                        };
++
++                        poiLevel.moonrise$getChunkTaskScheduler().scheduleChunkTask(0, 0, releasePoiTask, ca.spottedleaf.concurrentutil.util.Priority.BLOCKING);
++                    } else {
++                        PoiManager poiManager = poiLevel.getPoiManager();
++                        Optional<Holder<PoiType>> type = poiManager.getType(memory.pos());
++                        BiPredicate<Villager, Holder<PoiType>> poiTypePredicate = POI_MEMORIES.get(memoryType);
++                        if (type.isPresent() && poiTypePredicate.test(this, type.get())) {
++                            poiManager.release(memory.pos());
++                            poiLevel.debugSynchronizers().updatePoi(memory.pos());
++                        }
+                     }
++                    // Leaf end - SparklyPaper - parallel world ticking - handling for releasing poi cross-dimension
+                 }
+             });
+         }
+diff --git a/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java b/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java
+index b4250e23ff0b522bcb4118af9772e579dfa64c46..5d14ecd2023a84d06c07ddf4544dae95f3a8ee89 100644
+--- a/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java
++++ b/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java
+@@ -104,11 +104,13 @@ public class ThrownEnderpearl extends ThrowableItemProjectile {
+                 Vec3 teleportPos = this.oldPosition();
+                 if (owner instanceof ServerPlayer player) {
+                     if (player.connection.isAcceptingMessages()) {
++                        // Leaf start - SparklyPaper - parallel world ticking - handling for pearl teleportation cross-dimension
++                        java.util.function.Consumer<ServerPlayer> teleportPlayerCrossDimensionTask = taskPlayer -> {
+                         // CraftBukkit start
+                         // Store pre teleportation position as the teleport has been moved up.
+                         final double preTeleportX = player.getX(), preTeleportY = player.getY(), preTeleportZ = player.getZ();
+                         final float preTeleportYRot = player.getYRot(), preTeleportXRot = player.getXRot();
+-                        ServerPlayer newOwner = player.teleport(new TeleportTransition(
++                        ServerPlayer newOwner = taskPlayer.teleport(new TeleportTransition(
+                             level, teleportPos, Vec3.ZERO, 0.0F, 0.0F, Relative.union(Relative.ROTATION, Relative.DELTA), TeleportTransition.DO_NOTHING, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.ENDER_PEARL));
+                         if (newOwner == null) {
+                             this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.HIT);
+@@ -138,10 +140,18 @@ public class ThrownEnderpearl extends ThrowableItemProjectile {
+                         if (newOwner != null) {
+                             newOwner.resetFallDistance();
+                             newOwner.resetCurrentImpulseContext();
+-                            newOwner.hurtServer(player.level(), this.damageSources().enderPearl().eventEntityDamager(this), this.level().purpurConfig.enderPearlDamage); // CraftBukkit // Paper - fix DamageSource API // Purpur - Configurable Ender Pearl damage
++                            newOwner.hurtServer(taskPlayer.level(), this.damageSources().enderPearl().eventEntityDamager(this), this.level().purpurConfig.enderPearlDamage); // CraftBukkit // Paper - fix DamageSource API // Purpur - Configurable Ender Pearl damage
+                         }
+ 
+                         this.playSound(level, teleportPos);
++                        };
++                        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                            player.getBukkitEntity().taskScheduler.schedule(teleportPlayerCrossDimensionTask, entity -> {
++                            }, 0);
++                        } else {
++                            teleportPlayerCrossDimensionTask.accept(player);
++                        }
++                        // Leaf end - SparklyPaper - parallel world ticking - handling for pearl teleportation cross-dimension
+                     }
+                 } else {
+                     Entity newOwner = owner.teleport(
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index 54524a7472f75332e010a93bd923fd076f4ce66c..2c877323fabfb78782e4d28aa6a0806ffeaef5d8 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -94,8 +94,14 @@ public abstract class AbstractContainerMenu {
+ 
+     public void startOpen() {}
+     // CraftBukkit end
++    public Throwable containerCreationStacktrace; // Leaf - SparklyPaper - parallel world ticking (debugging)
+ 
+     protected AbstractContainerMenu(final @Nullable MenuType<?> menuType, final int containerId) {
++        // Leaf start - SparklyPaper - parallel world ticking (debugging)
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.logContainerCreationStacktraces) {
++            this.containerCreationStacktrace = new Throwable();
++        }
++        // Leaf end - SparklyPaper - parallel world ticking (debugging)
+         this.menuType = menuType;
+         this.containerId = containerId;
+     }
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index 6e5438a327287981d7732659530fba6cd06b591e..8b1582e2f881c581bd6788c587b830ef57ad7d4f 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -403,8 +403,8 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
+             capturedBlockEntities = new java.util.ArrayList<>(level.capturedBlockEntities.values());
+             level.capturedBlockEntities.clear();
+ 
+-            treeType = net.minecraft.world.level.block.SaplingBlock.treeType;
+-            net.minecraft.world.level.block.SaplingBlock.treeType = null;
++            treeType = net.minecraft.world.level.block.SaplingBlock.getTreeTypeRT(); // Leaf - SparklyPaper - parallel world ticking
++            net.minecraft.world.level.block.SaplingBlock.setTreeTypeRT(null); // Leaf - SparklyPaper - parallel world ticking
+         }
+ 
+         DataComponentPatch newPatch = this.components.asPatch();
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 786117f3fc54933454bf4916b19e2128e7581427..6f360efdd6248cef1cf3d1392eeae4d273c80a79 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -180,6 +180,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+     // Gale end - Gale configuration
+ 
+     public final org.purpurmc.purpur.PurpurWorldConfig purpurConfig; // Purpur - Purpur config files
++    public final io.papermc.paper.redstone.RedstoneWireTurbo turbo; // Leaf - SparklyPaper - parallel world ticking - moved to world
+     public static @Nullable BlockPos lastPhysicsProblem; // Spigot
+     public final Map<ServerExplosion.CacheKey, Float> explosionDensityCache = new java.util.HashMap<>(); // Paper - Optimize explosions
+     public java.util.ArrayDeque<net.minecraft.world.level.block.RedstoneTorchBlock.Toggle> redstoneUpdateInfos; // Paper - Faster redstone torch rapid clock removal; Move from Map in BlockRedstoneTorch to here
+@@ -932,6 +933,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         this.damageSources = new DamageSources(registryAccess);
+         this.entityLookup = new ca.spottedleaf.moonrise.patches.chunk_system.level.entity.dfl.DefaultEntityLookup(this); // Paper - rewrite chunk system
+         this.chunkPacketBlockController = this.paperConfig().anticheat.antiXray.enabled ? new io.papermc.paper.antixray.ChunkPacketBlockControllerAntiXray(this, executor) : io.papermc.paper.antixray.ChunkPacketBlockController.NO_OPERATION_INSTANCE; // Paper - Anti-Xray
++        this.turbo = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? new io.papermc.paper.redstone.RedstoneWireTurbo((net.minecraft.world.level.block.RedStoneWireBlock) net.minecraft.world.level.block.Blocks.REDSTONE_WIRE) : null; // Leaf - SparklyPaper - parallel world ticking
+     }
+ 
+     public int getNextEntityId() {
+@@ -1113,6 +1115,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     @Override
+     public boolean setBlock(final BlockPos pos, final BlockState blockState, final @Block.UpdateFlags int updateFlags, final int updateLimit) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, pos, "Updating block asynchronously"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         // CraftBukkit start - tree generation
+         if (this.captureTreeGeneration) {
+             // Paper start - Protect Bedrock and End Portal/Frames from being destroyed
+@@ -1563,7 +1566,10 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+             } else if (tickBlockEntities && this.shouldTickBlocksAt(ticker.getPos())) {
+                 ticker.tick();
+                 // Paper start - rewrite chunk system
+-                if ((++tickedEntities & 7) == 0) {
++                // Leaf start - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
++                ++tickedEntities;
++                if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && (tickedEntities & 7) == 0) {
++                    // Leaf end - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
+                     ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)(Level)(Object)this).moonrise$midTickTasks();
+                 }
+                 // Paper end - rewrite chunk system
+@@ -1585,6 +1591,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+             entity.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DISCARD); // Gale - Airplane - remove lambda from ticking guard - diff on change ServerLevel#tick
+             // Paper end - Prevent block entity and entity crashes
+         }
++        if (!org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) // Leaf - SparklyPaper - parallel world ticking (only run mid-tick at the end of each tick / fixes concurrency bugs related to executeMidTickTasks)
+         this.moonrise$midTickTasks(); // Paper - rewrite chunk system // Gale - Airplane - remove lambda from ticking guard - diff on change ServerLevel#tick
+     }
+ 
+@@ -1736,6 +1743,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     @Override
+     public @Nullable BlockEntity getBlockEntity(final BlockPos pos) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThreadOrAsyncThread((ServerLevel) this, "Cannot read world asynchronously"); // Leaf - SparklyPaper - parallel world ticking
+         // Paper start - Perf: Optimize capturedTileEntities lookup
+         net.minecraft.world.level.block.entity.BlockEntity blockEntity;
+         if (!this.capturedBlockEntities.isEmpty() && (blockEntity = this.capturedBlockEntities.get(pos)) != null) {
+@@ -1752,6 +1760,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+     }
+ 
+     public void setBlockEntity(final BlockEntity blockEntity) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread((ServerLevel) this, "Cannot modify world asynchronously"); // Leaf - SparklyPaper - parallel world ticking
+         BlockPos pos = blockEntity.getBlockPos();
+         if (this.isInValidBounds(pos)) {
+             // CraftBukkit start
+@@ -1824,6 +1833,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     @Override
+     public List<Entity> getEntities(final @Nullable Entity except, final AABB bb, final Predicate<? super Entity> selector) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this, bb, "Cannot getEntities asynchronously"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         Profiler.get().incrementCounter("getEntities");
+         // Paper start - rewrite chunk system
+         final List<Entity> ret = new java.util.ArrayList<>();
+diff --git a/net/minecraft/world/level/block/MushroomBlock.java b/net/minecraft/world/level/block/MushroomBlock.java
+index 8d466e5a3e187cb151a7513de3e78d3350b32277..ebf04195e1461b06ebc15654b7fa552a3b7f4322 100644
+--- a/net/minecraft/world/level/block/MushroomBlock.java
++++ b/net/minecraft/world/level/block/MushroomBlock.java
+@@ -94,7 +94,7 @@ public class MushroomBlock extends VegetationBlock implements BonemealableBlock
+         }
+ 
+         level.removeBlock(pos, false);
+-        SaplingBlock.treeType = (this == Blocks.BROWN_MUSHROOM) ? org.bukkit.TreeType.BROWN_MUSHROOM : org.bukkit.TreeType.RED_MUSHROOM; // CraftBukkit
++        SaplingBlock.setTreeTypeRT((this == Blocks.BROWN_MUSHROOM) ? org.bukkit.TreeType.BROWN_MUSHROOM : org.bukkit.TreeType.RED_MUSHROOM); // CraftBukkit // Leaf - SparklyPaper - parallel world ticking
+         if (feature.get().value().place(level, level.getChunkSource().getGenerator(), random, pos)) {
+             return true;
+         }
+diff --git a/net/minecraft/world/level/block/NetherFungusBlock.java b/net/minecraft/world/level/block/NetherFungusBlock.java
+index 82ab930bf438e988d637786bdde88e34ea073a2f..71637f75ad2e1b9c0159695d66936b27afaa4535 100644
+--- a/net/minecraft/world/level/block/NetherFungusBlock.java
++++ b/net/minecraft/world/level/block/NetherFungusBlock.java
+@@ -84,9 +84,9 @@ public class NetherFungusBlock extends VegetationBlock implements BonemealableBl
+             // CraftBukkit start
+             .map((value) -> {
+                 if (this == Blocks.WARPED_FUNGUS) {
+-                    SaplingBlock.treeType = org.bukkit.TreeType.WARPED_FUNGUS;
++                    SaplingBlock.setTreeTypeRT(org.bukkit.TreeType.WARPED_FUNGUS); // Leaf - SparklyPaper - parallel world ticking
+                 } else if (this == Blocks.CRIMSON_FUNGUS) {
+-                    SaplingBlock.treeType = org.bukkit.TreeType.CRIMSON_FUNGUS;
++                    SaplingBlock.setTreeTypeRT(org.bukkit.TreeType.CRIMSON_FUNGUS); // Leaf - SparklyPaper - parallel world ticking
+                 }
+                 return value;
+             })
+diff --git a/net/minecraft/world/level/block/RedStoneWireBlock.java b/net/minecraft/world/level/block/RedStoneWireBlock.java
+index 35e49078d8d36ae4683de26988435d971c7f0e89..65fd02956e004871a8c04ed560ee5726eab9ceba 100644
+--- a/net/minecraft/world/level/block/RedStoneWireBlock.java
++++ b/net/minecraft/world/level/block/RedStoneWireBlock.java
+@@ -66,6 +66,7 @@ public class RedStoneWireBlock extends Block {
+     private final BlockState crossState;
+     private final RedstoneWireEvaluator evaluator = new DefaultRedstoneWireEvaluator(this);
+     public boolean shouldSignal = true;
++    private final ThreadLocal<Boolean> shouldSignalTL = ThreadLocal.withInitial(() -> true); // Leaf - SparklyPaper - parallel world ticking
+ 
+     @Override
+     public MapCodec<RedStoneWireBlock> codec() {
+@@ -287,7 +288,13 @@ public class RedStoneWireBlock extends Block {
+             if (orientation != null) {
+                 source = pos.relative(orientation.getFront().getOpposite());
+             }
+-            turbo.updateSurroundingRedstone(worldIn, pos, state, source);
++            // Leaf start - SparklyPaper - parallel world ticking
++            if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                worldIn.turbo.updateSurroundingRedstone(worldIn, pos, state, source);
++            } else {
++                turbo.updateSurroundingRedstone(worldIn, pos, state, source);
++            }
++            // Leaf end - parallel world ticking
+             return;
+         }
+         updatePowerStrength(worldIn, pos, state, orientation, blockAdded);
+@@ -311,7 +318,13 @@ public class RedStoneWireBlock extends Block {
+                 // [Space Walker] suppress shape updates and emit those manually to
+                 // bypass the new neighbor update stack.
+                 if (level.setBlock(pos, state, Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_CLIENTS)) {
+-                    turbo.updateNeighborShapes(level, pos, state);
++                    // Leaf start - SparklyPaper - parallel world ticking
++                    if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++                        level.turbo.updateNeighborShapes(level, pos, state);
++                    } else {
++                        turbo.updateNeighborShapes(level, pos, state);
++                    }
++                    // Leaf end - SparklyPaper - parallel world ticking
+                 }
+             }
+         }
+@@ -334,10 +347,19 @@ public class RedStoneWireBlock extends Block {
+     }
+ 
+     public int getBlockSignal(final Level level, final BlockPos pos) {
+-        this.shouldSignal = false;
+-        int blockSignal = level.getBestNeighborSignal(pos);
+-        this.shouldSignal = true;
+-        return blockSignal;
++        // Leaf start - SparklyPaper - parallel world ticking
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            this.shouldSignalTL.set(false);
++            int blockSignal = level.getBestNeighborSignal(pos);
++            this.shouldSignalTL.set(true);
++            return blockSignal;
++        } else {
++            this.shouldSignal = false;
++            int blockSignal = level.getBestNeighborSignal(pos);
++            this.shouldSignal = true;
++            return blockSignal;
++        }
++        // Leaf end - SparklyPaper - parallel world ticking
+     }
+ 
+     private void checkCornerChangeAt(final Level level, final BlockPos pos) {
+@@ -430,12 +452,18 @@ public class RedStoneWireBlock extends Block {
+ 
+     @Override
+     protected int getDirectSignal(final BlockState state, final BlockGetter level, final BlockPos pos, final Direction direction) {
+-        return !this.shouldSignal ? Redstone.SIGNAL_MIN : state.getSignal(level, pos, direction);
++        // Leaf start - SparklyPaper - parallel world ticking
++        boolean signal = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal;
++        return !signal ? Redstone.SIGNAL_MIN : state.getSignal(level, pos, direction);
++        // Leaf end - SparklyPaper - parallel world ticking
+     }
+ 
+     @Override
+     protected int getSignal(final BlockState state, final BlockGetter level, final BlockPos pos, final Direction direction) {
+-        if (this.shouldSignal && direction != Direction.DOWN) {
++        // Leaf start - SparklyPaper - parallel world ticking
++        final boolean signal = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal;
++        if (signal && direction != Direction.DOWN) {
++            // Leaf end - SparklyPaper - parallel world ticking
+             int power = this.ownSignal(state, level, pos);
+             if (power == 0) {
+                 return Redstone.SIGNAL_MIN;
+@@ -472,7 +500,7 @@ public class RedStoneWireBlock extends Block {
+ 
+     @Override
+     protected boolean isSignalSource(final BlockState state) {
+-        return this.shouldSignal;
++        return org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal; // Leaf - SparklyPaper - parallel world ticking
+     }
+ 
+     public static int getColorForPower(final int power) {
+diff --git a/net/minecraft/world/level/block/SaplingBlock.java b/net/minecraft/world/level/block/SaplingBlock.java
+index cbf7845ca64f1b716af3e50ac8716373d2ae3755..d5da17218b9386198981c5329e13e9a106f4c233 100644
+--- a/net/minecraft/world/level/block/SaplingBlock.java
++++ b/net/minecraft/world/level/block/SaplingBlock.java
+@@ -25,6 +25,35 @@ public class SaplingBlock extends VegetationBlock implements BonemealableBlock {
+     private static final VoxelShape SHAPE = Block.column(12.0, 0.0, 12.0);
+     protected final TreeGrower treeGrower;
+     public static org.bukkit.@org.jspecify.annotations.Nullable TreeType treeType; // CraftBukkit
++    public static final ThreadLocal<org.bukkit.@org.jspecify.annotations.Nullable TreeType> treeTypeRT = new ThreadLocal<>(); // Leaf - SparklyPaper - parallel world ticking (from Folia)
++
++    // Leaf start - SparklyPaper - parallel world ticking
++    // refer to original field in case plugins attempt to modify it
++    public static org.bukkit.@org.jspecify.annotations.Nullable TreeType getTreeTypeRT() {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            org.bukkit.TreeType treeTypeRTCopy;
++            if ((treeTypeRTCopy = treeTypeRT.get()) != null)
++                return treeTypeRTCopy;
++            synchronized (SaplingBlock.class) {
++                return treeType;
++            }
++        } else {
++            return treeType;
++        }
++    }
++
++    // update original field in case plugins attempt to access it
++    public static void setTreeTypeRT(final org.bukkit.@org.jspecify.annotations.Nullable TreeType value) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            treeTypeRT.set(value);
++            synchronized (SaplingBlock.class) {
++                treeType = value;
++            }
++        } else {
++            treeType = value;
++        }
++    }
++    // Leaf end - SparklyPaper - parallel world ticking
+ 
+     @Override
+     public MapCodec<? extends SaplingBlock> codec() {
+@@ -59,7 +88,7 @@ public class SaplingBlock extends VegetationBlock implements BonemealableBlock {
+             } else {
+                 level.captureTreeGeneration = true;
+                 java.util.List<org.bukkit.craftbukkit.block.CraftBlockState> capturedBlockStates;
+-                org.bukkit.TreeType treeType;
++                org.bukkit.TreeType treeTypeLocal; // Leaf - SparklyPaper - parallel world ticking
+                 try {
+                     this.treeGrower.growTree(level, level.getChunkSource().getGenerator(), pos, state, random);
+                 } finally {
+@@ -68,14 +97,14 @@ public class SaplingBlock extends VegetationBlock implements BonemealableBlock {
+                     capturedBlockStates = new java.util.ArrayList<>(level.capturedBlockStates.values());
+                     level.capturedBlockStates.clear();
+ 
+-                    treeType = SaplingBlock.treeType;
+-                    SaplingBlock.treeType = null;
++                    treeTypeLocal = SaplingBlock.getTreeTypeRT(); // Leaf - SparklyPaper - parallel world ticking
++                    SaplingBlock.setTreeTypeRT(null); // Leaf - SparklyPaper - parallel world ticking
+                 }
+                 if (!capturedBlockStates.isEmpty()) {
+                     org.bukkit.Location location = org.bukkit.craftbukkit.util.CraftLocation.toBukkit(pos, level);
+                     org.bukkit.event.world.StructureGrowEvent event = null;
+-                    if (treeType != null) {
+-                        event = new org.bukkit.event.world.StructureGrowEvent(location, treeType, false, null, (java.util.List<org.bukkit.block.BlockState>) (java.util.List<? extends org.bukkit.block.BlockState>) capturedBlockStates);
++                    if (treeTypeLocal != null) { // Leaf - SparklyPaper - parallel world ticking - fix missing stuff from original sparkly paper
++                        event = new org.bukkit.event.world.StructureGrowEvent(location, treeTypeLocal, false, null, (java.util.List<org.bukkit.block.BlockState>) (java.util.List<? extends org.bukkit.block.BlockState>) capturedBlockStates); // Leaf - SparklyPaper - parallel world ticking - fix missing stuff from original sparkly paper
+                         org.bukkit.Bukkit.getPluginManager().callEvent(event);
+                     }
+                     if (event == null || !event.isCancelled()) {
+diff --git a/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java b/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
+index 0e594121b60aa5a01b5bbe94b80350f2fc698b1a..9b7cebf6d4f680a00945dd54ddf043f077ee5a2a 100644
+--- a/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
+@@ -66,6 +66,12 @@ public abstract class BaseContainerBlockEntity extends BlockEntity implements Co
+     protected abstract Component getDefaultName();
+ 
+     public boolean canOpen(final Player player) {
++        // Leaf start - SparklyPaper - parallel world ticking (see: PARALLEL_NOTES.md - Opening an inventory after a world switch)
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled && player instanceof net.minecraft.server.level.ServerPlayer serverPlayer && this.getLevel() != serverPlayer.level()) {
++            net.minecraft.server.MinecraftServer.LOGGER.warn("Player {} ({}) attempted to open a BlockEntity @ {} {}, {}, {} while they were in a different world {} than the block themselves!", serverPlayer.getScoreboardName(), serverPlayer.getStringUUID(), this.getLevel().getWorld().getName(), this.getBlockPos().getX(), this.getBlockPos().getY(), this.getBlockPos().getZ(), serverPlayer.level().getWorld().getName());
++            return false;
++        }
++        // Leaf end - SparklyPaper - parallel world ticking (see: PARALLEL_NOTES.md - Opening an inventory after a world switch)
+         return org.bukkit.craftbukkit.event.CraftEventFactory.callBlockLockCheckEvent(this, this.lockKey, this.getDisplayName(), player); // Paper - Call BlockLockCheckEvent
+     }
+ 
+diff --git a/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java b/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
+index 5e9ec23d980c387661d248cccb11ffaa364db8a1..714c332980b6e87a64e21f05f4b70acda37ea5c5 100644
+--- a/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
+@@ -44,9 +44,9 @@ public class SculkCatalystBlockEntity extends BlockEntity implements GameEventLi
+     // Paper end - Fix NPE in SculkBloomEvent world access
+ 
+     public static void serverTick(final Level level, final BlockPos pos, final BlockState state, final SculkCatalystBlockEntity entity) {
+-        org.bukkit.craftbukkit.event.CraftEventFactory.sourceBlockOverride = pos; // CraftBukkit - SPIGOT-7068: Add source block override, not the most elegant way but better than passing down a BlockPos up to five methods deep.
++        org.bukkit.craftbukkit.event.CraftEventFactory.setSourceBlockOverrideRT(pos); // CraftBukkit - SPIGOT-7068: Add source block override, not the most elegant way but better than passing down a BlockPos up to five methods deep. // Leaf - SparklyPaper - parallel world ticking
+         entity.catalystListener.getSculkSpreader().updateCursors(level, pos, level.getRandom(), true);
+-        org.bukkit.craftbukkit.event.CraftEventFactory.sourceBlockOverride = null; // CraftBukkit
++        org.bukkit.craftbukkit.event.CraftEventFactory.setSourceBlockOverrideRT(null); // CraftBukkit // Leaf - SparklyPaper - parallel world ticking
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/level/block/grower/TreeGrower.java b/net/minecraft/world/level/block/grower/TreeGrower.java
+index 2a537a329b635d48865e59c03589b89594ef012e..bcabef5a6ec8f2707c89a9f603783c8e9295d87e 100644
+--- a/net/minecraft/world/level/block/grower/TreeGrower.java
++++ b/net/minecraft/world/level/block/grower/TreeGrower.java
+@@ -215,55 +215,57 @@ public final class TreeGrower {
+ 
+     // CraftBukkit start
+     private void setTreeType(Holder<ConfiguredFeature<?, ?>> feature) {
++        org.bukkit.TreeType treeType; // Leaf - SparklyPaper - parallel world ticking
+         if (feature.is(TreeFeatures.OAK) || feature.is(TreeFeatures.OAK_BEES_005)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.TREE;
++            treeType = org.bukkit.TreeType.TREE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.HUGE_RED_MUSHROOM)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.RED_MUSHROOM;
++            treeType = org.bukkit.TreeType.RED_MUSHROOM; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.HUGE_BROWN_MUSHROOM)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.BROWN_MUSHROOM;
++            treeType = org.bukkit.TreeType.BROWN_MUSHROOM; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.JUNGLE_TREE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.COCOA_TREE;
++            treeType = org.bukkit.TreeType.COCOA_TREE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.JUNGLE_TREE_NO_VINE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.SMALL_JUNGLE;
++            treeType = org.bukkit.TreeType.SMALL_JUNGLE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.PINE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.TALL_REDWOOD;
++            treeType = org.bukkit.TreeType.TALL_REDWOOD; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.SPRUCE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.REDWOOD;
++            treeType = org.bukkit.TreeType.REDWOOD; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.ACACIA)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.ACACIA;
++            treeType = org.bukkit.TreeType.ACACIA; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.BIRCH) || feature.is(TreeFeatures.BIRCH_BEES_005)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.BIRCH;
++            treeType = org.bukkit.TreeType.BIRCH; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.SUPER_BIRCH_BEES_0002)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.TALL_BIRCH;
++            treeType = org.bukkit.TreeType.TALL_BIRCH; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.SWAMP_OAK)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.SWAMP;
++            treeType = org.bukkit.TreeType.SWAMP; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.FANCY_OAK) || feature.is(TreeFeatures.FANCY_OAK_BEES_005)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.BIG_TREE;
++            treeType = org.bukkit.TreeType.BIG_TREE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.JUNGLE_BUSH)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.JUNGLE_BUSH;
++            treeType = org.bukkit.TreeType.JUNGLE_BUSH; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.DARK_OAK)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.DARK_OAK;
++            treeType = org.bukkit.TreeType.DARK_OAK; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.MEGA_SPRUCE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.MEGA_REDWOOD;
++            treeType = org.bukkit.TreeType.MEGA_REDWOOD; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.MEGA_PINE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.MEGA_PINE;
++            treeType = org.bukkit.TreeType.MEGA_PINE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.MEGA_JUNGLE_TREE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.JUNGLE;
++            treeType = org.bukkit.TreeType.JUNGLE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.AZALEA_TREE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.AZALEA;
++            treeType = org.bukkit.TreeType.AZALEA; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.MANGROVE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.MANGROVE;
++            treeType = org.bukkit.TreeType.MANGROVE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.TALL_MANGROVE)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.TALL_MANGROVE;
++            treeType = org.bukkit.TreeType.TALL_MANGROVE; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.CHERRY) || feature.is(TreeFeatures.CHERRY_BEES_005)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.CHERRY;
++            treeType = org.bukkit.TreeType.CHERRY; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.PALE_OAK) || feature.is(TreeFeatures.PALE_OAK_BONEMEAL)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.PALE_OAK;
++            treeType = org.bukkit.TreeType.PALE_OAK; // Leaf - SparklyPaper - parallel world ticking
+         } else if (feature.is(TreeFeatures.PALE_OAK_CREAKING)) {
+-            net.minecraft.world.level.block.SaplingBlock.treeType = org.bukkit.TreeType.PALE_OAK_CREAKING;
++            treeType = org.bukkit.TreeType.PALE_OAK_CREAKING; // Leaf - SparklyPaper - parallel world ticking
+         } else {
+             throw new IllegalArgumentException("Unknown tree generator " + feature);
+         }
++        net.minecraft.world.level.block.SaplingBlock.setTreeTypeRT(treeType); // Leaf - SparklyPaper - parallel world ticking
+     }
+     // CraftBukkit end
+ }
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index bd55c7cabade9191564cf513885739fdffed7694..f61589618497fde5c22b37baeee2b96e9f588ba4 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -408,6 +408,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+ 
+     @Override
+     public @Nullable BlockState setBlockState(final BlockPos pos, final BlockState state, final @Block.UpdateFlags int flags) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, pos, "Updating block asynchronously"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         int y = pos.getY();
+         LevelChunkSection section = this.getSection(this.getSectionIndex(y));
+         boolean wasEmpty = section.hasOnlyAir();
+diff --git a/net/minecraft/world/level/entity/EntityTickList.java b/net/minecraft/world/level/entity/EntityTickList.java
+index 8bec89eb9ede23e26cbc4e23ad2dda5bc1b2d815..f362942c79c2203ccc95baf009d75f5b6a997622 100644
+--- a/net/minecraft/world/level/entity/EntityTickList.java
++++ b/net/minecraft/world/level/entity/EntityTickList.java
+@@ -11,16 +11,31 @@ import org.jspecify.annotations.Nullable;
+ public class EntityTickList {
+     public final ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet<net.minecraft.world.entity.Entity> entities = new ca.spottedleaf.moonrise.common.list.IteratorSafeOrderedReferenceSet<>(); // Paper - rewrite chunk system // Pufferfish - private->public
+ 
++    // Leaf start - SparklyPaper - parallel world ticking
++    // Used to track async entity additions/removals/loops
++    private final net.minecraft.server.level.@Nullable ServerLevel serverLevel;
++
++    public EntityTickList() {
++        this(null);
++    }
++
++    public EntityTickList(final net.minecraft.server.level.@Nullable ServerLevel serverLevel) {
++        this.serverLevel = serverLevel;
++    }
++    // Leaf end - SparklyPaper - parallel world ticking
++
+     private void ensureActiveIsNotIterated() {
+         // Paper - rewrite chunk system
+     }
+ 
+     public void add(final Entity entity) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(entity, "Asynchronous entity ticklist addition"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         this.ensureActiveIsNotIterated();
+         this.entities.add(entity); // Paper - rewrite chunk system
+     }
+ 
+     public void remove(final Entity entity) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(entity, "Asynchronous entity ticklist removal"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         this.ensureActiveIsNotIterated();
+         this.entities.remove(entity); // Paper - rewrite chunk system
+     }
+@@ -30,6 +45,7 @@ public class EntityTickList {
+     }
+ 
+     public void forEach(final Consumer<Entity> output) {
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(serverLevel, "Asynchronous entity ticklist iteration"); // Leaf - SparklyPaper - parallel world ticking (additional concurrency issues logs)
+         // Paper start - rewrite chunk system
+         // To ensure nothing weird happens with dimension travelling, do not iterate over new entries...
+         // (by dfl iterator() is configured to not iterate over new entries)
+diff --git a/net/minecraft/world/level/saveddata/maps/MapIndex.java b/net/minecraft/world/level/saveddata/maps/MapIndex.java
+index 6b3ce2ded53a7ea46cf7f0cb49043a022f6d9ee7..3576edc2953282bb07eb635c3378a0f0946d2e20 100644
+--- a/net/minecraft/world/level/saveddata/maps/MapIndex.java
++++ b/net/minecraft/world/level/saveddata/maps/MapIndex.java
+@@ -26,8 +26,10 @@ public class MapIndex extends SavedData {
+     }
+ 
+     public MapId getNextMapId() {
++        synchronized (TYPE) { // Leaf start - SparklyPaper - parallel world ticking
+         MapId id = new MapId(++this.lastMapId);
+         this.setDirty();
+         return id;
++        } // Leaf end - SparklyPaper - parallel world ticking
+     }
+ }

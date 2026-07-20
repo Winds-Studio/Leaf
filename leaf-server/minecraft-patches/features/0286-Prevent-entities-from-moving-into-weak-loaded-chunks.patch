@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Prevent entities from moving into weak loaded chunks
+
+This also should mitigate most cases of memory leaks caused by massive weak loaded projectiles
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 7f84054524547a133f81acbdd85d4c3d2f157fd2..f19fd8392e914d3cc7f92c173ca2192e18ec6762 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -257,8 +257,40 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         return this.typeKey;
+     }
+ 
++    // Leaf start - Prevent entity from moving into weak loaded chunks
++    public final boolean areChunksLoadedForEntityMove(final AABB box) {
++        // copied code from collision methods, so that we can guarantee that they won't load chunks (we don't override
++        // CollisionGetter methods for VoxelShapes)
++        // be more strict too, add a block (dumb plugins in move events?)
++        int minBlockX = Mth.floor(box.minX - 1.0E-7D) - 3;
++        int maxBlockX = Mth.floor(box.maxX + 1.0E-7D) + 3;
++
++        int minBlockZ = Mth.floor(box.minZ - 1.0E-7D) - 3;
++        int maxBlockZ = Mth.floor(box.maxZ + 1.0E-7D) + 3;
++
++        int minChunkX = minBlockX >> 4;
++        int maxChunkX = maxBlockX >> 4;
++
++        int minChunkZ = minBlockZ >> 4;
++        int maxChunkZ = maxBlockZ >> 4;
++
++        ServerChunkCache chunkProvider = this.getChunkSource();
++
++        for (int cx = minChunkX; cx <= maxChunkX; ++cx) {
++            for (int cz = minChunkZ; cz <= maxChunkZ; ++cz) {
++                LevelChunk chunk = chunkProvider.getChunkAtIfLoadedImmediately(cx, cz);
++                if (chunk == null || !chunk.getFullStatus().isOrAfter(FullChunkStatus.ENTITY_TICKING)) { // check chunk status
++                    return false;
++                }
++            }
++        }
++
++        return true;
++    }
++    // Leaf end - Prevent entity from moving into weak loaded chunks
++
+     // Paper start
+-    public final boolean areChunksLoadedForMove(AABB box) {
++    public final boolean areChunksLoadedForMove(AABB box) { // Leaf - Prevent entity from moving into weak loaded chunks - diff on change - update areChunksLoadedForEntityMove if this changed
+         // copied code from collision methods, so that we can guarantee that they won't load chunks (we don't override
+         // CollisionGetter methods for VoxelShapes)
+         // be more strict too, add a block (dumb plugins in move events?)
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 31d2c2c21148f785ca3552a30a5fb4032f78ad04..1f267f763a4686504634c62717fa8124090f25eb 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -390,6 +390,7 @@ public abstract class Entity
+     public final io.papermc.paper.entity.activation.ActivationType activationType = io.papermc.paper.entity.activation.ActivationType.activationTypeFor(this); // Paper - EAR 2/tracking ranges
+     public @Nullable Boolean immuneToFire = null; // Purpur - Fire immune API
+     public boolean leaf$isWeakLoaded = false; // Leaf - Rewrite entity despawn time
++    protected boolean preventMoveIntoWeakLoadedChunks = false; // Leaf - Prevent entity from moving into weak loaded chunks
+     // Paper start - EAR 2
+     public final boolean defaultActivationState;
+     public long activatedTick = Integer.MIN_VALUE;
+diff --git a/net/minecraft/world/entity/projectile/LlamaSpit.java b/net/minecraft/world/entity/projectile/LlamaSpit.java
+index a226360ffbb51f5c5059df9c47e05088cbfe5685..ac6c058479c038adb54ae9391148202c88133ce2 100644
+--- a/net/minecraft/world/entity/projectile/LlamaSpit.java
++++ b/net/minecraft/world/entity/projectile/LlamaSpit.java
+@@ -62,6 +62,17 @@ public class LlamaSpit extends Projectile {
+         } else {
+             this.setDeltaMovement(movement.scale(this.getAirDrag()));
+             this.applyGravity();
++            // Leaf start - Prevent entity from moving into weak loaded chunks
++            if (this.preventMoveIntoWeakLoadedChunks) {
++                if (this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
++                    if (!serverLevel.areChunksLoadedForEntityMove(this.getBoundingBox().expandTowards(this.getDeltaMovement()))) {
++                        this.setDeltaMovement(Vec3.ZERO);
++                        this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DISCARD);
++                        return;
++                    }
++                }
++            }
++            // Leaf end - Prevent entity from moving into weak loaded chunks
+             this.setPos(x, y, z);
+         }
+     }
+diff --git a/net/minecraft/world/entity/projectile/Projectile.java b/net/minecraft/world/entity/projectile/Projectile.java
+index b41e1ead7e9016cd0dd74c2adb7bad0e58410c79..8f0113a7f74cc207fc9e3ebe487af58aa0e3424d 100644
+--- a/net/minecraft/world/entity/projectile/Projectile.java
++++ b/net/minecraft/world/entity/projectile/Projectile.java
+@@ -48,6 +48,7 @@ public abstract class Projectile extends Entity implements TraceableEntity {
+ 
+     protected Projectile(final EntityType<? extends Projectile> type, final Level level) {
+         super(type, level);
++        this.preventMoveIntoWeakLoadedChunks = org.dreeam.leaf.config.modules.fixes.PreventMoveIntoWeakLoadedChunks.isProjectileEnabled(); // Leaf - Prevent entity from moving into weak loaded chunks
+     }
+ 
+     // Gale start - Airplane - reduce projectile chunk loading
+diff --git a/net/minecraft/world/entity/projectile/ShulkerBullet.java b/net/minecraft/world/entity/projectile/ShulkerBullet.java
+index d5506bfc84912ec50cd5391225b9b5291435d3aa..7c3ba89fb4b0913ece2e279771c5f5392069d5aa 100644
+--- a/net/minecraft/world/entity/projectile/ShulkerBullet.java
++++ b/net/minecraft/world/entity/projectile/ShulkerBullet.java
+@@ -226,6 +226,13 @@ public class ShulkerBullet extends Projectile {
+         }
+ 
+         Vec3 movement = this.getDeltaMovement();
++        // Leaf start - Prevent entity from moving into weak loaded chunks
++        if (this.preventMoveIntoWeakLoadedChunks && this.level() instanceof ServerLevel serverLevel && !serverLevel.areChunksLoadedForEntityMove(this.getBoundingBox().expandTowards(movement))) {
++            this.setDeltaMovement(Vec3.ZERO);
++            this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DISCARD);
++            return;
++        }
++        // Leaf end - Prevent entity from moving into weak loaded chunks
+         this.setPos(this.position().add(movement));
+         this.applyEffectsFromBlocks();
+         if (this.portalProcess != null && this.portalProcess.isInsidePortalThisTick()) {
+diff --git a/net/minecraft/world/entity/projectile/ThrowableProjectile.java b/net/minecraft/world/entity/projectile/ThrowableProjectile.java
+index ccd0ed111fd84a14069403a1aa236892c0aa4f1c..971310496fcc58d7e413ff207f174af565eca3b4 100644
+--- a/net/minecraft/world/entity/projectile/ThrowableProjectile.java
++++ b/net/minecraft/world/entity/projectile/ThrowableProjectile.java
+@@ -57,7 +57,20 @@ public abstract class ThrowableProjectile extends Projectile {
+         if (result.getType() != HitResult.Type.MISS) {
+             newPosition = result.getLocation();
+         } else {
+-            newPosition = this.position().add(this.getDeltaMovement());
++            // Leaf start - Prevent entity from moving into weak loaded chunks
++            if (this.preventMoveIntoWeakLoadedChunks) {
++                Vec3 previousLocation = this.position();
++                newPosition = this.position().add(this.getDeltaMovement());
++                if (this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
++                    if (!serverLevel.areChunksLoadedForEntityMove(this.getBoundingBox().expandTowards(newPosition.subtract(previousLocation)))) {
++                        newPosition = previousLocation;
++                        this.setDeltaMovement(Vec3.ZERO);
++                    }
++                }
++            } else {
++                newPosition = this.position().add(this.getDeltaMovement());
++            }
++            // Leaf end - Prevent entity from moving into weak loaded chunks
+         }
+ 
+         this.setPos(newPosition);
+diff --git a/net/minecraft/world/entity/projectile/hurtingprojectile/AbstractHurtingProjectile.java b/net/minecraft/world/entity/projectile/hurtingprojectile/AbstractHurtingProjectile.java
+index 84c07fb51e8321b32f8607a602dd1e417ce36af7..b39383b134068b8cc58cc96c72230d2ea26cfa28 100644
+--- a/net/minecraft/world/entity/projectile/hurtingprojectile/AbstractHurtingProjectile.java
++++ b/net/minecraft/world/entity/projectile/hurtingprojectile/AbstractHurtingProjectile.java
+@@ -24,6 +24,7 @@ public abstract class AbstractHurtingProjectile extends Projectile {
+     public double accelerationPower = 0.1;
+     public float bukkitYield = 1; // CraftBukkit
+     public boolean isIncendiary = true; // CraftBukkit
++    private boolean scheduleForRemoval = false; // Leaf - Prevent entity from moving into weak loaded chunks
+ 
+     protected AbstractHurtingProjectile(final EntityType<? extends AbstractHurtingProjectile> type, final Level level) {
+         super(type, level);
+@@ -76,13 +77,27 @@ public abstract class AbstractHurtingProjectile extends Projectile {
+     public void tick() {
+         Entity owner = this.getOwner();
+         this.applyInertia();
+-        if (this.level().isClientSide() || (owner == null || !owner.isRemoved()) && this.level().hasChunkAt(this.blockPosition())) {
++        if (this.level().isClientSide() || (owner == null || !owner.isRemoved()) && this.level().hasChunkAt(this.blockPosition()) && !this.scheduleForRemoval) { // Leaf - Prevent entity from moving into weak loaded chunks
+             HitResult hitResult = ProjectileUtil.getHitResultOnMoveVector(this, this::canHitEntity, this.getClipType());
+             Vec3 newPosition;
+             if (hitResult.getType() != HitResult.Type.MISS) {
+                 newPosition = hitResult.getLocation();
+             } else {
+-                newPosition = this.position().add(this.getDeltaMovement());
++                // Leaf start - Prevent entity from moving into weak loaded chunks
++                if (this.preventMoveIntoWeakLoadedChunks) {
++                    Vec3 previousLocation = this.position();
++                    newPosition = this.position().add(this.getDeltaMovement());
++                    if (this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
++                        if (!serverLevel.areChunksLoadedForEntityMove(this.getBoundingBox().expandTowards(newPosition.subtract(previousLocation)))) {
++                            newPosition = previousLocation;
++                            this.setDeltaMovement(Vec3.ZERO);
++                            this.scheduleForRemoval = true;
++                        }
++                    }
++                } else {
++                    newPosition = this.position().add(this.getDeltaMovement());
++                }
++                // Leaf end - Prevent entity from moving into weak loaded chunks
+             }
+ 
+             ProjectileUtil.rotateTowardsMovement(this, 0.2F);
+diff --git a/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java b/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java
+index 5d14ecd2023a84d06c07ddf4544dae95f3a8ee89..2b3110a73446ef85093f6670f6d714564c21e56c 100644
+--- a/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java
++++ b/net/minecraft/world/entity/projectile/throwableitemprojectile/ThrownEnderpearl.java
+@@ -35,10 +35,12 @@ public class ThrownEnderpearl extends ThrowableItemProjectile {
+ 
+     public ThrownEnderpearl(final EntityType<? extends ThrownEnderpearl> type, final Level level) {
+         super(type, level);
++        this.preventMoveIntoWeakLoadedChunks = false; // Leaf - Prevent entity from moving into weak loaded chunks
+     }
+ 
+     public ThrownEnderpearl(final Level level, final LivingEntity mob, final ItemStack itemStack) {
+         super(EntityTypes.ENDER_PEARL, mob, level, itemStack);
++        this.preventMoveIntoWeakLoadedChunks = false; // Leaf - Prevent entity from moving into weak loaded chunks
+     }
+ 
+     @Override
