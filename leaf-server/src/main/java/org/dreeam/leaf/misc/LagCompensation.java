@@ -1,11 +1,34 @@
 package org.dreeam.leaf.misc;
 
 import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 
 import java.util.Collections;
 import java.util.List;
 
 public class LagCompensation {
+
+    public static boolean isTouchingFluid(Level level, BlockPos pos, TagKey<Fluid> fluidTag) {
+        final BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
+        for (final Direction direction : Direction.VALUES) {
+            final FluidState fluidState = level.getFluidIfLoaded(neighbor.setWithOffset(pos, direction));
+            if (fluidState != null && fluidState.is(fluidTag)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static int fluidDelay(Level level, BlockPos pos, int rawDelay, boolean enabledForThisFluid, TagKey<Fluid> oppositeTag) {
+        return org.dreeam.leaf.config.modules.misc.LagCompensation.enabled && enabledForThisFluid && !isTouchingFluid(level, pos, oppositeTag)
+            ? tt20(rawDelay, true)
+            : rawDelay;
+    }
 
     public static float tt20(float ticks, boolean limitZero) {
         float newTicks = (float) rawTT20(ticks);

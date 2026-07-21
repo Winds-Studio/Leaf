@@ -48,7 +48,10 @@ public final class AsyncChunkSender {
     }
 
     public @Nullable ClientboundLevelChunkWithLightPacket recv() {
-        size--;
-        return this.channel.recv();
+        final ClientboundLevelChunkWithLightPacket chunk = this.channel.recv();
+        if (chunk != null) {
+            size--;
+        }
+        return chunk;
     }
 }

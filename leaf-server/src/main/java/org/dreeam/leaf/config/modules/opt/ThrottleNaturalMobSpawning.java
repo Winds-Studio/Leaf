@@ -17,12 +17,12 @@ public class ThrottleNaturalMobSpawning extends ConfigModules {
     @Override
     public void onLoaded() {
         config.addCommentRegionBased(getBasePath(), """
-            Skip mob spawning for chunks with repeated failures exceeding `min-failed`.
-            Randomly skip 1-`spawn-chance`% of these chunks from spawning attempts.
-            Failure counter does not increment when spawn limits are reached.""",
+            Skip mob spawning for chunks with repeated failures at least `min-failed`.
+            Valid range for `spawn-chance` is 0.0 to 100.0.
+            Failure counter does not increment when reach spawn limits.""",
             """
-            跳过区块中重复失败次数超过 `min-failed` 的生物生成.
-            随机跳过这些区块中 1-`spawn-chance`% 的生物生成尝试.
+            跳过区块中重复失败次数至少达到 `min-failed` 的生物生成.
+            `spawn-chance` 的有效范围为 0.0 到 100.0.
             达到生成限制时, 失败计数器不会增加.""");
         enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
         MobCategory[] categories = NaturalSpawner.SPAWNING_CATEGORIES;
