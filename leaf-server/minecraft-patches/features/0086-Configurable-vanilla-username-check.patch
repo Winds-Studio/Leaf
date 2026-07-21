@@ -1,0 +1,201 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Wed, 12 Oct 2022 14:36:58 -0400
+Subject: [PATCH] Configurable vanilla username check
+
+
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index 6aa9b8739c286d28e8a50028f7866f38616fb08a..fed9ea8fc4a57b860c2b26093b0300c8a7d78134 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -2661,7 +2661,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+         if (this.level().purpurConfig.idleTimeoutUpdateTabList) {
+             String scoreboardName = getScoreboardName();
+             String playerListName = net.kyori.adventure.text.minimessage.MiniMessage.miniMessage().serialize(getBukkitEntity().playerListName());
+-            String[] split = playerListName.split(scoreboardName);
++            String[] split = playerListName.split(java.util.regex.Pattern.quote(scoreboardName)); // Leaf - Configurable vanilla username check - Sanitize name input
+             String prefix = (split.length > 0 ? split[0] : "").replace(org.purpurmc.purpur.PurpurConfig.afkTabListPrefix, "");
+             String suffix = (split.length > 1 ? split[1] : "").replace(org.purpurmc.purpur.PurpurConfig.afkTabListSuffix, "");
+             if (afk) {
+diff --git a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+index 00283b8dc9f9c4c6241c010c5afb819de6b3f9c6..fdfd4bb4a6e875a7b2119d271e7142a4832b8755 100644
+--- a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+@@ -172,11 +172,20 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+     public void handleHello(final ServerboundHelloPacket packet) {
+         Validate.validState(this.state == ServerLoginPacketListenerImpl.State.HELLO, "Unexpected hello packet");
+         // Paper start - Validate usernames
+-        if (io.papermc.paper.configuration.GlobalConfiguration.get().proxies.isProxyOnlineMode()
++        // Leaf start - Configurable vanilla username check
++        boolean allPrevChecksPassed;
++        if (!org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.removeAllCheck
++            && io.papermc.paper.configuration.GlobalConfiguration.get().proxies.isProxyOnlineMode()
+             && io.papermc.paper.configuration.GlobalConfiguration.get().unsupportedSettings.performUsernameValidation
+             && !this.iKnowThisMayNotBeTheBestIdeaButPleaseDisableUsernameValidation) {
+-            Validate.validState(StringUtil.isReasonablePlayerName(packet.name()), "Invalid characters in username");
++            allPrevChecksPassed = true;
++            if (!org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.allowOldPlayersJoin) {
++                Validate.validState(StringUtil.isReasonablePlayerName(packet.name()), "Invalid characters in username");
++            }
++        } else {
++            allPrevChecksPassed = false;
+         }
++        // Leaf end - Configurable vanilla username check
+         this.requestedUuid = packet.profileId();
+         // Paper end - Validate usernames
+         this.requestedUsername = packet.name();
+@@ -202,6 +211,15 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+                 authenticatorPool.execute(() -> {
+                     try {
+                         GameProfile gameprofile = ServerLoginPacketListenerImpl.this.createOfflineProfile(ServerLoginPacketListenerImpl.this.requestedUsername); // Spigot
++                        // Leaf start - Configurable vanilla username check
++                        if (org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.allowOldPlayersJoin) {
++                            if (server.playerDataStorage.load(new net.minecraft.server.players.NameAndId(gameprofile)).orElse(null) != null) {
++                                server.getPlayerList().playedPlayers.add(packet.name());
++                            } else if (allPrevChecksPassed) {
++                                Validate.validState(StringUtil.isReasonablePlayerName(packet.name()), "Invalid characters in username");
++                            }
++                        }
++                        // Leaf end - Configurable vanilla username check
+ 
+                         gameprofile = ServerLoginPacketListenerImpl.this.callPlayerPreLoginEvents(gameprofile); // Paper - Add more fields to AsyncPlayerPreLoginEvent
+                         ServerLoginPacketListenerImpl.LOGGER.info("UUID of player {} is {}", gameprofile.name(), gameprofile.id());
+@@ -346,7 +364,7 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         server.getPluginManager().callEvent(asyncEvent);
+         profile = asyncEvent.getPlayerProfile();
+         profile.complete(true); // Paper - setPlayerProfileAPI
+-        gameprofile = com.destroystokyo.paper.profile.CraftPlayerProfile.asAuthlibCopy(profile);
++        gameprofile = com.destroystokyo.paper.profile.CraftPlayerProfile.asAuthlibCopyCustomValidation(profile); // Leaf - Configurable vanilla username check
+         playerName = gameprofile.name();
+         uniqueId = gameprofile.id();
+         // Paper end - Add more fields to AsyncPlayerPreLoginEvent
+diff --git a/net/minecraft/server/players/CachedUserNameToIdResolver.java b/net/minecraft/server/players/CachedUserNameToIdResolver.java
+index 7443744e3f256983e52a1cefcaf66082e4a46a7b..b7553611723f7120c66e1f3e51d89df28bd2756b 100644
+--- a/net/minecraft/server/players/CachedUserNameToIdResolver.java
++++ b/net/minecraft/server/players/CachedUserNameToIdResolver.java
+@@ -67,7 +67,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
+     }
+ 
+     private Optional<NameAndId> lookupGameProfile(final GameProfileRepository profileRepository, final String name) {
+-        if (!StringUtil.isValidPlayerName(name)) {
++        if (!StringUtil.isValidPlayerName(name, false)) { // Leaf - Configurable vanilla username check - Directly return, skip unnecessary following logic
+             return this.createUnknownProfile(name);
+         }
+ 
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index f77557454a7cd5e3ddf98f3a193fdcc31465adb3..c5d258b99c441e5d8fe93200bf57cc7c1ed1ce03 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -135,6 +135,7 @@ public abstract class PlayerList {
+     private org.bukkit.craftbukkit.CraftServer cserver;
+     private final Map<String,ServerPlayer> playersByName = new java.util.HashMap<>();
+     public @Nullable String collideRuleTeamName; // Paper - Configurable player collision
++    public final List<String> playedPlayers = new java.util.concurrent.CopyOnWriteArrayList<>(); // Leaf - Configurable vanilla username check
+ 
+     public PlayerList(
+         final MinecraftServer server,
+@@ -516,6 +517,7 @@ public abstract class PlayerList {
+         player.getAdvancements().clearTriggers();
+         this.players.remove(player);
+         this.playersByName.remove(player.getScoreboardName().toLowerCase(java.util.Locale.ROOT)); // Spigot
++        if (org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.allowOldPlayersJoin) this.playedPlayers.remove(player.getGameProfile().name()); // Leaf - Configurable vanilla username check
+         this.removeFromSendAllPlayerInfoBuckets(player); // Gale - Purpur - spread out sending all player info
+         this.server.getCustomBossEvents().onPlayerDisconnect(player);
+         UUID uuid = player.getUUID();
+diff --git a/net/minecraft/util/StringUtil.java b/net/minecraft/util/StringUtil.java
+index 0cad0f113cc7ff487b793d0c96cd56ac07c5b552..3d0b306ee747988cc329bc8327f43bc8fe067678 100644
+--- a/net/minecraft/util/StringUtil.java
++++ b/net/minecraft/util/StringUtil.java
+@@ -64,6 +64,15 @@ public class StringUtil {
+     }
+ 
+     public static boolean isValidPlayerName(final String name) {
++        // Leaf start - Configurable vanilla username check
++        return isValidPlayerName(name, org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.shouldSkipNonPlayerNameCheck());
++    }
++    public static boolean isValidPlayerNameVanilla(final String name) {
++        return name.length() <= 16 && name.chars().filter(i -> i <= 32 || i >= 127).findAny().isEmpty();
++    }
++    public static boolean isValidPlayerName(final String name, final boolean bypassCheck) {
++        if (bypassCheck) return name.length() <= 16;
++        // Leaf end - Configurable vanilla username check
+         return name.length() <= 16 && name.chars().filter(c -> c <= 32 || c >= 127).findAny().isEmpty();
+     }
+ 
+@@ -87,7 +96,12 @@ public class StringUtil {
+ 
+     // Paper start - Username validation
+     public static boolean isReasonablePlayerName(final String name) {
+-        if (true) return org.purpurmc.purpur.PurpurConfig.usernameValidCharactersPattern.matcher(name).matches(); // Purpur - Configurable valid characters for usernames
++        // Leaf start - Configurable vanilla username check
++        if (org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.allowOldPlayersJoin && net.minecraft.server.MinecraftServer.getServer().getPlayerList().playedPlayers.contains(name)) return true;
++        if (org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.useUsernameRegex) {
++            return org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.usernameRegex.matcher(name).matches() && name.length() <= 16; // Purpur - Configurable valid characters for usernames // Leaf - use our own config
++        }
++        // Leaf end - Configurable vanilla username check
+         if (name.isEmpty() || name.length() > 16) {
+             return false;
+         }
+diff --git a/net/minecraft/world/item/component/ResolvableProfile.java b/net/minecraft/world/item/component/ResolvableProfile.java
+index f1b62a6e0d8176d8ba1875e78cc730ee55b1b0c1..cfb2b9ffa71b06c542b10e0c7be0658e6ffcb42f 100644
+--- a/net/minecraft/world/item/component/ResolvableProfile.java
++++ b/net/minecraft/world/item/component/ResolvableProfile.java
+@@ -68,6 +68,30 @@ public abstract sealed class ResolvableProfile implements TooltipProvider permit
+ 
+     public abstract Either<GameProfile, ResolvableProfile.Partial> unpack();
+ 
++    // Leaf start - Configurable vanilla username check - Enforce skull validation
++    private static Either<String, UUID> sanitizeDynamicPlayerName(final Either<String, UUID> nameOrId) {
++        if (nameOrId.left().isEmpty()) {
++            return nameOrId;
++        }
++        return org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.enforceSkullValidation && !net.minecraft.util.StringUtil.isValidPlayerNameVanilla(nameOrId.left().get()) ? Either.left("INVALID_OWNER") : nameOrId;
++    }
++
++    private static Optional<String> sanitizePartialPlayerName(final Optional<String> name) {
++        if (name.isEmpty()) {
++            return name;
++        }
++        return org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.enforceSkullValidation && !net.minecraft.util.StringUtil.isValidPlayerNameVanilla(name.get()) ? Optional.of("INVALID_OWNER") : name;
++    }
++
++    private static Either<GameProfile, ResolvableProfile.Partial> sanitizeStaticPlayerName(final Either<GameProfile, ResolvableProfile.Partial> contents) {
++        if (contents.left().isEmpty()) {
++            return contents;
++        }
++        GameProfile gameProfile = contents.left().get();
++        return org.dreeam.leaf.config.modules.misc.VanillaUsernameCheck.enforceSkullValidation && !net.minecraft.util.StringUtil.isValidPlayerNameVanilla(gameProfile.name()) ? Either.left(new GameProfile(gameProfile.id(), "INVALID_OWNER", gameProfile.properties())) : contents;
++    }
++    // Leaf end - Configurable vanilla username check - Enforce skull validation
++
+     protected ResolvableProfile(final GameProfile partialProfile, final PlayerSkin.Patch skinPatch) {
+         this.partialProfile = partialProfile;
+         this.skinPatch = skinPatch;
+@@ -96,6 +120,7 @@ public abstract sealed class ResolvableProfile implements TooltipProvider permit
+         private final Either<String, UUID> nameOrId;
+ 
+         public Dynamic(final Either<String, UUID> nameOrId, final PlayerSkin.Patch skinPatch) {
++            sanitizeDynamicPlayerName(nameOrId); // Leaf - Configurable vanilla username check
+             super(ResolvableProfile.createPartialProfile(nameOrId.left(), nameOrId.right(), PropertyMap.EMPTY), skinPatch);
+             this.nameOrId = nameOrId;
+         }
+@@ -135,6 +160,11 @@ public abstract sealed class ResolvableProfile implements TooltipProvider permit
+     }
+ 
+     public record Partial(Optional<String> name, Optional<UUID> id, PropertyMap properties) {
++        // Leaf start - Configurable vanilla username check
++        public Partial {
++            name = ResolvableProfile.sanitizePartialPlayerName(name);
++        }
++        // Leaf end - Configurable vanilla username check
+         public static final ResolvableProfile.Partial EMPTY = new ResolvableProfile.Partial(Optional.empty(), Optional.empty(), PropertyMap.EMPTY);
+         public static final MapCodec<ResolvableProfile.Partial> MAP_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+@@ -165,6 +195,7 @@ public abstract sealed class ResolvableProfile implements TooltipProvider permit
+         private final Either<GameProfile, ResolvableProfile.Partial> contents;
+ 
+         public Static(final Either<GameProfile, ResolvableProfile.Partial> contents, final PlayerSkin.Patch skinPatch) {
++            sanitizeStaticPlayerName(contents); // Leaf - Configurable vanilla username check
+             super(contents.map(gameProfile -> (GameProfile)gameProfile, ResolvableProfile.Partial::createProfile), skinPatch);
+             this.contents = contents;
+         }

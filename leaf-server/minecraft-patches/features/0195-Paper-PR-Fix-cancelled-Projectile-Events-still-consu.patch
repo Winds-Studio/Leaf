@@ -1,0 +1,257 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tamion <70228790+notTamion@users.noreply.github.com>
+Date: Sun, 16 Feb 2025 12:22:53 +0100
+Subject: [PATCH] Paper PR: Fix cancelled Projectile Events still consuming
+ arrows
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/12124
+
+fixes https://github.com/PaperMC/Paper/issues/12123
+
+diff --git a/net/minecraft/world/item/BowItem.java b/net/minecraft/world/item/BowItem.java
+index b8ec51d5f50c15f2cd74733f762b4ddc71b573cb..2976d01105ae1d68eef98af68b212f801b8b3d7e 100644
+--- a/net/minecraft/world/item/BowItem.java
++++ b/net/minecraft/world/item/BowItem.java
+@@ -41,9 +41,9 @@ public class BowItem extends ProjectileWeaponItem {
+                 return false;
+             }
+ 
+-            List<ItemStack> firedProjectiles = draw(itemStack, projectile, player);
++            List<ItemStack> firedProjectiles = draw(itemStack, projectile, player, ProjectileDrawingItemConsumption.MAYBE_LATER); // Paper PR - prevent item consumption for cancelled events
+             if (level instanceof ServerLevel serverLevel && !firedProjectiles.isEmpty()) {
+-                this.shoot(serverLevel, player, player.getUsedItemHand(), itemStack, firedProjectiles, pow * 3.0F, (float) serverLevel.purpurConfig.bowProjectileOffset, pow == 1.0F, null, pow); // Paper - Pass draw strength // Purpur - Projectile offset config
++                if (!this.shoot(serverLevel, player, player.getUsedItemHand(), itemStack, new UnrealizedDrawResult(firedProjectiles, projectile), pow * 3.0F, (float) serverLevel.purpurConfig.bowProjectileOffset, pow == 1.0F, null, pow)) return false; // Paper - Pass draw strength // Purpur - Projectile offset config // Paper PR - prevent item consumption for cancelled events
+             }
+ 
+             level.playSound(
+diff --git a/net/minecraft/world/item/CrossbowItem.java b/net/minecraft/world/item/CrossbowItem.java
+index cf9ae51fed029c1a59a9383f3c9a255832829a3f..e3ff9bb3422ae33f326f554e868939e978afc011 100644
+--- a/net/minecraft/world/item/CrossbowItem.java
++++ b/net/minecraft/world/item/CrossbowItem.java
+@@ -95,7 +95,7 @@ public class CrossbowItem extends ProjectileWeaponItem {
+     }
+ 
+     private static boolean tryLoadProjectiles(final LivingEntity shooter, final ItemStack heldItem, final boolean consume) {
+-        List<ItemStack> drawn = draw(heldItem, shooter.getProjectile(heldItem), shooter, consume);
++        List<ItemStack> drawn = draw(heldItem, shooter.getProjectile(heldItem), shooter, consume ? ProjectileDrawingItemConsumption.IMMEDIATELY : ProjectileDrawingItemConsumption.NEVER); // Paper PR - prevent item consumption for cancelled events
+         // Paper end - Add EntityLoadCrossbowEvent
+         if (!drawn.isEmpty()) {
+             heldItem.set(DataComponents.CHARGED_PROJECTILES, ChargedProjectiles.ofNonEmpty(drawn));
+@@ -135,6 +135,8 @@ public class CrossbowItem extends ProjectileWeaponItem {
+         }
+ 
+         projectileEntity.shoot(shotVector.x(), shotVector.y(), shotVector.z(), power, uncertainty);
++        // Paper PR start - moved up to ensure events weren't cancelled
++        /*
+         float soundPitch = getShotPitch(livingEntity.getRandom(), index);
+         livingEntity.level()
+             .playSound(
+@@ -147,6 +149,8 @@ public class CrossbowItem extends ProjectileWeaponItem {
+                 1.0F,
+                 soundPitch
+             );
++         */
++        // Paper PR end - moved up to ensure events weren't cancelled
+     }
+ 
+     private static Vector3f getProjectileShotVector(final LivingEntity body, final Vec3 originalVector, final float angle) {
+@@ -196,9 +200,9 @@ public class CrossbowItem extends ProjectileWeaponItem {
+         final @Nullable LivingEntity targetOverride
+     ) {
+         if (level instanceof ServerLevel serverLevel) {
+-            ChargedProjectiles charged = weapon.set(DataComponents.CHARGED_PROJECTILES, ChargedProjectiles.EMPTY);
++            ChargedProjectiles charged = weapon.get(DataComponents.CHARGED_PROJECTILES); // Paper PR - prevent item consumption for cancelled events
+             if (charged != null && !charged.isEmpty()) {
+-                this.shoot(serverLevel, shooter, hand, weapon, charged.itemCopies(), power, uncertainty, shooter instanceof Player, targetOverride, 1.0F); // Paper - Pass draw strength
++                if (!this.shoot(serverLevel, shooter, hand, weapon, charged.itemCopies(), power, uncertainty, shooter instanceof Player, targetOverride, 1.0F)) return; // Paper - Pass draw strength // Paper PR - prevent item consumption for cancelled events
+                 if (shooter instanceof ServerPlayer player) {
+                     CriteriaTriggers.SHOT_CROSSBOW.trigger(player, weapon);
+                     player.awardStat(Stats.ITEM_USED.get(weapon.getItem()));
+diff --git a/net/minecraft/world/item/ProjectileWeaponItem.java b/net/minecraft/world/item/ProjectileWeaponItem.java
+index 039fc3ced4e06a97346264b52375ddd298fb8422..e6e88258a67ecc5a098ad903221fdc0f7246b565 100644
+--- a/net/minecraft/world/item/ProjectileWeaponItem.java
++++ b/net/minecraft/world/item/ProjectileWeaponItem.java
+@@ -40,7 +40,21 @@ public abstract class ProjectileWeaponItem extends Item {
+ 
+     public abstract int getDefaultProjectileRange();
+ 
+-    protected void shoot(
++    // Paper PR start - prevent item consumption for cancelled events
++    protected record UnrealizedDrawResult(
++        List<ItemStack> projectiles,
++        @Nullable ItemStack originalInPlayerInventory
++        // Null in case the unrealised draw result is a noop (case of Crossbow)
++    ) {
++        public void consumeProjectilesFromPlayerInventory(final int projectStackIndex) {
++            if (projectStackIndex != 0 || originalInPlayerInventory == null) return;
++            if (projectiles.isEmpty()) return; // Whatever happened here, nothing
++            final ItemStack nonIntangibleStack = projectiles.get(projectStackIndex);
++            originalInPlayerInventory.shrink(nonIntangibleStack.getCount());
++        }
++    }
++    protected boolean shoot(
++        // Paper PR end - prevent item consumption for cancelled events
+         final ServerLevel level,
+         final LivingEntity shooter,
+         final InteractionHand hand,
+@@ -52,6 +66,24 @@ public abstract class ProjectileWeaponItem extends Item {
+         final @Nullable LivingEntity targetOverride
+         , final float drawStrength // Paper - Pass draw strength
+     ) {
++        // Paper PR start - prevent item consumption for cancelled events
++        return shoot(level, shooter, hand, weapon, new UnrealizedDrawResult(projectiles, null), power, uncertainty, isCrit, targetOverride, drawStrength);
++    }
++    protected boolean shoot(
++        final ServerLevel level,
++        final LivingEntity shooter,
++        final InteractionHand hand,
++        ItemStack weapon, // Remove final
++        final UnrealizedDrawResult unrealizedDrawResult,
++        final float power,
++        final float uncertainty,
++        final boolean isCrit,
++        final @Nullable LivingEntity targetOverride
++        , final float drawStrength // Paper - Pass draw strength
++    ) {
++        List<ItemStack> projectiles = unrealizedDrawResult.projectiles();
++        boolean atLeastOneShootBowEventUncancelled = false;
++        // Paper PR end - prevent item consumption for cancelled events
+         float maxAngle = EnchantmentHelper.processProjectileSpread(level, weapon, shooter, 0.0F);
+         float angleStep = projectiles.size() == 1 ? 0.0F : 2.0F * maxAngle / (projectiles.size() - 1);
+         float angleOffset = (projectiles.size() - 1) % 2 * angleStep / 2.0F;
+@@ -67,11 +99,15 @@ public abstract class ProjectileWeaponItem extends Item {
+                 Projectile projectileEntity = this.createProjectile(level, shooter, weapon, projectile, isCrit);
+                 this.shootProjectile(shooter, projectileEntity, index, power, uncertainty, angle, targetOverride);
+ 
+-                org.bukkit.event.entity.EntityShootBowEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callEntityShootBowEvent(shooter, weapon, projectile, projectileEntity, hand, drawStrength, true);
++                // Paper PR start - prevent item consumption for cancelled events; call for each shot projectile
++                boolean preConsumption = weapon.is(Items.CROSSBOW) || shooter.level().shouldConsumeArrow;
++                org.bukkit.event.entity.EntityShootBowEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callEntityShootBowEvent(shooter, weapon, projectile, projectileEntity, hand, drawStrength, preConsumption);
++                // Paper PR end - prevent item consumption for cancelled events; call for each shot projectile
+                 if (event.isCancelled()) {
+                     event.getProjectile().remove();
+-                    return;
++                    continue; // Paper PR - prevent item consumption for cancelled events; call for each shot projectile
+                 }
++                atLeastOneShootBowEventUncancelled = true; // Paper PR - prevent item consumption for cancelled events
+ 
+                 if (event.getProjectile() == projectileEntity.getBukkitEntity()) {
+                     if (Projectile.spawnProjectile(
+@@ -79,7 +115,27 @@ public abstract class ProjectileWeaponItem extends Item {
+                         level,
+                         projectile
+                     ).isRemoved()) {
+-                        return;
++                        // Paper PR start - prevent item consumption for cancelled events
++                        continue; // call for each shot projectile
++                    }
++                }
++                if (this instanceof CrossbowItem crossbow) {
++                    // moved up to ensure events uncancelled
++                    float shotPitch = crossbow.getShotPitch(shooter.getRandom(), index);
++                    shooter.level().playSound(null, shooter.getX(), shooter.getY(), shooter.getZ(), net.minecraft.sounds.SoundEvents.CROSSBOW_SHOOT, shooter.getSoundSource(), 1.0F, shotPitch);
++                }
++                if (!event.shouldConsumeItem() && projectileEntity instanceof final AbstractArrow abstractArrow)
++                    abstractArrow.pickup = AbstractArrow.Pickup.CREATIVE_ONLY;
++                if (event.shouldConsumeItem()) {
++                    // Update item reference to explicitly use crossbow on hand, since plugin can change item in inventory during this stage
++                    weapon = shooter.getItemInHand(hand);
++                    if (weapon.is(Items.CROSSBOW)) {
++                        List<ItemStack> newProjectiles = new ArrayList<>(weapon.get(DataComponents.CHARGED_PROJECTILES).itemCopies());
++                        newProjectiles.remove(i - (projectiles.size() - newProjectiles.size()));
++                        weapon.set(DataComponents.CHARGED_PROJECTILES, net.minecraft.world.item.component.ChargedProjectiles.ofNonEmpty(newProjectiles));
++                    } else if (level.shouldConsumeArrow) {
++                        unrealizedDrawResult.consumeProjectilesFromPlayerInventory(i);
++                        // Paper PR end - prevent item consumption for cancelled events
+                     }
+                 }
+                 // CraftBukkit end
+@@ -89,6 +145,7 @@ public abstract class ProjectileWeaponItem extends Item {
+                 }
+             }
+         }
++        return atLeastOneShootBowEventUncancelled; // Paper PR - prevent item consumption for cancelled events
+     }
+ 
+     protected int getDurabilityUse(final ItemStack projectile) {
+@@ -120,12 +177,21 @@ public abstract class ProjectileWeaponItem extends Item {
+     }
+ 
+     protected static List<ItemStack> draw(final ItemStack weapon, final ItemStack projectile, final LivingEntity shooter) {
+-        // Paper start
+-        return draw(weapon, projectile, shooter, true);
++        // Paper PR start - prevent item consumption for cancelled events
++        return draw(weapon, projectile, shooter, ProjectileDrawingItemConsumption.IMMEDIATELY);
+     }
+-
+-    protected static List<ItemStack> draw(final ItemStack weapon, final ItemStack projectile, final LivingEntity shooter, final boolean consume) {
+-        // Paper end
++    protected enum ProjectileDrawingItemConsumption {
++        // Will immediately consume from the passed projectile stack, like vanilla would
++        IMMEDIATELY,
++        // Will create a copyWithCount from the projectileStack, allowing for later reduction.
++        // The stacks yielded will adhere to vanilla's intangibility layout, with the first itemstack
++        // being tangible, allowing for it to be picked up once shot.
++        // Callers that do *not* consume later are responsible for marking the shot projectile as intangible.
++        MAYBE_LATER,
++        NEVER,
++    }
++    protected static List<ItemStack> draw(final ItemStack weapon, final ItemStack projectile, final LivingEntity shooter, final ProjectileDrawingItemConsumption consume) {
++        // Paper PR end - prevent item consumption for cancelled events
+         if (projectile.isEmpty()) {
+             return List.of();
+         }
+@@ -134,8 +200,9 @@ public abstract class ProjectileWeaponItem extends Item {
+         List<ItemStack> drawn = new ArrayList<>(numProjectiles);
+         ItemStack projectileCopy = projectile.copy();
+ 
++        shooter.level().shouldConsumeArrow = true; // Paper PR - prevent item consumption for cancelled events
+         for (int i = 0; i < numProjectiles; i++) {
+-            ItemStack drawnStack = useAmmo(weapon, i == 0 ? projectile : projectileCopy, shooter, i > 0 || !consume); // Paper
++            ItemStack drawnStack = useAmmo(weapon, i == 0 ? projectile : projectileCopy, shooter, i > 0, consume); // Paper // Paper PR - prevent item consumption for cancelled events
+             if (!drawnStack.isEmpty()) {
+                 drawn.add(drawnStack);
+             }
+@@ -145,20 +212,26 @@ public abstract class ProjectileWeaponItem extends Item {
+     }
+ 
+     protected static ItemStack useAmmo(final ItemStack weapon, final ItemStack projectile, final LivingEntity holder, final boolean forceInfinite) {
+-        int ammoToUse = !forceInfinite && !holder.hasInfiniteMaterials() && holder.level() instanceof ServerLevel serverLevel
++        // Paper PR start - prevent item consumption for cancelled events
++        return useAmmo(weapon, projectile, holder, forceInfinite, ProjectileDrawingItemConsumption.IMMEDIATELY);
++    }
++    protected static ItemStack useAmmo(final ItemStack weapon, final ItemStack projectile, final LivingEntity holder, final boolean forceInfinite, final ProjectileDrawingItemConsumption consumption) {
++        int ammoToUse = !forceInfinite && consumption != ProjectileDrawingItemConsumption.NEVER && !holder.hasInfiniteMaterials() && holder.level() instanceof ServerLevel serverLevel
+             ? EnchantmentHelper.processAmmoUse(serverLevel, weapon, projectile, 1)
+             : 0;
++        // Paper PR end - prevent item consumption for cancelled events
+         if (ammoToUse > projectile.getCount()) {
+             return ItemStack.EMPTY;
+         }
+ 
+         if (ammoToUse == 0) {
++            if (!forceInfinite) holder.level().shouldConsumeArrow = false; // Paper PR - prevent item consumption for cancelled events
+             ItemStack copy = projectile.copyWithCount(1);
+             copy.set(DataComponents.INTANGIBLE_PROJECTILE, Unit.INSTANCE);
+             return copy;
+         }
+ 
+-        ItemStack used = projectile.split(ammoToUse);
++        ItemStack used =consumption == ProjectileDrawingItemConsumption.MAYBE_LATER ? projectile.copyWithCount(ammoToUse) : projectile.split(ammoToUse); // Paper PR - prevent item consumption for cancelled events
+         if (projectile.isEmpty() && holder instanceof Player player) {
+             player.getInventory().removeItem(projectile);
+         }
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 6f360efdd6248cef1cf3d1392eeae4d273c80a79..909b22783a482c9d96f088f288305323e8487149 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -185,6 +185,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+     public final Map<ServerExplosion.CacheKey, Float> explosionDensityCache = new java.util.HashMap<>(); // Paper - Optimize explosions
+     public java.util.ArrayDeque<net.minecraft.world.level.block.RedstoneTorchBlock.Toggle> redstoneUpdateInfos; // Paper - Faster redstone torch rapid clock removal; Move from Map in BlockRedstoneTorch to here
+     public final net.minecraft.world.level.levelgen.BitRandomSource simpleRandom = org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new org.dreeam.leaf.util.math.random.FasterRandomSource(net.minecraft.world.level.levelgen.RandomSupport.generateUniqueSeed()) : new ca.spottedleaf.moonrise.common.util.SimpleThreadUnsafeRandom(net.minecraft.world.level.levelgen.RandomSupport.generateUniqueSeed()); // Gale - Pufferfish - move random tick random // Leaf - Faster random generator
++    public boolean shouldConsumeArrow = true; // Paper PR - prevent item consumption for cancelled shot events
+ 
+     // Purpur start - Add adjustable breeding cooldown to config
+     private com.google.common.cache.Cache<BreedingCooldownPair, Object> playerBreedingCooldowns;

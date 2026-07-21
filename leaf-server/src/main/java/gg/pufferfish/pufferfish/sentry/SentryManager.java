@@ -1,14 +1,15 @@
 package gg.pufferfish.pufferfish.sentry;
 
+import com.mojang.logging.LogUtils;
 import io.sentry.Sentry;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
+import org.slf4j.Logger;
 
 public class SentryManager {
 
-    private static final Logger LOGGER = LogManager.getLogger(SentryManager.class);
+    private static final Logger LOGGER = LogUtils.getClassLogger();
 
     private SentryManager() {
     }

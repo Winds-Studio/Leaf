@@ -1,10 +1,15 @@
 package org.dreeam.leaf.util;
 
 /**
- * A high-quality 3D coordinate hasher that prioritizes distribution over raw instruction count.
- * <p>
- * This implementation trades a marginal amount of calculation speed for extremely low hash collision rates,
- * significantly improving the performance of large HashMaps.
+ * Hash helper for 3D integer coordinates.
+ *
+ * <p>The vanilla hash formula is linear in a way that can produce large
+ * collision groups for structured spatial inputs, for example dense chunk
+ * BlockPos sets. This hasher uses a different coordinate combination followed
+ * by a small integer mix to reduce those pathological distributions.</p>
+ *
+ * <p>This is not intended to be universally faster than the vanilla formula:
+ * random inputs and small maps may see little benefit.</p>
  */
 public final class Vec3iHasher {
 

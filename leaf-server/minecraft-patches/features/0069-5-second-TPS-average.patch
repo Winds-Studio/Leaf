@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martijn Muijsers <martijnmuijsers@live.nl>
+Date: Wed, 30 Nov 2022 12:42:32 +0100
+Subject: [PATCH] 5-second TPS average
+
+License: MIT (https://opensource.org/licenses/MIT)
+Gale - https://galemc.org
+
+This patch is based on the following patch:
+"Add 5 second tps average in /tps"
+By: William Blake Galbreath <blake.galbreath@gmail.com>
+As part of: Purpur (https://github.com/PurpurMC/Purpur)
+Licensed under: MIT (https://opensource.org/licenses/MIT)
+
+* Purpur copyright *
+
+MIT License
+
+Copyright (c) 2019-2022 PurpurMC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index c7d30e431fc17230cf14a3d3edd3db9f000f3ba4..af2c6ed0e80fb893a959a32c50b7ce387d0c3fe2 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -371,6 +371,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     private final java.util.concurrent.atomic.AtomicInteger tickTaskTickCount = new java.util.concurrent.atomic.AtomicInteger();
+     private final Object statsLock = new Object();
+     private double @Nullable [] tps;
++    private double @Nullable [] tps5s; // Gale - Purpur - 5-second TPS average
+     private ca.spottedleaf.common.time.TickData.@Nullable MSPTData msptData5s;
+ 
+     private void addTickTime(final ca.spottedleaf.common.time.TickTime time) {
+@@ -389,6 +390,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     private void clearTickTimeStatistics() {
+         this.msptData5s = null;
+         this.tps = null;
++        this.tps5s = null; // Gale - Purpur - 5-second TPS average
+     }
+ 
+     private static double getTPS(final ca.spottedleaf.common.time.TickData tickData, final long tickInterval) {
+@@ -404,7 +406,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         synchronized (this.statsLock) {
+             double @Nullable [] tps = this.tps;
+             if (tps == null) {
+-                tps = this.computeTPS();
++                tps = this.computeTPS(); // Gale - Purpur - 5-second TPS average - diff on change
+                 this.tps = tps;
+             }
+             return tps.clone();
+@@ -429,6 +431,40 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         };
+     }
+     // Paper end - improve tick loop
++    // Gale start - Purpur - 5-second TPS average
++    public double[] getTPSIncluding5Seconds() {
++        synchronized (this.statsLock) {
++            double[] tps5s = this.tps5s;
++            if (tps5s == null) {
++                tps5s = this.computeTPSIncluding5Seconds();
++                this.tps5s = tps5s;
++            }
++            return tps5s.clone();
++        }
++    }
++
++    public double[] getTPSIncluding5SecondsReadOnly() {
++        synchronized (this.statsLock) {
++            double[] tps5s = this.tps5s;
++            if (tps5s == null) {
++                tps5s = this.computeTPSIncluding5Seconds();
++                this.tps5s = tps5s;
++            }
++            return tps5s;
++        }
++    }
++
++    public double[] computeTPSIncluding5Seconds() {
++        final long interval = this.tickRateManager().nanosecondsPerTick();
++        return new double[]{
++                getTPS(this.tickTimes5s, interval),
++                getTPS(this.tickTimes1m, interval),
++                getTPS(this.tickTimes5m, interval),
++                getTPS(this.tickTimes15m, interval)
++        };
++    }
++
++    // Gale end - Purpur - 5-second TPS average
+     // Paper start - rewrite chunk system
+     private volatile Throwable chunkSystemCrash;
+ 
+@@ -1355,7 +1391,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                         org.purpurmc.purpur.PurpurConfig.tpsCatchup ? 5 : 1 //ConfigHolder.getConfig().tickLoop.catchupTicks.getOrDefault(MoonriseConfig.TickLoop.DEFAULT_CATCHUP_TICKS).intValue() // Purpur - Configurable TPS Catchup
+                     );
+ 
+-                    lagging = getTPS()[0] < org.purpurmc.purpur.PurpurConfig.laggingThreshold; // Purpur - Lagging threshold
++                    lagging = getTPSIncluding5SecondsReadOnly()[0] < org.purpurmc.purpur.PurpurConfig.laggingThreshold; // Purpur - Lagging threshold // Gale - Purpur - 5-second TPS average
+ 
+                     // adjust ticksBehind so that it is not greater-than catchup
+                     if (ticksBehind - catchup > 0L) {
+diff --git a/net/minecraft/server/gui/StatsComponent.java b/net/minecraft/server/gui/StatsComponent.java
+index e9f53520d99454536f32bb491ed1ef6b2a5ee07a..a64cdb78f17b8a65642caffb65fd91b81ec7f159 100644
+--- a/net/minecraft/server/gui/StatsComponent.java
++++ b/net/minecraft/server/gui/StatsComponent.java
+@@ -33,7 +33,7 @@ public class StatsComponent extends JComponent {
+     private void tick() {
+         long usedRam = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+         // Paper start - Improve ServerGUI
+-        double[] tps = org.bukkit.Bukkit.getTPS();
++        double[] tps = org.bukkit.Bukkit.getTPSIncluding5SecondAverage(); // Gale - Purpur - 5-second TPS average
+         String[] tpsAvg = new String[tps.length];
+ 
+         for (int g = 0; g < tps.length; g++) {
+@@ -45,7 +45,7 @@ public class StatsComponent extends JComponent {
+             + Runtime.getRuntime().freeMemory() * 100L / Runtime.getRuntime().maxMemory()
+             + "% free)";
+         this.msgs[1] = "Avg tick: " + DECIMAL_FORMAT.format((double)this.server.getAverageTickTimeNanos() / TimeUtil.NANOSECONDS_PER_MILLISECOND) + " ms";
+-        this.msgs[2] = "TPS from last 1m, 5m, 15m: " + String.join(", ", tpsAvg);
++        this.msgs[2] = "TPS from last 5s, 1m, 5m, 15m: " + String.join(", ", tpsAvg); // Gale - Purpur - 5-second TPS average
+         // Paper end - Improve ServerGUI
+         this.values[this.vp++ & 0xFF] = (int)(usedRam * 100L / Runtime.getRuntime().maxMemory());
+         this.repaint();

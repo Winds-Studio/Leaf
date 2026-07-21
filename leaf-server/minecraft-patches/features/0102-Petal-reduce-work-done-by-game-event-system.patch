@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: peaches94 <peachescu94@gmail.com>
+Date: Sun, 10 Jul 2022 13:29:20 -0500
+Subject: [PATCH] Petal: reduce work done by game event system
+
+Original license: GPL-3.0-only
+Original project: https://github.com/Bloom-host/Petal
+
+1. going into game event dispatching can be expensive so run the checks before dispatching
+
+2. EuclideanGameEventListenerRegistry is not used concurrently so we ban that usage for improved performance with allays
+
+diff --git a/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java b/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
+index 4aa2d141eba2596e782fc4ab4890c5e2d80eb811..5e9ec23d980c387661d248cccb11ffaa364db8a1 100644
+--- a/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
+@@ -66,7 +66,7 @@ public class SculkCatalystBlockEntity extends BlockEntity implements GameEventLi
+         return this.catalystListener;
+     }
+ 
+-    public static class CatalystListener implements GameEventListener {
++    public class CatalystListener implements GameEventListener { // Leaf - petal - reduce work done by game event system
+         public static final int PULSE_TICKS = 8;
+         private final SculkSpreader sculkSpreader;
+         private final BlockState blockState;
+@@ -126,6 +126,13 @@ public class SculkCatalystBlockEntity extends BlockEntity implements GameEventLi
+             level.playSound(null, pos, SoundEvents.SCULK_CATALYST_BLOOM, SoundSource.BLOCKS, 2.0F, 0.6F + random.nextFloat() * 0.4F);
+         }
+ 
++        // Leaf start - petal - reduce work done by game event system
++        @Override
++        public boolean listensToEvent(final GameEvent gameEvent, final GameEvent.Context context) {
++            return !SculkCatalystBlockEntity.this.isRemoved() && gameEvent == GameEvent.ENTITY_DIE.value() && context.sourceEntity() instanceof LivingEntity;
++        }
++        // Leaf end - petal - reduce work done by game event system
++
+         private void tryAwardItSpreadsAdvancement(final Level level, final LivingEntity mob) {
+             if (mob.getLastHurtByMob() instanceof ServerPlayer player) {
+                 DamageSource damageSource = mob.getLastDamageSource() == null ? level.damageSources().playerAttack(player) : mob.getLastDamageSource();
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 98bbfdd848f697f4aaba1ebe34b629674a561e7f..997bb3af34ee0c8d99bfe8d0b73adc571b4a4304 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -90,7 +90,19 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+     private final ServerLevel level; // CraftBukkit - type
+     private @Nullable Supplier<FullChunkStatus> fullStatus;
+     private LevelChunk.@Nullable PostLoadProcessor postLoad;
+-    private final Int2ObjectMap<GameEventListenerRegistry> gameEventListenerRegistrySections;
++    // Leaf start - petal - reduce work done by game event system
++    private final GameEventListenerRegistry[] gameEventListenerRegistrySections;
++    private static final int GAME_EVENT_DISPATCHER_RADIUS = 2;
++
++    private static int getGameEventSectionIndex(final int sectionIndex) {
++        return sectionIndex + GAME_EVENT_DISPATCHER_RADIUS;
++    }
++
++    private static int getGameEventSectionLength(final int sectionCount) {
++        return sectionCount + (GAME_EVENT_DISPATCHER_RADIUS * 2);
++    }
++
++    // Leaf end - petal - reduce work done by game event system
+     private final LevelChunkTicks<Block> blockTicks;
+     private final LevelChunkTicks<Fluid> fluidTicks;
+     private LevelChunk.UnsavedListener unsavedListener = chunkPos -> {};
+@@ -165,7 +177,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+     ) {
+         super(pos, upgradeData, level, PalettedContainerFactory.create(net.minecraft.server.MinecraftServer.getServer().registryAccess()), inhabitedTime, sections, blendingData); // Paper - Anti-Xray - The world isn't ready yet, use server singleton for registry
+         this.level = (ServerLevel) level; // CraftBukkit - type
+-        this.gameEventListenerRegistrySections = new Int2ObjectOpenHashMap<>();
++        this.gameEventListenerRegistrySections = new GameEventListenerRegistry[getGameEventSectionLength(this.getSectionsCount())]; // Leaf - petal - reduce work done by game event system
+ 
+         for (Heightmap.Types type : Heightmap.Types.values()) {
+             if (ChunkStatus.FULL.heightmapsAfter().contains(type)) {
+@@ -277,10 +289,27 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+ 
+     @Override
+     public GameEventListenerRegistry getListenerRegistry(final int section) {
+-        return this.level instanceof ServerLevel serverLevel
+-            ? this.gameEventListenerRegistrySections
+-                .computeIfAbsent(section, key -> new EuclideanGameEventListenerRegistry(serverLevel, section, this::removeGameEventListenerRegistry))
+-            : super.getListenerRegistry(section);
++        // Leaf start - petal - reduce work done by game event system
++        if (this.level instanceof ServerLevel serverLevel) {
++            int sectionIndex = getGameEventSectionIndex(this.getSectionIndexFromSectionY(section));
++
++            // drop game events that are too far away (32 blocks) from loaded sections
++            // this matches the highest radius of game events in the game
++            if (sectionIndex < 0 || sectionIndex >= this.gameEventListenerRegistrySections.length) {
++                return GameEventListenerRegistry.NOOP;
++            }
++
++            var dispatcher = this.gameEventListenerRegistrySections[sectionIndex];
++
++            if (dispatcher == null) {
++                dispatcher = this.gameEventListenerRegistrySections[sectionIndex] = new EuclideanGameEventListenerRegistry(serverLevel, section, this::removeGameEventListenerRegistry);
++            }
++
++            return dispatcher;
++        }
++
++        return super.getListenerRegistry(section);
++        // Leaf end - petal - reduce work done by game event system
+     }
+ 
+     // Paper start - Perf: Reduce instructions and provide final method
+@@ -624,7 +653,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+     }
+ 
+     private void removeGameEventListenerRegistry(final int sectionY) {
+-        this.gameEventListenerRegistrySections.remove(sectionY);
++        this.gameEventListenerRegistrySections[getGameEventSectionIndex(this.getSectionIndexFromSectionY(sectionY))] = null; // Leaf - petal - reduce work done by game event system
+     }
+ 
+     private void removeBlockEntityTicker(final BlockPos pos) {
+diff --git a/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java b/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java
+index d8ef1923612d2a11a7ec9f0622dc1295c3ba135b..21441c639fca02c3035fd076872ba93e7ec8a24d 100644
+--- a/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java
++++ b/net/minecraft/world/level/gameevent/EuclideanGameEventListenerRegistry.java
+@@ -16,8 +16,8 @@ import net.minecraft.world.phys.Vec3;
+ 
+ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegistry {
+     private final List<GameEventListener> listeners = Lists.newArrayList();
+-    private final Set<GameEventListener> listenersToRemove = Sets.newHashSet();
+-    private final List<GameEventListener> listenersToAdd = Lists.newArrayList();
++    //private final Set<GameEventListener> listenersToRemove = Sets.newHashSet(); // Leaf - petal - reduce work done by game event system - Not necessary
++    //private final List<GameEventListener> listenersToAdd = Lists.newArrayList(); // Leaf - petal - reduce work done by game event system
+     private boolean processing;
+     private final ServerLevel level;
+     private final int sectionY;
+@@ -37,7 +37,7 @@ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegi
+     @Override
+     public void register(final GameEventListener listener) {
+         if (this.processing) {
+-            this.listenersToAdd.add(listener);
++            throw new java.util.ConcurrentModificationException(); // Leaf - petal - reduce work done by game event system - Disallow concurrent modification
+         } else {
+             this.listeners.add(listener);
+         }
+@@ -63,7 +63,7 @@ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegi
+     @Override
+     public void unregister(final GameEventListener listener) {
+         if (this.processing) {
+-            this.listenersToRemove.add(listener);
++            throw new java.util.ConcurrentModificationException(); // Leaf - petal - reduce work done by game event system - Disallow concurrent modification
+         } else {
+             this.listeners.remove(listener);
+         }
+@@ -85,7 +85,7 @@ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegi
+ 
+             while (iterator.hasNext()) {
+                 GameEventListener listener = iterator.next();
+-                if (this.listenersToRemove.remove(listener)) {
++                if (false) { // Leaf - petal - reduce work done by game event system - Disallow concurrent modification
+                     iterator.remove();
+                 } else {
+                     Optional<Vec3> optionalPosition = getPostableListenerPosition(this.level, sourcePosition, listener);
+@@ -99,6 +99,8 @@ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegi
+             this.processing = false;
+         }
+ 
++        // Leaf start - petal - reduce work done by game event system
++        /*
+         if (!this.listenersToAdd.isEmpty()) {
+             this.listeners.addAll(this.listenersToAdd);
+             this.listenersToAdd.clear();
+@@ -108,6 +110,8 @@ public class EuclideanGameEventListenerRegistry implements GameEventListenerRegi
+             this.listeners.removeAll(this.listenersToRemove);
+             this.listenersToRemove.clear();
+         }
++        */
++        // Leaf end - petal - reduce work done by game event system
+ 
+         return applicable;
+     }
+diff --git a/net/minecraft/world/level/gameevent/GameEventDispatcher.java b/net/minecraft/world/level/gameevent/GameEventDispatcher.java
+index f8c4b24e603abb85c804cccec2c34c47f2670aba..1bdb36266e718bce07eae8355538a8c7db86c3c8 100644
+--- a/net/minecraft/world/level/gameevent/GameEventDispatcher.java
++++ b/net/minecraft/world/level/gameevent/GameEventDispatcher.java
+@@ -39,6 +39,7 @@ public class GameEventDispatcher {
+         int sectionMaxZ = SectionPos.blockToSectionCoord(center.getZ() + radius);
+         List<GameEvent.ListenerInfo> toHandleByDistance = new ArrayList<>();
+         GameEventListenerRegistry.ListenerVisitor visitListeners = (listener, pos) -> {
++            if (!listener.listensToEvent(gameEvent.value(), context)) return; // Leaf - petal - reduce work done by game event system - If they don't listen, ignore
+             if (listener.getDeliveryMode() == GameEventListener.DeliveryMode.BY_DISTANCE) {
+                 toHandleByDistance.add(new GameEvent.ListenerInfo(gameEvent, position, context, listener, pos));
+             } else {
+diff --git a/net/minecraft/world/level/gameevent/GameEventListener.java b/net/minecraft/world/level/gameevent/GameEventListener.java
+index 9414da5af047f60ff1233c5c61f47b4de3f960e5..4b32ac2044b6c38ad64667b270663fbca9574eb7 100644
+--- a/net/minecraft/world/level/gameevent/GameEventListener.java
++++ b/net/minecraft/world/level/gameevent/GameEventListener.java
+@@ -23,4 +23,11 @@ public interface GameEventListener {
+     interface Provider<T extends GameEventListener> {
+         T getListener();
+     }
++
++    // Leaf start - petal - reduce work done by game event system
++    // Add check for seeing if this listener cares about an event
++    default boolean listensToEvent(final GameEvent gameEvent, final GameEvent.Context context) {
++        return true;
++    }
++    // Leaf end - petal - reduce work done by game event system
+ }

@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Sat, 19 Oct 2024 03:28:33 -0400
+Subject: [PATCH] Optimize nearby alive players for spawning
+
+Use SpottedLeaf's nearby players system to avoid iterating over all online players
+and reduce the cost on predicate test
+
+diff --git a/net/minecraft/world/entity/EntitySelector.java b/net/minecraft/world/entity/EntitySelector.java
+index d449654d21a9d160c1a2825f6c8bee1a166a4a72..53a7312bc021edfe46b589d68e3bc775fdda0ffb 100644
+--- a/net/minecraft/world/entity/EntitySelector.java
++++ b/net/minecraft/world/entity/EntitySelector.java
+@@ -32,7 +32,7 @@ public final class EntitySelector {
+ 
+     // Paper start - Affects Spawning API
+     public static final Predicate<Entity> PLAYER_AFFECTS_SPAWNING = (entity) -> {
+-        return !entity.isSpectator() && entity.isAlive() && entity instanceof Player player && player.affectsSpawning;
++        return !entity.isSpectator() && entity.isAlive() && entity instanceof Player player && player.affectsSpawning; // Leaf - Optimize nearby alive players for spawning - diff on change
+     };
+     // Paper end - Affects Spawning API
+ 
+diff --git a/net/minecraft/world/entity/monster/zombie/Zombie.java b/net/minecraft/world/entity/monster/zombie/Zombie.java
+index dcaa3cc212eaa82e650a2718d35b4c37ec450c29..489c79c622f7c79a5b1a4d8dd9c95ad7b1e552c0 100644
+--- a/net/minecraft/world/entity/monster/zombie/Zombie.java
++++ b/net/minecraft/world/entity/monster/zombie/Zombie.java
+@@ -431,7 +431,7 @@ public class Zombie extends Monster {
+                 if (SpawnPlacements.isSpawnPositionOk(type, level, spawnPos)
+                     && SpawnPlacements.checkSpawnRules(type, level, EntitySpawnReason.REINFORCEMENT, spawnPos, level.getRandom())) {
+                     reinforcement.setPos(xt, yt, zt);
+-                    if (!level.hasNearbyAlivePlayerThatAffectsSpawning(xt, yt, zt, 7.0) // Paper - affects spawning api
++                    if (!level.hasNearbyAlivePlayerThatAffectsSpawningForZombie(xt, yt, zt, 7.0) // Paper - affects spawning api // Leaf - Optimize nearby alive players for spawning
+                         && level.isUnobstructed(reinforcement)
+                         && level.noCollision(reinforcement)
+                         && (reinforcement.canSpawnInLiquids() || !level.containsAnyLiquid(reinforcement.getBoundingBox()))) {
+diff --git a/net/minecraft/world/level/BaseSpawner.java b/net/minecraft/world/level/BaseSpawner.java
+index 3a7030b60f2c5a8880c2e21ea4c3cb1df3aff88d..bbc3e6045cb3c0392d0668af53c4db8a334351fc 100644
+--- a/net/minecraft/world/level/BaseSpawner.java
++++ b/net/minecraft/world/level/BaseSpawner.java
+@@ -67,7 +67,7 @@ public abstract class BaseSpawner {
+ 
+     public boolean isNearPlayer(final Level level, final BlockPos pos) {
+         if (level.purpurConfig.spawnerDeactivateByRedstone && level.hasNeighborSignal(pos)) return false; // Purpur - Redstone deactivates spawners
+-        return level.hasNearbyAlivePlayerThatAffectsSpawning(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, this.requiredPlayerRange); // Paper - Affects Spawning API
++        return level.hasNearbyAlivePlayerThatAffectsSpawningForSpawner(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, this.requiredPlayerRange); // Paper - Affects Spawning API // Leaf - Optimize nearby alive players for spawning
+     }
+ 
+     public void clientTick(final Level level, final BlockPos pos) {
+diff --git a/net/minecraft/world/level/EntityGetter.java b/net/minecraft/world/level/EntityGetter.java
+index 2841ac4ad1029e1d3a88e3710a532d803343bbe6..205f54132650c9e166a88e563d279970d4b55b32 100644
+--- a/net/minecraft/world/level/EntityGetter.java
++++ b/net/minecraft/world/level/EntityGetter.java
+@@ -112,6 +112,87 @@ public interface EntityGetter extends ca.spottedleaf.moonrise.patches.chunk_syst
+         // Paper end - optimise collisions
+     }
+ 
++    // Leaf start - Optimize nearby alive players for spawning
++    default boolean hasNearbyAlivePlayerThatAffectsSpawningForSpawner(final double x, final double y, final double z, final double range) {
++        if (range > 33) {
++            return hasNearbyAlivePlayerThatAffectsSpawningForLargerRangeSpawner(x, y, z, range);
++        }
++
++        final net.minecraft.core.BlockPos.MutableBlockPos mutablePos = new net.minecraft.core.BlockPos.MutableBlockPos();
++
++        mutablePos.set(x, y, z);
++
++        final ca.spottedleaf.moonrise.common.list.ReferenceList<net.minecraft.server.level.ServerPlayer> players = ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel) this).moonrise$getNearbyPlayers().getPlayers(
++            mutablePos, ca.spottedleaf.moonrise.common.misc.NearbyPlayers.NearbyMapType.GENERAL // NearbyPlayers.GENERAL_AREA_VIEW_DISTANCE: 33
++        );
++
++        if (players == null) return false;
++
++        final net.minecraft.server.level.ServerPlayer[] raw = players.getRawDataUnchecked();
++        final int len = players.size();
++
++        java.util.Objects.checkFromIndexSize(0, len, raw.length);
++
++        for (int i = 0; i < len; i++) {
++            final net.minecraft.server.level.ServerPlayer player = raw[i];
++            final double distanceSqr = player.distanceToSqr(x, y, z);
++
++            if (range < 0.0D || distanceSqr < range * range) {
++                if (!player.isSpectator() && player.isAlive() && player.affectsSpawning) { // combines NO_SPECTATORS and LIVING_ENTITY_STILL_ALIVE with an "affects spawning" check
++                    return true;
++                }
++            }
++        }
++
++        return false;
++    }
++
++    default boolean hasNearbyAlivePlayerThatAffectsSpawningForLargerRangeSpawner(final double x, final double y, final double z, final double range) {
++        List<? extends Player> players = this.players();
++        for (int i = 0, size = players.size(); i < size; i++) {
++            final Player player = players.get(i);
++            final double distanceSqr = player.distanceToSqr(x, y, z);
++            if (range < 0.0D || distanceSqr < range * range) {
++                if (!player.isSpectator() && player.isAlive() && player.affectsSpawning) { // combines NO_SPECTATORS and LIVING_ENTITY_STILL_ALIVE with an "affects spawning" check
++                    return true;
++                }
++            }
++        }
++
++        return false;
++    }
++
++    default boolean hasNearbyAlivePlayerThatAffectsSpawningForZombie(final int x, final int y, final int z, final double range) {
++        final net.minecraft.core.BlockPos.MutableBlockPos mutablePos = new net.minecraft.core.BlockPos.MutableBlockPos();
++
++        mutablePos.set(x, y, z);
++
++        final ca.spottedleaf.moonrise.common.list.ReferenceList<net.minecraft.server.level.ServerPlayer> players = ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel) this).moonrise$getNearbyPlayers().getPlayers(
++            mutablePos, ca.spottedleaf.moonrise.common.misc.NearbyPlayers.NearbyMapType.SPAWN_RANGE // NearbyPlayers.PLAYER_SPAWN_TRACK_RANGE: 8
++        );
++
++        if (players == null) return false;
++
++        final net.minecraft.server.level.ServerPlayer[] raw = players.getRawDataUnchecked();
++        final int len = players.size();
++
++        java.util.Objects.checkFromIndexSize(0, len, raw.length);
++
++        for (int i = 0; i < len; i++) {
++            final net.minecraft.server.level.ServerPlayer player = raw[i];
++            final double distanceSqr = player.distanceToSqr(x, y, z);
++
++            if (range < 0.0D || distanceSqr < range * range) {
++                if (!player.isSpectator() && player.isAlive() && player.affectsSpawning) { // combines NO_SPECTATORS and LIVING_ENTITY_STILL_ALIVE with an "affects spawning" check
++                    return true;
++                }
++            }
++        }
++
++        return false;
++    }
++    // Leaf end - Optimize nearby alive players for spawning
++
+     // Paper start - Affects Spawning API
+     default @Nullable Player findNearbyPlayer(Entity entity, double range, @Nullable Predicate<Entity> predicate) {
+         return this.getNearestPlayer(entity.getX(), entity.getY(), entity.getZ(), range, predicate);

@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Mon, 11 Nov 2024 02:46:39 -0500
+Subject: [PATCH] Use faster and thread-safe ban list date format parsing
+
+Use DateTimeFormatter since the original java SimpleDateFormat is not thread-safe
+If calls DateTimeFormatter asynchronously, one data format may pollute another
+
+This can fix the server crash on loading according to the user report.
+The server crashed during initing the IP ban list, probably caused by calls in off-main.
+
+Some performance test **only for reference**
+Single thread, 10,000,000 times loop, java 21 (graalvm / zulu)
+
+SimpleDateFormat:                       ~29,446ms
+DateTimeFormatter:                      ~13,128ms
+apache commons-lang's FastDateFormat:   ~23,514ms
+
+In the end, DateTimeFormatter is also fastest in three implementations in any ways,
+Wether there is a high frequnently calls or not. And also thread-safe. So there is
+a better solution, why not using it?
+
+diff --git a/net/minecraft/server/players/BanListEntry.java b/net/minecraft/server/players/BanListEntry.java
+index a3aa9128aeb17e9148a149e93fe514c7661a9e21..55e5d828640c94f5d24beba1a8d02b764ef94af1 100644
+--- a/net/minecraft/server/players/BanListEntry.java
++++ b/net/minecraft/server/players/BanListEntry.java
+@@ -10,7 +10,11 @@ import net.minecraft.network.chat.Component;
+ import org.jspecify.annotations.Nullable;
+ 
+ public abstract class BanListEntry<T> extends StoredUserEntry<T> {
+-    public static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT);
++    // Leaf start - Use faster and thread-safe ban list date format parsing
++    //public static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT); // Leaf - I assume no one will use this, if yes, why?
++    private static final java.time.ZoneId ZONE_ID = java.time.ZoneId.systemDefault();
++    public static final java.time.format.DateTimeFormatter DATE_TIME_FORMATTER = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss Z");
++    // Leaf end - Use faster and thread-safe ban list date format parsing
+     public static final String EXPIRES_NEVER = "forever";
+     protected final Date created;
+     protected final String source;
+@@ -32,8 +36,10 @@ public abstract class BanListEntry<T> extends StoredUserEntry<T> {
+ 
+         Date created;
+         try {
+-            created = object.has("created") ? DATE_FORMAT.parse(object.get("created").getAsString()) : new Date();
+-        } catch (ParseException ignored) {
++            // Leaf start - Use faster and thread-safe ban list date format parsing
++            created = object.has("created") ? parseToDate(object.get("created").getAsString()) : new Date();
++        } catch (java.time.format.DateTimeParseException ignored) {
++            // Leaf end - Use faster and thread-safe ban list date format parsing
+             created = new Date();
+         }
+ 
+@@ -42,8 +48,10 @@ public abstract class BanListEntry<T> extends StoredUserEntry<T> {
+ 
+         Date expires;
+         try {
+-            expires = object.has("expires") ? DATE_FORMAT.parse(object.get("expires").getAsString()) : null;
+-        } catch (ParseException ignored) {
++            // Leaf start - Use faster and thread-safe ban list date format parsing
++            expires = object.has("expires") ? parseToDate(object.get("expires").getAsString()) : null;
++        } catch (java.time.format.DateTimeParseException ignored) {
++            // Leaf end - Use faster and thread-safe ban list date format parsing
+             expires = null;
+         }
+ 
+@@ -81,9 +89,9 @@ public abstract class BanListEntry<T> extends StoredUserEntry<T> {
+ 
+     @Override
+     protected void serialize(final JsonObject object) {
+-        object.addProperty("created", DATE_FORMAT.format(this.created));
++        object.addProperty("created", formateToString(this.created)); // Leaf - Use faster and thread-safe ban list date format parsing
+         object.addProperty("source", this.source);
+-        object.addProperty("expires", this.expires == null ? "forever" : DATE_FORMAT.format(this.expires));
++        object.addProperty("expires", this.expires == null ? "forever" : formateToString(this.expires)); // Leaf - Use faster and thread-safe ban list date format parsing
+         object.addProperty("reason", this.reason);
+     }
+ 
+@@ -112,9 +120,11 @@ public abstract class BanListEntry<T> extends StoredUserEntry<T> {
+         Date expires = null;
+ 
+         try {
+-            expires = jsonobject.has("expires") ? BanListEntry.DATE_FORMAT.parse(jsonobject.get("expires").getAsString()) : null;
+-        } catch (ParseException ex) {
++            // Leaf start - Use faster and thread-safe ban list date format parsing
++            expires = jsonobject.has("expires") ? parseToDate(jsonobject.get("expires").getAsString()) : null;
++        } catch (java.time.format.DateTimeParseException ex) {
+             // Guess we don't have a date
++            // Leaf end - Use faster and thread-safe ban list date format parsing
+         }
+ 
+         if (expires == null || expires.after(new Date())) {
+@@ -124,4 +134,15 @@ public abstract class BanListEntry<T> extends StoredUserEntry<T> {
+         }
+     }
+     // CraftBukkit end
++
++    // Leaf start - Use faster and thread-safe ban list date format parsing
++    public static Date parseToDate(final String string) {
++        java.time.ZonedDateTime parsedDateTime = java.time.ZonedDateTime.parse(string, DATE_TIME_FORMATTER);
++        return Date.from(parsedDateTime.toInstant());
++    }
++
++    private static String formateToString(final Date date) {
++        return DATE_TIME_FORMATTER.format(date.toInstant().atZone(ZONE_ID));
++    }
++    // Leaf end - Use faster and thread-safe ban list date format parsing
+ }
+diff --git a/net/minecraft/server/players/OldUsersConverter.java b/net/minecraft/server/players/OldUsersConverter.java
+index e38acabda1d2e49d88b94d46cc51f6602870d6b6..289ad06b563ede29152504370a0aadf1cb6caac5 100644
+--- a/net/minecraft/server/players/OldUsersConverter.java
++++ b/net/minecraft/server/players/OldUsersConverter.java
+@@ -445,8 +445,10 @@ public class OldUsersConverter {
+     private static Date parseDate(final String dateString, final Date defaultValue) {
+         Date parsedDate;
+         try {
+-            parsedDate = BanListEntry.DATE_FORMAT.parse(dateString);
+-        } catch (ParseException ignored) {
++            // Leaf start - Use faster and thread-safe ban list date format parsing
++            parsedDate = BanListEntry.parseToDate(dateString);
++        } catch (java.time.format.DateTimeParseException ignored) {
++            // Leaf end - Use faster and thread-safe ban list date format parsing
+             parsedDate = defaultValue;
+         }
+ 

@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Thu, 6 Mar 2025 00:26:19 +0100
+Subject: [PATCH] SparklyPaper: Track each world MSPT
+
+Original project: https://github.com/SparklyPower/SparklyPaper
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 973d8dd59356ab02775840d82eda11bf9eec62ba..dfd5e5601ee6811241e641163be61769fb077143 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1869,7 +1869,16 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     // Leaf start - SparklyPaper - parallel world ticking - move level ticking logic out for branch convergence
+     private void tickLevel(final ServerLevel level, final BooleanSupplier haveTime) {
+         try {
++            long levelTickStart = Util.getNanos(); // SparklyPaper - track world's MSPT
+             level.tick(haveTime);
++            // SparklyPaper start - track world's MSPT
++            long lastLevelTickTime = Util.getNanos() - levelTickStart;
++
++            // These are from the "tickServer" function
++            level.tickTimes5s.add(this.tickCount, lastLevelTickTime);
++            level.tickTimes10s.add(this.tickCount, lastLevelTickTime);
++            level.tickTimes1m.add(this.tickCount, lastLevelTickTime);
++            // SparklyPaper end - track world's MSPT
+         } catch (Throwable t) {
+             CrashReport report = CrashReport.forThrowable(t, "Exception ticking world");
+             level.fillReportDetails(report);
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 07fc6636477fa0a5020234b970c3c2852fb2a8a7..97e84257c6d22f21e62bf08e8f2e731a1b806340 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -614,6 +614,12 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     }
+     // Paper end - chunk tick iteration
+ 
++    // SparklyPaper start - track world's MSPT
++    public final MinecraftServer.TickTimes tickTimes5s = new MinecraftServer.TickTimes(100);
++    public final MinecraftServer.TickTimes tickTimes10s = new MinecraftServer.TickTimes(200);
++    public final MinecraftServer.TickTimes tickTimes1m = new MinecraftServer.TickTimes(1200);
++    // SparklyPaper end - track world's MSPT
++
+     public ServerLevel(
+         final MinecraftServer server,
+         final Executor executor,
+diff --git a/org/purpurmc/purpur/task/TPSBarTask.java b/org/purpurmc/purpur/task/TPSBarTask.java
+index 8769993e7ca59da309087051a3cd38fc562c15d1..b7a463fc6f7cac62f2cd19a0d19a0fae9de96990 100644
+--- a/org/purpurmc/purpur/task/TPSBarTask.java
++++ b/org/purpurmc/purpur/task/TPSBarTask.java
+@@ -28,6 +28,45 @@ public class TPSBarTask extends BossBarTask {
+ 
+     @Override
+     void updateBossBar(BossBar bossbar, Player player) {
++        // SparklyPaper start - track world's MSPT
++        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++            // Get player's current world
++            net.minecraft.server.level.ServerLevel serverLevel = ((org.bukkit.craftbukkit.CraftWorld) player.getWorld()).getHandle();
++
++            // Calculate world-specific MSPT and TPS
++            double worldMspt = calculateWorldMSPT(serverLevel);
++            double worldTps = Math.min(20.0, 1000.0 / Math.max(worldMspt, 0.001)); // Avoid division by zero
++
++            // Store original values
++            double originalTps = this.tps;
++            double originalMspt = this.mspt;
++
++            try {
++                // Temporarily set to world values
++                this.tps = worldTps;
++                this.mspt = worldMspt;
++
++                // Create MSPT component with world name
++                Component msptWithWorld = Component.empty()
++                    .append(getMSPTColor())
++                    .append(Component.text(" [" + player.getWorld().getName() + "]").color(net.kyori.adventure.text.format.NamedTextColor.GRAY));
++
++                // Update the boss bar using the methods that depend on the fields
++                bossbar.progress(getBossBarProgress());
++                bossbar.color(getBossBarColor());
++                bossbar.name(MiniMessage.miniMessage().deserialize(PurpurConfig.commandTPSBarTitle,
++                    Placeholder.component("tps", getTPSColor()),
++                    Placeholder.component("mspt", msptWithWorld),
++                    Placeholder.component("ping", getPingColor(player.getPing()))
++                ));
++            } finally {
++                // Restore original values
++                this.tps = originalTps;
++                this.mspt = originalMspt;
++            }
++            return;
++        }
++        // SparklyPaper end - track world's MSPT
+         bossbar.progress(getBossBarProgress());
+         bossbar.color(getBossBarColor());
+         bossbar.name(MiniMessage.miniMessage().deserialize(PurpurConfig.commandTPSBarTitle,
+@@ -136,6 +175,25 @@ public class TPSBarTask extends BossBarTask {
+         return MiniMessage.miniMessage().deserialize(color, Placeholder.parsed("text", String.format("%s", ping)));
+     }
+ 
++    // SparklyPaper start - track world's MSPT
++    private double calculateWorldMSPT(final net.minecraft.server.level.ServerLevel level) {
++        long[] times = level.tickTimes5s.getTimes();
++        long total = 0L;
++        int count = 0;
++
++        for (long value : times) {
++            if (value > 0L) {
++                total += value;
++                count++;
++            }
++        }
++
++        if (count == 0) return 0.0;
++
++        return (double) total / (double) count * 1.0E-6D;
++    }
++    // SparklyPaper end - track world's MSPT
++
+     public enum FillMode {
+         TPS, MSPT, PING
+     }

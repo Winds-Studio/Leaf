@@ -43,26 +43,6 @@ public class ExecutorFactory {
         ); // Paper
     }
 
-    public static ExecutorService buildAuthPoolExecutor() {
-        // Leaf start - Virtual thread support for user authenticator
-        if (VirtualThreadSupport.authPool) {
-            return Executors.newThreadPerTaskExecutor(
-                Thread.ofVirtual()
-                    .name("User Authenticator #", 0)
-                    .uncaughtExceptionHandler(new DefaultUncaughtExceptionHandler(ServerLoginPacketListenerImpl.LOGGER))
-                    .factory()
-            );
-        }
-        // Leaf end - Virtual thread support for user authenticator
-        return Executors.newCachedThreadPool(
-            new ThreadFactoryBuilder()
-                .setNameFormat("User Authenticator #%d")
-                .setThreadFactory(Executors.defaultThreadFactory())
-                .setUncaughtExceptionHandler(new DefaultUncaughtExceptionHandler(ServerLoginPacketListenerImpl.LOGGER))
-                .build()
-        ); // Paper - Cache authenticator threads
-    }
-
     public static ExecutorService buildDownloadPoolExecutor() {
         // Leaf start - Virtual thread support for download pool
         if (VirtualThreadSupport.downloadPool) {
@@ -86,25 +66,6 @@ public class ExecutorFactory {
                 return ret;
             }
         }); // Paper - Limit download pool size
-    }
-
-    public static ExecutorService buildPaperConfigurationPool() {
-        // Leaf start - Virtual thread support for paper configuration pool
-        if (VirtualThreadSupport.paperConfigurationPool) {
-            return Executors.newThreadPerTaskExecutor(
-                Thread.ofVirtual()
-                    .name("Configuration Thread #", 0)
-                    .uncaughtExceptionHandler(new DefaultUncaughtExceptionHandler(PaperConfigurationTask.LOGGER))
-                    .factory()
-            );
-        }
-        // Leaf end - Virtual thread support for paper configuration pool
-        return Executors.newCachedThreadPool(
-            new ThreadFactoryBuilder()
-                .setNameFormat("Configuration Thread #%d")
-                .setUncaughtExceptionHandler(new DefaultUncaughtExceptionHandler(PaperConfigurationTask.LOGGER))
-                .build()
-        );
     }
 
     public static ExecutorService buildBukkitAsyncSchedulerExecutor() {

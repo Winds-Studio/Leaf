@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Skip inactive entity for execute
+
+Co-authored-by: <90316914+wling-art@users.noreply.github.com>
+
+diff --git a/net/minecraft/commands/arguments/EntityArgument.java b/net/minecraft/commands/arguments/EntityArgument.java
+index 2d20317d50c9b5602ab547ab1217a5fe3c26b381..5c5c8ce05b11cb24b66ffeec4d269a7de3a10236 100644
+--- a/net/minecraft/commands/arguments/EntityArgument.java
++++ b/net/minecraft/commands/arguments/EntityArgument.java
+@@ -67,7 +67,10 @@ public class EntityArgument implements ArgumentType<EntitySelector> {
+     }
+ 
+     public static Collection<? extends Entity> getOptionalEntities(final CommandContext<CommandSourceStack> context, final String name) throws CommandSyntaxException {
+-        return context.getArgument(name, EntitySelector.class).findEntities(context.getSource());
++        // Leaf start - Skip inactive entity for execute
++        EntitySelector entitySelector = context.getArgument(name, EntitySelector.class);
++        return org.dreeam.leaf.config.modules.opt.SkipInactiveEntityForExecute.skipInactiveEntityForExecute && context.getSource().source instanceof net.minecraft.server.MinecraftServer ? entitySelector.findEntitiesSkipInactive(context.getSource()) : entitySelector.findEntities(context.getSource());
++        // Leaf end - Skip inactive entity for execute
+     }
+ 
+     public static Collection<ServerPlayer> getOptionalPlayers(final CommandContext<CommandSourceStack> context, final String name) throws CommandSyntaxException {
+diff --git a/net/minecraft/commands/arguments/selector/EntitySelector.java b/net/minecraft/commands/arguments/selector/EntitySelector.java
+index 01fdddf69fca99b7d6f18ccf3a2ff96dcacc2d5f..2b17e033224a34fe7e60e6c2d20b2689e7274593 100644
+--- a/net/minecraft/commands/arguments/selector/EntitySelector.java
++++ b/net/minecraft/commands/arguments/selector/EntitySelector.java
+@@ -184,6 +184,57 @@ public class EntitySelector {
+         }
+     }
+ 
++    // Leaf start - Skip inactive entity for execute
++    // Copied and modified from `findEntities`
++    public java.util.Collection<? extends Entity> findEntitiesSkipInactive(final CommandSourceStack sender) throws CommandSyntaxException {
++        this.checkPermissions(sender);
++        if (!this.includesEntities) {
++            return this.findPlayers(sender);
++        }
++
++        if (this.playerName != null) {
++            ServerPlayer result = sender.getServer().getPlayerList().getPlayerByName(this.playerName);
++            result = result instanceof org.leavesmc.leaves.replay.ServerPhotographer ? null : result; // Leaves - skip photographer
++            return result == null ? List.of() : List.of(result);
++        }
++
++        if (this.entityUUID != null) {
++            for (ServerLevel level : sender.getServer().getAllLevels()) {
++                Entity entity = level.getEntity(this.entityUUID);
++                if (entity != null && !(entity instanceof org.leavesmc.leaves.replay.ServerPhotographer)) { // Leaves - skip photographer
++                    if (entity.getType().isEnabled(sender.enabledFeatures())) {
++                        return List.of(entity);
++                    }
++                    break;
++                }
++            }
++
++            return List.of();
++        } else {
++            Vec3 pos = this.position.apply(sender.getPosition());
++            AABB absoluteAabb = this.getAbsoluteAabb(pos);
++            if (this.currentEntity) {
++                Predicate<Entity> predicate = this.getPredicateSkipInactive(pos, absoluteAabb, null);
++                return sender.getEntity() != null && !(sender.getEntity() instanceof org.leavesmc.leaves.replay.ServerPhotographer) && predicate.test(sender.getEntity()) ? List.of(sender.getEntity()) : List.of(); // Leaves - skip photographer
++            }
++
++            Predicate<Entity> predicate = this.getPredicateSkipInactive(pos, absoluteAabb, sender.enabledFeatures());
++            List<Entity> result = new ObjectArrayList<>();
++            if (this.isWorldLimited()) {
++                this.addEntities(result, sender.getLevel(), absoluteAabb, predicate);
++            } else {
++                for (ServerLevel level : sender.getServer().getAllLevels()) {
++                    this.addEntities(result, level, absoluteAabb, predicate);
++                }
++            }
++
++            result.removeIf(entity -> entity instanceof org.leavesmc.leaves.replay.ServerPhotographer); // Leaves - skip photographer
++
++            return this.sortAndLimit(pos, result);
++        }
++    }
++    // Leaf end - Skip inactive entity for execute
++
+     private void addEntities(final List<Entity> result, final ServerLevel level, final @Nullable AABB absoluteAABB, final Predicate<Entity> predicate) {
+         int limit = this.getResultLimit();
+         if (result.size() < limit) {
+@@ -284,6 +335,39 @@ public class EntitySelector {
+         return Util.allOf(completePredicates);
+     }
+ 
++    // Leaf start - Skip inactive entity for execute
++    // Copied and modified from `getPredicate`
++    private Predicate<Entity> getPredicateSkipInactive(final Vec3 pos, final @Nullable AABB absoluteAabb, final @Nullable FeatureFlagSet enabledFeatures) {
++        boolean filterFeatures = enabledFeatures != null;
++        boolean filterAabb = absoluteAabb != null;
++        boolean filterRange = this.range != null;
++        int extraCount = (filterFeatures ? 1 : 0) + (filterAabb ? 1 : 0) + (filterRange ? 1 : 0);
++        List<Predicate<Entity>> completePredicates;
++        if (extraCount == 0) {
++            completePredicates = this.contextFreePredicates;
++        } else {
++            List<Predicate<Entity>> predicates = new ObjectArrayList<>(this.contextFreePredicates.size() + extraCount);
++            predicates.addAll(this.contextFreePredicates);
++            if (filterFeatures) {
++                predicates.add(e -> e.getType().isEnabled(enabledFeatures));
++            }
++
++            if (filterAabb) {
++                predicates.add(e -> absoluteAabb.intersects(e.getBoundingBox()));
++            }
++
++            if (filterRange) {
++                predicates.add(e -> this.range.matchesSqr(e.distanceToSqr(pos)));
++            }
++
++            predicates.add(e -> e instanceof net.minecraft.world.entity.Marker || io.papermc.paper.entity.activation.ActivationRange.checkIfActive(e));
++            completePredicates = predicates;
++        }
++
++        return Util.allOf(completePredicates);
++    }
++    // Leaf end - Skip inactive entity for execute
++
+     private <T extends Entity> List<T> sortAndLimit(final Vec3 pos, final List<T> result) {
+         if (result.size() > 1) {
+             this.order.accept(pos, result);

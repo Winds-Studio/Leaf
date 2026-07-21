@@ -3,14 +3,14 @@ set -e
 
 IS_EOL=false
 IS_UNSUPPORTED=false
-IS_DEV=false
+IS_DEV=true
 
 JAR_NAME="leaf-${MC_VERSION}"
 CURRENT_TAG="ver-${MC_VERSION}"
 RELEASE_NOTES="release_notes.md"
 
 # Rename Leaf jar
-mv ./leaf-server/build/libs/leaf-paperclip-${MC_VERSION}-R0.1-SNAPSHOT-mojmap.jar ./$JAR_NAME-${BUILD_NUMBER}.jar
+mv ./leaf-server/build/libs/leaf-paperclip-${MC_VERSION}*.jar ./$JAR_NAME-${BUILD_NUMBER}.jar
 
 # Branch name
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)

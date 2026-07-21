@@ -1,0 +1,805 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Thu, 24 Apr 2025 16:36:16 -0400
+Subject: [PATCH] Paw optimization
+
+Some random optimizations
+
+- Remove Paper's dead code
+- Only set shuffle random seed if is really used
+- Cache direction values to skip copy
+
+diff --git a/net/minecraft/data/advancements/packs/VanillaAdventureAdvancements.java b/net/minecraft/data/advancements/packs/VanillaAdventureAdvancements.java
+index eea58e2649634a47546ddd6c468e4f6e780cda5b..450ee8016215111cefd39424bd8ed1d592c495b8 100644
+--- a/net/minecraft/data/advancements/packs/VanillaAdventureAdvancements.java
++++ b/net/minecraft/data/advancements/packs/VanillaAdventureAdvancements.java
+@@ -1110,7 +1110,7 @@ public class VanillaAdventureAdvancements implements AdvancementSubProvider {
+     private static Criterion<ItemUsedOnLocationTrigger.TriggerInstance> placedBlockActivatesCreakingHeart(
+         final HolderGetter<Block> blocks, final TagKey<Block> block
+     ) {
+-        LootItemCondition.Builder[] conditions = Stream.of(Direction.values())
++        LootItemCondition.Builder[] conditions = Stream.of(Direction.VALUES) // Leaf - paw optimization - cache direction values
+             .map(
+                 direction -> {
+                     StatePropertiesPredicate.Builder creakingHeartProperties = StatePropertiesPredicate.Builder.properties()
+diff --git a/net/minecraft/data/loot/BlockLootSubProvider.java b/net/minecraft/data/loot/BlockLootSubProvider.java
+index 7d6a488c9380edeccdcd254f583e0606fb51a9e7..3989c1da060b11ab7b8d7c9ed8ca403d0e7e7ce9 100644
+--- a/net/minecraft/data/loot/BlockLootSubProvider.java
++++ b/net/minecraft/data/loot/BlockLootSubProvider.java
+@@ -483,7 +483,7 @@ public abstract class BlockLootSubProvider implements LootTableSubProvider {
+                             LootItem.lootTableItem(block)
+                                 .when(condition)
+                                 .apply(
+-                                    Direction.values(),
++                                    Direction.VALUES, // Leaf - paw optimization - cache direction values
+                                     dir -> SetItemCountFunction.setCount(ConstantValue.exactly(1.0F), true)
+                                         .when(
+                                             LootItemBlockStatePropertyCondition.hasBlockStateProperties(block)
+@@ -507,7 +507,7 @@ public abstract class BlockLootSubProvider implements LootTableSubProvider {
+                             block,
+                             LootItem.lootTableItem(block)
+                                 .apply(
+-                                    Direction.values(),
++                                    Direction.VALUES, // Leaf - paw optimization - cache direction values
+                                     dir -> SetItemCountFunction.setCount(ConstantValue.exactly(1.0F), true)
+                                         .when(
+                                             LootItemBlockStatePropertyCondition.hasBlockStateProperties(block)
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 3cb6a97c588aff63c014906025504931442c06ec..32bf915afcd2a434c3e42b9a691c287378b314e1 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -619,13 +619,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+             if (!(this.packetListener instanceof net.minecraft.server.network.ServerLoginPacketListenerImpl loginPacketListener)
+                 || loginPacketListener.state != net.minecraft.server.network.ServerLoginPacketListenerImpl.State.VERIFYING
+                 || Connection.joinAttemptsThisTick++ < MAX_PER_TICK) {
+-            // Paper start - detailed watchdog information
+-            net.minecraft.network.PacketProcessor.packetProcessing.push(this.packetListener);
+-            try {
+             tickable.tick();
+-            } finally {
+-                net.minecraft.network.PacketProcessor.packetProcessing.pop();
+-            } // Paper end - detailed watchdog information
+             } // Paper end - Buffer joins to world
+         }
+ 
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index 78ec485515b53a4d61d577b4a688f12722655cf9..b26d7cbe440abf35952c1bab3a2487cf0be7d6e4 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -625,8 +625,12 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+             if (org.dreeam.leaf.config.modules.opt.OptimizeMobSpawning.enabled) { this.level.natureSpawnChunkMap.tick(this.level, spawningChunks); } else { this.chunkMap.collectSpawningChunks(spawningChunks); } // Leaf - optimize mob spawning
+             profiler.popPush("shuffleSpawningChunks");
+             // Paper start - chunk tick iteration optimisation
++            // Leaf start - paw optimization - Only set seed if is really used
++            if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) {
+             this.shuffleRandom.setSeed(this.level.getRandom().nextLong());
+-            if (!this.level.paperConfig().entities.spawning.perPlayerMobSpawns) Util.shuffle(spawningChunks, this.level.getRandom()); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
++            Util.shuffle(spawningChunks, this.level.getRandom()); // Paper - Optional per player mob spawns; do not need this when per-player is enabled
++            }
++            // Leaf end - paw optimization - Only set seed if is really used
+             // Paper end - chunk tick iteration optimisation
+             profiler.popPush("tickSpawningChunks");
+ 
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 04c5dbabc43f822d3bc5c640d985801a5c24a4ce..b8a9d7b84567ba290211428b2ebfcef2ce02fdbd 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1639,26 +1639,8 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     }
+ 
+-    // Paper start - log detailed entity tick information
+-    // TODO replace with varhandle
+-    static final java.util.concurrent.atomic.AtomicReference<Entity> currentlyTickingEntity = new java.util.concurrent.atomic.AtomicReference<>();
+-
+-    public static List<Entity> getCurrentlyTickingEntities() {
+-        Entity ticking = currentlyTickingEntity.get();
+-        List<Entity> ret = java.util.Arrays.asList(ticking == null ? me.titaniumtown.ArrayConstants.emptyEntityArray : new Entity[] { ticking }); // Gale - JettPack - reduce array allocations
+-
+-        return ret;
+-    }
+-    // Paper end - log detailed entity tick information
+-
+     public void tickNonPassenger(final Entity entity) {
+-        // Paper start - log detailed entity tick information
+         ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread("Cannot tick an entity off-main");
+-        try {
+-            if (currentlyTickingEntity.get() == null) {
+-                currentlyTickingEntity.lazySet(entity);
+-            }
+-            // Paper end - log detailed entity tick information
+         entity.setOldPosAndRot();
+         ProfilerFiller profiler = Profiler.get();
+         entity.tickCount++;
+@@ -1675,13 +1657,6 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         for (Entity passenger : entity.getPassengers()) {
+             this.tickPassenger(entity, passenger, isActive); // Paper - EAR 2
+         }
+-        // Paper start - log detailed entity tick information
+-        } finally {
+-            if (currentlyTickingEntity.get() == entity) {
+-                currentlyTickingEntity.lazySet(null);
+-            }
+-        }
+-        // Paper end - log detailed entity tick information
+     }
+ 
+     private void tickPassenger(final Entity vehicle, final Entity entity, final boolean isActive) { // Paper - EAR 2
+diff --git a/net/minecraft/util/ParticleUtils.java b/net/minecraft/util/ParticleUtils.java
+index 995f2336dc9c10b871d92db912a6ef584f5d8b8c..f2ac7bd5c584a6533bab0fb027eaef394b3d69bd 100644
+--- a/net/minecraft/util/ParticleUtils.java
++++ b/net/minecraft/util/ParticleUtils.java
+@@ -19,7 +19,7 @@ public class ParticleUtils {
+     ) {
+         RandomSource random = level.getRandom();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             spawnParticlesOnBlockFace(level, pos, particle, particlesPerFaceRange, direction, () -> getRandomSpeedRanges(random), 0.55);
+         }
+     }
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index e3c66e5ae0e760cc03c7e976bd4f97df5eee8a1e..ffd9051b0c479777048fe5264a8516595c5339b6 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1182,25 +1182,9 @@ public abstract class Entity
+     // Paper start - detailed watchdog information
+     public final Object posLock = new Object(); // Paper - log detailed entity tick information
+ 
+-    @Nullable
+-    private Vec3 moveVector;
+-    private double moveStartX;
+-    private double moveStartY;
+-    private double moveStartZ;
+-    // Paper end - detailed watchdog information
+-
+     public void move(final MoverType moverType, Vec3 delta) {
+         final Vec3 originalMovement = delta; // Paper - Expose pre-collision velocity
+-        // Paper start - detailed watchdog information
+         ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread("Cannot move an entity off-main");
+-        synchronized (this.posLock) {
+-            this.moveStartX = this.getX();
+-            this.moveStartY = this.getY();
+-            this.moveStartZ = this.getZ();
+-            this.moveVector = delta;
+-        }
+-        try {
+-        // Paper end - detailed watchdog information
+         if (this.noPhysics) {
+             this.setPos(this.getX() + delta.x, this.getY() + delta.y, this.getZ() + delta.z);
+             this.horizontalCollision = false;
+@@ -1339,13 +1323,6 @@ public abstract class Entity
+                 profiler.pop();
+             }
+         }
+-        // Paper start - detailed watchdog information
+-        } finally {
+-            synchronized (this.posLock) { // Paper
+-                this.moveVector = null;
+-            } // Paper
+-        }
+-        // Paper end - detailed watchdog information
+     }
+ 
+     private void restituteMovementAfterCollisions(final BlockState effectState, final boolean xCollision, final boolean zCollision, final Vec3 movement) {
+@@ -5070,9 +5047,7 @@ public abstract class Entity
+ 
+     public void setDeltaMovement(final Vec3 deltaMovement) {
+         if (deltaMovement.isFinite()) {
+-            synchronized (this.posLock) { // Paper - detailed watchdog information
+             this.deltaMovement = deltaMovement;
+-            } // Paper - detailed watchdog information
+         }
+     }
+ 
+@@ -5177,9 +5152,7 @@ public abstract class Entity
+         }
+         // Paper end - Block invalid positions and bounding box
+         if (this.position.x != x || this.position.y != y || this.position.z != z) {
+-            synchronized (this.posLock) { // Paper - detailed watchdog information
+             this.position = new Vec3(x, y, z);
+-            } // Paper - detailed watchdog information
+             int fx = Mth.floor(x);
+             int fy = Mth.floor(y);
+             int fz = Mth.floor(z);
+diff --git a/net/minecraft/world/entity/monster/Ghast.java b/net/minecraft/world/entity/monster/Ghast.java
+index c5aa0c1a6fa8849525b79200f8fb5a915d6543ca..9c8efe9eba76ba601d2aa440461e7eb6b6a1e663 100644
+--- a/net/minecraft/world/entity/monster/Ghast.java
++++ b/net/minecraft/world/entity/monster/Ghast.java
+@@ -531,7 +531,7 @@ public class Ghast extends Mob implements Enemy {
+                 return false;
+             }
+ 
+-            for (Direction dir : Direction.values()) {
++            for (Direction dir : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 for (int i = 1; i < distanceToBlocks; i++) {
+                     BlockPos offset = pos.relative(dir, i);
+                     if (!level.getBlockState(offset).isAir()) {
+diff --git a/net/minecraft/world/entity/monster/Shulker.java b/net/minecraft/world/entity/monster/Shulker.java
+index 3f4bad4bb552da43d6ed037b0595808203da4660..5b218748d6f0375267a0570cc7a66f8131598d26 100644
+--- a/net/minecraft/world/entity/monster/Shulker.java
++++ b/net/minecraft/world/entity/monster/Shulker.java
+@@ -411,7 +411,7 @@ public class Shulker extends AbstractGolem implements Enemy {
+     }
+ 
+     protected @Nullable Direction findAttachableSurface(final BlockPos target) {
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (this.canStayAt(target, direction)) {
+                 return direction;
+             }
+diff --git a/net/minecraft/world/level/block/BaseCoralPlantTypeBlock.java b/net/minecraft/world/level/block/BaseCoralPlantTypeBlock.java
+index e74f35af3fe2aa8ddf338d7ef52347e1d8d1ad2e..05acfa635e03a6f160ef409c99e29852b47c845a 100644
+--- a/net/minecraft/world/level/block/BaseCoralPlantTypeBlock.java
++++ b/net/minecraft/world/level/block/BaseCoralPlantTypeBlock.java
+@@ -46,7 +46,7 @@ public abstract class BaseCoralPlantTypeBlock extends Block implements SimpleWat
+             return true;
+         }
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (level.getFluidState(blockPos.relative(direction)).is(FluidTags.WATER)) {
+                 return true;
+             }
+diff --git a/net/minecraft/world/level/block/BaseFireBlock.java b/net/minecraft/world/level/block/BaseFireBlock.java
+index e4b26e22385a1c6e059da8a70a20f5bee5b00bb3..108549a88185af83b0c2d41b8ce6db32159c8002 100644
+--- a/net/minecraft/world/level/block/BaseFireBlock.java
++++ b/net/minecraft/world/level/block/BaseFireBlock.java
+@@ -215,7 +215,7 @@ public abstract class BaseFireBlock extends Block {
+         BlockPos.MutableBlockPos testPos = pos.mutable();
+         boolean hasObsidian = false;
+ 
+-        for (Direction face : Direction.values()) {
++        for (Direction face : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (PortalShape.FRAME.test(level.getBlockState(testPos.set(pos).move(face)), level, testPos)) { // Purpur - Crying obsidian valid for portal frames
+                 hasObsidian = true;
+                 break;
+diff --git a/net/minecraft/world/level/block/ConcretePowderBlock.java b/net/minecraft/world/level/block/ConcretePowderBlock.java
+index f73ff403888bfae04440d4498ba7d8f15625a1f7..16b0fc46a0a03fc543bb1db1abfca9fd2e4d141f 100644
+--- a/net/minecraft/world/level/block/ConcretePowderBlock.java
++++ b/net/minecraft/world/level/block/ConcretePowderBlock.java
+@@ -73,7 +73,7 @@ public class ConcretePowderBlock extends FallingBlock {
+         boolean touchesLiquid = false;
+         BlockPos.MutableBlockPos testPos = pos.mutable();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             BlockState blockState = level.getBlockState(testPos);
+             if (direction != Direction.DOWN || canSolidify(blockState)) {
+                 testPos.setWithOffset(pos, direction);
+diff --git a/net/minecraft/world/level/block/CoralBlock.java b/net/minecraft/world/level/block/CoralBlock.java
+index 70c3cf601e22b0a4858420ae13c7d4a4ab930623..9e22454690466b7c8934ce319641e514a10b384d 100644
+--- a/net/minecraft/world/level/block/CoralBlock.java
++++ b/net/minecraft/world/level/block/CoralBlock.java
+@@ -66,7 +66,7 @@ public class CoralBlock extends Block {
+ 
+     protected boolean scanForWater(final BlockGetter level, final BlockPos blockPos) {
+         if (!((net.minecraft.world.level.LevelAccessor) level).getMinecraftWorld().purpurConfig.coralDieOutsideWater) return true; // Purpur - Config to not let coral die
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             FluidState fluidState = level.getFluidState(blockPos.relative(direction));
+             if (fluidState.is(FluidTags.WATER)) {
+                 return true;
+diff --git a/net/minecraft/world/level/block/CreakingHeartBlock.java b/net/minecraft/world/level/block/CreakingHeartBlock.java
+index 57292f216052110c5f03e8f3fe51709c87b7995c..c2135202f1de461673944e09a6c958c2bbf29bdf 100644
+--- a/net/minecraft/world/level/block/CreakingHeartBlock.java
++++ b/net/minecraft/world/level/block/CreakingHeartBlock.java
+@@ -127,7 +127,7 @@ public class CreakingHeartBlock extends BaseEntityBlock {
+     }
+ 
+     private static boolean isSurroundedByLogs(final LevelAccessor level, final BlockPos pos) {
+-        for (Direction dir : Direction.values()) {
++        for (Direction dir : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             BlockPos neighbourPos = pos.relative(dir);
+             BlockState neighbourState = level.getBlockState(neighbourPos);
+             if (!neighbourState.is(BlockTags.PALE_OAK_LOGS)) {
+diff --git a/net/minecraft/world/level/block/DiodeBlock.java b/net/minecraft/world/level/block/DiodeBlock.java
+index 2339099e05af80b234e64778822b012cc6318157..4b239e1be8bdfffb358f759bdc7c69d9a4f12967 100644
+--- a/net/minecraft/world/level/block/DiodeBlock.java
++++ b/net/minecraft/world/level/block/DiodeBlock.java
+@@ -89,7 +89,7 @@ public abstract class DiodeBlock extends HorizontalDirectionalBlock {
+                 dropResources(state, level, pos, blockEntity);
+                 level.removeBlock(pos, false);
+ 
+-                for (Direction direction : Direction.values()) {
++                for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                     level.updateNeighborsAt(pos.relative(direction), this);
+                 }
+             }
+diff --git a/net/minecraft/world/level/block/FireBlock.java b/net/minecraft/world/level/block/FireBlock.java
+index 0ab93b5937cf098750820affb0969ccfbc578cca..8e343c36f60cf52b883ec0727a2e96434198a3f0 100644
+--- a/net/minecraft/world/level/block/FireBlock.java
++++ b/net/minecraft/world/level/block/FireBlock.java
+@@ -136,7 +136,7 @@ public class FireBlock extends BaseFireBlock {
+         if (!this.canBurn(belowState) && !belowState.isFaceSturdy(level, below, Direction.UP)) {
+             BlockState result = this.defaultBlockState();
+ 
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 BooleanProperty property = PROPERTY_BY_DIRECTION.get(direction);
+                 if (property != null) {
+                     result = result.setValue(property, this.canBurn(level.getBlockState(pos.relative(direction))));
+@@ -306,7 +306,7 @@ public class FireBlock extends BaseFireBlock {
+     }
+ 
+     private boolean isValidFireLocation(final BlockGetter level, final BlockPos pos) {
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (this.canBurn(level.getBlockState(pos.relative(direction)))) {
+                 return true;
+             }
+@@ -322,7 +322,7 @@ public class FireBlock extends BaseFireBlock {
+ 
+         int odds = 0;
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             BlockState blockState = level.getBlockState(pos.relative(direction));
+             odds = Math.max(this.getIgniteOdds(blockState), odds);
+         }
+diff --git a/net/minecraft/world/level/block/FrostedIceBlock.java b/net/minecraft/world/level/block/FrostedIceBlock.java
+index 0f286643b2016e41bf75478b10ae036a0751a408..e7d57d5cad2a4e708a7c4381f8ff35db1899174f 100644
+--- a/net/minecraft/world/level/block/FrostedIceBlock.java
++++ b/net/minecraft/world/level/block/FrostedIceBlock.java
+@@ -49,7 +49,7 @@ public class FrostedIceBlock extends IceBlock {
+             if (brightness > 11 - state.getValue(AGE) - state.getLightDampening() && this.slightlyMelt(state, level, pos)) {
+                 BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+ 
+-                for (Direction direction : Direction.values()) {
++                for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                     neighborPos.setWithOffset(pos, direction);
+                     BlockState neighbour = level.getBlockState(neighborPos);
+                     if (neighbour.is(this) && !this.slightlyMelt(neighbour, level, neighborPos)) {
+@@ -95,7 +95,7 @@ public class FrostedIceBlock extends IceBlock {
+         int result = 0;
+         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             neighborPos.setWithOffset(pos, direction);
+             if (level.getBlockState(neighborPos).is(this)) {
+                 if (++result >= limit) {
+diff --git a/net/minecraft/world/level/block/LeavesBlock.java b/net/minecraft/world/level/block/LeavesBlock.java
+index 23ff958d35aa9199f361aa88cca7fd676f035709..9755c9fd548cf2e29a6a79c2ab8f01254d74914a 100644
+--- a/net/minecraft/world/level/block/LeavesBlock.java
++++ b/net/minecraft/world/level/block/LeavesBlock.java
+@@ -120,7 +120,7 @@ public abstract class LeavesBlock extends Block implements SimpleWaterloggedBloc
+         int newDistance = 7;
+         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             neighborPos.setWithOffset(pos, direction);
+             newDistance = Math.min(newDistance, getDistanceAt(level.getBlockState(neighborPos)) + 1);
+             if (newDistance == 1) {
+diff --git a/net/minecraft/world/level/block/MultifaceBlock.java b/net/minecraft/world/level/block/MultifaceBlock.java
+index 369cc90b9001501fd4881bd5b0fb6a72d634599c..c7e2e3c5f19003e650548879d2bc2b914881d3d3 100644
+--- a/net/minecraft/world/level/block/MultifaceBlock.java
++++ b/net/minecraft/world/level/block/MultifaceBlock.java
+@@ -74,7 +74,7 @@ public class MultifaceBlock extends Block implements SimpleWaterloggedBlock {
+ 
+         Set<Direction> faces = EnumSet.noneOf(Direction.class);
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (hasFace(state, direction)) {
+                 faces.add(direction);
+             }
+@@ -86,7 +86,7 @@ public class MultifaceBlock extends Block implements SimpleWaterloggedBlock {
+     public static Set<Direction> unpack(final byte data) {
+         Set<Direction> presentDirections = EnumSet.noneOf(Direction.class);
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if ((data & (byte)(1 << direction.ordinal())) > 0) {
+                 presentDirections.add(direction);
+             }
+diff --git a/net/minecraft/world/level/block/RedStoneOreBlock.java b/net/minecraft/world/level/block/RedStoneOreBlock.java
+index 60cf974d7b8b1ede092e2aa062083664388e07cc..74f51986e536acfe92715d92e9e45b3594fa2b71 100644
+--- a/net/minecraft/world/level/block/RedStoneOreBlock.java
++++ b/net/minecraft/world/level/block/RedStoneOreBlock.java
+@@ -139,7 +139,7 @@ public class RedStoneOreBlock extends Block {
+         double offset = 0.5625;
+         RandomSource random = level.getRandom();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             BlockPos relative = pos.relative(direction);
+             if (!level.getBlockState(relative).isSolidRender()) {
+                 Direction.Axis axis = direction.getAxis();
+diff --git a/net/minecraft/world/level/block/RedStoneWireBlock.java b/net/minecraft/world/level/block/RedStoneWireBlock.java
+index 65fd02956e004871a8c04ed560ee5726eab9ceba..67f0611b07b1a5482acbbdc3ac1a14ea00adbd7a 100644
+--- a/net/minecraft/world/level/block/RedStoneWireBlock.java
++++ b/net/minecraft/world/level/block/RedStoneWireBlock.java
+@@ -366,7 +366,7 @@ public class RedStoneWireBlock extends Block {
+         if (level.getBlockState(pos).is(this)) {
+             level.updateNeighborsAt(pos, this);
+ 
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 level.updateNeighborsAt(pos.relative(direction), this);
+             }
+         }
+@@ -394,7 +394,7 @@ public class RedStoneWireBlock extends Block {
+     @Override
+     protected void affectNeighborsAfterRemoval(final BlockState state, final ServerLevel level, final BlockPos pos, final boolean movedByPiston) {
+         if (!movedByPiston) {
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 level.updateNeighborsAt(pos.relative(direction), this);
+             }
+ 
+diff --git a/net/minecraft/world/level/block/RedstoneTorchBlock.java b/net/minecraft/world/level/block/RedstoneTorchBlock.java
+index e51c99908d95069da1e9746d50396bb275e2ff2b..2e9d9536716c4f51f5b8ddb4af04c1061706a84d 100644
+--- a/net/minecraft/world/level/block/RedstoneTorchBlock.java
++++ b/net/minecraft/world/level/block/RedstoneTorchBlock.java
+@@ -49,7 +49,7 @@ public class RedstoneTorchBlock extends BaseTorchBlock {
+     private void notifyNeighbors(final Level level, final BlockPos pos, final BlockState state) {
+         Orientation orientation = this.randomOrientation(level, state);
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             level.updateNeighborsAt(pos.relative(direction), this, ExperimentalRedstoneUtils.withFront(orientation, direction));
+         }
+     }
+diff --git a/net/minecraft/world/level/block/SculkSensorBlock.java b/net/minecraft/world/level/block/SculkSensorBlock.java
+index 10cff0f9db2910c543c20fa055c0c5b759becc15..d08941c1f7042da16278a5a29053afdb35f7b59c 100644
+--- a/net/minecraft/world/level/block/SculkSensorBlock.java
++++ b/net/minecraft/world/level/block/SculkSensorBlock.java
+@@ -257,7 +257,7 @@ public class SculkSensorBlock extends BaseEntityBlock implements SimpleWaterlogg
+     }
+ 
+     public static void tryResonateVibration(final @Nullable Entity sourceEntity, final Level level, final BlockPos pos, final int vibrationFrequency) {
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             BlockPos relativePos = pos.relative(direction);
+             BlockState blockState = level.getBlockState(relativePos);
+             if (blockState.is(BlockTags.VIBRATION_RESONATORS)) {
+diff --git a/net/minecraft/world/level/block/entity/CreakingHeartBlockEntity.java b/net/minecraft/world/level/block/entity/CreakingHeartBlockEntity.java
+index 4ce0e689eb4678bbd1b50dffa78c3a80c1d52fde..69235f524e6c18f4122faa8e83fda3b3d16b0ef5 100644
+--- a/net/minecraft/world/level/block/entity/CreakingHeartBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/CreakingHeartBlockEntity.java
+@@ -254,7 +254,7 @@ public class CreakingHeartBlockEntity extends BlockEntity {
+         RandomSource random = level.getRandom();
+         Mutable<BlockPos> placedResin = new MutableObject<>(null);
+         BlockPos.breadthFirstTraversal(this.worldPosition, 2, 64, (pos, acceptor) -> {
+-            for (Direction dir : Util.shuffledCopy(Direction.values(), random)) {
++            for (Direction dir : Util.shuffledCopy(Direction.VALUES, random)) { // Leaf - paw optimization - cache direction values
+                 BlockPos neighbourPos = pos.relative(dir);
+                 if (level.getBlockState(neighbourPos).is(BlockTags.PALE_OAK_LOGS)) {
+                     acceptor.accept(neighbourPos);
+@@ -265,7 +265,7 @@ public class CreakingHeartBlockEntity extends BlockEntity {
+                 return BlockPos.TraversalNodeStatus.ACCEPT;
+             }
+ 
+-            for (Direction dir : Util.shuffledCopy(Direction.values(), random)) {
++            for (Direction dir : Util.shuffledCopy(Direction.VALUES, random)) { // Leaf - paw optimization - cache direction values
+                 BlockPos neightbourPos = pos.relative(dir);
+                 BlockState neighbourState = level.getBlockState(neightbourPos);
+                 Direction opposite = dir.getOpposite();
+diff --git a/net/minecraft/world/level/block/entity/TheEndGatewayBlockEntity.java b/net/minecraft/world/level/block/entity/TheEndGatewayBlockEntity.java
+index 766e3ba6d7c4692303291b16042ef82da7de6674..2fef6c6515c0fe464e027c4d078a3d2ba6b28e5f 100644
+--- a/net/minecraft/world/level/block/entity/TheEndGatewayBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/TheEndGatewayBlockEntity.java
+@@ -263,7 +263,7 @@ public class TheEndGatewayBlockEntity extends TheEndPortalBlockEntity {
+     public int getParticleAmount() {
+         int count = 0;
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             count += this.shouldRenderFace(direction) ? 1 : 0;
+         }
+ 
+diff --git a/net/minecraft/world/level/block/piston/PistonBaseBlock.java b/net/minecraft/world/level/block/piston/PistonBaseBlock.java
+index c02394b5ea59c9f3b5d2b4f40b4f69d701698aed..b7f36a209436a7eb20317cd74da01c9d007672d6 100644
+--- a/net/minecraft/world/level/block/piston/PistonBaseBlock.java
++++ b/net/minecraft/world/level/block/piston/PistonBaseBlock.java
+@@ -126,7 +126,7 @@ public class PistonBaseBlock extends DirectionalBlock {
+     }
+ 
+     private boolean getNeighborSignal(final SignalGetter level, final BlockPos pos, final Direction pushDirection) {
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (direction != pushDirection && level.hasSignal(pos.relative(direction), direction)) {
+                 return true;
+             }
+@@ -138,7 +138,7 @@ public class PistonBaseBlock extends DirectionalBlock {
+ 
+         BlockPos above = pos.above();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (direction != Direction.DOWN && level.hasSignal(above.relative(direction), direction)) {
+                 return true;
+             }
+diff --git a/net/minecraft/world/level/block/piston/PistonStructureResolver.java b/net/minecraft/world/level/block/piston/PistonStructureResolver.java
+index c47a763c75913dcaefc6709e2b7f44a8b87fcef1..2b0f6a573000c85a6b6d2bb9fa1c958961c62ca6 100644
+--- a/net/minecraft/world/level/block/piston/PistonStructureResolver.java
++++ b/net/minecraft/world/level/block/piston/PistonStructureResolver.java
+@@ -175,7 +175,7 @@ public class PistonStructureResolver {
+     private boolean addBranchingBlocks(final BlockPos fromPos) {
+         BlockState fromState = this.level.getBlockState(fromPos);
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (direction.getAxis() != this.pushDirection.getAxis()) {
+                 BlockPos neighbourPos = fromPos.relative(direction);
+                 BlockState neighbourState = this.level.getBlockState(neighbourPos);
+diff --git a/net/minecraft/world/level/block/state/pattern/BlockPattern.java b/net/minecraft/world/level/block/state/pattern/BlockPattern.java
+index ed5a5fb38bfe8fb9216c7eab00b833485c4bbade..c305bc4a4988faddd29fb2cee11920fb2d546660 100644
+--- a/net/minecraft/world/level/block/state/pattern/BlockPattern.java
++++ b/net/minecraft/world/level/block/state/pattern/BlockPattern.java
+@@ -78,8 +78,8 @@ public class BlockPattern {
+         int dist = Math.max(Math.max(this.width, this.height), this.depth);
+ 
+         for (BlockPos testPos : BlockPos.betweenClosed(origin, origin.offset(dist - 1, dist - 1, dist - 1))) {
+-            for (Direction forwards : Direction.values()) {
+-                for (Direction up : Direction.values()) {
++            for (Direction forwards : Direction.VALUES) { // Leaf - paw optimization - cache direction values
++                for (Direction up : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                     if (up != forwards && up != forwards.getOpposite()) {
+                         BlockPattern.BlockPatternMatch match = this.matches(testPos, forwards, up, cache);
+                         if (match != null) {
+diff --git a/net/minecraft/world/level/chunk/UpgradeData.java b/net/minecraft/world/level/chunk/UpgradeData.java
+index 6cb2ca4e073615e9f1b50faba7b3b52a9a72a91d..23f25e6ab8ad3c45aa72767b916a2bfdbce9fa33 100644
+--- a/net/minecraft/world/level/chunk/UpgradeData.java
++++ b/net/minecraft/world/level/chunk/UpgradeData.java
+@@ -146,14 +146,13 @@ public class UpgradeData {
+             int maxX = chunkPos.getMinBlockX() + (!singular || !north && !south ? (west ? 0 : 15) : 14);
+             int minZ = chunkPos.getMinBlockZ() + (!singular || !east && !west ? (north ? 0 : 15) : 1);
+             int maxZ = chunkPos.getMinBlockZ() + (!singular || !east && !west ? (north ? 0 : 15) : 14);
+-            Direction[] updateDirections = Direction.values();
+             BlockPos.MutableBlockPos neighbourPos = new BlockPos.MutableBlockPos();
+ 
+             for (BlockPos pos : BlockPos.betweenClosed(minX, level.getMinY(), minZ, maxX, level.getMaxY(), maxZ)) {
+                 BlockState state = level.getBlockState(pos);
+                 BlockState newState = state;
+ 
+-                for (Direction direction : updateDirections) {
++                for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                     neighbourPos.setWithOffset(pos, direction);
+                     newState = updateState(newState, direction, level, pos, neighbourPos);
+                 }
+@@ -181,7 +180,6 @@ public class UpgradeData {
+             int[] upgradeIndex = this.index[sectionIndex];
+             this.index[sectionIndex] = null;
+             if (upgradeIndex != null && upgradeIndex.length > 0) {
+-                Direction[] directions = Direction.values();
+                 PalettedContainer<BlockState> states = chunkSection.getStates();
+                 int sectionY = chunk.getSectionYFromSectionIndex(sectionIndex);
+                 int bottomYInSection = SectionPos.sectionToBlockCoord(sectionY);
+@@ -194,7 +192,7 @@ public class UpgradeData {
+                     BlockState state = states.get(coordinate);
+                     BlockState newState = state;
+ 
+-                    for (Direction direction : directions) {
++                    for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                         neighbourPos.setWithOffset(pos, direction);
+                         if (SectionPos.blockToSectionCoord(pos.getX()) == chunkPos.x() && SectionPos.blockToSectionCoord(pos.getZ()) == chunkPos.z()) {
+                             newState = updateState(newState, direction, level, pos, neighbourPos);
+diff --git a/net/minecraft/world/level/gameevent/vibrations/VibrationSystem.java b/net/minecraft/world/level/gameevent/vibrations/VibrationSystem.java
+index 7364d6ae99772912bf353f7a004dd26f00fa80ae..98e52c705e04f56e77f679eb05f3e0b8df4be743 100644
+--- a/net/minecraft/world/level/gameevent/vibrations/VibrationSystem.java
++++ b/net/minecraft/world/level/gameevent/vibrations/VibrationSystem.java
+@@ -271,7 +271,7 @@ public interface VibrationSystem {
+             Vec3 from = new Vec3(Mth.floor(origin.x) + 0.5, Mth.floor(origin.y) + 0.5, Mth.floor(origin.z) + 0.5);
+             Vec3 to = new Vec3(Mth.floor(dest.x) + 0.5, Mth.floor(dest.y) + 0.5, Mth.floor(dest.z) + 0.5);
+ 
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 Vec3 nudgedSource = from.relative(direction, 1.0E-5F);
+                 if (level.isBlockInLine(new ClipBlockStateContext(nudgedSource, to, state -> state.is(BlockTags.OCCLUDES_VIBRATION_SIGNALS))).getType()
+                     != HitResult.Type.BLOCK) {
+diff --git a/net/minecraft/world/level/levelgen/feature/BlueIceFeature.java b/net/minecraft/world/level/levelgen/feature/BlueIceFeature.java
+index e17a778cfa6bc704200702e36674500dd0fd197c..07cd586348246da678e404327718b2e205cae7e7 100644
+--- a/net/minecraft/world/level/levelgen/feature/BlueIceFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/BlueIceFeature.java
+@@ -30,7 +30,7 @@ public class BlueIceFeature extends Feature<NoneFeatureConfiguration> {
+ 
+         boolean foundPackedIce = false;
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (direction != Direction.DOWN && level.getBlockState(origin.relative(direction)).is(Blocks.PACKED_ICE)) {
+                 foundPackedIce = true;
+                 break;
+@@ -54,7 +54,7 @@ public class BlueIceFeature extends Feature<NoneFeatureConfiguration> {
+                 BlockPos placePos = origin.offset(random.nextInt(xzDiff) - random.nextInt(xzDiff), yOff, random.nextInt(xzDiff) - random.nextInt(xzDiff));
+                 BlockState placeState = level.getBlockState(placePos);
+                 if (placeState.isAir() || placeState.is(Blocks.WATER) || placeState.is(Blocks.PACKED_ICE) || placeState.is(Blocks.ICE)) {
+-                    for (Direction direction : Direction.values()) {
++                    for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                         BlockState relativeBlockState = level.getBlockState(placePos.relative(direction));
+                         if (relativeBlockState.is(Blocks.BLUE_ICE)) {
+                             level.setBlock(placePos, Blocks.BLUE_ICE.defaultBlockState(), Block.UPDATE_CLIENTS);
+diff --git a/net/minecraft/world/level/levelgen/feature/Feature.java b/net/minecraft/world/level/levelgen/feature/Feature.java
+index bf5996cdc07fc6e0b708bab617d259b22700d138..4c5023ddf2e6efa8f784ca28c2a0ec0f356039bf 100644
+--- a/net/minecraft/world/level/levelgen/feature/Feature.java
++++ b/net/minecraft/world/level/levelgen/feature/Feature.java
+@@ -195,7 +195,7 @@ public abstract class Feature<FC extends FeatureConfiguration> {
+     public static boolean checkNeighbors(final Function<BlockPos, BlockState> blockGetter, final BlockPos pos, final Predicate<BlockState> predicate) {
+         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             neighborPos.setWithOffset(pos, direction);
+             if (predicate.test(blockGetter.apply(neighborPos))) {
+                 return true;
+diff --git a/net/minecraft/world/level/levelgen/feature/GlowstoneFeature.java b/net/minecraft/world/level/levelgen/feature/GlowstoneFeature.java
+index 9bc19412533a6687f70bcdd679d87998df763781..5f6fd666be09c327f53acb7e5c560b5acef5f4f1 100644
+--- a/net/minecraft/world/level/levelgen/feature/GlowstoneFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/GlowstoneFeature.java
+@@ -36,7 +36,7 @@ public class GlowstoneFeature extends Feature<NoneFeatureConfiguration> {
+             if (level.getBlockState(placePos).isAir()) {
+                 int neighbours = 0;
+ 
+-                for (Direction direction : Direction.values()) {
++                for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                     if (level.getBlockState(placePos.relative(direction)).is(Blocks.GLOWSTONE)) {
+                         neighbours++;
+                     }
+diff --git a/net/minecraft/world/level/levelgen/feature/TreeFeature.java b/net/minecraft/world/level/levelgen/feature/TreeFeature.java
+index 0e9d7bbf8f17843e3bef51e63476bd66edaa0d55..04a3bde484e8d64583d2587cb8ef7bd273122ede 100644
+--- a/net/minecraft/world/level/levelgen/feature/TreeFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/TreeFeature.java
+@@ -205,7 +205,7 @@ public class TreeFeature extends Feature<TreeConfiguration> {
+ 
+                     shape.fill(pos.getX() - bounds.minX(), pos.getY() - bounds.minY(), pos.getZ() - bounds.minZ());
+ 
+-                    for (Direction direction : Direction.values()) {
++                    for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                         neighborPos.setWithOffset(pos, direction);
+                         if (bounds.isInside(neighborPos)) {
+                             int xInShape = neighborPos.getX() - bounds.minX();
+diff --git a/net/minecraft/world/level/levelgen/feature/VinesFeature.java b/net/minecraft/world/level/levelgen/feature/VinesFeature.java
+index a1f86df2b128bf15f2cf84313d73dad33a29beac..f789be43370094ddd7236a11d1258a65245d4d05 100644
+--- a/net/minecraft/world/level/levelgen/feature/VinesFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/VinesFeature.java
+@@ -23,7 +23,7 @@ public class VinesFeature extends Feature<NoneFeatureConfiguration> {
+             return false;
+         }
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (direction != Direction.DOWN && VineBlock.isAcceptableNeighbour(level, origin.relative(direction), direction)) {
+                 level.setBlock(origin, Blocks.VINE.defaultBlockState().setValue(VineBlock.getPropertyForFace(direction), true), Block.UPDATE_CLIENTS);
+                 return true;
+diff --git a/net/minecraft/world/level/levelgen/feature/treedecorators/CreakingHeartDecorator.java b/net/minecraft/world/level/levelgen/feature/treedecorators/CreakingHeartDecorator.java
+index 9828a63f8451f8f6e2fe39c2c4efe30a4aef8045..1e1e62ba9f009e785995a4ad48f8a3ecb5b7a036 100644
+--- a/net/minecraft/world/level/levelgen/feature/treedecorators/CreakingHeartDecorator.java
++++ b/net/minecraft/world/level/levelgen/feature/treedecorators/CreakingHeartDecorator.java
+@@ -38,7 +38,7 @@ public class CreakingHeartDecorator extends TreeDecorator {
+                 List<BlockPos> heartPlacements = new ArrayList<>(logs);
+                 Util.shuffle(heartPlacements, random);
+                 Optional<BlockPos> targetPos = heartPlacements.stream().filter(pos -> {
+-                    for (Direction dir : Direction.values()) {
++                    for (Direction dir : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                         if (!context.checkBlock(pos.relative(dir), state -> state.is(BlockTags.LOGS))) {
+                             return false;
+                         }
+diff --git a/net/minecraft/world/level/levelgen/structure/structures/BuriedTreasurePieces.java b/net/minecraft/world/level/levelgen/structure/structures/BuriedTreasurePieces.java
+index 8a5bd57b4d33a5fb28c77c44e409d1661f15b227..53974ffd006b2b4a02c3d86c8141b543023dbc73 100644
+--- a/net/minecraft/world/level/levelgen/structure/structures/BuriedTreasurePieces.java
++++ b/net/minecraft/world/level/levelgen/structure/structures/BuriedTreasurePieces.java
+@@ -55,7 +55,7 @@ public class BuriedTreasurePieces {
+                     || belowState.is(Blocks.DIORITE)) {
+                     BlockState softState = !currentState.isAir() && !isLiquid(currentState) ? currentState : Blocks.SAND.defaultBlockState();
+ 
+-                    for (Direction direction : Direction.values()) {
++                    for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                         BlockPos relativePos = pos.relative(direction);
+                         BlockState relativeState = level.getBlockState(relativePos);
+                         if (relativeState.isAir() || isLiquid(relativeState)) {
+diff --git a/net/minecraft/world/level/levelgen/structure/structures/DesertPyramidStructure.java b/net/minecraft/world/level/levelgen/structure/structures/DesertPyramidStructure.java
+index 8b2f75cfa141681f1b01af336b8ad19c58131c71..5b775d09a94ef6e7125485b72128b5043b23f20f 100644
+--- a/net/minecraft/world/level/levelgen/structure/structures/DesertPyramidStructure.java
++++ b/net/minecraft/world/level/levelgen/structure/structures/DesertPyramidStructure.java
+@@ -49,7 +49,7 @@ public class DesertPyramidStructure extends SinglePieceStructure {
+             }
+         }
+ 
+-        ObjectArrayList<BlockPos> shuffledSandPlacements = new ObjectArrayList<>(uniqueSandPlacements.stream().toList());
++        ObjectArrayList<BlockPos> shuffledSandPlacements = new ObjectArrayList<>(uniqueSandPlacements); // Leaf - paw optimization - TODO: use array
+         RandomSource positionalRandom = RandomSource.createThreadLocalInstance(level.getSeed()).forkPositional().at(pieces.calculateBoundingBox().getCenter());
+         Util.shuffle(shuffledSandPlacements, positionalRandom);
+         int suspiciousSandToPlace = Math.min(uniqueSandPlacements.size(), positionalRandom.nextInt(5, 8));
+diff --git a/net/minecraft/world/level/levelgen/structure/structures/MineshaftPieces.java b/net/minecraft/world/level/levelgen/structure/structures/MineshaftPieces.java
+index c473cc9c12a0eb387895985cef3995e779bd8603..712cac5407599dd2b49bbfe47100beaf972802a6 100644
+--- a/net/minecraft/world/level/levelgen/structure/structures/MineshaftPieces.java
++++ b/net/minecraft/world/level/levelgen/structure/structures/MineshaftPieces.java
+@@ -610,7 +610,7 @@ public class MineshaftPieces {
+             BlockPos.MutableBlockPos worldPos = this.getWorldPos(x, y, z);
+             int sturdyNeighbours = 0;
+ 
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 worldPos.move(direction);
+                 if (chunkBB.isInside(worldPos) && level.getBlockState(worldPos).isFaceSturdy(level, worldPos, direction.getOpposite())) {
+                     if (++sturdyNeighbours >= count) {
+diff --git a/net/minecraft/world/level/levelgen/structure/structures/OceanMonumentPieces.java b/net/minecraft/world/level/levelgen/structure/structures/OceanMonumentPieces.java
+index fa93d0f67d439547c37fe3ae5ca95ad195850a15..2b646f0a8fafbf32364cba3bda9a7162f81646cc 100644
+--- a/net/minecraft/world/level/levelgen/structure/structures/OceanMonumentPieces.java
++++ b/net/minecraft/world/level/levelgen/structure/structures/OceanMonumentPieces.java
+@@ -258,7 +258,7 @@ public class OceanMonumentPieces {
+                     for (int y = 0; y < 3; y++) {
+                         int pos = getRoomIndex(x, y, z);
+                         if (roomGrid[pos] != null) {
+-                            for (Direction direction : Direction.values()) {
++                            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                                 int neighX = x + direction.getStepX();
+                                 int neighY = y + direction.getStepY();
+                                 int neighZ = z + direction.getStepZ();
+diff --git a/net/minecraft/world/level/material/LavaFluid.java b/net/minecraft/world/level/material/LavaFluid.java
+index fe1b319e63b85331c44d31e99c2119edd21e2e5d..a03f1da6f0f6006e86e58ac1cc893def703ed97e 100644
+--- a/net/minecraft/world/level/material/LavaFluid.java
++++ b/net/minecraft/world/level/material/LavaFluid.java
+@@ -141,7 +141,7 @@ public abstract class LavaFluid extends FlowingFluid {
+     }
+ 
+     private boolean hasFlammableNeighbours(final LevelReader level, final BlockPos pos) {
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             if (this.isFlammable(level, pos.relative(direction))) {
+                 return true;
+             }
+diff --git a/net/minecraft/world/level/pathfinder/AmphibiousNodeEvaluator.java b/net/minecraft/world/level/pathfinder/AmphibiousNodeEvaluator.java
+index 21d969b49e22c00f456befc7bea25a927de6f2fb..745cc35d9591003908a0c571ffecbe2506adbd82 100644
+--- a/net/minecraft/world/level/pathfinder/AmphibiousNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/AmphibiousNodeEvaluator.java
+@@ -97,7 +97,7 @@ public class AmphibiousNodeEvaluator extends WalkNodeEvaluator {
+         if (blockPathType == PathType.WATER) {
+             BlockPos.MutableBlockPos reusablePos = new BlockPos.MutableBlockPos();
+ 
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 reusablePos.set(x, y, z).move(direction);
+                 PathType pathType = context.getPathTypeFromState(reusablePos.getX(), reusablePos.getY(), reusablePos.getZ());
+                 if (pathType == PathType.BLOCKED) {
+diff --git a/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java b/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java
+index 355142be30daaa00809cd77e99857dc812c3d791..49d959160337f61a40cb94c31aec8dad0aee3839 100644
+--- a/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/SwimNodeEvaluator.java
+@@ -51,7 +51,7 @@ public class SwimNodeEvaluator extends NodeEvaluator {
+         int count = 0;
+         Map<Direction, Node> nodes = Maps.newEnumMap(Direction.class);
+ 
+-        for (Direction direction : Direction.values()) {
++        for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             Node node = this.findAcceptedNode(pos.x + direction.getStepX(), pos.y + direction.getStepY(), pos.z + direction.getStepZ());
+             nodes.put(direction, node);
+             if (this.isNodeValid(node)) {
+diff --git a/net/minecraft/world/level/redstone/DefaultRedstoneWireEvaluator.java b/net/minecraft/world/level/redstone/DefaultRedstoneWireEvaluator.java
+index 2540a39f40827ff864a9b3e8bec5cb7b43dbcebd..40fedccaf191b583c0653b4c103adbe7fea65516 100644
+--- a/net/minecraft/world/level/redstone/DefaultRedstoneWireEvaluator.java
++++ b/net/minecraft/world/level/redstone/DefaultRedstoneWireEvaluator.java
+@@ -34,7 +34,7 @@ public class DefaultRedstoneWireEvaluator extends RedstoneWireEvaluator {
+             Set<BlockPos> toUpdate = Sets.newHashSet();
+             toUpdate.add(pos);
+ 
+-            for (Direction direction : Direction.values()) {
++            for (Direction direction : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+                 toUpdate.add(pos.relative(direction));
+             }
+ 
+diff --git a/net/minecraft/world/level/redstone/Orientation.java b/net/minecraft/world/level/redstone/Orientation.java
+index f71dc76e61103a80d5d8d574bfb0648fef3f5abc..dd76e72daa7fb382806acf166c75a1815d73a6aa 100644
+--- a/net/minecraft/world/level/redstone/Orientation.java
++++ b/net/minecraft/world/level/redstone/Orientation.java
+@@ -136,7 +136,7 @@ public class Orientation {
+             self.withSideBias.put(sideBias, generateContext(new Orientation(self.up, self.front, sideBias), lookup));
+         }
+ 
+-        for (Direction facing : Direction.values()) {
++        for (Direction facing : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             Direction up = self.up;
+             if (facing == self.up) {
+                 up = self.front.getOpposite();
+@@ -149,7 +149,7 @@ public class Orientation {
+             self.withFront.put(facing, generateContext(new Orientation(up, facing, self.sideBias), lookup));
+         }
+ 
+-        for (Direction facing : Direction.values()) {
++        for (Direction facing : Direction.VALUES) { // Leaf - paw optimization - cache direction values
+             Direction front = self.front;
+             if (facing == self.front) {
+                 front = self.up.getOpposite();

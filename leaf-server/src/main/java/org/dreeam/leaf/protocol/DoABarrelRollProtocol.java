@@ -181,7 +181,7 @@ public class DoABarrelRollProtocol implements Protocol {
 
         if (configUpdated) {
             configUpdated = false;
-            for (ServerPlayer player : server.getPlayerList().players) {
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
                 sendHandshake(player.connection);
             }
         }
