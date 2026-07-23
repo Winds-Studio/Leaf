@@ -1,19 +1,19 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class IceAndSnowChance extends ConfigModules {
+public class IceAndSnowChance extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".ice-and-snow-chance";
+    public String basePath() {
+        return ConfigCategory.GAMEPLAY.basePath() + ".ice-and-snow-chance";
     }
 
     public static int iceAndSnowChance = 48;
 
     @Override
     public void onLoaded() {
-        iceAndSnowChance = config.getInt(getBasePath(), iceAndSnowChance);
+        iceAndSnowChance = globalConfig.getInt(basePath(), iceAndSnowChance);
         if (iceAndSnowChance <= 0) {
             iceAndSnowChance = 48;
         }
