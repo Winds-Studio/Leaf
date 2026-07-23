@@ -47,6 +47,7 @@ public class LeafConfig {
     public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
 
     protected static final String CURRENT_CONFIG_VERSION = "3.0";
+    // It will be in uppercase by default, just make sure
     private static final String REGION_COUNTRY_CODE = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT);
     private static final boolean IS_CHINESE_LOCALE = REGION_COUNTRY_CODE.equals("CN");
 
