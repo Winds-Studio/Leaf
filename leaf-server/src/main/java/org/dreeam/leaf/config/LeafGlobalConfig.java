@@ -10,12 +10,18 @@ import java.util.Map;
 
 public class LeafGlobalConfig {
 
-    private static ConfigFile configFile;
+    protected final ConfigFile configFile;
 
     public LeafGlobalConfig(boolean init) throws Exception {
-        configFile = ConfigFile.loadConfig(new File(LeafConfig.CONFIG_DIRECTORY, LeafConfig.GLOBAL_CONFIG_FILE));
+        this(new File(LeafConfig.CONFIG_DIRECTORY, LeafConfig.GLOBAL_CONFIG_FILE), true);
+    }
 
-        LeafConfig.loadPreviousConfigVersion(getString("config-version"));
+    protected LeafGlobalConfig(File file, boolean loadConfigVersion) throws Exception {
+        configFile = ConfigFile.loadConfig(file);
+
+        if (loadConfigVersion) {
+            LeafConfig.loadPreviousConfigVersion(getString("config-version"));
+        }
         configFile.set("config-version", LeafConfig.CURRENT_CONFIG_VERSION);
 
         configFile.addComments("config-version", pickStringRegionBased("""
@@ -45,6 +51,15 @@ public class LeafGlobalConfig {
 
     public void saveConfig() throws Exception {
         configFile.save();
+    }
+
+    /**
+     * Moves a deprecated option path to its replacement.
+     *
+     * @see ConfigPathMigration#migrate(ConfigSection, String, String)
+     */
+    public boolean migratePath(String oldPath, String newPath) {
+        return ConfigPathMigration.migrate(configFile, oldPath, newPath);
     }
 
     // Config Utilities

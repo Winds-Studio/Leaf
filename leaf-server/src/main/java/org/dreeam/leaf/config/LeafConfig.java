@@ -46,7 +46,7 @@ public class LeafConfig {
 
     public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
 
-    protected static final String CURRENT_CONFIG_VERSION = "3.0";
+    public static final String CURRENT_CONFIG_VERSION = "3.0";
     // It will be in uppercase by default, just make sure
     private static final String REGION_COUNTRY_CODE = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT);
     private static final boolean IS_CHINESE_LOCALE = REGION_COUNTRY_CODE.equals("CN");
@@ -54,17 +54,16 @@ public class LeafConfig {
     protected static final File CONFIG_DIRECTORY = new File("config");
     protected static final String CONFIG_MODULE_PACKAGE = "org.dreeam.leaf.config.modules";
     protected static final String GLOBAL_CONFIG_FILE = "leaf-global.yml";
-    protected static final String DEFAULT_WORLD_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per world config
+    protected static final String DEFAULT_WORLD_CONFIG_FILE = "leaf-world-defaults.yml";
+    protected static final String WORLD_CONFIG_FILE = "leaf-world.yml";
 
     private static final String SPARK_EXTRA_CONFIG_PROPERTY =  "spark.serverconfigs.extra";
     private static final String SPARK_HIDDEN_PATHS_PROPERTY =  "spark.serverconfigs.hiddenpaths";
 
     private static LeafGlobalConfig globalConfig;
+    private static LeafWorldConfig worldDefaultsConfig;
 
-    //private static int preMajorVer;
-    private static int preMinorVer;
-    //private static int currMajorVer;
-    private static int currMinorVer;
+    private static ConfigVersion previousConfigVersion = ConfigVersion.initial();
 
     /* Load & Reload */
 
@@ -112,10 +111,37 @@ public class LeafConfig {
 
         // Load config modules
         ConfigModule.initModules();
+
+        File worldDefaultsFile = new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE);
+        if (!worldDefaultsFile.exists()) {
+            globalConfig.saveConfig();
+            Files.copy(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE).toPath(), worldDefaultsFile.toPath());
+        }
+        worldDefaultsConfig = LeafWorldConfig.loadDefaults(worldDefaultsFile);
+        worldDefaultsConfig.saveConfig();
     }
 
     public static LeafGlobalConfig globalConfig() {
         return globalConfig;
+    }
+
+    public static LeafWorldConfig worldDefaultsConfig() {
+        return worldDefaultsConfig;
+    }
+
+    /**
+     * Loads an explicit world override without creating a file when the world uses the defaults.
+     */
+    public static LeafWorldConfig createWorldConfig(Path worldDirectory) {
+        File worldConfigFile = worldDirectory.resolve(WORLD_CONFIG_FILE).toFile();
+        if (!LeafWorldConfig.exists(worldConfigFile)) {
+            return worldDefaultsConfig;
+        }
+        try {
+            return new LeafWorldConfig(worldConfigFile, worldDefaultsConfig);
+        } catch (Exception exception) {
+            throw new RuntimeException("Could not load Leaf world config for " + worldDirectory, exception);
+        }
     }
 
     static boolean isChineseLocale() {
@@ -217,14 +243,91 @@ public class LeafConfig {
         }
     }
 
-    // TODO
-    public static void loadConfigVersion(String preVer, String currVer) {
-        int currMinor;
-        int preMinor;
+    /**
+     * Records the version that was stored in the global configuration before it is updated to
+     * {@link #CURRENT_CONFIG_VERSION}. A missing version is treated as the initial configuration version
+     * so migrations can also handle configurations created before versioning was introduced.
+     *
+     * @param previousVersion the value of {@code config-version}, or {@code null} when absent
+     */
+    public static void loadPreviousConfigVersion(String previousVersion) {
+        if (previousVersion == null) {
+            previousConfigVersion = ConfigVersion.initial();
+            return;
+        }
 
-        // First time user
-        if (preVer == null) {
+        try {
+            previousConfigVersion = ConfigVersion.parse(previousVersion);
+        } catch (IllegalArgumentException exception) {
+            LOGGER.warn("Invalid Leaf config version '{}'; treating it as an unversioned configuration.", previousVersion);
+            previousConfigVersion = ConfigVersion.initial();
+        }
+    }
 
+    /**
+     * Returns whether the configuration being loaded predates {@code version}.
+     *
+     * <p>Use this when migrating a renamed option path, before the current config version is
+     * persisted. For example, {@code isConfigVersionBefore("3.1")} is {@code true} for a
+     * configuration last written by Leaf 3.0.</p>
+     *
+     * @param version a numeric dot-separated config version, such as {@code 3.1}
+     * @return {@code true} when the loaded configuration is older than {@code version}
+     * @throws IllegalArgumentException if {@code version} is not a numeric dot-separated version
+     */
+    public static boolean isConfigVersionBefore(String version) {
+        return previousConfigVersion.compareTo(ConfigVersion.parse(version)) < 0;
+    }
+
+    /**
+     * Returns whether the configuration being loaded is at least {@code version}.
+     *
+     * @param version a numeric dot-separated config version, such as {@code 3.1}
+     * @return {@code true} when the loaded configuration is not older than {@code version}
+     * @throws IllegalArgumentException if {@code version} is not a numeric dot-separated version
+     */
+    public static boolean isConfigVersionAtLeast(String version) {
+        return !isConfigVersionBefore(version);
+    }
+
+    private record ConfigVersion(List<Integer> components) implements Comparable<ConfigVersion> {
+
+        private static ConfigVersion initial() {
+            return new ConfigVersion(List.of(0));
+        }
+
+        private static ConfigVersion parse(String version) {
+            if (version == null || version.isBlank()) {
+                throw new IllegalArgumentException("Config version must not be blank");
+            }
+
+            String[] parts = version.split("\\.", -1);
+            List<Integer> components = new ArrayList<>(parts.length);
+            for (String part : parts) {
+                if (part.isEmpty() || !part.chars().allMatch(Character::isDigit)) {
+                    throw new IllegalArgumentException("Invalid config version: " + version);
+                }
+                try {
+                    components.add(Integer.parseInt(part));
+                } catch (NumberFormatException exception) {
+                    throw new IllegalArgumentException("Invalid config version: " + version, exception);
+                }
+            }
+            return new ConfigVersion(List.copyOf(components));
+        }
+
+        @Override
+        public int compareTo(ConfigVersion other) {
+            int componentCount = Math.max(this.components.size(), other.components.size());
+            for (int index = 0; index < componentCount; index++) {
+                int thisComponent = index < this.components.size() ? this.components.get(index) : 0;
+                int otherComponent = index < other.components.size() ? other.components.get(index) : 0;
+                int comparison = Integer.compare(thisComponent, otherComponent);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+            return 0;
         }
     }
 
@@ -233,6 +336,7 @@ public class LeafConfig {
     private static List<String> buildSparkExtraConfigs() {
         List<String> extraConfigs = new ArrayList<>(Arrays.asList(
             "config/leaf-global.yml",
+            "config/leaf-world-defaults.yml",
             "config/gale-global.yml",
             "config/gale-world-defaults.yml"
         ));
@@ -249,6 +353,10 @@ public class LeafConfig {
         for (World world : Bukkit.getWorlds()) {
             Path galeWorldFolder = world.getWorldFolder().toPath().resolve("gale-world.yml");
             extraConfigs.add(galeWorldFolder.toString().replace("\\", "/").replace("./", "")); // Gale world config
+            Path leafWorldFile = world.getWorldFolder().toPath().resolve(WORLD_CONFIG_FILE);
+            if (Files.isRegularFile(leafWorldFile)) {
+                extraConfigs.add(leafWorldFile.toString().replace("\\", "/").replace("./", ""));
+            }
         }
 
         return extraConfigs;

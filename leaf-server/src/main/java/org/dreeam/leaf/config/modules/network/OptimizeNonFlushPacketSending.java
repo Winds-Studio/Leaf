@@ -30,4 +30,8 @@ public class OptimizeNonFlushPacketSending extends ConfigModule {
                 
                 需要重启服务器才能生效."""));
     }
+
+    private void migrateConfigPath() {
+        globalConfig.migratePath(basePath() + ".OptimizeNonFlushPacketSending", basePath() + ".optimizeNonFlushPacketSending");
+    }
 }
