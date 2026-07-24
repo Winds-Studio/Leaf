@@ -10,17 +10,13 @@ import java.util.Map;
 
 public class LeafGlobalConfig {
 
-    private static final String CURRENT_VERSION = "3.0";
-    private static final String CURRENT_REGION = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT); // It will be in uppercase by default, just make sure
-    private static final boolean isCN = CURRENT_REGION.equals("CN");
-
     private static ConfigFile configFile;
 
     public LeafGlobalConfig(boolean init) throws Exception {
-        configFile = ConfigFile.loadConfig(new File(LeafConfig.I_CONFIG_FOLDER, LeafConfig.I_GLOBAL_CONFIG_FILE));
+        configFile = ConfigFile.loadConfig(new File(LeafConfig.CONFIG_DIRECTORY, LeafConfig.GLOBAL_CONFIG_FILE));
 
-        LeafConfig.loadConfigVersion(getString("config-version"), CURRENT_VERSION);
-        configFile.set("config-version", CURRENT_VERSION);
+        LeafConfig.loadPreviousConfigVersion(getString("config-version"));
+        configFile.set("config-version", LeafConfig.CURRENT_CONFIG_VERSION);
 
         configFile.addComments("config-version", pickStringRegionBased("""
                 Leaf Config
@@ -42,8 +38,8 @@ public class LeafGlobalConfig {
     }
 
     protected void structureConfig() {
-        for (EnumConfigCategory configCate : EnumConfigCategory.getCategoryValues()) {
-            createTitledSection(configCate.name(), configCate.getBaseKeyName());
+        for (ConfigCategory category : ConfigCategory.categoryValues()) {
+            createTitledSection(category.name(), category.basePath());
         }
     }
 
@@ -201,22 +197,22 @@ public class LeafGlobalConfig {
     }
 
     public void addCommentIfCN(String path, String comment) {
-        if (isCN) {
+        if (LeafConfig.isChineseLocale()) {
             configFile.addComment(path, comment);
         }
     }
 
     public void addCommentIfNonCN(String path, String comment) {
-        if (!isCN) {
+        if (!LeafConfig.isChineseLocale()) {
             configFile.addComment(path, comment);
         }
     }
 
     public void addCommentRegionBased(String path, String en, String cn) {
-        configFile.addComment(path, isCN ? cn : en);
+        configFile.addComment(path, LeafConfig.isChineseLocale() ? cn : en);
     }
 
     public String pickStringRegionBased(String en, String cn) {
-        return isCN ? cn : en;
+        return LeafConfig.isChineseLocale() ? cn : en;
     }
 }

@@ -1,18 +1,18 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class TileEntitySnapshotCreation extends ConfigModules {
+public class TileEntitySnapshotCreation extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName();
+    public String basePath() {
+        return ConfigCategory.PERF.basePath();
     }
 
     public static boolean enabled = true;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".create-snapshot-on-retrieving-blockstate", enabled);
+        enabled = globalConfig.getBoolean(basePath() + ".create-snapshot-on-retrieving-blockstate", enabled);
     }
 }

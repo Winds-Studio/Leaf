@@ -1,15 +1,15 @@
 package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.async.world.UnsafeReadPolicy;
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
 import org.dreeam.leaf.config.annotations.Experimental;
 
-public class SparklyPaperParallelWorldTicking extends ConfigModules {
+public class SparklyPaperParallelWorldTicking extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".parallel-world-ticking";
+    public String basePath() {
+        return ConfigCategory.ASYNC.basePath() + ".parallel-world-ticking";
     }
 
     @Experimental
@@ -23,31 +23,31 @@ public class SparklyPaperParallelWorldTicking extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 **Experimental feature**
                 Enables parallel world ticking to improve performance on multi-core systems.""",
             """
                 **实验性功能**
                 启用并行世界处理以提高多核 CPU 使用率.""");
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        threads = config.getInt(getBasePath() + ".threads", threads);
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
+        threads = globalConfig.getInt(basePath() + ".threads", threads);
         if (enabled) {
             if (threads <= 0) threads = 8;
         } else {
             threads = 0;
         }
 
-        logContainerCreationStacktraces = config.getBoolean(getBasePath() + ".log-container-creation-stacktraces", logContainerCreationStacktraces);
+        logContainerCreationStacktraces = globalConfig.getBoolean(basePath() + ".log-container-creation-stacktraces", logContainerCreationStacktraces);
         logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
-        disableHardThrow = config.getBoolean(getBasePath() + ".disable-hard-throw", disableHardThrow);
+        disableHardThrow = globalConfig.getBoolean(basePath() + ".disable-hard-throw", disableHardThrow);
         disableHardThrow = enabled && disableHardThrow;
-        asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(config.getString(getBasePath() + ".async-unsafe-read-handling", asyncUnsafeReadHandling.toString()));
+        asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(globalConfig.getString(basePath() + ".async-unsafe-read-handling", asyncUnsafeReadHandling.toString()));
 
         // Transfer old config
-        runAsyncTasksSync = config.getBoolean(getBasePath() + ".run-async-tasks-sync");
+        runAsyncTasksSync = globalConfig.getBoolean(basePath() + ".run-async-tasks-sync");
         if (runAsyncTasksSync != null && runAsyncTasksSync) {
-            LeafConfig.LOGGER.warn("The setting '{}.run-async-tasks-sync' is deprecated, removed automatically. Use 'async-unsafe-read-handling: BUFFERED' for buffered reads instead.", getBasePath());
+            LeafConfig.LOGGER.warn("The setting '{}.run-async-tasks-sync' is deprecated, removed automatically. Use 'async-unsafe-read-handling: BUFFERED' for buffered reads instead.", basePath());
         }
 
         if (enabled) {

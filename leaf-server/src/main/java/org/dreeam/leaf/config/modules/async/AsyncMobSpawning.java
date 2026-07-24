@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.async;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class AsyncMobSpawning extends ConfigModules {
+public class AsyncMobSpawning extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-mob-spawning";
+    public String basePath() {
+        return ConfigCategory.ASYNC.basePath() + ".async-mob-spawning";
     }
 
     public static boolean enabled = true;
@@ -14,7 +14,7 @@ public class AsyncMobSpawning extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 Whether or not asynchronous mob spawning should be enabled.
                 On servers with many entities, this can improve performance by up to 15%. You must have
                 paper's per-player-mob-spawns setting set to true for this to work.
@@ -27,11 +27,11 @@ public class AsyncMobSpawning extends ConfigModules {
 
         // This prevents us from changing the value during a reload.
         if (asyncMobSpawningInitialized) {
-            config.getConfigSection(getBasePath());
+            globalConfig.getConfigSection(basePath());
             return;
         }
         asyncMobSpawningInitialized = true;
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
     }
 }
