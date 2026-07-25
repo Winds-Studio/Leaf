@@ -1,13 +1,13 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;
 
-public class Knockback extends ConfigModules {
+public class Knockback extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".knockback";
+    public String basePath() {
+        return ConfigCategory.GAMEPLAY.basePath() + ".knockback";
     }
 
     public static boolean snowballCanKnockback = false;
@@ -19,26 +19,26 @@ public class Knockback extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        snowballCanKnockback = config.getBoolean(getBasePath() + ".snowball-knockback-players", snowballCanKnockback,
-            config.pickStringRegionBased(
+        snowballCanKnockback = globalConfig.getBoolean(basePath() + ".snowball-knockback-players", snowballCanKnockback,
+            globalConfig.pickStringRegionBased(
                 "Make snowball can knockback players.",
                 "使雪球可以击退玩家."
             ));
-        eggCanKnockback = config.getBoolean(getBasePath() + ".egg-knockback-players", eggCanKnockback,
-            config.pickStringRegionBased(
+        eggCanKnockback = globalConfig.getBoolean(basePath() + ".egg-knockback-players", eggCanKnockback,
+            globalConfig.pickStringRegionBased(
                 "Make egg can knockback players.",
                 "使鸡蛋可以击退玩家."
             ));
-        canPlayerKnockbackZombie = config.getBoolean(getBasePath() + ".can-player-knockback-zombie", canPlayerKnockbackZombie,
-            config.pickStringRegionBased(
+        canPlayerKnockbackZombie = globalConfig.getBoolean(basePath() + ".can-player-knockback-zombie", canPlayerKnockbackZombie,
+            globalConfig.pickStringRegionBased(
                 "Make players can knockback zombie.",
                 "使玩家可以击退僵尸."
             ));
-        flushKnockback = config.getBoolean(getBasePath() + ".flush-location-while-knockback-player", flushKnockback,
-            config.pickStringRegionBased(
+        flushKnockback = globalConfig.getBoolean(basePath() + ".flush-location-while-knockback-player", flushKnockback,
+            globalConfig.pickStringRegionBased(
                 "Synchronize player immediately when knocked back.",
                 "被击退时立即同步玩家."
             ));
-        oldBlastProtectionKnockbackBehavior = config.getBoolean(getBasePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
+        oldBlastProtectionKnockbackBehavior = globalConfig.getBoolean(basePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
     }
 }

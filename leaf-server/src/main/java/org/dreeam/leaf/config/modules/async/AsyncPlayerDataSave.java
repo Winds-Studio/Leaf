@@ -1,24 +1,24 @@
 package org.dreeam.leaf.config.modules.async;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class AsyncPlayerDataSave extends ConfigModules {
+public class AsyncPlayerDataSave extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-playerdata-save";
+    public String basePath() {
+        return ConfigCategory.ASYNC.basePath() + ".async-playerdata-save";
     }
 
     public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 Make PlayerData saving asynchronously.""",
             """
                 异步保存玩家数据.""");
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
 
         if (enabled) {
             org.dreeam.leaf.async.AsyncPlayerDataSaving.init();

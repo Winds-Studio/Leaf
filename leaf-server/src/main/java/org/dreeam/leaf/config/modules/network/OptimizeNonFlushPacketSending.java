@@ -1,19 +1,19 @@
 package org.dreeam.leaf.config.modules.network;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class OptimizeNonFlushPacketSending extends ConfigModules {
+public class OptimizeNonFlushPacketSending extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.NETWORK.getBaseKeyName();
+    public String basePath() {
+        return ConfigCategory.NETWORK.basePath();
     }
 
     public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".OptimizeNonFlushPacketSending", enabled, config.pickStringRegionBased("""
+        enabled = globalConfig.getBoolean(basePath() + ".OptimizeNonFlushPacketSending", enabled, globalConfig.pickStringRegionBased("""
                 WARNING: This option is NOT compatible with ProtocolLib and may cause
                 issues with other plugins that modify packet handling.
                 

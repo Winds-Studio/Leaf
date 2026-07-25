@@ -1,19 +1,19 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class ConfigurableMaxUseItemDistance extends ConfigModules {
+public class ConfigurableMaxUseItemDistance extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".player";
+    public String basePath() {
+        return ConfigCategory.GAMEPLAY.basePath() + ".player";
     }
 
     public static double maxUseItemDistance = 1.0000001;
 
     @Override
     public void onLoaded() {
-        maxUseItemDistance = config.getDouble(getBasePath() + ".max-use-item-distance", maxUseItemDistance, config.pickStringRegionBased("""
+        maxUseItemDistance = globalConfig.getDouble(basePath() + ".max-use-item-distance", maxUseItemDistance, globalConfig.pickStringRegionBased("""
                 The max distance of UseItem for players.
                 Set to -1 to disable max-distance-check.
                 NOTE: if set to -1 to disable the check,
