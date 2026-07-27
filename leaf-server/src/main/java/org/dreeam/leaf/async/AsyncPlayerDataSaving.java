@@ -29,7 +29,7 @@ public class AsyncPlayerDataSaving {
                     .setNameFormat("Leaf IO Thread")
                     .setUncaughtExceptionHandler(Util::onThreadException)
                     .build(),
-                new ThreadPoolExecutor.DiscardPolicy()
+                new ThreadPoolExecutor.CallerRunsPolicy()
             );
         } else {
             // Temp no-op
