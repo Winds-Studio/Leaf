@@ -117,8 +117,10 @@ public class LeafConfig {
             globalConfig.saveConfig();
             Files.copy(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE).toPath(), worldDefaultsFile.toPath());
         }
-        worldDefaultsConfig = LeafWorldConfig.loadDefaults(worldDefaultsFile);
+        LeafWorldConfig previousWorldDefaults = worldDefaultsConfig;
+        worldDefaultsConfig = LeafWorldConfig.loadDefaults(worldDefaultsFile, previousWorldDefaults);
         worldDefaultsConfig.saveConfig();
+        ConfigModuleLoader.markInitialized();
     }
 
     public static LeafGlobalConfig globalConfig() {

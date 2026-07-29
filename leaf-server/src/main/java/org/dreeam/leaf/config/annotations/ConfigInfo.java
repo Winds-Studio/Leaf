@@ -6,9 +6,14 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Keeps an annotated configuration field unchanged during a hot reload. */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.FIELD)
-public @interface HotReloadUnsupported {
+public @interface ConfigInfo {
+
+    String name();
+
+    String[] directory() default {};
+
+    String comments() default "";
 }
