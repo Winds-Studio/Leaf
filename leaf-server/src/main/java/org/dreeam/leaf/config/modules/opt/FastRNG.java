@@ -1,13 +1,13 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.LeafConfig;
 
-public class FastRNG extends ConfigModules {
+public class FastRNG extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".faster-random-generator";
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".faster-random-generator";
     }
 
     public static boolean enabled = false;
@@ -22,7 +22,7 @@ public class FastRNG extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 Use faster random generator?
                 Requires a JVM that supports Xoroshiro128PlusPlus.
                 Some JREs don't support this.""",
@@ -31,20 +31,20 @@ public class FastRNG extends ConfigModules {
                 需要支持 Xoroshiro128PlusPlus 的 JVM.
                 一些 JRE 不支持此功能.""");
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
-        enableForWorldgen = config.getBoolean(getBasePath() + ".enable-for-worldgen", enableForWorldgen,
-            config.pickStringRegionBased(
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
+        enableForWorldgen = globalConfig.getBoolean(basePath() + ".enable-for-worldgen", enableForWorldgen,
+            globalConfig.pickStringRegionBased(
                 """
                     Enable faster random generator for world generation.
                     WARNING: This will affect world generation!!!""",
                 """
                     是否为世界生成启用更快的随机生成器.
                     警告: 此项会影响世界生成!!!"""));
-        warnForSlimeChunk = config.getBoolean(getBasePath() + ".warn-for-slime-chunk", warnForSlimeChunk,
-            config.pickStringRegionBased(
+        warnForSlimeChunk = globalConfig.getBoolean(basePath() + ".warn-for-slime-chunk", warnForSlimeChunk,
+            globalConfig.pickStringRegionBased(
                 "Warn if you are not using legacy random source for slime chunk generation.",
                 "是否在没有为史莱姆区块使用原版随机生成器的情况下进行警告."));
-        useLegacyForSlimeChunk = config.getBoolean(getBasePath() + ".use-legacy-random-for-slime-chunk", useLegacyForSlimeChunk, config.pickStringRegionBased(
+        useLegacyForSlimeChunk = globalConfig.getBoolean(basePath() + ".use-legacy-random-for-slime-chunk", useLegacyForSlimeChunk, globalConfig.pickStringRegionBased(
             """
                 Use legacy random source for slime chunk generation,
                 to follow vanilla behavior.""",

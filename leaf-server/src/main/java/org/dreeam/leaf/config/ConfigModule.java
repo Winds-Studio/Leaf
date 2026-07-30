@@ -9,27 +9,27 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.util.*;
 
-public abstract class ConfigModules extends LeafConfig {
+public abstract class ConfigModule extends LeafConfig {
 
-    private static final Set<ConfigModules> MODULES = new HashSet<>();
+    private static final Set<ConfigModule> LOADED_MODULES = new HashSet<>();
 
-    public LeafGlobalConfig config;
+    protected final LeafGlobalConfig globalConfig;
 
-    public ConfigModules() {
-        this.config = LeafConfig.config();
+    public ConfigModule() {
+        this.globalConfig = LeafConfig.globalConfig();
     }
 
     public static void initModules() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
         List<Field> enabledExperimentalModules = new ArrayList<>();
         List<Field> deprecatedModules = new ArrayList<>();
 
-        Class<?>[] classes = LeafConfig.getClasses(LeafConfig.I_CONFIG_PKG).toArray(new Class[0]);
+        Class<?>[] classes = LeafConfig.getClasses(LeafConfig.CONFIG_MODULE_PACKAGE).toArray(new Class[0]);
         ObjectArrays.quickSort(classes, Comparator.comparing(Class::getSimpleName));
         for (Class<?> clazz : classes) {
-            ConfigModules module = (ConfigModules) clazz.getConstructor().newInstance();
+            ConfigModule module = (ConfigModule) clazz.getConstructor().newInstance();
             module.onLoaded();
 
-            MODULES.add(module);
+            LOADED_MODULES.add(module);
             for (Field field : getAnnotatedStaticFields(clazz, Experimental.class)) {
                 if (!(field.get(null) instanceof Boolean enabled)) continue;
                 if (enabled) {
@@ -58,13 +58,13 @@ public abstract class ConfigModules extends LeafConfig {
     }
 
     public static void loadAfterBootstrap() {
-        for (ConfigModules module : MODULES) {
+        for (ConfigModule module : LOADED_MODULES) {
             module.onPostLoaded();
         }
 
         // Save config to disk
         try {
-            LeafConfig.config().saveConfig();
+            LeafConfig.globalConfig().saveConfig();
         } catch (Exception e) {
             LeafConfig.LOGGER.error("Failed to save config file!", e);
         }
@@ -84,7 +84,7 @@ public abstract class ConfigModules extends LeafConfig {
     }
 
     public static void clearModules() {
-        MODULES.clear();
+        LOADED_MODULES.clear();
     }
 
     public abstract void onLoaded();

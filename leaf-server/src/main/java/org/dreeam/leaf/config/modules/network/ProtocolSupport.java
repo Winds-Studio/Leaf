@@ -1,16 +1,16 @@
 package org.dreeam.leaf.config.modules.network;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.protocol.DoABarrelRollPackets;
 import org.dreeam.leaf.protocol.DoABarrelRollProtocol;
 
 import java.util.concurrent.ThreadLocalRandom;
 
-public class ProtocolSupport extends ConfigModules {
+public class ProtocolSupport extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.NETWORK.getBaseKeyName() + ".protocol-support";
+    public String basePath() {
+        return ConfigCategory.NETWORK.basePath() + ".protocol-support";
     }
 
     public static boolean strictMode = false;
@@ -33,25 +33,25 @@ public class ProtocolSupport extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        strictMode = config.getBoolean(getBasePath() + ".strict-mode", strictMode);
-        jadeProtocol = config.getBoolean(getBasePath() + ".jade-protocol", jadeProtocol);
-        appleskinProtocol = config.getBoolean(getBasePath() + ".appleskin-protocol", appleskinProtocol);
-        appleskinSyncTickInterval = config.getInt(getBasePath() + ".appleskin-protocol-sync-tick-interval", appleskinSyncTickInterval);
-        asteorBarProtocol = config.getBoolean(getBasePath() + ".asteorbar-protocol", asteorBarProtocol);
-        chatImageProtocol = config.getBoolean(getBasePath() + ".chatimage-protocol", chatImageProtocol);
-        xaeroMapProtocol = config.getBoolean(getBasePath() + ".xaero-map-protocol", xaeroMapProtocol);
-        xaeroMapServerID = config.getInt(getBasePath() + ".xaero-map-server-id", xaeroMapServerID);
-        syncmaticaProtocol = config.getBoolean(getBasePath() + ".syncmatica-protocol", syncmaticaProtocol);
-        syncmaticaQuota = config.getBoolean(getBasePath() + ".syncmatica-quota", syncmaticaQuota);
-        syncmaticaQuotaLimit = config.getInt(getBasePath() + ".syncmatica-quota-limit", syncmaticaQuotaLimit);
+        strictMode = globalConfig.getBoolean(basePath() + ".strict-mode", strictMode);
+        jadeProtocol = globalConfig.getBoolean(basePath() + ".jade-protocol", jadeProtocol);
+        appleskinProtocol = globalConfig.getBoolean(basePath() + ".appleskin-protocol", appleskinProtocol);
+        appleskinSyncTickInterval = globalConfig.getInt(basePath() + ".appleskin-protocol-sync-tick-interval", appleskinSyncTickInterval);
+        asteorBarProtocol = globalConfig.getBoolean(basePath() + ".asteorbar-protocol", asteorBarProtocol);
+        chatImageProtocol = globalConfig.getBoolean(basePath() + ".chatimage-protocol", chatImageProtocol);
+        xaeroMapProtocol = globalConfig.getBoolean(basePath() + ".xaero-map-protocol", xaeroMapProtocol);
+        xaeroMapServerID = globalConfig.getInt(basePath() + ".xaero-map-server-id", xaeroMapServerID);
+        syncmaticaProtocol = globalConfig.getBoolean(basePath() + ".syncmatica-protocol", syncmaticaProtocol);
+        syncmaticaQuota = globalConfig.getBoolean(basePath() + ".syncmatica-quota", syncmaticaQuota);
+        syncmaticaQuotaLimit = globalConfig.getInt(basePath() + ".syncmatica-quota-limit", syncmaticaQuotaLimit);
 
         org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol);
 
-        doABarrelRollProtocol = config.getBoolean(getBasePath() + ".do-a-barrel-roll-protocol", doABarrelRollProtocol);
-        doABarrelRollAllowThrusting = config.getBoolean(getBasePath() + ".do-a-barrel-roll-allow-thrusting", doABarrelRollAllowThrusting);
-        doABarrelRollForceEnabled = config.getBoolean(getBasePath() + ".do-a-barrel-roll-force-enabled", doABarrelRollForceEnabled);
-        doABarrelRollForceInstalled = config.getBoolean(getBasePath() + ".do-a-barrel-roll-force-installed", doABarrelRollForceInstalled);
-        doABarrelRollInstalledTimeout = config.getInt(getBasePath() + ".do-a-barrel-roll-installed-timeout", 0);
+        doABarrelRollProtocol = globalConfig.getBoolean(basePath() + ".do-a-barrel-roll-protocol", doABarrelRollProtocol);
+        doABarrelRollAllowThrusting = globalConfig.getBoolean(basePath() + ".do-a-barrel-roll-allow-thrusting", doABarrelRollAllowThrusting);
+        doABarrelRollForceEnabled = globalConfig.getBoolean(basePath() + ".do-a-barrel-roll-force-enabled", doABarrelRollForceEnabled);
+        doABarrelRollForceInstalled = globalConfig.getBoolean(basePath() + ".do-a-barrel-roll-force-installed", doABarrelRollForceInstalled);
+        doABarrelRollInstalledTimeout = globalConfig.getInt(basePath() + ".do-a-barrel-roll-installed-timeout", 0);
         if (doABarrelRollInstalledTimeout <= 0) {
             doABarrelRollInstalledTimeout = 40;
         }
