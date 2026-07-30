@@ -23,7 +23,7 @@ public abstract class ChunkSectionEntityMovementTracker {
 
     public abstract void unregister();
 
-    public static void unregister(@NotNull List<? extends ChunkSectionEntityMovementTracker> trackers) {
+    public static void unregister(ChunkSectionEntityMovementTracker @NotNull [] trackers) { // Leaf - Replace Lithium tracker list with array
         for (ChunkSectionEntityMovementTracker tracker : trackers) {
             tracker.unregister();
         }
@@ -33,7 +33,7 @@ public abstract class ChunkSectionEntityMovementTracker {
         return this.lastChangeTime <= lastCheckedTime;
     }
 
-    public static boolean isUnchangedSince(long lastCheckedTime, @NotNull List<? extends ChunkSectionEntityMovementTracker> trackers) {
+    public static boolean isUnchangedSince(long lastCheckedTime, ChunkSectionEntityMovementTracker @NotNull [] trackers) { // Leaf - Replace Lithium tracker list with array
         for (ChunkSectionEntityMovementTracker tracker : trackers) {
             if (!tracker.isUnchangedSince(lastCheckedTime)) {
                 return false;
@@ -46,7 +46,7 @@ public abstract class ChunkSectionEntityMovementTracker {
         this.listeners.add(listener);
     }
 
-    public static void listenToEntityMovementOnce(ChunkSectionEntityMovementListener listener, @NotNull List<? extends ChunkSectionEntityMovementTracker> trackers) {
+    public static void listenToEntityMovementOnce(ChunkSectionEntityMovementListener listener, ChunkSectionEntityMovementTracker @NotNull [] trackers) { // Leaf - Replace Lithium tracker list with array
         for (ChunkSectionEntityMovementTracker tracker : trackers) {
             tracker.listenToEntityMovementOnce(listener);
         }

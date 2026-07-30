@@ -15,6 +15,7 @@ public final class LeafGlobalConfig extends LeafConfigAccessor {
         if (loadConfigVersion) {
             LeafConfig.loadPreviousConfigVersion(getString("config-version"));
         }
+
         configFile.set("config-version", LeafConfig.CURRENT_CONFIG_VERSION);
 
         configFile.addComments("config-version", pickStringRegionBased("""
