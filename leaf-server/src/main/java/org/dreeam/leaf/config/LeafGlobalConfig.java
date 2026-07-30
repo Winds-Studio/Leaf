@@ -15,7 +15,7 @@ public class LeafGlobalConfig {
     public LeafGlobalConfig(boolean init) throws Exception {
         configFile = ConfigFile.loadConfig(new File(LeafConfig.CONFIG_DIRECTORY, LeafConfig.GLOBAL_CONFIG_FILE));
 
-        LeafConfig.loadPreviousConfigVersion(getString("config-version"));
+        //LeafConfig.loadPreviousConfigVersion(getString("config-version"));
         configFile.set("config-version", LeafConfig.CURRENT_CONFIG_VERSION);
 
         configFile.addComments("config-version", pickStringRegionBased("""
