@@ -36,35 +36,38 @@ public class ChunkSectionInventoryEntityTracker extends ChunkSectionEntityMoveme
         return level.getEntitiesOfClass((Class) Container.class, boundingBox, EntitySelector.CONTAINER_ENTITY_SELECTOR);
     }
 
-    public static it.unimi.dsi.fastutil.objects.@NotNull ObjectArrayList<ChunkSectionInventoryEntityTracker> registerAt(ServerLevel world, AABB interactionArea) { // Leaf - Replace Lithium tracker list with with optimized collection
+    // Leaf start - Replace Lithium tracker list with array
+    public static ChunkSectionInventoryEntityTracker[] registerAt(ServerLevel world, AABB interactionArea) {
         WorldSectionBox worldSectionBox = WorldSectionBox.entityAccessBox(world, interactionArea);
         UUID levelId = world.uuid;
 
         if (worldSectionBox.chunkX1() == worldSectionBox.chunkX2() &&
             worldSectionBox.chunkY1() == worldSectionBox.chunkY2() &&
             worldSectionBox.chunkZ1() == worldSectionBox.chunkZ2()) {
-            return new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(Collections.singletonList(registerAt( // Leaf - Replace Lithium tracker list with with optimized collection
+            return new ChunkSectionInventoryEntityTracker[]{registerAt(
                 CoordinateUtils.getChunkSectionKey(worldSectionBox.chunkX1(), worldSectionBox.chunkY1(), worldSectionBox.chunkZ1()),
                 levelId
-            ))); // Leaf - Replace Lithium tracker list with with optimized collection
+            )};
         }
 
         // Leaf start - pre-size ArrayList to avoid grow allocations
+        int count = 0;
         int sizeX = worldSectionBox.chunkX2() - worldSectionBox.chunkX1() + 1;
         int sizeY = worldSectionBox.chunkY2() - worldSectionBox.chunkY1() + 1;
         int sizeZ = worldSectionBox.chunkZ2() - worldSectionBox.chunkZ1() + 1;
-        it.unimi.dsi.fastutil.objects.ObjectArrayList<ChunkSectionInventoryEntityTracker> trackers = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(sizeX * sizeY * sizeZ); // Leaf - Replace Lithium tracker list with with optimized collection
+        ChunkSectionInventoryEntityTracker[] trackers = new ChunkSectionInventoryEntityTracker[sizeX * sizeY * sizeZ];
         // Leaf end - pre-size ArrayList to avoid grow allocations
 
         for (int x = worldSectionBox.chunkX1(); x <= worldSectionBox.chunkX2(); x++) {
             for (int y = worldSectionBox.chunkY1(); y <= worldSectionBox.chunkY2(); y++) {
                 for (int z = worldSectionBox.chunkZ1(); z <= worldSectionBox.chunkZ2(); z++) {
-                    trackers.add(registerAt(CoordinateUtils.getChunkSectionKey(x, y, z), levelId));
+                    trackers[count++] = registerAt(CoordinateUtils.getChunkSectionKey(x, y, z), levelId);
                 }
             }
         }
 
         return trackers;
+        // Leaf end - Replace Lithium tracker list with array
     }
 
     private static @NotNull ChunkSectionInventoryEntityTracker registerAt(long key, UUID levelId) {
