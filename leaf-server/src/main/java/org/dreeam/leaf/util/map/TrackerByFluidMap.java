@@ -8,12 +8,15 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.entity.EntityFluidInteraction;
 import net.minecraft.world.level.material.Fluid;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 import java.util.NoSuchElementException;
 
+@NullMarked
 public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<Fluid>, EntityFluidInteraction.Tracker> {
-    private EntityFluidInteraction.Tracker water = null;
-    private EntityFluidInteraction.Tracker lava = null;
+    private EntityFluidInteraction.@Nullable Tracker water = null;
+    private EntityFluidInteraction.@Nullable Tracker lava = null;
 
     @Override
     public int size() {
@@ -26,12 +29,12 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
     }
 
     @Override
-    public EntityFluidInteraction.Tracker get(Object k) {
+    public EntityFluidInteraction.@Nullable Tracker get(Object k) {
         return k == FluidTags.WATER ? water : k == FluidTags.LAVA ? lava : null;
     }
 
     @Override
-    public EntityFluidInteraction.Tracker put(TagKey<Fluid> k, EntityFluidInteraction.Tracker v) {
+    public EntityFluidInteraction.@Nullable Tracker put(TagKey<Fluid> k, EntityFluidInteraction.Tracker v) {
         if (k == FluidTags.WATER) {
             EntityFluidInteraction.Tracker prev = this.water;
             this.water = v;
@@ -50,14 +53,18 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
         this.lava = null;
     }
 
-    public void init () {
+    public void init() {
         this.water = new EntityFluidInteraction.Tracker();
         this.lava = new EntityFluidInteraction.Tracker();
     }
 
     public void reset() {
-        this.water.reset();
-        this.lava.reset();
+        if (this.water != null) {
+            this.water.reset();
+        }
+        if (this.lava != null) {
+            this.lava.reset();
+        }
     }
 
     private final class EntrySet extends AbstractObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> {
@@ -104,24 +111,28 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
 
     private final class EntryIterator implements ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> {
         private int index = 0;
+        @Nullable
         private Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> entry = null;
 
         @Override
         public boolean hasNext() {
-            return index < 2;
+            if (index == 0 && water != null) {
+                return true;
+            } else {
+                return (index == 0 || index == 1) && lava != null;
+            }
         }
 
         @Override
         public Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
-            }
-            if (index == 0) {
-                index++;
+            if (index == 0 && water != null) {
+                index = 1;
                 return entry = new TrackerEntry(FluidTags.WATER);
-            } else {
-                index++;
+            } else if ((index == 0 || index == 1) && lava != null) {
+                index = 2;
                 return entry = new TrackerEntry(FluidTags.LAVA);
+            } else {
+                throw new NoSuchElementException();
             }
         }
 
