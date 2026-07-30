@@ -1,13 +1,13 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;
 
-public class OptimizeMobSpawning extends ConfigModules {
+public class OptimizeMobSpawning extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".optimize-mob-spawning";
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".optimize-mob-spawning";
     }
 
     @Experimental
@@ -15,6 +15,6 @@ public class OptimizeMobSpawning extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath(), enabled);
+        enabled = globalConfig.getBoolean(basePath(), enabled);
     }
 }

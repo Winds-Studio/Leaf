@@ -1,13 +1,13 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;
 
-public class MutableBlockPos extends ConfigModules {
+public class MutableBlockPos extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName();
+    public String basePath() {
+        return ConfigCategory.PERF.basePath();
     }
 
     @Experimental
@@ -15,8 +15,8 @@ public class MutableBlockPos extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".reuse-random-ticking-blockpos", enabled,
-            config.pickStringRegionBased(
+        enabled = globalConfig.getBoolean(basePath() + ".reuse-random-ticking-blockpos", enabled,
+            globalConfig.pickStringRegionBased(
                 """
                     Experimental feature.
                     Reuse BlockPos to reduce memory allocation slightly and improve performance on random ticking.

@@ -3,16 +3,16 @@ package org.dreeam.leaf.config.modules.misc;
 import abomination.LinearRegionFile;
 import me.earthme.luminol.enums.EnumRegionFormat;
 import me.earthme.luminol.utils.BufferedLinearRegionFileFlusher;
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
 import org.dreeam.leaf.util.LeafConstants;
 
-public class RegionFormatConfig extends ConfigModules {
+public class RegionFormatConfig extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".region-format";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".region-format";
     }
 
     public static @HotReloadUnsupported String regionFormatName = "MCA";
@@ -32,7 +32,7 @@ public class RegionFormatConfig extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 Linear is a region format that uses zstd compression instead of zlib.
                 This format saves about 50% of disk space.
                 Read Leaf docs before using!""",
@@ -42,19 +42,19 @@ public class RegionFormatConfig extends ConfigModules {
                 使用前请阅读 Leaf 文档!""");
 
         if (regionFormatLoaded) {
-            config.getConfigSection(getBasePath());
+            globalConfig.getConfigSection(basePath());
             return;
         }
         regionFormatLoaded = true;
 
-        regionFormatName = config.getString(getBasePath() + ".format-name", regionFormatName,
-            config.pickStringRegionBased(
+        regionFormatName = globalConfig.getString(basePath() + ".format-name", regionFormatName,
+            globalConfig.pickStringRegionBased(
                 "Available region format names: MCA, B_LINEAR, LINEAR_V2",
                 "可用格式: MCA, B_LINEAR, LINEAR_V2"));
-        compressionLevel = config.getInt(getBasePath() + ".compress-level", compressionLevel);
-        ioThreadCount = config.getInt(getBasePath() + ".io-thread-count", ioThreadCount);
-        ioFlushDelay = config.getInt(getBasePath() + ".io-flush-delay", ioFlushDelay);
-        linearUseVirtualThread =  config.getBoolean(getBasePath() + ".linear-use-virtual-thread", linearUseVirtualThread);
+        compressionLevel = globalConfig.getInt(basePath() + ".compress-level", compressionLevel);
+        ioThreadCount = globalConfig.getInt(basePath() + ".io-thread-count", ioThreadCount);
+        ioFlushDelay = globalConfig.getInt(basePath() + ".io-flush-delay", ioFlushDelay);
+        linearUseVirtualThread =  globalConfig.getBoolean(basePath() + ".linear-use-virtual-thread", linearUseVirtualThread);
 
         regionFormat = EnumRegionFormat.fromString(regionFormatName);
         if (regionFormat == EnumRegionFormat.UNKNOWN) {

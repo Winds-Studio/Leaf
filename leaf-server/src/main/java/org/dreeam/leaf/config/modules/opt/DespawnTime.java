@@ -1,13 +1,13 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;
 
-public class DespawnTime extends ConfigModules {
+public class DespawnTime extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".despawn-time";
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".despawn-time";
     }
 
     @Experimental
@@ -15,8 +15,8 @@ public class DespawnTime extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        proactiveWeakLoading = config.getBoolean(getBasePath() + ".proactive-weak-loading-despawn", proactiveWeakLoading,
-            config.pickStringRegionBased("""
+        proactiveWeakLoading = globalConfig.getBoolean(basePath() + ".proactive-weak-loading-despawn", proactiveWeakLoading,
+            globalConfig.pickStringRegionBased("""
                     Proactive despawn check for weak-loaded entities.
                     This is an experimental feature.""",
                 """

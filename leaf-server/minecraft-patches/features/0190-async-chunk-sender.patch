@@ -1,0 +1,258 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Sun, 2 Mar 2025 21:23:20 +0100
+Subject: [PATCH] async chunk sender
+
+Co-authored-by: hayanesuru <hayanesuru@outlook.jp>
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+index 0743659c9f1122088adad4992b93649efc9ba873..295af5bbbce2582f9199498c6004ac1423e58163 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
+@@ -413,6 +413,7 @@ public final class RegionizedPlayerChunkLoader {
+         private final LongHeapPriorityQueue loadQueue = new LongHeapPriorityQueue(this.queueComparator);
+ 
+         private volatile boolean removed;
++        private final org.dreeam.leaf.async.chunk.AsyncChunkSender asyncSender = org.dreeam.leaf.config.modules.async.AsyncChunkSend.enabled ? new org.dreeam.leaf.async.chunk.AsyncChunkSender() : null; // Leaf - async chunk sender
+ 
+         public PlayerChunkLoaderData(final ServerLevel world, final ServerPlayer player) {
+             this.world = world;
+@@ -445,8 +446,53 @@ public final class RegionizedPlayerChunkLoader {
+             throw new IllegalStateException();
+         }
+ 
++        // Leaf start - async chunk sender
++        private boolean leaf$sendChunk(final int chunkX, final int chunkZ) {
++            long k = CoordinateUtils.getChunkKey(chunkX, chunkZ);
++            if (!this.sentChunks.contains(k)) {
++                if (this.asyncSender.add(k)) {
++                    PlayerChunkSender.sendChunk(this.player.connection, this.world, ((ChunkSystemLevel) this.world).moonrise$getFullChunkIfLoaded(chunkX, chunkZ), this.asyncSender);
++                    return true;
++                } else {
++                    return false;
++                }
++            }
++            throw new IllegalStateException();
++        }
++        private void leaf$sendChunkRaw(final net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket chunkPacket) {
++            final int chunkX = chunkPacket.getX();
++            final int chunkZ = chunkPacket.getZ();
++            if (this.sentChunks.add(CoordinateUtils.getChunkKey(chunkX, chunkZ))) {
++                ((ChunkSystemChunkHolder)((ChunkSystemServerLevel)this.world).moonrise$getChunkTaskScheduler().chunkHolderManager
++                    .getChunkHolder(chunkX, chunkZ).vanillaChunkHolder).moonrise$addReceivedChunk(this.player);
++
++                final LevelChunk chunk = ((ChunkSystemLevel)this.world).moonrise$getFullChunkIfLoaded(chunkX, chunkZ);
++
++                PlatformHooks.get().onChunkWatch(this.world, chunk, this.player);
++                this.player.connection.send(chunkPacket);
++                // Paper start - PlayerChunkLoadEvent
++                if (io.papermc.paper.event.packet.PlayerChunkLoadEvent.getHandlerList().getRegisteredListeners().length > 0) {
++                    new io.papermc.paper.event.packet.PlayerChunkLoadEvent(new org.bukkit.craftbukkit.CraftChunk(chunk), this.player.connection.getPlayer().getBukkitEntity()).callEvent();
++                }
++                // Paper end - PlayerChunkLoadEvent
++                // Leaf start - Multithreaded tracker
++                if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++                    ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk trackedChunk = chunk.moonrise$getChunkHolder().holderData.nearbyPlayers;
++                    if (trackedChunk != null) {
++                        trackedChunk.trackingUpdateCountAtomic.getAndIncrement();
++                    }
++                }
++                // Leaf end - Multithreaded tracker
++                return;
++            }
++            throw new IllegalStateException();
++        }
++        // Leaf end - async chunk sender
++
+         private void sendUnloadChunk(final int chunkX, final int chunkZ) {
+-            if (!this.sentChunks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ))) {
++            long k = CoordinateUtils.getChunkKey(chunkX, chunkZ); // Leaf - async chunk sender
++            if (this.asyncSender != null) { this.asyncSender.remove(k); } // Leaf - async chunk sender
++            if (!this.sentChunks.remove(k)) { // Leaf - async chunk sender
+                 return;
+             }
+             this.sendUnloadChunkRaw(chunkX, chunkZ);
+@@ -856,15 +902,36 @@ public final class RegionizedPlayerChunkLoader {
+                         return;
+                     } // else: good to dequeue and send, fall through
+                 }
+-                this.sendQueue.dequeueLong();
++                //this.sendQueue.dequeueLong(); // Leaf - async chunk sender
+ 
+-                this.sendChunk(pendingSendX, pendingSendZ);
++                // Leaf start - async chunk sender
++                if (this.asyncSender != null) {
++                    if (this.leaf$sendChunk(pendingSendX, pendingSendZ)) {
++                        this.sendQueue.dequeueLong();
++                    } else {
++                        break;
++                    }
++                } else {
++                    this.sendQueue.dequeueLong();
++                    this.sendChunk(pendingSendX, pendingSendZ);
++                }
++                // Leaf end - async chunk sender
+ 
+                 if (this.removed) {
+                     // sendChunk may invoke plugin logic
+                     return;
+                 }
+             }
++            // Leaf start - async chunk sender
++            if (this.asyncSender != null) {
++                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet;
++                while ((packet = this.asyncSender.recv()) != null) {
++                    if (this.asyncSender.remove(CoordinateUtils.getChunkKey(packet.getX(), packet.getZ()))) {
++                        this.leaf$sendChunkRaw(packet);
++                    }
++                }
++            }
++            // Leaf end - async chunk sender
+ 
+             this.flushDelayedTicketOps();
+         }
+@@ -1041,7 +1108,7 @@ public final class RegionizedPlayerChunkLoader {
+                         break;
+                     }
+                     case CHUNK_TICKET_STAGE_GENERATED: {
+-                        if (sendChunk && !sentChunk) {
++                        if (sendChunk && !sentChunk && (this.asyncSender == null || !this.asyncSender.contains(chunk))) { // Leaf - async chunk sender
+                             this.sendQueue.enqueue(chunk);
+                         }
+                         if (squareDistance <= tickViewDistance) {
+@@ -1050,7 +1117,7 @@ public final class RegionizedPlayerChunkLoader {
+                         break;
+                     }
+                     case CHUNK_TICKET_STAGE_TICK: {
+-                        if (sendChunk && !sentChunk) {
++                        if (sendChunk && !sentChunk && (this.asyncSender == null || !this.asyncSender.contains(chunk))) { // Leaf - async chunk sender
+                             this.sendQueue.enqueue(chunk);
+                         }
+                         break;
+@@ -1095,6 +1162,7 @@ public final class RegionizedPlayerChunkLoader {
+             this.flushDelayedTicketOps();
+ 
+             // now all tickets should be removed, which is all of our external state
++            if (this.asyncSender != null) { this.asyncSender.clear(); } // Leaf - async chunk sender
+         }
+ 
+         public LongOpenHashSet getSentChunksRaw() {
+diff --git a/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java b/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java
+index a52f93d0563f713b1d2b707cdb6ab74e4793a54d..b32722cfce2490d18c626fb1bf42abc4e51a7873 100644
+--- a/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java
++++ b/net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData.java
+@@ -75,6 +75,37 @@ public class ClientboundLevelChunkPacketData {
+         }
+     }
+ 
++    // Leaf start - async chunk sender
++    public ClientboundLevelChunkPacketData(final LevelChunk levelChunk, final io.papermc.paper.antixray.ChunkPacketInfo<net.minecraft.world.level.block.state.BlockState> chunkPacketInfo, final BlockEntity[] blockEntities, final Map<Heightmap.Types, long[]> heightmaps) {
++        this.heightmaps = heightmaps;
++        int size;
++        ByteBuf buffer;
++        do {
++            buffer = Unpooled.buffer(size = calculateChunkSize(levelChunk));
++        } while (!extractChunkData(new FriendlyByteBuf(buffer), levelChunk, chunkPacketInfo, size));
++        this.buffer = it.unimi.dsi.fastutil.bytes.ByteArrays.setLength(buffer.array(), buffer.writerIndex());
++        this.blockEntitiesData = Lists.newArrayList();
++        int totalTileEntities = 0; // Paper - Handle oversized block entities in chunks
++
++        for (BlockEntity blockEntity : blockEntities) {
++            // Paper start - Handle oversized block entities in chunks
++            if (++totalTileEntities > BLOCK_ENTITY_LIMIT) {
++                net.minecraft.network.protocol.Packet<ClientGamePacketListener> packet = blockEntity.getUpdatePacket();
++                if (packet != null) {
++                    this.extraPackets.add(packet);
++                    continue;
++                }
++            }
++            // Paper end - Handle oversized block entities in chunks
++            this.blockEntitiesData.add(ClientboundLevelChunkPacketData.BlockEntityInfo.create(blockEntity));
++        }
++
++        if (chunkPacketInfo != null) {
++            chunkPacketInfo.setBuffer(this.buffer);
++        }
++    }
++    // Leaf end - async chunk sender
++
+     public ClientboundLevelChunkPacketData(final RegistryFriendlyByteBuf input, final int x, final int z) {
+         this.heightmaps = HEIGHTMAPS_STREAM_CODEC.decode(input);
+         int size = input.readVarInt();
+@@ -128,6 +159,18 @@ public class ClientboundLevelChunkPacketData {
+         }
+     }
+ 
++    // Leaf start - async chunk sender
++    public static boolean extractChunkData(final FriendlyByteBuf buffer, final LevelChunk chunk, final io.papermc.paper.antixray.ChunkPacketInfo<net.minecraft.world.level.block.state.BlockState> chunkPacketInfo, final int expected) {
++        int chunkSectionIndex = 0;
++        for (LevelChunkSection section : chunk.getSections()) {
++            section.write(buffer, chunkPacketInfo, chunkSectionIndex);
++            chunkSectionIndex++;
++            // Paper end  - Anti-Xray - Add chunk packet info
++        }
++        return buffer.writerIndex() == expected;
++    }
++    // Leaf end - async chunk sender
++
+     public Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> getBlockEntitiesTagsConsumer(final int x, final int z) {
+         return output -> this.getBlockEntitiesTags(output, x, z);
+     }
+diff --git a/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java b/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
+index a1018e9ca9dfb978d6e6633577abd7d5d0960fa6..c113644c629b567f56dfdb2429f9e42da71f5886 100644
+--- a/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
++++ b/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
+@@ -57,6 +57,26 @@ public class ClientboundLevelChunkWithLightPacket implements Packet<ClientGamePa
+         levelChunk.getLevel().chunkPacketBlockController.modifyBlocks(this, chunkPacketInfo); // Paper - Anti-Xray - Modify blocks
+     }
+ 
++    // Leaf start - async chunk sender
++    public ClientboundLevelChunkWithLightPacket(
++        final LevelChunk levelChunk,
++        final LevelLightEngine lightEngine,
++        final @Nullable BitSet skyChangedLightSectionFilter,
++        final @Nullable BitSet blockChangedLightSectionFilter,
++        final boolean modifyBlocks,
++        final net.minecraft.world.level.block.entity.BlockEntity[] blockEntities,
++        final java.util.Map<net.minecraft.world.level.levelgen.Heightmap.Types, long[]> heightmaps
++    ) {
++        ChunkPos chunkPos = levelChunk.getPos();
++        this.x = chunkPos.x();
++        this.z = chunkPos.z();
++        io.papermc.paper.antixray.ChunkPacketInfo<net.minecraft.world.level.block.state.BlockState> chunkPacketInfo = modifyBlocks ? levelChunk.getLevel().chunkPacketBlockController.getChunkPacketInfo(this, levelChunk) : null; // Paper - Anti-Xray
++        this.chunkData = new ClientboundLevelChunkPacketData(levelChunk, chunkPacketInfo, blockEntities, heightmaps); // Paper - Anti-Xray
++        this.lightData = new ClientboundLightUpdatePacketData(chunkPos, lightEngine, skyChangedLightSectionFilter, blockChangedLightSectionFilter);
++        levelChunk.getLevel().chunkPacketBlockController.modifyBlocks(this, chunkPacketInfo); // Paper - Anti-Xray - Modify blocks
++    }
++    // Leaf end - async chunk sender
++
+     private ClientboundLevelChunkWithLightPacket(final RegistryFriendlyByteBuf input) {
+         this.x = input.readInt();
+         this.z = input.readInt();
+diff --git a/net/minecraft/server/network/PlayerChunkSender.java b/net/minecraft/server/network/PlayerChunkSender.java
+index 196c01fe5f200ed57e6f23e0939cac616305571a..6a12adc9c5a97d2cd626a1dc56010ce726212d50 100644
+--- a/net/minecraft/server/network/PlayerChunkSender.java
++++ b/net/minecraft/server/network/PlayerChunkSender.java
+@@ -96,6 +96,22 @@ public class PlayerChunkSender {
+         level.debugSynchronizers().startTrackingChunk(connection.player, chunk.getPos());
+     }
+ 
++    // Leaf start - async chunk sender
++    public static void sendChunk(final ServerGamePacketListenerImpl connection, final ServerLevel level, final LevelChunk chunk, final org.dreeam.leaf.async.chunk.AsyncChunkSender chunkSender) {
++        final boolean shouldModify = level.chunkPacketBlockController.shouldModify(connection.player, chunk);
++        net.minecraft.world.level.block.entity.BlockEntity[] blockEntities = chunk.blockEntities.values().toArray(new net.minecraft.world.level.block.entity.BlockEntity[0]);
++        java.util.Map<net.minecraft.world.level.levelgen.Heightmap.Types, long[]> heightmaps = new java.util.EnumMap<>(net.minecraft.world.level.levelgen.Heightmap.Types.class);
++        for (java.util.Map.Entry<net.minecraft.world.level.levelgen.Heightmap.Types, net.minecraft.world.level.levelgen.Heightmap> map : chunk.getHeightmaps()) {
++            if (map.getKey().sendToClient()) {
++                heightmaps.put(map.getKey(), map.getValue().getRawData().clone());
++            }
++        }
++        chunkSender.submit(
++            () -> new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify, blockEntities, heightmaps)
++        );
++    }
++    // Leaf end - async chunk sender
++
+     private List<LevelChunk> collectChunksToSend(final ChunkMap chunkMap, final ChunkPos playerPos) {
+         int maxBatchSize = Mth.floor(this.batchQuota);
+         List<LevelChunk> chunks;

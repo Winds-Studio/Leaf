@@ -1,19 +1,19 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class UnknownCommandMessage extends ConfigModules {
+public class UnknownCommandMessage extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".message";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".message";
     }
 
     public static String unknownCommandMessage = "default";
 
     @Override
     public void onLoaded() {
-        unknownCommandMessage = config.getString(getBasePath() + ".unknown-command", unknownCommandMessage, config.pickStringRegionBased("""
+        unknownCommandMessage = globalConfig.getString(basePath() + ".unknown-command", unknownCommandMessage, globalConfig.pickStringRegionBased("""
                 Unknown command message, using MiniMessage format, set to "default" to use vanilla message,
                 placeholder:
                 <message>, show message of the command exception.

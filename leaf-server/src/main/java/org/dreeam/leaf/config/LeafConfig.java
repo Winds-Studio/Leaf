@@ -31,6 +31,7 @@ import java.util.Date;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.jar.JarEntry;
@@ -44,15 +45,21 @@ import java.util.jar.JarFile;
 public class LeafConfig {
 
     public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
-    protected static final File I_CONFIG_FOLDER = new File("config");
-    protected static final String I_CONFIG_PKG = "org.dreeam.leaf.config.modules";
-    protected static final String I_GLOBAL_CONFIG_FILE = "leaf-global.yml";
-    protected static final String I_LEVEL_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per level config
+
+    protected static final String CURRENT_CONFIG_VERSION = "3.0";
+    // It will be in uppercase by default, just make sure
+    private static final String REGION_COUNTRY_CODE = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT);
+    private static final boolean IS_CHINESE_LOCALE = REGION_COUNTRY_CODE.equals("CN");
+
+    protected static final File CONFIG_DIRECTORY = new File("config");
+    protected static final String CONFIG_MODULE_PACKAGE = "org.dreeam.leaf.config.modules";
+    protected static final String GLOBAL_CONFIG_FILE = "leaf-global.yml";
+    protected static final String DEFAULT_WORLD_CONFIG_FILE = "leaf-world-defaults.yml"; // Leaf TODO - Per world config
 
     private static final String SPARK_EXTRA_CONFIG_PROPERTY =  "spark.serverconfigs.extra";
     private static final String SPARK_HIDDEN_PATHS_PROPERTY =  "spark.serverconfigs.hiddenpaths";
 
-    private static LeafGlobalConfig leafGlobalConfig;
+    private static LeafGlobalConfig globalConfig;
 
     //private static int preMajorVer;
     private static int preMinorVer;
@@ -67,9 +74,9 @@ public class LeafConfig {
             try {
                 long begin = System.nanoTime();
 
-                ConfigModules.clearModules();
+                ConfigModule.clearModules();
                 loadConfig(false);
-                ConfigModules.loadAfterBootstrap();
+                ConfigModule.loadAfterBootstrap();
 
                 final String success = String.format("Successfully reloaded config in %sms.", (System.nanoTime() - begin) / 1_000_000);
                 Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));
@@ -99,16 +106,20 @@ public class LeafConfig {
 
     private static void loadConfig(boolean init) throws Exception {
         // Create config folder
-        createDirectory(I_CONFIG_FOLDER);
+        createDirectory(CONFIG_DIRECTORY);
 
-        leafGlobalConfig = new LeafGlobalConfig(init);
+        globalConfig = new LeafGlobalConfig(init);
 
         // Load config modules
-        ConfigModules.initModules();
+        ConfigModule.initModules();
     }
 
-    public static LeafGlobalConfig config() {
-        return leafGlobalConfig;
+    public static LeafGlobalConfig globalConfig() {
+        return globalConfig;
+    }
+
+    static boolean isChineseLocale() {
+        return IS_CHINESE_LOCALE;
     }
 
     /* Create config folder */
