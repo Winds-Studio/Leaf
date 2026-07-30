@@ -36,24 +36,24 @@ public class ChunkSectionInventoryEntityTracker extends ChunkSectionEntityMoveme
         return level.getEntitiesOfClass((Class) Container.class, boundingBox, EntitySelector.CONTAINER_ENTITY_SELECTOR);
     }
 
-    public static @NotNull List<ChunkSectionInventoryEntityTracker> registerAt(ServerLevel world, AABB interactionArea) {
+    public static it.unimi.dsi.fastutil.objects.@NotNull ObjectArrayList<ChunkSectionInventoryEntityTracker> registerAt(ServerLevel world, AABB interactionArea) { // Leaf - Replace Lithium tracker list with with optimized collection
         WorldSectionBox worldSectionBox = WorldSectionBox.entityAccessBox(world, interactionArea);
         UUID levelId = world.uuid;
 
         if (worldSectionBox.chunkX1() == worldSectionBox.chunkX2() &&
             worldSectionBox.chunkY1() == worldSectionBox.chunkY2() &&
             worldSectionBox.chunkZ1() == worldSectionBox.chunkZ2()) {
-            return Collections.singletonList(registerAt(
+            return new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(Collections.singletonList(registerAt( // Leaf - Replace Lithium tracker list with with optimized collection
                 CoordinateUtils.getChunkSectionKey(worldSectionBox.chunkX1(), worldSectionBox.chunkY1(), worldSectionBox.chunkZ1()),
                 levelId
-            ));
+            ))); // Leaf - Replace Lithium tracker list with with optimized collection
         }
 
         // Leaf start - pre-size ArrayList to avoid grow allocations
         int sizeX = worldSectionBox.chunkX2() - worldSectionBox.chunkX1() + 1;
         int sizeY = worldSectionBox.chunkY2() - worldSectionBox.chunkY1() + 1;
         int sizeZ = worldSectionBox.chunkZ2() - worldSectionBox.chunkZ1() + 1;
-        List<ChunkSectionInventoryEntityTracker> trackers = new ArrayList<>(sizeX * sizeY * sizeZ);
+        it.unimi.dsi.fastutil.objects.ObjectArrayList<ChunkSectionInventoryEntityTracker> trackers = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>(sizeX * sizeY * sizeZ); // Leaf - Replace Lithium tracker list with with optimized collection
         // Leaf end - pre-size ArrayList to avoid grow allocations
 
         for (int x = worldSectionBox.chunkX1(); x <= worldSectionBox.chunkX2(); x++) {
