@@ -1,6 +1,6 @@
 package org.dreeam.leaf.async.tracker;
 
-import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
+import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.network.protocol.Packet;
@@ -49,10 +49,8 @@ public final class AsyncTracker {
         return this.local;
     }
 
-    public void tick(ServerLevel world) {
+    public void tick(ServerLevel world, ReferenceList<Entity> trackerEntities) {
         handlePlayer(world);
-        ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
-        ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
         int trackerEntitiesSize = trackerEntities.size();
         if (trackerEntitiesSize == 0) {
             return;
