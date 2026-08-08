@@ -8,7 +8,6 @@ import me.lucko.spark.paper.common.platform.serverconfig.ExcludedConfigFilter;
 import me.lucko.spark.paper.common.platform.serverconfig.PropertiesConfigParser;
 import me.lucko.spark.paper.common.platform.serverconfig.ServerConfigProvider;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
-import org.dreeam.leaf.config.modules.opt.FastBiomeManagerSeedObfuscation;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.configuration.MemorySection;
@@ -128,7 +127,6 @@ public class LeafServerConfigProvider extends ServerConfigProvider {
             .add("feature-seeds")
             .add("seed-*")
             .add(SentryDSN.sentryDsnConfigPath) // Hide Sentry DSN key
-            .add(FastBiomeManagerSeedObfuscation.seedObfKeyPath) // Hide FastBiomeManagerSeedObfuscation key
             .addAll(getSystemPropertyList("spark.serverconfigs.hiddenpaths"));
 
         FILES = files.build();

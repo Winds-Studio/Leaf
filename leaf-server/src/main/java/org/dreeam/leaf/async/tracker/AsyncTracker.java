@@ -1,6 +1,6 @@
 package org.dreeam.leaf.async.tracker;
 
-import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
+import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.network.protocol.Packet;
@@ -49,19 +49,19 @@ public final class AsyncTracker {
         return this.local;
     }
 
-    public void tick(ServerLevel world) {
+    public void tick(ServerLevel world, ReferenceList<Entity> trackerEntities) {
         handlePlayer(world);
-        ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
-        ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
-        int trackerEntitiesSize = trackerEntities.size();
-        if (trackerEntitiesSize == 0) {
+        int len = trackerEntities.size();
+        if (len == 0) {
             return;
         }
-        Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
-        Entity[] entities = new Entity[trackerEntitiesSize];
-        System.arraycopy(trackerEntitiesRaw, 0, entities, 0, trackerEntitiesSize);
-        EntitySlice slice = new EntitySlice(entities);
-        EntitySlice[] slices = entities.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
+        Entity[] raw = trackerEntities.getRawDataUnchecked();
+        java.util.Objects.checkFromIndexSize(0, len, raw.length);
+
+        Entity[] clone = new Entity[len];
+        System.arraycopy(raw, 0, clone, 0, len);
+        EntitySlice slice = new EntitySlice(clone);
+        EntitySlice[] slices = clone.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
