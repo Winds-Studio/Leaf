@@ -5,19 +5,42 @@ Subject: [PATCH] optimize PathNavigation#shouldRecomputePath
 
 
 diff --git a/net/minecraft/world/entity/ai/navigation/PathNavigation.java b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
-index 0336742e0886eb06beacaa2d8b1975d77b383142..bf47b60064d5253748cc94798c3d6032d4af5bc3 100644
+index 0336742e0886eb06beacaa2d8b1975d77b383142..34ff0f006e3017e111f30efc6225dda1ac565e39 100644
 --- a/net/minecraft/world/entity/ai/navigation/PathNavigation.java
 +++ b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
-@@ -487,8 +487,10 @@ public abstract class PathNavigation {
+@@ -1,6 +1,7 @@
+ package net.minecraft.world.entity.ai.navigation;
+ 
+ import com.google.common.collect.ImmutableSet;
++import java.util.List;
+ import java.util.Set;
+ import java.util.stream.Collectors;
+ import java.util.stream.Stream;
+@@ -485,13 +486,22 @@ public abstract class PathNavigation {
+     public boolean shouldRecomputePath(final BlockPos pos) {
+         if (this.hasDelayedRecomputation) {
              return false;
-         } else if (this.path != null && this.path.isProcessed() && !this.path.isDone() && this.path.getNodeCount() != 0) { // Kaiiju - petal - async path processing - Skip if not processed
-             Node target = this.path.getEndNode();
+-        } else if (this.path != null && this.path.isProcessed() && !this.path.isDone() && this.path.getNodeCount() != 0) { // Kaiiju - petal - async path processing - Skip if not processed
+-            Node target = this.path.getEndNode();
 -            Vec3 middlePos = new Vec3((target.x + this.mob.getX()) / 2.0, (target.y + this.mob.getY()) / 2.0, (target.z + this.mob.getZ()) / 2.0);
 -            return pos.closerToCenterThan(middlePos, this.path.getNodeCount() - this.path.getNextNodeIndex());
-+            // Leaf start - optimize PathNavigation#shouldRecomputePath - avoid Vec3 alloc on this hot path
-+            return pos.distToCenterSqr((target.x + this.mob.getX()) / 2.0, (target.y + this.mob.getY()) / 2.0, (target.z + this.mob.getZ()) / 2.0)
-+                < Mth.square(this.path.getNodeCount() - this.path.getNextNodeIndex());
-+            // Leaf end - optimize PathNavigation#shouldRecomputePath
-         } else {
+-        } else {
++        }
++        // Leaf start - optimize PathNavigation#shouldRecomputePath - avoid redundant getNodeCount/getEndNode/isDone calls
++        final Path path = this.path;
++        if (path == null || !path.isProcessed()) { // Kaiiju - petal - async path processing - Skip if not processed // Leaf - nodes below now safe to read
++            return false;
++        }
++        final List<Node> nodes = path.nodes;
++        final int nodeCount = nodes.size();
++        final int nextNodeIndex = path.getNextNodeIndex();
++        if (nextNodeIndex >= nodeCount) { // inlined isDone(), also covers nodeCount == 0
              return false;
          }
++        final Node target = nodes.get(nodeCount - 1); // inlined getEndNode(), skips its isEmpty()+size() recheck
++        return pos.distToCenterSqr((target.x + this.mob.getX()) / 2.0, (target.y + this.mob.getY()) / 2.0, (target.z + this.mob.getZ()) / 2.0)
++            < Mth.square(nodeCount - nextNodeIndex);
++        // Leaf end - optimize PathNavigation#shouldRecomputePath
+     }
+ 
+     public float getMaxDistanceToWaypoint() {
