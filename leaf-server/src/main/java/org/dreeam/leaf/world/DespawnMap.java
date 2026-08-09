@@ -79,11 +79,7 @@ public final class DespawnMap implements Consumer<Entity> {
                 i++;
             }
         }
-        final int[] indices = new int[i];
-        for (int j = 0; j < i; j++) {
-            indices[j] = j;
-        }
-        tree.build(new double[][]{pxl, pyl, pzl}, indices);
+        tree.build(new double[][]{pxl, pyl, pzl}, new int[i]);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
         if (fallback) {
             return false;
