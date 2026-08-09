@@ -19,10 +19,10 @@ public class DynamicActivationofBrain extends ConfigModule {
     }
 
     public static boolean enabled = false;
-    public static int startDistance = 12;
-    public static int startDistanceSquared;
+    public static double startDistance = 12.0;
+    public static double startDistanceSquared;
     public static int maximumActivationPrio = 20;
-    public static int activationDistanceMod = 8;
+    public static double activationDistanceMod = 8.0;
     public static boolean dontEnableIfInWater = false;
     public static List<String> blackedEntities = new ArrayList<>(Arrays.asList(
         "villager",
@@ -47,7 +47,7 @@ public class DynamicActivationofBrain extends ConfigModule {
             """
                 启用此项后, 在水中的非水生生物将不会被 DAB 影响.
                 可以避免距离玩家较远的生物在水里淹死."""));
-        startDistance = globalConfig.getInt(basePath() + ".start-distance", startDistance, globalConfig.pickStringRegionBased("""
+        startDistance = globalConfig.getDouble(basePath() + ".start-distance", startDistance, globalConfig.pickStringRegionBased("""
                 This value determines how far away an entity has to be
                 from the player to start being effected by DEAR.""",
             """
@@ -57,7 +57,7 @@ public class DynamicActivationofBrain extends ConfigModule {
                 will get their pathfinders and behaviors ticked. 20 = 1s""",
             """
                 最远处的实体每隔多少刻tick一次"""));
-        activationDistanceMod = globalConfig.getInt(basePath() + ".activation-dist-mod", activationDistanceMod, """
+        activationDistanceMod = globalConfig.getDouble(basePath() + ".activation-dist-mod", activationDistanceMod, """
             This value defines how much distance modifies an entity's
             tick frequency. freq = (distanceToPlayer^2) / (2^value)",
             If you want further away entities to tick less often, use 7.
