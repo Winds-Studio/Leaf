@@ -19,6 +19,18 @@ After: 1.5 seconds
 Brings the ability to despawn weak-loaded entities once they are ticked,
 a solution for https://github.com/PaperMC/Paper/issues/12986
 
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 81e72a1cd2de1bfeb4c78999148dd2e95ed782c2..2b90941bf6824719531582c27e640514742f0dd2 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -183,6 +183,7 @@ public final class ChunkEntitySlices {
+                 // removed by us below
+                 continue;
+             }
++            if (entity.detectDespawnTime(true)) continue; // Leaf - Rewrite entity despawn time
+             if (entity.shouldBeSaved()) {
+                 PlatformHooks.get().unloadEntity(entity);
+                 if (entity.isVehicle()) {
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
 index 6d6b1a261708b88a4b706ccc51b7d397fe42ea6b..f27f198e84ac668446c9d57772343ba10464428c 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
@@ -97,7 +109,7 @@ index 6d6b1a261708b88a4b706ccc51b7d397fe42ea6b..f27f198e84ac668446c9d57772343ba1
  
          private final ChunkEntitySlices[] slices = new ChunkEntitySlices[REGION_SIZE * REGION_SIZE];
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 231925545b6543004a0f6164bf73ee7139ad86f6..916998f5b997012f62179d9a08d27d7d23d0db45 100644
+index 231925545b6543004a0f6164bf73ee7139ad86f6..6bad7fa23cfd3be43f6f642ae3eeb02492b0aa2f 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -1131,6 +1131,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
@@ -108,26 +120,26 @@ index 231925545b6543004a0f6164bf73ee7139ad86f6..916998f5b997012f62179d9a08d27d7d
          if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) { this.leaf$asyncTracker.onEntitiesTickEnd(); } // Leaf - Multithreaded tracker
      }
  
-@@ -1659,6 +1660,8 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
-         } else {entity.inactiveTick();} // Paper - EAR 2
-         profiler.pop();
- 
-+        entity.updateLastTick(); // Leaf - Rewrite entity despawn time
-+
-         for (Entity passenger : entity.getPassengers()) {
-             this.tickPassenger(entity, passenger, isActive); // Paper - EAR 2
-         }
-@@ -1687,6 +1690,8 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
-             // Paper end - EAR 2
-             profiler.pop();
- 
-+            entity.updateLastTick(); // Leaf - Rewrite entity despawn time
-+
-             for (Entity passenger : entity.getPassengers()) {
-                 this.tickPassenger(entity, passenger, isActive); // Paper - EAR 2
-             }
+@@ -1649,7 +1650,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         entity.setOldPosAndRot();
+         ProfilerFiller profiler = Profiler.get();
+         entity.tickCount++;
+-        entity.totalEntityAge++; // Paper - age-like counter for all entities
++        entity.updateEntityAge(); // Paper - age-like counter for all entities // Leaf - Rewrite entity despawn time
+         profiler.push(entity.typeHolder()::getRegisteredName);
+         profiler.incrementCounter("tickNonPassenger");
+         final boolean isActive = io.papermc.paper.entity.activation.ActivationRange.checkIfActive(entity); // Paper - EAR 2
+@@ -1670,7 +1671,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         } else if (entity instanceof Player || this.entityTickList.contains(entity)) {
+             entity.setOldPosAndRot();
+             entity.tickCount++;
+-            entity.totalEntityAge++; // Paper - age-like counter for all entities
++            entity.updateEntityAge(); // Paper - age-like counter for all entities // Leaf - Rewrite entity despawn time
+             ProfilerFiller profiler = Profiler.get();
+             profiler.push(entity.typeHolder()::getRegisteredName);
+             profiler.incrementCounter("tickPassenger");
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 4b48f99aaf3fcfcc5f1f3d481021865e47d0e10f..baae51ab803ff739850cfa06383eab91186e6ea9 100644
+index 4b48f99aaf3fcfcc5f1f3d481021865e47d0e10f..614b22b5054ef09067e57e3540ec99654b2fab15 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -383,12 +383,14 @@ public abstract class Entity
@@ -162,7 +174,7 @@ index 4b48f99aaf3fcfcc5f1f3d481021865e47d0e10f..baae51ab803ff739850cfa06383eab91
      }
  
      public boolean isColliding(final BlockPos pos, final BlockState state) {
-@@ -909,15 +913,57 @@ public abstract class Entity
+@@ -909,15 +913,69 @@ public abstract class Entity
      }
  
      public void tick() {
@@ -188,31 +200,43 @@ index 4b48f99aaf3fcfcc5f1f3d481021865e47d0e10f..baae51ab803ff739850cfa06383eab91
 +    }
 +
 +    public final boolean detectDespawnTime() {
-+        boolean exceeded = this.isExceedingDespawnTime(false);
++        return this.detectDespawnTime(false);
++    }
++
++    public final boolean detectDespawnTime(final boolean needCompensation) {
++        boolean exceeded = this.isExceedingDespawnTime(needCompensation);
 +        if (exceeded) {
 +            this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
 +        }
 +        return exceeded;
 +    }
 +
-+    public final boolean isExceedingDespawnTime(boolean isWeakLoaded) {
++    public final boolean isExceedingDespawnTime(boolean needCompensation) {
 +        if (this.despawnTime >= 0) {
-+            int compensatedAge = this.syncEntityAge(!isWeakLoaded);
++            int compensatedAge = needCompensation ? this.getCompensatedEntityAge() : this.totalEntityAge;
 +            return compensatedAge >= this.despawnTime;
 +        }
 +        return false;
 +    }
 +
-+    private int syncEntityAge(boolean writeBack) {
++    private int getCompensatedEntityAge() {
 +        int missedTicks = this.calculateMissedTicks();
-+        if (missedTicks > 1) {
-+            if (writeBack) return this.totalEntityAge += missedTicks;
++        if (missedTicks > 0) {
 +            return this.totalEntityAge + missedTicks;
 +        }
 +        return this.totalEntityAge;
 +    }
 +
-+    public void updateLastTick() {
++    public void updateEntityAge() {
++        int missedTicks = this.calculateMissedTicks();
++        if (missedTicks > 1) {
++            this.totalEntityAge += missedTicks - 1;
++        }
++        this.totalEntityAge++;
++        this.updateLastTick();
++    }
++
++    protected void updateLastTick() {
 +        this.lastTickTime = net.minecraft.server.MinecraftServer.currentTick;
 +    }
 +    // Leaf end - Rewrite entity despawn time
@@ -220,23 +244,22 @@ index 4b48f99aaf3fcfcc5f1f3d481021865e47d0e10f..baae51ab803ff739850cfa06383eab91
      // CraftBukkit start
      public void postTick() {
          // No clean way to break out of ticking once the entity has been copied to a new world, so instead we move the portalling later in the tick cycle
-@@ -2777,6 +2823,7 @@ public abstract class Entity
+@@ -2777,7 +2835,7 @@ public abstract class Entity
              if (this.maxAirTicks != this.getDefaultMaxAirSupply() && this.getDefaultMaxAirSupply() != this.level().purpurConfig.drowningAirTicks) { // Purpur - Drowning Settings
                  output.putInt("Bukkit.MaxAirSupply", this.getMaxAirSupply());
              }
-+            this.syncEntityAge(true); // Leaf - Rewrite entity despawn time
-             output.putInt("Spigot.ticksLived", this.totalEntityAge); // Paper
+-            output.putInt("Spigot.ticksLived", this.totalEntityAge); // Paper
++            output.putInt("Spigot.ticksLived", this.getCompensatedEntityAge()); // Paper // Leaf - Rewrite entity despawn time
              // CraftBukkit end
              output.storeNullable("CustomName", ComponentSerialization.CODEC, this.getCustomName());
-@@ -5422,9 +5469,10 @@ public abstract class Entity
- 
-     @Override
+             if (this.isCustomNameVisible()) {
+@@ -5424,7 +5482,8 @@ public abstract class Entity
      public boolean shouldBeSaved() {
-+        this.syncEntityAge(true); // Leaf - Rewrite entity despawn time
          return (this.removalReason == null || this.removalReason.shouldSave())
              && !this.isPassenger()
 -            && (!this.isVehicle() || !((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this).moonrise$hasAnyPlayerPassengers()); // Paper - rewrite chunk system
-+            && (!this.isVehicle() || !((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this).moonrise$hasAnyPlayerPassengers()) && (this.despawnTime < 0 || this.totalEntityAge < this.despawnTime); // Paper - rewrite chunk system // Leaf - Rewrite entity despawn time
++            && (!this.isVehicle() || !((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this).moonrise$hasAnyPlayerPassengers())
++            && !this.isExceedingDespawnTime(true); // Paper - rewrite chunk system // Leaf - Rewrite entity despawn time
      }
  
      @Override
