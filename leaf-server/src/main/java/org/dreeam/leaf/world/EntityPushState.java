@@ -61,7 +61,7 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
         this.foundAny = true;
 
         if (this.maxEntityCollisions > 0 && this.pushableEntities.size() < this.maxEntityCollisions) {
-            this.pushableEntities.add(entity);
+            this.pushableEntities.add(entity); // collect entities for collision
         }
 
         if (!this.crammingResolved) {
@@ -69,13 +69,13 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
                 ++this.pushableCount;
             }
             if (!entity.isPassenger()) {
-                ++this.nonPassengerCount;
+                ++this.nonPassengerCount; // cramming needs non-passengers
             }
 
             if (this.pushableCount >= this.maxCramming) {
                 if (!this.crammingCheckStarted) {
                     this.crammingCheckStarted = true;
-                    if (this.source.getRandom().nextInt(4) != 0) {
+                    if (this.source.getRandom().nextInt(4) != 0) { // 75% chance to enter and skip all cramming checks
                         this.crammingResolved = true;
                     }
                 }
@@ -86,7 +86,7 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
                 }
             }
         }
-
+        // whether we collected enough entities for collision and cramming process
         final boolean collisionsResolved = this.maxEntityCollisions <= 0 || this.pushableEntities.size() >= this.maxEntityCollisions;
         return collisionsResolved && this.crammingResolved ? AbortableIterationConsumer.Continuation.ABORT : AbortableIterationConsumer.Continuation.CONTINUE;
     }
