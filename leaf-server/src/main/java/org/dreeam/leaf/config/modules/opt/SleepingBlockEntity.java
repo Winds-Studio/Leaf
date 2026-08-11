@@ -10,9 +10,16 @@ public class SleepingBlockEntity extends ConfigModule {
     }
 
     public static boolean enabled = false;
+    private static boolean sleepingBlockEntityInitialized;
 
     @Override
     public void onLoaded() {
+        if (sleepingBlockEntityInitialized) {
+            globalConfig.getConfigSection(basePath());
+            return;
+        }
+        sleepingBlockEntityInitialized = true;
+
         enabled = globalConfig.getBoolean(basePath() + ".sleeping-block-entity", enabled);
     }
 }
