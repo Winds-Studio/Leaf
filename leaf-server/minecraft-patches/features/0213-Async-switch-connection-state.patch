@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Fri, 9 May 2025 16:55:34 +0900
+Subject: [PATCH] Async switch connection state
+
+
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 55d8a9bde6dcef561959b4772d8ab017649cb9e8..dc304c719647292bd3eac7c94c18d716af8aef1e 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -320,6 +320,11 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         if (protocol.flow() != this.getReceiving()) {
+             throw new IllegalStateException("Invalid inbound protocol: " + protocol.id());
+         }
++        // Leaf start - Async switch connection state
++        if (org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled && ca.spottedleaf.moonrise.common.util.TickThread.isTickThread()) {
++            this.channel.config().setAutoRead(false);
++        }
++        // Leaf end - Async switch connection state
+ 
+         this.packetListener = packetListener;
+         this.disconnectListener = null;
+@@ -330,7 +335,14 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+             configMessage = configMessage.andThen(ctx -> ctx.pipeline().addAfter(HandlerNames.DECODER, HandlerNames.BUNDLER, newBundler));
+         }
+ 
+-        syncAfterConfigurationChange(this.channel.writeAndFlush(configMessage));
++        // Leaf start - Async switch connection state
++        var cf = this.channel.writeAndFlush(configMessage);
++        if (org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled && ca.spottedleaf.moonrise.common.util.TickThread.isTickThread()) {
++            cf.addListener((ChannelFutureListener) Connection::syncAfterConfigurationChange);
++            return;
++        }
++        syncAfterConfigurationChange(cf);
++        // Leaf end - Async switch connection state
+     }
+ 
+     public void setupOutboundProtocol(final ProtocolInfo<?> protocol) {
+@@ -349,6 +361,31 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         syncAfterConfigurationChange(this.channel.writeAndFlush(configMessage.andThen(ctx -> this.sendLoginDisconnect = isLoginProtocol)));
+     }
+ 
++    // Leaf start - Async switch connection state
++    public @Nullable ChannelFuture setupOutboundProtocolAsync(final ProtocolInfo<?> protocol) {
++        if (protocol.flow() != this.getSending()) {
++            throw new IllegalStateException("Invalid outbound protocol: " + protocol.id());
++        }
++
++        UnconfiguredPipelineHandler.OutboundConfigurationTask configMessage = UnconfiguredPipelineHandler.setupOutboundProtocol(protocol);
++        BundlerInfo bundlerInfo = protocol.bundlerInfo();
++        if (bundlerInfo != null) {
++            PacketBundleUnpacker newUnbundler = new PacketBundleUnpacker(bundlerInfo);
++            configMessage = configMessage.andThen(
++                ctx -> ctx.pipeline().addAfter(HandlerNames.ENCODER, HandlerNames.UNBUNDLER, newUnbundler)
++            );
++        }
++
++        boolean isLoginProtocol = protocol.id() == ConnectionProtocol.LOGIN;
++        var cf = this.channel.writeAndFlush(configMessage.andThen(ctx -> this.sendLoginDisconnect = isLoginProtocol));
++        if (org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled) {
++            cf.addListener((ChannelFutureListener) Connection::syncAfterConfigurationChange);
++            return cf;
++        }
++        return null;
++    }
++    // Leaf end - Async switch connection state
++
+     public void setListenerForServerboundHandshake(final PacketListener packetListener) {
+         if (this.packetListener != null) {
+             throw new IllegalStateException("Listener already set");
+diff --git a/net/minecraft/server/network/ServerConfigurationPacketListenerImpl.java b/net/minecraft/server/network/ServerConfigurationPacketListenerImpl.java
+index 6baa9d2a8af7901d47964e6d7ad53ea7963ceeef..b6fbcd4329d94af940b1aff50d9b1ae7e491ca1b 100644
+--- a/net/minecraft/server/network/ServerConfigurationPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerConfigurationPacketListenerImpl.java
+@@ -192,11 +192,33 @@ public class ServerConfigurationPacketListenerImpl extends ServerCommonPacketLis
+         this.finishCurrentTask(ServerCodeOfConductConfigurationTask.TYPE);
+     }
+ 
++    private volatile boolean changingState = false; // Leaf - Async switch connection state
+     @Override
+     public void handleConfigurationFinished(final ServerboundFinishConfigurationPacket packet) {
++        // Leaf start - Async switch connection state
++        if (org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled && !changingState) {
++            changingState = true;
++            this.finishCurrentTask(JoinWorldTask.TYPE);
++            this.connection.setupOutboundProtocolAsync(GameProtocols.CLIENTBOUND_TEMPLATE.bind(RegistryFriendlyByteBuf.decorator(this.server.registryAccess()))).addListener(l -> {
++                try {
++                    PacketUtils.ensureRunningOnSameThread(packet, this, this.server.packetProcessor());
++                } catch (net.minecraft.server.RunningOnDifferentThreadException var5) {
++                } catch (io.papermc.paper.util.ServerStopRejectedExecutionException ignored) { // Paper - do not prematurely disconnect players on stop
++                } catch (java.util.concurrent.RejectedExecutionException ignored) {
++                    this.connection.disconnect(Component.translatable("multiplayer.disconnect.server_shutdown"));
++                } catch (ClassCastException exception) {
++                    LOGGER.error("Received {} that couldn't be processed", packet.getClass(), exception);
++                    this.connection.disconnect(Component.translatable("multiplayer.disconnect.invalid_packet"));
++                }
++            });
++            return;
++        }
++        // Leaf end - Async switch connection state
+         PacketUtils.ensureRunningOnSameThread(packet, this, this.server.packetProcessor());
++        if (!org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled) { // Leaf - Async switch connection state
+         this.finishCurrentTask(JoinWorldTask.TYPE);
+         this.connection.setupOutboundProtocol(GameProtocols.CLIENTBOUND_TEMPLATE.bind(RegistryFriendlyByteBuf.decorator(this.server.registryAccess())));
++        } // Leaf - Async switch connection state
+ 
+         try {
+             PlayerList playerList = this.server.getPlayerList();
+diff --git a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+index 5db53a0b4b8d5581e14ae095e79c85a9f6bff38f..6ca6bdad9af24444eaf96ac315270d2759b1345b 100644
+--- a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+@@ -456,11 +456,30 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         this.disconnect(ServerCommonPacketListenerImpl.DISCONNECT_UNEXPECTED_QUERY);
+     }
+ 
++    private volatile boolean changingState = false; // Leaf - Async switch connection state
+     @Override
+     public void handleLoginAcknowledgement(final ServerboundLoginAcknowledgedPacket packet) {
++        // Leaf start - Async switch connection state
++        if (org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled && !changingState) {
++            changingState = true;
++            this.connection.setupOutboundProtocolAsync(ConfigurationProtocols.CLIENTBOUND).addListener(l -> {
++                try {
++                    net.minecraft.network.protocol.PacketUtils.ensureRunningOnSameThread(packet, this, this.server.packetProcessor());
++                } catch (net.minecraft.server.RunningOnDifferentThreadException var5) {
++                } catch (io.papermc.paper.util.ServerStopRejectedExecutionException ignored) { // Paper - do not prematurely disconnect players on stop
++                } catch (java.util.concurrent.RejectedExecutionException ignored) {
++                    this.connection.disconnect(Component.translatable("multiplayer.disconnect.server_shutdown"));
++                } catch (ClassCastException exception) {
++                    LOGGER.error("Received {} that couldn't be processed", packet.getClass(), exception);
++                    this.connection.disconnect(Component.translatable("multiplayer.disconnect.invalid_packet"));
++                }
++            });
++            return;
++        }
++        // Leaf end - Async switch connection state
+         net.minecraft.network.protocol.PacketUtils.ensureRunningOnSameThread(packet, this, this.server.packetProcessor()); // CraftBukkit
+         Validate.validState(this.state == ServerLoginPacketListenerImpl.State.PROTOCOL_SWITCHING, "Unexpected login acknowledgement packet");
+-        this.connection.setupOutboundProtocol(ConfigurationProtocols.CLIENTBOUND);
++        if (!org.dreeam.leaf.config.modules.network.AlternativeJoin.enabled) this.connection.setupOutboundProtocol(ConfigurationProtocols.CLIENTBOUND); // Leaf - Async switch connection state
+         CommonListenerCookie cookie = CommonListenerCookie.createInitial(Objects.requireNonNull(this.authenticatedProfile), this.transferred);
+         ServerConfigurationPacketListenerImpl configPacketListener = new ServerConfigurationPacketListenerImpl(this.server, this.connection, cookie);
+         this.connection.setupInboundProtocol(ConfigurationProtocols.SERVERBOUND, configPacketListener);

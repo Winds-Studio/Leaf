@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class EntityGoal extends ConfigModules {
+public class EntityGoal extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".entity-goal";
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".entity-goal";
     }
 
     public static int chanceTarget = -1; // only all <= 10
@@ -17,12 +17,12 @@ public class EntityGoal extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        String path = getBasePath() + ".start-tick-chance";
-        chanceTarget = config.getInt(path + ".nearest-attackable-target", -1);
-        chanceFollowParent = config.getInt(path + ".follow-parent", -1);
-        chanceAvoidEntity = config.getInt(path + ".avoid-entity", -1);
-        chanceTempt = config.getInt(path + ".temptation", -1);
-        chanceEndermanLookForPlayer = config.getInt(path + ".enderman-look-for-player", -1);
+        String path = basePath() + ".start-tick-chance";
+        chanceTarget = globalConfig.getInt(path + ".nearest-attackable-target", -1);
+        chanceFollowParent = globalConfig.getInt(path + ".follow-parent", -1);
+        chanceAvoidEntity = globalConfig.getInt(path + ".avoid-entity", -1);
+        chanceTempt = globalConfig.getInt(path + ".temptation", -1);
+        chanceEndermanLookForPlayer = globalConfig.getInt(path + ".enderman-look-for-player", -1);
 
         // expect nearest_attackable_target
         if (chanceFollowParent < 1) {

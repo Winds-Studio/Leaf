@@ -1,0 +1,332 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: froobynooby <froobynooby@froobworld.com>
+Date: Wed, 17 Jul 2024 18:46:11 +0930
+Subject: [PATCH] Paper PR: Throttle failed spawn attempts
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/11099
+
+For example config in paper-world-defaults.yml
+```
+    spawning-throttle:
+      failed-attempts-threshold: 1200
+      throttled-ticks-per-spawn:
+        ambient: 10 # default value in bukkit.yml tickers-per * 10
+        axolotls: 10
+        creature: 4000
+        monster: 10
+        underground_water_creature: 10
+        water_ambient: 10
+        water_creature: 10
+```
+
+This patch adds the option to use longer ticks-per-spawn for a given
+mob type in chunks where spawn attempts are consecutively failing.
+
+This behaviour is particularly useful on servers where players build
+mob farms. Mob farm designs often require making surrounding chunks
+spawnproof, which causes the server to waste CPU cycles trying to spawn mobs in
+vain. Throttling spawn attempts in suspected spawnproof chunks improves
+performance without noticeably advantaging or disadvantaging the mob farm.
+
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index 6f9b639a73bb764be820544e5732e7e8c66d0206..f7b592914d67f549c9391310b1d72c0ebbb2f963 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -170,10 +170,21 @@ public final class NaturalSpawner {
+                 // Copied from getFilteredSpawningCategories
+                 int limit = mobCategory.getMaxInstancesPerChunk();
+                 org.bukkit.entity.SpawnCategory spawnCategory = org.bukkit.craftbukkit.util.CraftSpawnCategory.toBukkit(mobCategory);
++                // Paper PR start - throttle failed spawn attempts
++                boolean spawnThisTick = true;
++                long ticksPerSpawn = level.ticksPerSpawnCategory.getLong(spawnCategory);
++                long ticksPerSpawnTmp = ticksPerSpawn;
++                io.papermc.paper.configuration.WorldConfiguration.Entities.Spawning.SpawningThrottle spawningThrottle = level.paperConfig().entities.spawning.spawningThrottle;
++                if (spawningThrottle.failedAttemptsThreshold.test(threshold -> chunk.failedSpawnAttempts[mobCategory.ordinal()] > threshold)) {
++                    ticksPerSpawn = Math.max(ticksPerSpawn, spawningThrottle.throttledTicksPerSpawn.getOrDefault(mobCategory, -1));
++                }
++                // Paper PR end - throttle failed spawn attempts
+                 if (org.bukkit.craftbukkit.util.CraftSpawnCategory.isValidForLimits(spawnCategory)) {
++                    spawnThisTick = ticksPerSpawnTmp != 0 && level.getGameTime() % ticksPerSpawn == 0; // Paper PR - throttle failed spawn attempts
+                     limit = level.getWorld().getSpawnLimit(spawnCategory);
+                 }
+ 
++                if (!spawningThrottle.failedAttemptsThreshold.enabled() || spawnThisTick) { // Paper PR - throttle failed spawn attempts
+                 // Apply per-player limit
+                 int minDiff = Integer.MAX_VALUE;
+                 final ca.spottedleaf.moonrise.common.list.ReferenceList<net.minecraft.server.level.ServerPlayer> inRange =
+@@ -187,12 +198,20 @@ public final class NaturalSpawner {
+ 
+                 maxSpawns = (minDiff == Integer.MAX_VALUE) ? 0 : minDiff;
+                 canSpawn = maxSpawns > 0;
++                } else { canSpawn = false; } // Paper PR - throttle failed spawn attempts
+             } else {
+                 canSpawn = state.canSpawnForCategoryLocal(mobCategory, chunk.getPos());
+             }
+             if (canSpawn) {
+-                spawnCategoryForChunk(mobCategory, level, chunk, state::canSpawn, state::afterSpawn,
+-                    maxSpawns, level.paperConfig().entities.spawning.perPlayerMobSpawns ? level.getChunkSource().chunkMap::updatePlayerMobTypeMap : null);
++                // Paper PR start - throttle failed spawn attempts
++                int spawnCount = spawnCategoryForChunk(mobCategory, level, chunk, state::canSpawn, state::afterSpawn,
++                    maxSpawns, level.paperConfig().entities.spawning.perPlayerMobSpawns ? level.getChunkSource().chunkMap::updatePlayerMobTypeMap : null, false);
++                if (spawnCount == 0) {
++                    chunk.failedSpawnAttempts[mobCategory.ordinal()]++;
++                } else {
++                    chunk.failedSpawnAttempts[mobCategory.ordinal()] = 0;
++                }
++                // Paper end PR - throttle failed spawn attempts
+                 // Paper end - Optional per player mob spawns
+             }
+         }
+@@ -229,11 +248,27 @@ public final class NaturalSpawner {
+         final int maxSpawns,
+         final Consumer<Entity> trackEntity
+     ) {
++        // Paper PR start - throttle failed spawn attempts
++        spawnCategoryForChunk(mobCategory, level, chunk, extraTest, spawnCallback, maxSpawns, trackEntity, false);
++    }
++    public static int spawnCategoryForChunk(
++        final MobCategory mobCategory,
++        final ServerLevel level,
++        final LevelChunk chunk,
++        final NaturalSpawner.SpawnPredicate extraTest,
++        final NaturalSpawner.AfterSpawnCallback spawnCallback,
++        final int maxSpawns,
++        final Consumer<Entity> trackEntity,
++        final boolean nothing
++    ) {
++        // Paper PR end - throttle failed spawn attempts
+         // Paper end - Optional per player mob spawns
+         BlockPos start = getRandomPosWithin(level, chunk);
+         if (start.getY() >= level.getMinY() + 1) {
+-            spawnCategoryForPosition(mobCategory, level, chunk, start, extraTest, spawnCallback, maxSpawns, trackEntity); // Paper - Optional per player mob spawns
++            return spawnCategoryForPosition(mobCategory, level, chunk, start, extraTest, spawnCallback, maxSpawns, trackEntity, false); // Paper - Optional per player mob spawns // Paper PR - throttle failed spawn attempts
+         }
++
++        return 0; // Paper PR - throttle failed spawn attempts
+     }
+ 
+     @VisibleForDebug
+@@ -261,15 +296,31 @@ public final class NaturalSpawner {
+         final NaturalSpawner.AfterSpawnCallback spawnCallback,
+         final int maxSpawns,
+         final @Nullable Consumer<Entity> trackEntity
++        // Paper PR start - throttle failed spawn attempts
++    ) {
++        spawnCategoryForPosition(mobCategory, level, chunk, start, extraTest, spawnCallback, maxSpawns, trackEntity, false);
++    }
++    public static int spawnCategoryForPosition(
++        final MobCategory mobCategory,
++        final ServerLevel level,
++        final ChunkAccess chunk,
++        final BlockPos start,
++        final NaturalSpawner.SpawnPredicate extraTest,
++        final NaturalSpawner.AfterSpawnCallback spawnCallback,
++        final int maxSpawns,
++        final @Nullable Consumer<Entity> trackEntity,
++        final boolean nothing
++        // Paper PR end - throttle failed spawn attempts
+     ) {
+         // Paper end - Optional per player mob spawns
+         StructureManager structureManager = level.structureManager();
+         ChunkGenerator generator = level.getChunkSource().getGenerator();
+         int yStart = start.getY();
++        int clusterSize = 0; // Paper PR - throttle failed spawn attempts
+         BlockState state = level.getBlockStateIfLoadedAndInBounds(start); // Paper - don't load chunks for mob spawn
+         if (state != null && !state.isRedstoneConductor(chunk, start)) { // Paper - don't load chunks for mob spawn
+             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+-            int clusterSize = 0;
++            //int clusterSize = 0; // Paper PR - throttle failed spawn attempts - move up
+ 
+             for (int groupCount = 0; groupCount < 3; groupCount++) {
+                 int x = start.getX();
+@@ -310,14 +361,14 @@ public final class NaturalSpawner {
+                             }
+                             // Paper end - per player mob count backoff
+                             if (doSpawning == PreSpawnStatus.ABORT) {
+-                                return;
++                                return clusterSize; // Paper PR - throttle failed spawn attempts
+                             }
+                             if (doSpawning == PreSpawnStatus.SUCCESS
+                             // Paper end - PreCreatureSpawnEvent
+                                 && extraTest.test(currentSpawnData.type(), pos, chunk)) {
+                                 Mob mob = getMobForSpawn(level, currentSpawnData.type());
+                                 if (mob == null) {
+-                                    return;
++                                    return clusterSize; // Paper PR - throttle failed spawn attempts
+                                 }
+ 
+                                 mob.snapTo(xx, yStart, zz, level.random.nextFloat() * 360.0F, 0.0F);
+@@ -340,7 +391,7 @@ public final class NaturalSpawner {
+                                     }
+                                     // CraftBukkit end
+                                     if (clusterSize >= maxSpawns || clusterSize >= mob.getMaxSpawnClusterSize()) { // Paper - Optional per player mob spawns
+-                                        return;
++                                        return clusterSize; // Paper PR - throttle failed spawn attempts
+                                     }
+ 
+                                     if (mob.isMaxGroupSizeReached(groupSize)) {
+@@ -353,6 +404,7 @@ public final class NaturalSpawner {
+                 }
+             }
+         }
++        return clusterSize; // Paper PR - throttle failed spawn attempts
+     }
+ 
+     private static boolean isRightDistanceToPlayerAndSpawnPoint(
+diff --git a/net/minecraft/world/level/chunk/ChunkAccess.java b/net/minecraft/world/level/chunk/ChunkAccess.java
+index f6cecf0ec1ebf9dd7028877dcadf191d1a2d954c..dd4f4fe9f36e16b2014f66fbdb684b5ebb226fa7 100644
+--- a/net/minecraft/world/level/chunk/ChunkAccess.java
++++ b/net/minecraft/world/level/chunk/ChunkAccess.java
+@@ -87,6 +87,7 @@ public abstract class ChunkAccess implements LightChunk, StructureAccess, BiomeM
+     private boolean slimeChunk;
+     private boolean hasComputedSlimeChunk;
+     // Leaf end - Matter - Secure Seed
++    public final long[] failedSpawnAttempts = new long[net.minecraft.server.level.ServerPlayer.MOBCATEGORY_TOTAL_ENUMS]; // Paper PR - throttle failed spawn attempts
+ 
+     // Paper start - rewrite chunk system
+     private volatile ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles;
+diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+index 7d29fdc6548324d97ec34d476b5b48ec0bdba0d2..c23dac3a7cafe33e67b04cd913f592c5bedb677d 100644
+--- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
++++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+@@ -93,6 +93,7 @@ public record SerializableChunkData(
+     List<CompoundTag> blockEntities,
+     CompoundTag structureData
+     , net.minecraft.nbt.@Nullable Tag persistentDataContainer // CraftBukkit - persistentDataContainer
++    , long @Nullable [] failedSpawnAttempts // Paper PR - throttle failed spawn attempts
+ ) {
+     private static final Codec<List<SavedTick<Block>>> BLOCK_TICKS_CODEC = SavedTick.codec(BuiltInRegistries.BLOCK.byNameCodec()).listOf();
+     private static final Codec<List<SavedTick<Fluid>>> FLUID_TICKS_CODEC = SavedTick.codec(BuiltInRegistries.FLUID.byNameCodec()).listOf();
+@@ -188,6 +189,19 @@ public record SerializableChunkData(
+             }
+         }
+ 
++        // Paper PR start - throttle failed spawn attempts
++        long[] failedSpawnAttemptsData = null;
++        if (chunkData.contains("Paper.FailedSpawnAttempts")) {
++            failedSpawnAttemptsData = new long[net.minecraft.world.entity.MobCategory.values().length];
++            CompoundTag failedSpawnAttemptsTag = chunkData.getCompoundOrEmpty("Paper.FailedSpawnAttempts");
++            for (net.minecraft.world.entity.MobCategory mobCategory : net.minecraft.world.level.NaturalSpawner.SPAWNING_CATEGORIES) {
++                if (failedSpawnAttemptsTag.contains(mobCategory.getSerializedName())) {
++                    failedSpawnAttemptsData[mobCategory.ordinal()] = failedSpawnAttemptsTag.getLongOr(mobCategory.getSerializedName(), 0);
++                }
++            }
++        }
++        // Paper PR end - throttle failed spawn attempts
++
+         List<CompoundTag> entities = chunkData.getList("entities").stream().flatMap(ListTag::compoundStream).toList();
+         List<CompoundTag> blockEntities = chunkData.getList("block_entities").stream().flatMap(ListTag::compoundStream).toList();
+         CompoundTag structureData = chunkData.getCompoundOrEmpty("structures");
+@@ -260,6 +274,7 @@ public record SerializableChunkData(
+             blockEntities,
+             structureData
+             , chunkData.get("ChunkBukkitValues") // CraftBukkit - ChunkBukkitValues
++            , failedSpawnAttemptsData // Paper PR - throttle failed spawn attempts
+         );
+     }
+ 
+@@ -418,6 +433,13 @@ public record SerializableChunkData(
+             }
+         }
+ 
++        // Paper PR start - throttle failed spawn attempts
++        long[] failedSpawnAttemptsData = this.failedSpawnAttempts;
++        if (failedSpawnAttemptsData != null) {
++            System.arraycopy(failedSpawnAttemptsData, 0, chunk.failedSpawnAttempts, 0, failedSpawnAttemptsData.length);
++        }
++        // Paper PR end - throttle failed spawn attempts
++
+         if (chunkType == ChunkType.LEVELCHUNK) {
+             return this.loadStarlightLightData(level, new ImposterProtoChunk((LevelChunk)chunk, false)); // Paper - starlight
+         }
+@@ -529,6 +551,7 @@ public record SerializableChunkData(
+             persistentDataContainer = chunk.persistentDataContainer.toTagCompound();
+         }
+         // CraftBukkit end
++        final long[] failedSpawnAttemptsData = chunk.failedSpawnAttempts; // Paper PR - throttle failed spawn attempts
+         return new SerializableChunkData(
+             level.palettedContainerFactory(),
+             pos,
+@@ -549,6 +572,7 @@ public record SerializableChunkData(
+             blockEntities,
+             structureData
+             , persistentDataContainer // CraftBukkit - persistentDataContainer
++            , failedSpawnAttemptsData // Paper PR - throttle failed spawn attempts
+         );
+     }
+ 
+@@ -633,6 +657,21 @@ public record SerializableChunkData(
+             tag.put("ChunkBukkitValues", this.persistentDataContainer);
+         }
+         // CraftBukkit end
++        // Paper PR start - throttle failed spawn attempts
++        CompoundTag failedSpawnAttemptsTag = new CompoundTag();
++        long[] failedSpawnAttemptsData = this.failedSpawnAttempts;
++        if (failedSpawnAttemptsData != null) {
++            for (net.minecraft.world.entity.MobCategory mobCategory : net.minecraft.world.entity.MobCategory.values()) {
++                long failedAttempts = failedSpawnAttemptsData[mobCategory.ordinal()];
++                if (failedAttempts > 0) {
++                    failedSpawnAttemptsTag.putLong(mobCategory.getSerializedName(), failedAttempts);
++                }
++            }
++        }
++        if (!failedSpawnAttemptsTag.isEmpty()) {
++            tag.put("Paper.FailedSpawnAttempts", failedSpawnAttemptsTag);
++        }
++        // Paper PR end - throttle failed spawn attempts
+         // Paper start - starlight
+         if (this.lightCorrect && !this.chunkStatus.isBefore(net.minecraft.world.level.chunk.status.ChunkStatus.LIGHT)) {
+             // clobber vanilla value to force vanilla to relight
+@@ -844,4 +883,50 @@ public record SerializableChunkData(
+         }
+         // Paper end - starlight - convert from record
+     }
++
++    // Paper PR start - throttle failed spawn attempts
++    // For plugin compatibility
++    public SerializableChunkData(
++        final PalettedContainerFactory containerFactory,
++        final ChunkPos chunkPos,
++        final int minSectionY,
++        final long lastUpdateTime,
++        final long inhabitedTime,
++        final ChunkStatus chunkStatus,
++        final BlendingData.@Nullable Packed blendingData,
++        final @Nullable BelowZeroRetrogen belowZeroRetrogen,
++        final UpgradeData upgradeData,
++        final long @Nullable [] carvingMask,
++        final Map<Heightmap.Types, long[]> heightmaps,
++        final ChunkAccess.PackedTicks packedTicks,
++        final @Nullable ShortList[] postProcessingSections,
++        final boolean lightCorrect,
++        final List<SerializableChunkData.SectionData> sectionData,
++        final List<CompoundTag> entities,
++        final List<CompoundTag> blockEntities,
++        final CompoundTag structureData
++        , final net.minecraft.nbt.@Nullable Tag persistentDataContainer // CraftBukkit - persistentDataContainer
++    ) {
++        this(containerFactory,
++            chunkPos,
++            minSectionY,
++            lastUpdateTime,
++            inhabitedTime,
++            chunkStatus,
++            blendingData,
++            belowZeroRetrogen,
++            upgradeData,
++            carvingMask,
++            heightmaps,
++            packedTicks,
++            postProcessingSections,
++            lightCorrect,
++            sectionData,
++            entities,
++            blockEntities,
++            structureData,
++            persistentDataContainer,
++            null);
++    }
++    // Paper PR end - throttle failed spawn attempts
+ }

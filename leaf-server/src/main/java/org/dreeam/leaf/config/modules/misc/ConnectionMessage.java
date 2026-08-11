@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class ConnectionMessage extends ConfigModules {
+public class ConnectionMessage extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".connection-message";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".connection-message";
     }
 
     public static boolean joinEnabled = true;
@@ -16,7 +16,7 @@ public class ConnectionMessage extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 Connection message, using MiniMessage format, set to "default" to use vanilla join message.
                 available placeholders:
                 <player_name> - player name
@@ -27,14 +27,14 @@ public class ConnectionMessage extends ConfigModules {
                 <player_name> - 玩家名称
                 <player_displayname> - 玩家显示名称""");
 
-        joinEnabled = config.getBoolean(getBasePath() + ".join.enabled", joinEnabled);
-        joinMessage = config.getString(getBasePath() + ".join.message", joinMessage, config.pickStringRegionBased(
+        joinEnabled = globalConfig.getBoolean(basePath() + ".join.enabled", joinEnabled);
+        joinMessage = globalConfig.getString(basePath() + ".join.message", joinMessage, globalConfig.pickStringRegionBased(
             "Join message of player",
             "玩家加入服务器时的消息"
         ));
 
-        quitEnabled = config.getBoolean(getBasePath() + ".quit.enabled", quitEnabled);
-        quitMessage = config.getString(getBasePath() + ".quit.message", quitMessage, config.pickStringRegionBased(
+        quitEnabled = globalConfig.getBoolean(basePath() + ".quit.enabled", quitEnabled);
+        quitMessage = globalConfig.getString(basePath() + ".quit.message", quitMessage, globalConfig.pickStringRegionBased(
             "Quit message of player",
             "玩家退出服务器时的消息"));
 

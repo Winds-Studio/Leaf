@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Sun, 10 Jan 2077 00:00:00 +0800
+Subject: [PATCH] Paper PR: Fix cancelled rooted dirt drops being duped
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper pull request: https://github.com/PaperMC/Paper/pull/13537
+
+This PR fixes Paper#13536, cancelled rooted dirt drops being duped
+
+Analysis
+
+```
+protected static final Map<Block, Pair<Predicate<UseOnContext>, Consumer<UseOnContext>>> TILLABLES = Maps.newHashMap(
+        ImmutableMap.of(
+            Blocks.GRASS_BLOCK,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.FARMLAND.defaultBlockState())),
+            Blocks.DIRT_PATH,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.FARMLAND.defaultBlockState())),
+            Blocks.DIRT,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.FARMLAND.defaultBlockState())),
+            Blocks.COARSE_DIRT,
+            Pair.of(HoeItem::onlyIfAirAbove, changeIntoState(Blocks.DIRT.defaultBlockState())),
+            Blocks.ROOTED_DIRT,
+            Pair.of(useOnContext -> true, changeIntoStateAndDropItem(Blocks.DIRT.defaultBlockState(), Items.HANGING_ROOTS))
+        )
+    );
+```
+
+The rooted dirt item drop logic is being processed in HoeItem#useOn, the drop capturing isn't enabled in this path, causing hanging roots to still be dropped even BlockPlaceEvent is cancelled.
+This bug has existed since 1.19, after Mojang added the rooted dirt.
+
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index 4cdc2d2bb5e0b503f369839a297e15c8a7ffc37c..27122aa287626a7deb70bad5b601fe086e268b82 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -394,12 +394,24 @@ public final class ItemStack implements DataComponentHolder, ItemInstance, net.c
+         List<org.bukkit.craftbukkit.block.CraftBlockState> capturedBlockStates;
+         List<net.minecraft.world.level.block.entity.BlockEntity> capturedBlockEntities;
+         org.bukkit.TreeType treeType;
++        // Paper start - Fix cancelled rooted dirt drops being duped
++        List<ItemEntity> capturedDrops = null;
++        if (item != null && item.value() instanceof HoeItem) {
++            capturedDrops = new java.util.ArrayList<>();
++            level.captureDrops = capturedDrops;
++        }
++        // Paper end - Fix cancelled rooted dirt drops being duped
+         InteractionResult result;
+         try {
+             result = usedItem.useOn(context);
+         } finally {
+             level.captureBlockStates = false;
+             level.captureTreeGeneration = false;
++            // Paper start - Fix cancelled rooted dirt drops being duped
++            if (capturedDrops != null) {
++                level.captureDrops = null;
++            }
++            // Paper end - Fix cancelled rooted dirt drops being duped
+ 
+             capturedBlockStates = new java.util.ArrayList<>(level.capturedBlockStates.values());
+             level.capturedBlockStates.clear();
+@@ -439,6 +451,15 @@ public final class ItemStack implements DataComponentHolder, ItemInstance, net.c
+                     snapshot.place(snapshot.getFlags());
+                     level.checkCapturedTreeStateForObserverNotify(pos, snapshot); // Paper - notify observers even if grow failed
+                 }
++
++                // Paper start - Fix cancelled rooted dirt drops being duped
++                if (capturedDrops != null) {
++                    for (ItemEntity drop : capturedDrops) {
++                        level.addFreshEntity(drop);
++                    }
++                }
++                // Paper end - Fix cancelled rooted dirt drops being duped
++
+                 player.awardStat(Stats.ITEM_USED.get(usedItem)); // SPIGOT-7236 - award stat
+             }
+             return result;
+@@ -510,6 +531,14 @@ public final class ItemStack implements DataComponentHolder, ItemInstance, net.c
+                     level.playSound(player, pos, blockItem.getPlaceSound(placedState), net.minecraft.sounds.SoundSource.BLOCKS, (soundType.getVolume() + 1.0F) / 2.0F, soundType.getPitch() * 0.8F);
+                 }
+ 
++                // Paper start - Fix cancelled rooted dirt drops being duped
++                if (capturedDrops != null) {
++                    for (ItemEntity drop : capturedDrops) {
++                        level.addFreshEntity(drop);
++                    }
++                }
++                // Paper end - Fix cancelled rooted dirt drops being duped
++
+                 player.awardStat(Stats.ITEM_USED.get(usedItem));
+             }
+         }

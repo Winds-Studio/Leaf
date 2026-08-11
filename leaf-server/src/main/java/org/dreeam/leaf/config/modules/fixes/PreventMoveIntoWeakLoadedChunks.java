@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.fixes;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
+public class PreventMoveIntoWeakLoadedChunks extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.FIXES.getBaseKeyName() + ".prevent-moving-into-weak-loaded-chunks";
+    public String basePath() {
+        return ConfigCategory.FIXES.basePath() + ".prevent-moving-into-weak-loaded-chunks";
     }
 
     public static boolean enabled = false;
@@ -18,17 +18,17 @@ public class PreventMoveIntoWeakLoadedChunks extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(),
+        globalConfig.addCommentRegionBased(basePath(),
             "Prevents entities from moving into weak loaded chunks.",
             "阻止实体进入弱加载区块。"
         );
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled, config().pickStringRegionBased(
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled, globalConfig.pickStringRegionBased(
             "Set to true to enable features below.",
             "设置为 true 以启用以下功能。"
         ));
 
-        projectiles = config.getBoolean(getBasePath() + ".projectiles", projectiles, config().pickStringRegionBased(
+        projectiles = globalConfig.getBoolean(basePath() + ".projectiles", projectiles, globalConfig.pickStringRegionBased(
             "Prevents projectiles from moving into weak loaded chunks.",
             "阻止弹射物进入弱加载区块。"
         ));

@@ -1,20 +1,20 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class RemoveChangeNonEditableSignWarning extends ConfigModules {
+public class RemoveChangeNonEditableSignWarning extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName();
+    public String basePath() {
+        return ConfigCategory.MISC.basePath();
     }
 
     public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".remove-change-non-editable-sign-warning", enabled,
-            config.pickStringRegionBased(
+        enabled = globalConfig.getBoolean(basePath() + ".remove-change-non-editable-sign-warning", enabled,
+            globalConfig.pickStringRegionBased(
                 "Enable to prevent console spam.",
                 "移除修改无法编辑的告示牌时输出的警告."
             ));

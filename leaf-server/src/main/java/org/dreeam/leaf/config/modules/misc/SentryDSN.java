@@ -1,13 +1,13 @@
 package org.dreeam.leaf.config.modules.misc;
 
 import org.apache.logging.log4j.Level;
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class SentryDSN extends ConfigModules {
+public class SentryDSN extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".sentry";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".sentry";
     }
 
     public static String sentryDsnConfigPath;
@@ -18,7 +18,7 @@ public class SentryDSN extends ConfigModules {
     @Override
     public void onLoaded() {
         String sentryEnvironment = System.getenv("SENTRY_DSN");
-        String sentryConfig = config.getString(sentryDsnConfigPath = getBasePath() + ".dsn", sentryDsn, config.pickStringRegionBased("""
+        String sentryConfig = globalConfig.getString(sentryDsnConfigPath = basePath() + ".dsn", sentryDsn, globalConfig.pickStringRegionBased("""
                 Sentry DSN for improved error logging, leave blank to disable,
                 Obtain from https://sentry.io/""",
             """
@@ -27,11 +27,11 @@ public class SentryDSN extends ConfigModules {
         sentryDsn = sentryEnvironment == null
             ? sentryConfig
             : sentryEnvironment;
-        logLevel = config.getString(getBasePath() + ".log-level", logLevel, config.pickStringRegionBased("""
+        logLevel = globalConfig.getString(basePath() + ".log-level", logLevel, globalConfig.pickStringRegionBased("""
                 Logs with a level higher than or equal to this level will be recorded.""",
             """
                 大于等于该等级的日志会被记录."""));
-        onlyLogThrown = config.getBoolean(getBasePath() + ".only-log-thrown", onlyLogThrown, config.pickStringRegionBased("""
+        onlyLogThrown = globalConfig.getBoolean(basePath() + ".only-log-thrown", onlyLogThrown, globalConfig.pickStringRegionBased("""
                 Only log with a Throwable will be recorded after enabling this.""",
             """
                 是否仅记录带有 Throwable 的日志."""));

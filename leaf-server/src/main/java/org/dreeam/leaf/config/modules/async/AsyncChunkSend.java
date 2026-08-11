@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.async;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class AsyncChunkSend extends ConfigModules {
+public class AsyncChunkSend extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.ASYNC.getBaseKeyName() + ".async-chunk-send";
+    public String basePath() {
+        return ConfigCategory.ASYNC.basePath() + ".async-chunk-send";
     }
 
     public static boolean enabled = false;
@@ -14,7 +14,7 @@ public class AsyncChunkSend extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        config.addCommentRegionBased(getBasePath(), """
+        globalConfig.addCommentRegionBased(basePath(), """
                 Makes chunk packet preparation and sending asynchronous to improve server performance.
                 This can significantly reduce main thread load when many players are loading chunks.""",
             """
@@ -22,11 +22,11 @@ public class AsyncChunkSend extends ConfigModules {
                 当许多玩家同时加载区块时, 这可以显著减少主线程负载.""");
 
         if (asyncChunkSendInitialized) {
-            config.getConfigSection(getBasePath());
+            globalConfig.getConfigSection(basePath());
             return;
         }
         asyncChunkSendInitialized = true;
 
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled);
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
     }
 }

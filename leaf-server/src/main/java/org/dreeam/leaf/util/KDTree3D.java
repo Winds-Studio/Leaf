@@ -30,6 +30,9 @@ public final class KDTree3D {
             ensureSearch(0, 0);
             return;
         }
+        for (int i = 0; i < indices.length; i++) {
+            indices[i] = i;
+        }
 
         int st = 0;
         ensureConstruct(st);
@@ -104,6 +107,10 @@ public final class KDTree3D {
         return ENABLE_FMA
             ? Math.fma(dz, dz, Math.fma(dy, dy, dx * dx))
             : dx * dx + dy * dy + dz * dz;
+    }
+
+    public boolean isEmpty() {
+        return this.search.length == 0 || this.search[0] == SENTINEL;
     }
 
     public double nearestSqr(final double tx, final double ty, final double tz, double dist) {
