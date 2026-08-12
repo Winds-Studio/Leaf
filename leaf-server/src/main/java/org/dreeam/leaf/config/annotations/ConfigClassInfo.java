@@ -1,6 +1,6 @@
 package org.dreeam.leaf.config.annotations;
 
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigCategory;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -13,7 +13,7 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface ConfigClassInfo {
 
-    EnumConfigCategory category();
+    ConfigCategory category();
 
     String name();
 

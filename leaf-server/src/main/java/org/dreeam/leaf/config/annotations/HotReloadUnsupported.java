@@ -6,9 +6,9 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Keeps an annotated configuration field unchanged during a hot reload. */
+/** Prevents an annotated field, or every configuration field in an annotated module, from being reloaded. */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.FIELD)
+@Target({ElementType.FIELD, ElementType.TYPE})
 public @interface HotReloadUnsupported {
 }

@@ -33,8 +33,7 @@ final class ConfigModuleLoader {
         ObjectArrays.quickSort(classes, Comparator.comparing((Class<?> clazz) -> clazz.getSimpleName())
             .thenComparing(Class::getName));
         for (Class<?> moduleClass : classes) {
-            if (!ConfigModule.class.isAssignableFrom(moduleClass)
-                || moduleClass.isInterface()
+            if (moduleClass.isInterface()
                 || Modifier.isAbstract(moduleClass.getModifiers())) {
                 continue;
             }
@@ -45,6 +44,9 @@ final class ConfigModuleLoader {
                     (Class<? extends WorldConfigModule>) moduleClass;
                 discoveredWorldModules.add(worldModuleClass);
                 validateAnnotatedModule(moduleClass);
+                continue;
+            }
+            if (!ConfigModule.class.isAssignableFrom(moduleClass)) {
                 continue;
             }
 
@@ -88,18 +90,25 @@ final class ConfigModuleLoader {
         try {
             boolean alreadyInitialized = config.isReload();
             for (Class<? extends WorldConfigModule> moduleClass : worldModules) {
-                WorldConfigModule module = alreadyInitialized ? config.reloadModule(moduleClass) : null;
-                if (module == null) {
-                    module = moduleClass.getConstructor().newInstance();
-                }
-
-                ConfigBinder.bindWorld(module, config, alreadyInitialized);
-                config.registerModule(moduleClass, module);
-                module.onLoaded();
+                loadWorldModule(config, moduleClass, alreadyInitialized);
             }
         } catch (ReflectiveOperationException exception) {
             throw new RuntimeException("Could not load Leaf world configuration modules", exception);
         }
+    }
+
+    private static <T extends WorldConfigModule> void loadWorldModule(
+        LeafWorldConfig config,
+        Class<T> moduleClass,
+        boolean alreadyInitialized
+    ) throws ReflectiveOperationException {
+        T module = alreadyInitialized ? config.reloadModule(moduleClass) : null;
+        if (module == null) {
+            module = moduleClass.getConstructor().newInstance();
+        }
+
+        ConfigBinder.bindWorld(module, config, alreadyInitialized);
+        config.registerModule(moduleClass, module);
     }
 
     static void clearModules() {

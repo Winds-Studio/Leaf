@@ -36,7 +36,7 @@ final class ConfigBinder {
     }
 
     private static void bind(
-        ConfigModule module,
+        Object module,
         LeafConfigAccessor config,
         boolean global,
         boolean alreadyInitialized
@@ -54,11 +54,15 @@ final class ConfigBinder {
             config.addComment(basePath, classInfo.comments());
         }
 
+        boolean skipModuleReload = alreadyInitialized
+            && moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
+
         for (Field field : moduleClass.getDeclaredFields()) {
             boolean skipLoad = field.getAnnotation(DoNotLoad.class) != null;
-            boolean doNotReload = alreadyInitialized
-                && field.getAnnotation(HotReloadUnsupported.class) != null;
+            boolean skipReload = skipModuleReload
+                || alreadyInitialized && field.getAnnotation(HotReloadUnsupported.class) != null;
             ConfigInfo configInfo = field.getAnnotation(ConfigInfo.class);
+
             if (skipLoad || configInfo == null) {
                 continue;
             }
@@ -68,9 +72,11 @@ final class ConfigBinder {
 
             Object target = global ? null : module;
             Object defaultValue = field.get(target);
+            // Always call readValue, to keep comments on reloading
             Object loadedValue = readValue(config, path(basePath, configInfo), configInfo.comments(),
                 field, defaultValue);
-            if (!doNotReload) {
+
+            if (!skipReload) {
                 field.set(target, loadedValue);
             }
         }

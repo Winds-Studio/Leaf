@@ -106,15 +106,19 @@ public class LeafConfig {
         // Create config folder
         createDirectory(CONFIG_DIRECTORY);
 
+        File globalConfigFile = new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE);
+        File worldDefaultsFile = new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE);
+
+        // Read and migrate existing raw values before either config applies defaults.
+        LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile);
+
         globalConfig = new LeafGlobalConfig(init);
 
         // Load config modules
         ConfigModule.initModules();
 
-        File worldDefaultsFile = new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE);
         if (!worldDefaultsFile.exists()) {
-            globalConfig.saveConfig();
-            Files.copy(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE).toPath(), worldDefaultsFile.toPath());
+            Files.createFile(worldDefaultsFile.toPath());
         }
         LeafWorldConfig previousWorldDefaults = worldDefaultsConfig;
         worldDefaultsConfig = LeafWorldConfig.loadDefaults(worldDefaultsFile, previousWorldDefaults);
@@ -252,17 +256,7 @@ public class LeafConfig {
      * @param previousVersion the value of {@code config-version}, or {@code null} when absent
      */
     public static void loadPreviousConfigVersion(String previousVersion) {
-        if (previousVersion == null) {
-            previousConfigVersion = ConfigVersion.initial();
-            return;
-        }
-
-        try {
-            previousConfigVersion = ConfigVersion.parse(previousVersion);
-        } catch (IllegalArgumentException exception) {
-            LOGGER.warn("Invalid Leaf config version '{}'; treating it as an unversioned configuration.", previousVersion);
-            previousConfigVersion = ConfigVersion.initial();
-        }
+        previousConfigVersion = parseStoredConfigVersion(previousVersion, true);
     }
 
     /**
@@ -280,6 +274,10 @@ public class LeafConfig {
         return previousConfigVersion.compareTo(ConfigVersion.parse(version)) < 0;
     }
 
+    static boolean isConfigVersionBefore(String storedVersion, String version) {
+        return parseStoredConfigVersion(storedVersion, false).compareTo(ConfigVersion.parse(version)) < 0;
+    }
+
     /**
      * Returns whether the configuration being loaded is at least {@code version}.
      *
@@ -289,6 +287,21 @@ public class LeafConfig {
      */
     public static boolean isConfigVersionAtLeast(String version) {
         return !isConfigVersionBefore(version);
+    }
+
+    private static ConfigVersion parseStoredConfigVersion(String version, boolean warnIfInvalid) {
+        if (version == null) {
+            return ConfigVersion.initial();
+        }
+
+        try {
+            return ConfigVersion.parse(version);
+        } catch (IllegalArgumentException exception) {
+            if (warnIfInvalid) {
+                LOGGER.warn("Invalid Leaf config version '{}'; treating it as an unversioned configuration.", version);
+            }
+            return ConfigVersion.initial();
+        }
     }
 
     private record ConfigVersion(List<Integer> components) implements Comparable<ConfigVersion> {

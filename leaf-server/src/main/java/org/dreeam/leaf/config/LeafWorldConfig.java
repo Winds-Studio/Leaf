@@ -37,7 +37,7 @@ public final class LeafWorldConfig extends LeafConfigAccessor {
         this.defaults = defaults;
         this.reloadSource = reloadSource;
         try {
-            ConfigModule.loadWorldModules(this);
+            ConfigModuleLoader.loadWorldModules(this);
         } finally {
             this.reloadSource = null;
         }
