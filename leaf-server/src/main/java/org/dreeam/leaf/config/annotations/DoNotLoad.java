@@ -7,7 +7,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a runtime-only or derived field that must never be read from or written to configuration.
+ * Marks a non-configuration field whose value is initialized by module lifecycle hooks from
+ * already loaded configuration fields.
+ *
+ * <p>Fields annotated with {@code DoNotLoad} are never read from or written to configuration
+ * and should not be annotated with {@link ConfigInfo}.</p>
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)

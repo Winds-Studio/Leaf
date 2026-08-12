@@ -171,7 +171,7 @@ abstract class LeafConfigAccessor {
         configFile.addComment(path, LeafConfig.isChineseLocale() ? cn : en);
     }
 
-    public String pickStringRegionBased(String en, String cn) {
-        return LeafConfig.isChineseLocale() ? cn : en;
+    public String pickStringRegionBased(String[] localizedStrings) {
+        return LeafConfig.isChineseLocale() ? localizedStrings[1] : localizedStrings[0];
     }
 }

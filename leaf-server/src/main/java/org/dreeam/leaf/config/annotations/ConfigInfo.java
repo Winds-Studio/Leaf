@@ -15,5 +15,5 @@ public @interface ConfigInfo {
 
     String[] directory() default {};
 
-    String comments() default "";
+    String[] comments() default {};
 }

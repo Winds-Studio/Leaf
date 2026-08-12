@@ -49,9 +49,10 @@ final class ConfigBinder {
         }
 
         String basePath = basePath(classInfo);
-        if (!classInfo.comments().isBlank()
+        String sectionComment = config.pickStringRegionBased(classInfo.comments());
+        if (!sectionComment.isBlank()
             && (!(config instanceof LeafWorldConfig worldConfig) || worldConfig.isDefaultsConfig())) {
-            config.addComment(basePath, classInfo.comments());
+            config.addComment(basePath, sectionComment);
         }
 
         boolean skipModuleReload = alreadyInitialized
@@ -72,9 +73,9 @@ final class ConfigBinder {
 
             Object target = global ? null : module;
             Object defaultValue = field.get(target);
+            String comment = config.pickStringRegionBased(configInfo.comments());
             // Always call readValue, to keep comments on reloading
-            Object loadedValue = readValue(config, path(basePath, configInfo), configInfo.comments(),
-                field, defaultValue);
+            Object loadedValue = readValue(config, path(basePath, configInfo), comment, field, defaultValue);
 
             if (!skipReload) {
                 field.set(target, loadedValue);

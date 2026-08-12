@@ -19,5 +19,5 @@ public @interface ConfigClassInfo {
 
     String[] directory() default {};
 
-    String comments() default "";
+    String[] comments() default {};
 }
