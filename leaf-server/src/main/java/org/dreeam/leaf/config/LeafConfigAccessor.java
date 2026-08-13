@@ -2,6 +2,7 @@ package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
+import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 import java.util.List;
@@ -13,7 +14,11 @@ abstract class LeafConfigAccessor {
     protected final ConfigFile configFile;
 
     protected LeafConfigAccessor(File file) throws Exception {
-        this.configFile = ConfigFile.loadConfig(file);
+        this(ConfigFile.loadConfig(file));
+    }
+
+    protected LeafConfigAccessor(ConfigFile configFile) {
+        this.configFile = configFile;
     }
 
     public void saveConfig() throws Exception {
@@ -171,7 +176,9 @@ abstract class LeafConfigAccessor {
         configFile.addComment(path, LeafConfig.isChineseLocale() ? cn : en);
     }
 
-    public String pickStringRegionBased(String[] localizedStrings) {
+    public @Nullable String pickStringRegionBased(String... localizedStrings) {
+        if (localizedStrings == null || localizedStrings.length == 0) return null;
+        if (localizedStrings.length == 1) return localizedStrings[0];
         return LeafConfig.isChineseLocale() ? localizedStrings[1] : localizedStrings[0];
     }
 }

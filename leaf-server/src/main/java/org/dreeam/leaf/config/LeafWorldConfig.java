@@ -1,6 +1,8 @@
 package org.dreeam.leaf.config;
 
+import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
+import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 import java.util.LinkedHashMap;
@@ -15,7 +17,7 @@ import java.util.Map;
  */
 public final class LeafWorldConfig extends LeafConfigAccessor {
 
-    private final LeafWorldConfig defaults;
+    private final @Nullable LeafWorldConfig defaults;
     private LeafWorldConfig reloadSource;
     private final Map<Class<? extends WorldConfigModule>, WorldConfigModule> modules = new LinkedHashMap<>();
     public boolean secureSeedEnabled;
@@ -28,14 +30,47 @@ public final class LeafWorldConfig extends LeafConfigAccessor {
         return new LeafWorldConfig(file, null, reloadSource);
     }
 
+    static LeafWorldConfig loadDefaults(
+        ConfigFile configFile,
+        LeafWorldConfig reloadSource
+    ) {
+        return new LeafWorldConfig(configFile, null, reloadSource);
+    }
+
     public LeafWorldConfig(File file, LeafWorldConfig defaults) throws Exception {
         this(file, defaults, null);
     }
 
-    private LeafWorldConfig(File file, LeafWorldConfig defaults, LeafWorldConfig reloadSource) throws Exception {
+    public static LeafWorldConfig loadOverride(
+        ConfigFile configFile,
+        LeafWorldConfig defaults
+    ) {
+        return new LeafWorldConfig(configFile, defaults, null);
+    }
+
+    private LeafWorldConfig(
+        File file,
+        @Nullable LeafWorldConfig defaults,
+        LeafWorldConfig reloadSource
+    ) throws Exception {
         super(file);
         this.defaults = defaults;
         this.reloadSource = reloadSource;
+        loadModules();
+    }
+
+    private LeafWorldConfig(
+        ConfigFile configFile,
+        @Nullable LeafWorldConfig defaults,
+        LeafWorldConfig reloadSource
+    ) {
+        super(configFile);
+        this.defaults = defaults;
+        this.reloadSource = reloadSource;
+        loadModules();
+    }
+
+    private void loadModules() {
         try {
             ConfigModuleLoader.loadWorldModules(this);
         } finally {

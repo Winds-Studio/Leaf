@@ -3,29 +3,21 @@ package org.dreeam.leaf.config;
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
 
-import java.io.File;
 import java.util.Objects;
 
 /**
- * Applies versioned migrations to raw Leaf configuration files before defaults are added.
+ * Applies versioned migrations to the loaded Leaf configuration instances before defaults are added.
  */
 final class LeafConfigMigration {
 
     private LeafConfigMigration() {
     }
 
-    static void migrate(File globalFile, File worldDefaultsFile) throws Exception {
-        if (!globalFile.isFile()) {
-            return;
-        }
-
-        ConfigFile globalConfig = ConfigFile.loadConfig(globalFile);
+    static void migrate(ConfigFile globalConfig, ConfigFile worldDefaultsConfig) throws Exception {
         String storedVersion = globalConfig.getString("config-version", null);
-        MigrationContext context = new MigrationContext(globalConfig, worldDefaultsFile);
+        MigrationContext context = new MigrationContext(globalConfig, worldDefaultsConfig);
 
         applyMigrations(storedVersion, context);
-
-        context.saveChanges();
     }
 
     private static void applyMigrations(String storedVersion, MigrationContext context) throws Exception {
@@ -49,14 +41,11 @@ final class LeafConfigMigration {
     private static final class MigrationContext {
 
         private final ConfigFile globalConfig;
-        private final File worldDefaultsFile;
-        private ConfigFile worldDefaultsConfig;
-        private boolean globalChanged;
-        private boolean worldDefaultsChanged;
+        private final ConfigFile worldDefaultsConfig;
 
-        private MigrationContext(ConfigFile globalConfig, File worldDefaultsFile) {
+        private MigrationContext(ConfigFile globalConfig, ConfigFile worldDefaultsConfig) {
             this.globalConfig = globalConfig;
-            this.worldDefaultsFile = worldDefaultsFile;
+            this.worldDefaultsConfig = worldDefaultsConfig;
         }
 
         private void migrate(
@@ -67,8 +56,8 @@ final class LeafConfigMigration {
         ) throws Exception {
             validateMigration(source, oldPath, target, newPath);
 
-            ConfigFile sourceConfig = config(source, false);
-            if (sourceConfig == null || !sourceConfig.contains(oldPath)) {
+            ConfigFile sourceConfig = config(source);
+            if (!sourceConfig.contains(oldPath)) {
                 return;
             }
 
@@ -78,15 +67,12 @@ final class LeafConfigMigration {
                     + source + ":" + oldPath);
             }
 
-            ConfigFile targetConfig = config(target, true);
+            ConfigFile targetConfig = config(target);
             if (targetConfig.contains(newPath)) {
                 sourceConfig.set(oldPath, null);
             } else {
                 sourceConfig.moveTo(oldPath, newPath, targetConfig);
             }
-
-            markChanged(source);
-            markChanged(target);
         }
 
         private static void validateMigration(
@@ -116,35 +102,8 @@ final class LeafConfigMigration {
             }
         }
 
-        private ConfigFile config(ConfigFileType type, boolean create) throws Exception {
-            if (type == ConfigFileType.GLOBAL) {
-                return this.globalConfig;
-            }
-            if (this.worldDefaultsConfig != null) {
-                return this.worldDefaultsConfig;
-            }
-            if (!create && !this.worldDefaultsFile.isFile()) {
-                return null;
-            }
-            this.worldDefaultsConfig = ConfigFile.loadConfig(this.worldDefaultsFile);
-            return this.worldDefaultsConfig;
-        }
-
-        private void markChanged(ConfigFileType type) {
-            if (type == ConfigFileType.GLOBAL) {
-                this.globalChanged = true;
-            } else {
-                this.worldDefaultsChanged = true;
-            }
-        }
-
-        private void saveChanges() throws Exception {
-            if (this.globalChanged) {
-                this.globalConfig.save();
-            }
-            if (this.worldDefaultsChanged) {
-                this.worldDefaultsConfig.save();
-            }
+        private ConfigFile config(ConfigFileType type) {
+            return type == ConfigFileType.GLOBAL ? this.globalConfig : this.worldDefaultsConfig;
         }
     }
 }

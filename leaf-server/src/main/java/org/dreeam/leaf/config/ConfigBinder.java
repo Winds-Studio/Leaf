@@ -4,10 +4,10 @@ import org.dreeam.leaf.config.annotations.ConfigClassInfo;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
+import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -48,10 +48,9 @@ final class ConfigBinder {
                 + " is missing @ConfigClassInfo");
         }
 
-        String basePath = basePath(classInfo);
+        String basePath = ConfigPathResolver.modulePath(moduleClass);
         String sectionComment = config.pickStringRegionBased(classInfo.comments());
-        if (!sectionComment.isBlank()
-            && (!(config instanceof LeafWorldConfig worldConfig) || worldConfig.isDefaultsConfig())) {
+        if (sectionComment != null && (!(config instanceof LeafWorldConfig worldConfig) || worldConfig.isDefaultsConfig())) {
             config.addComment(basePath, sectionComment);
         }
 
@@ -72,10 +71,11 @@ final class ConfigBinder {
             field.setAccessible(true);
 
             Object target = global ? null : module;
+            String path = ConfigPathResolver.fieldPath(moduleClass, field);
             Object defaultValue = field.get(target);
             String comment = config.pickStringRegionBased(configInfo.comments());
             // Always call readValue, to keep comments on reloading
-            Object loadedValue = readValue(config, path(basePath, configInfo), comment, field, defaultValue);
+            Object loadedValue = readValue(config, path, comment, field, defaultValue);
 
             if (!skipReload) {
                 field.set(target, loadedValue);
@@ -96,36 +96,13 @@ final class ConfigBinder {
         }
     }
 
-    private static String basePath(ConfigClassInfo info) {
-        List<String> path = new ArrayList<>();
-        path.add(info.category().basePath());
-        path.addAll(List.of(info.directory()));
-        path.add(info.name());
-        return joinPath(path);
-    }
-
-    private static String path(String basePath, ConfigInfo info) {
-        List<String> path = new ArrayList<>();
-        path.add(basePath);
-        path.addAll(List.of(info.directory()));
-        path.add(info.name());
-        return joinPath(path);
-    }
-
-    private static String joinPath(List<String> path) {
-        if (path.stream().anyMatch(String::isBlank)) {
-            throw new IllegalStateException("Configuration path segments must not be blank: " + path);
-        }
-        return String.join(".", path);
-    }
-
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Object readValue(
         LeafConfigAccessor config,
         String path,
-        String comment,
+        @Nullable String comment,
         Field field,
-        Object defaultValue
+        @Nullable Object defaultValue
     ) {
         if (defaultValue == null) {
             throw new IllegalStateException("Configuration field has a null default value: " + field);
@@ -133,37 +110,37 @@ final class ConfigBinder {
 
         Class<?> type = field.getType();
         if (type == boolean.class || type == Boolean.class) {
-            return comment.isBlank()
+            return comment == null
                 ? config.getBoolean(path, (Boolean) defaultValue)
                 : config.getBoolean(path, (Boolean) defaultValue, comment);
         }
         if (type == int.class || type == Integer.class) {
-            return comment.isBlank()
+            return comment == null
                 ? config.getInt(path, (Integer) defaultValue)
                 : config.getInt(path, (Integer) defaultValue, comment);
         }
         if (type == long.class || type == Long.class) {
-            return comment.isBlank()
+            return comment == null
                 ? config.getLong(path, (Long) defaultValue)
                 : config.getLong(path, (Long) defaultValue, comment);
         }
         if (type == double.class || type == Double.class) {
-            return comment.isBlank()
+            return comment == null
                 ? config.getDouble(path, (Double) defaultValue)
                 : config.getDouble(path, (Double) defaultValue, comment);
         }
         if (type == String.class) {
-            return comment.isBlank()
+            return comment == null
                 ? config.getString(path, (String) defaultValue)
                 : config.getString(path, (String) defaultValue, comment);
         }
         if (List.class.isAssignableFrom(type)) {
-            return comment.isBlank()
+            return comment == null
                 ? config.getList(path, (List<String>) defaultValue)
                 : config.getList(path, (List<String>) defaultValue, comment);
         }
         if (type.isEnum()) {
-            String value = comment.isBlank()
+            String value = comment == null
                 ? config.getString(path, ((Enum<?>) defaultValue).name())
                 : config.getString(path, ((Enum<?>) defaultValue).name(), comment);
             try {

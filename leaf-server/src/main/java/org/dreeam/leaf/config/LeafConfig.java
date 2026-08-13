@@ -1,5 +1,6 @@
 package org.dreeam.leaf.config;
 
+import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.papermc.paper.SparksFly;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -7,6 +8,7 @@ import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
+import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.jspecify.annotations.NullMarked;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -109,20 +111,36 @@ public class LeafConfig {
         File globalConfigFile = new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE);
         File worldDefaultsFile = new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE);
 
-        // Read and migrate existing raw values before either config applies defaults.
-        LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile);
+        if (!worldDefaultsFile.exists()) {
+            Files.createFile(worldDefaultsFile.toPath());
+        }
 
-        globalConfig = new LeafGlobalConfig(init);
+        ConfigFile globalConfigFileData = ConfigFile.loadConfig(globalConfigFile);
+        ConfigFile worldDefaultsFileData = ConfigFile.loadConfig(worldDefaultsFile);
+
+        if (init) {
+            // Migrate the same raw config instances that will be bound and saved below.
+            LeafConfigMigration.migrate(globalConfigFileData, worldDefaultsFileData);
+
+            GaleConfigMigration.migrate(
+                CONFIG_DIRECTORY.toPath(),
+                globalConfigFileData,
+                worldDefaultsFileData
+            );
+        }
+
+        globalConfig = new LeafGlobalConfig(globalConfigFileData);
 
         // Load config modules
         ConfigModule.initModules();
 
-        if (!worldDefaultsFile.exists()) {
-            Files.createFile(worldDefaultsFile.toPath());
-        }
         LeafWorldConfig previousWorldDefaults = worldDefaultsConfig;
-        worldDefaultsConfig = LeafWorldConfig.loadDefaults(worldDefaultsFile, previousWorldDefaults);
+        worldDefaultsConfig = LeafWorldConfig.loadDefaults(
+            worldDefaultsFileData,
+            previousWorldDefaults
+        );
         worldDefaultsConfig.saveConfig();
+        GaleConfigMigration.completeWorldDefaults(worldDefaultsFile.toPath());
         ConfigModuleLoader.markInitialized();
     }
 
@@ -139,6 +157,14 @@ public class LeafConfig {
      */
     public static LeafWorldConfig createWorldConfig(Path worldDirectory) {
         File worldConfigFile = worldDirectory.resolve(WORLD_CONFIG_FILE).toFile();
+        LeafWorldConfig migratedConfig = GaleConfigMigration.migrateWorldOverride(
+            worldDirectory,
+            worldConfigFile,
+            worldDefaultsConfig
+        );
+        if (migratedConfig != null) {
+            return migratedConfig;
+        }
         if (!LeafWorldConfig.exists(worldConfigFile)) {
             return worldDefaultsConfig;
         }
@@ -147,6 +173,10 @@ public class LeafConfig {
         } catch (Exception exception) {
             throw new RuntimeException("Could not load Leaf world config for " + worldDirectory, exception);
         }
+    }
+
+    static void completeGlobalConfigMigration() {
+        GaleConfigMigration.completeGlobal(CONFIG_DIRECTORY.toPath().resolve(GLOBAL_CONFIG_FILE));
     }
 
     static boolean isChineseLocale() {
@@ -350,9 +380,7 @@ public class LeafConfig {
     private static List<String> buildSparkExtraConfigs() {
         List<String> extraConfigs = new ArrayList<>(Arrays.asList(
             "config/leaf-global.yml",
-            "config/leaf-world-defaults.yml",
-            "config/gale-global.yml",
-            "config/gale-world-defaults.yml"
+            "config/leaf-world-defaults.yml"
         ));
 
         String existing = System.getProperty(SPARK_EXTRA_CONFIG_PROPERTY);
@@ -365,21 +393,21 @@ public class LeafConfig {
         // instead of using SplitYamlConfigParser.INSTANCE for the extra config
         // However it's better to choose bundled spark for better view.
         for (World world : Bukkit.getWorlds()) {
-            Path galeWorldFolder = world.getWorldFolder().toPath().resolve("gale-world.yml");
-            extraConfigs.add(galeWorldFolder.toString().replace("\\", "/").replace("./", "")); // Gale world config
             Path leafWorldFile = world.getWorldFolder().toPath().resolve(WORLD_CONFIG_FILE);
-            if (Files.isRegularFile(leafWorldFile)) {
-                extraConfigs.add(leafWorldFile.toString().replace("\\", "/").replace("./", ""));
-            }
+            extraConfigs.add(leafWorldFile.toString().replace("\\", "/").replace("./", "")); // Leaf world override config
         }
 
         return extraConfigs;
     }
 
     private static List<String> buildSparkHiddenPaths() {
-        String existing = System.getProperty(SPARK_HIDDEN_PATHS_PROPERTY);
+        List<String> extraHidden = new ArrayList<>();
 
-        List<String> extraHidden = existing != null ? new ArrayList<>(Arrays.asList(existing.split(","))) : new ArrayList<>();
+        String existing = System.getProperty(SPARK_HIDDEN_PATHS_PROPERTY);
+        if (existing != null) {
+            extraHidden.addAll(Arrays.asList(existing.split(",")));
+        }
+
         extraHidden.add(SentryDSN.sentryDsnConfigPath); // Hide Sentry DSN key
 
         return extraHidden;

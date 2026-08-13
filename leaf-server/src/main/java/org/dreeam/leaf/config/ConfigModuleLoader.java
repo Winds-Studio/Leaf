@@ -81,6 +81,7 @@ final class ConfigModuleLoader {
 
         try {
             LeafConfig.globalConfig().saveConfig();
+            LeafConfig.completeGlobalConfigMigration();
         } catch (Exception exception) {
             LeafConfig.LOGGER.error("Failed to save config file!", exception);
         }

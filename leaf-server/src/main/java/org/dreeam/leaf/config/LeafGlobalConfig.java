@@ -1,24 +1,21 @@
 package org.dreeam.leaf.config;
 
-import java.io.File;
+import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
+
+import java.util.Objects;
 
 /** The server-wide Leaf configuration. */
 public final class LeafGlobalConfig extends LeafConfigAccessor {
 
-    public LeafGlobalConfig(boolean init) throws Exception {
-        this(new File(LeafConfig.CONFIG_DIRECTORY, LeafConfig.GLOBAL_CONFIG_FILE), true);
-    }
+    LeafGlobalConfig(ConfigFile configFile) {
+        super(configFile);
 
-    LeafGlobalConfig(File file, boolean loadConfigVersion) throws Exception {
-        super(file);
+        LeafConfig.loadPreviousConfigVersion(getString("config-version"));
 
-        if (loadConfigVersion) {
-            LeafConfig.loadPreviousConfigVersion(getString("config-version"));
-        }
 
         configFile.set("config-version", LeafConfig.CURRENT_CONFIG_VERSION);
 
-        configFile.addComments("config-version", pickStringRegionBased("""
+        configFile.addComments("config-version", Objects.requireNonNull(pickStringRegionBased("""
                 Leaf Config
 
                 Website: https://www.leafmc.one/
@@ -31,7 +28,7 @@ public final class LeafGlobalConfig extends LeafConfigAccessor {
                 官网: https://www.leafmc.one/zh/
                 文档: https://www.leafmc.one/zh/docs/getting-started
                 GitHub 仓库: https://github.com/Winds-Studio/Leaf
-                QQ社区群: 619278377"""));
+                QQ社区群: 619278377""")));
 
         structureConfig();
     }

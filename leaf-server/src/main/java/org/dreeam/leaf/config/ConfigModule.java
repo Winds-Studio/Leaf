@@ -36,5 +36,4 @@ public interface ConfigModule {
     static void clearModules() {
         ConfigModuleLoader.clearModules();
     }
-
 }

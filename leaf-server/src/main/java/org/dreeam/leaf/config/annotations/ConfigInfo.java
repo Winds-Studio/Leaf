@@ -13,7 +13,10 @@ public @interface ConfigInfo {
 
     String name();
 
-    String[] directory() default {};
-
+    /**
+     * Optional option comment. Text blocks are supported.
+     *
+     * <p>Supply one value for all locales, or English and Chinese values in that order.</p>
+     */
     String[] comments() default {};
 }
