@@ -91,7 +91,7 @@ public final class DespawnMap implements Consumer<Entity> {
 
     private boolean checkDespawn(final Entity entity) {
         EntityType<?> t = entity.getType();
-        if (entity instanceof final EnderDragon enderDragon) {
+        if (entity instanceof EnderDragon) {
             // [EnderDragon#checkDespawn()]
             return false;
         } else if (entity instanceof WitherBoss witherBoss) {
@@ -102,6 +102,7 @@ public final class DespawnMap implements Consumer<Entity> {
             witherBoss.noActionTime = 0;
             return false;
         } else if (entity instanceof final Mob mob) {
+            // [Mob#checkDespawn()]
             if (difficultyIsPeaceful && !t.isAllowedInPeaceful()) {
                 return true;
             }
