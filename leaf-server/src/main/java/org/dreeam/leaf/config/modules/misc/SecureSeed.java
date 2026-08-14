@@ -17,7 +17,7 @@ public class SecureSeed extends ConfigModule implements WorldConfigModule {
     @Override
     public void loadWorldConfig(LeafWorldConfig config) {
         String path = "misc.secure-seed";
-        if (config.isDefaultsConfig()) {
+        if (config.isWorldDefaultsFile()) {
             config.addCommentRegionBased(path, """
                     Once you enable secure seed, all ores and structures are generated with a 1024-bit seed
                     instead of vanilla's 64-bit seed, making seed cracking impossible.""", """

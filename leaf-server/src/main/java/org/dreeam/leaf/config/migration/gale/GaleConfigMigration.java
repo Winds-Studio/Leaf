@@ -4,6 +4,7 @@ import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.LeafConfig;
 import org.dreeam.leaf.config.LeafWorldConfig;
 import org.dreeam.leaf.config.WorldConfigModule;
 import org.dreeam.leaf.config.modules.gameplay.BookWriting;
@@ -84,7 +85,12 @@ public final class GaleConfigMigration {
      *
      * @return the newly created Leaf override, or {@code null} when normal Leaf loading should continue
      */
-    public static @Nullable LeafWorldConfig migrateWorldOverride(Path worldDirectory, File leafFile, LeafWorldConfig defaults) {
+    public static @Nullable LeafWorldConfig migrateWorldOverride(
+        Path worldDirectory,
+        File leafFile,
+        LeafWorldConfig defaults,
+        boolean reload
+    ) {
         Path leafPath = leafFile.toPath();
         Path galePath = worldDirectory.resolve(WORLD_OVERRIDE_FILE);
 
@@ -94,7 +100,7 @@ public final class GaleConfigMigration {
 
         boolean leafFileCreated = false;
         try {
-            if (LeafWorldConfig.exists(leafFile)) {
+            if (leafFile.isFile()) {
                 LOGGER.warn(
                     "Could not migrate Gale world config {} because Leaf world override {} already exists.",
                     galePath, leafPath
@@ -111,7 +117,7 @@ public final class GaleConfigMigration {
             leafFileCreated = true;
             ConfigFile leafConfig = ConfigFile.loadConfig(leafFile);
             applyMappings(galeConfig, resolvedWorldMappings, leafConfig);
-            LeafWorldConfig migrated = LeafWorldConfig.loadOverride(leafConfig, defaults);
+            LeafWorldConfig migrated = LeafConfig.loadWorldOverride(leafConfig, defaults, reload);
             migrated.saveConfig();
             return migrated;
         } catch (Exception exception) {

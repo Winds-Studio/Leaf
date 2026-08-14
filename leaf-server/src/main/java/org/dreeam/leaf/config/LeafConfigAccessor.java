@@ -14,16 +14,16 @@ abstract class LeafConfigAccessor {
 
     protected final ConfigFile configFile;
 
-    protected LeafConfigAccessor(File file) throws Exception {
-        this(ConfigFile.loadConfig(file));
-    }
-
     protected LeafConfigAccessor(ConfigFile configFile) {
         this.configFile = configFile;
     }
 
     public void saveConfig() throws Exception {
         configFile.save();
+    }
+
+    boolean contains(String path) {
+        return configFile.contains(path);
     }
 
     public boolean migratePath(String oldPath, String newPath) {

@@ -2,15 +2,19 @@ package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.papermc.paper.SparksFly;
+import it.unimi.dsi.fastutil.objects.ObjectArrays;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.minecraft.util.Util;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.config.annotations.Experimental;
 import org.dreeam.leaf.config.migration.LeafConfigMigration;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.Command;
@@ -18,6 +22,8 @@ import org.bukkit.command.CommandSender;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
@@ -29,6 +35,7 @@ import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
@@ -65,19 +72,24 @@ public class LeafConfig {
     private static LeafGlobalConfig globalConfig;
     private static LeafWorldConfig worldDefaultsConfig;
 
+    private static final List<ConfigModule> GLOBAL_MODULES = new ArrayList<>();
+    private static final List<Field> WORLD_MODULES = new ArrayList<>();
+    private static boolean modulesInitialized;
+
     private static ConfigVersion previousConfigVersion = ConfigVersion.initial();
 
     /* Load & Reload */
 
-    // Reload config (async)
+    // Reload config on the server thread
     public static CompletableFuture<Void> reloadAsync(CommandSender sender) {
+        MinecraftServer server = MinecraftServer.getServer();
         return CompletableFuture.runAsync(() -> {
             try {
                 long begin = System.nanoTime();
 
-                ConfigModule.clearModules();
                 loadConfig(false);
-                ConfigModule.loadAfterBootstrap();
+                reloadWorldConfig(server);
+                loadAfterBootstrap();
 
                 final String success = String.format("Successfully reloaded config in %sms.", (System.nanoTime() - begin) / 1_000_000);
                 Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));
@@ -85,7 +97,15 @@ public class LeafConfig {
                 Command.broadcastCommandMessage(sender, Component.text("Failed to reload config. See error in console!", NamedTextColor.RED));
                 LOGGER.error("Failed to reload config!", e);
             }
-        }, Util.ioPool());
+        }, server);
+    }
+
+    private static void reloadWorldConfig(MinecraftServer server) {
+        for (ServerLevel level : server.getAllLevels()) {
+            Path worldDirectory = server.storageSource.getDimensionPath(level.dimension());
+            LeafWorldConfig reloadedConfig = loadWorldConfig(worldDirectory, true);
+            level.setLeafConfig(reloadedConfig);
+        }
     }
 
     // Init config
@@ -109,40 +129,31 @@ public class LeafConfig {
         // Create config folder
         createDirectory(CONFIG_DIRECTORY);
 
-        File globalConfigFile = new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE);
-        File worldDefaultsFile = new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE);
-
-        if (!worldDefaultsFile.exists()) {
-            Files.createFile(worldDefaultsFile.toPath());
-        }
-
-        ConfigFile globalConfigFileData = ConfigFile.loadConfig(globalConfigFile);
-        ConfigFile worldDefaultsFileData = ConfigFile.loadConfig(worldDefaultsFile);
+        ConfigFile globalConfigFile = ConfigFile.loadConfig(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
+        ConfigFile worldDefaultsFile = ConfigFile.loadConfig(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
 
         if (init) {
             // Migrate the same raw config instances that will be bound and saved below.
-            LeafConfigMigration.migrate(globalConfigFileData, worldDefaultsFileData);
+            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile);
 
             GaleConfigMigration.migrate(
                 CONFIG_DIRECTORY.toPath(),
-                globalConfigFileData,
-                worldDefaultsFileData
+                globalConfigFile,
+                worldDefaultsFile
             );
         }
 
-        globalConfig = new LeafGlobalConfig(globalConfigFileData);
+        globalConfig = new LeafGlobalConfig(globalConfigFile);
 
-        // Load config modules
-        ConfigModule.initModules();
+        loadGlobalModules();
 
-        LeafWorldConfig previousWorldDefaults = worldDefaultsConfig;
-        worldDefaultsConfig = LeafWorldConfig.loadDefaults(
-            worldDefaultsFileData,
-            previousWorldDefaults
+        worldDefaultsConfig = loadWorldDefaults(
+            worldDefaultsFile,
+            !init
         );
         worldDefaultsConfig.saveConfig();
         GaleConfigMigration.finalizeWorldDefaultsMigration();
-        ConfigModuleLoader.markInitialized();
+        modulesInitialized = true;
     }
 
     public static LeafGlobalConfig globalConfig() {
@@ -156,24 +167,174 @@ public class LeafConfig {
     /**
      * Loads an explicit world override without creating a file when the world uses the defaults.
      */
-    public static LeafWorldConfig createWorldConfig(Path worldDirectory) {
+    public static LeafWorldConfig initWorldConfig(Path worldDirectory) {
         File worldConfigFile = worldDirectory.resolve(WORLD_CONFIG_FILE).toFile();
         LeafWorldConfig migratedConfig = GaleConfigMigration.migrateWorldOverride(
             worldDirectory,
             worldConfigFile,
-            worldDefaultsConfig
+            worldDefaultsConfig,
+            false
         );
         if (migratedConfig != null) {
             return migratedConfig;
         }
-        if (!LeafWorldConfig.exists(worldConfigFile)) {
+        if (!worldConfigFile.isFile()) {
             return worldDefaultsConfig;
         }
         try {
-            return new LeafWorldConfig(worldConfigFile, worldDefaultsConfig);
+            return loadWorldOverride(ConfigFile.loadConfig(worldConfigFile), worldDefaultsConfig, false);
         } catch (Exception exception) {
             throw new RuntimeException("Could not load Leaf world config for " + worldDirectory, exception);
         }
+    }
+
+    private static LeafWorldConfig loadWorldConfig(Path worldDirectory, boolean reload) {
+        File worldConfigFile = worldDirectory.resolve(WORLD_CONFIG_FILE).toFile();
+
+        if (!worldConfigFile.isFile()) {
+            return worldDefaultsConfig;
+        }
+        try {
+            return loadWorldOverride(ConfigFile.loadConfig(worldConfigFile), worldDefaultsConfig, reload);
+        } catch (Exception exception) {
+            throw new RuntimeException("Could not load Leaf world config for " + worldDirectory, exception);
+        }
+    }
+
+    private static void discoverGlobalModules() throws ReflectiveOperationException {
+        Class<?>[] classes = getClasses(CONFIG_MODULE_PACKAGE).toArray(new Class[0]);
+        ObjectArrays.quickSort(classes, Comparator.comparing((Class<?> clazz) -> clazz.getSimpleName())
+            .thenComparing(Class::getName));
+        for (Class<?> moduleClass : classes) {
+            if (moduleClass.isInterface() || Modifier.isAbstract(moduleClass.getModifiers())) {
+                continue;
+            }
+
+            if (!ConfigModule.class.isAssignableFrom(moduleClass)) {
+                continue;
+            }
+
+            ConfigModule module = (ConfigModule) moduleClass.getConstructor().newInstance();
+            GLOBAL_MODULES.add(module);
+        }
+    }
+
+    private static void discoverWorldModules() {
+        Field[] fields = LeafWorldConfig.class.getDeclaredFields();
+        ObjectArrays.quickSort(fields, Comparator.comparing((Field field) -> field.getType().getSimpleName())
+            .thenComparing(field -> field.getType().getName()));
+        for (Field field : fields) {
+            if (WorldConfigModule.class.isAssignableFrom(field.getType())) {
+                WORLD_MODULES.add(field);
+            }
+        }
+    }
+
+    private static void loadGlobalModules() throws ReflectiveOperationException {
+        if (GLOBAL_MODULES.isEmpty()) {
+            discoverGlobalModules();
+        }
+
+        List<Field> enabledExperimentalModules = new ArrayList<>();
+        List<Field> deprecatedModules = new ArrayList<>();
+
+        for (ConfigModule module : GLOBAL_MODULES) {
+            ConfigBinder.bind(module, null, globalConfig, true, modulesInitialized);
+            module.onLoaded();
+            GLOBAL_MODULES.add(module);
+
+            Class<?> moduleClass = module.getClass();
+            collectEnabledFields(moduleClass, enabledExperimentalModules, deprecatedModules);
+        }
+
+        warnEnabledModules(
+            enabledExperimentalModules,
+            "You have following experimental module(s) enabled: {}, please proceed with caution!"
+        );
+        warnEnabledModules(
+            deprecatedModules,
+            "The following enabled module(s) has been deprecated: {}, please proceed with caution!"
+        );
+    }
+
+    private static LeafWorldConfig loadWorldDefaults(
+        ConfigFile configFile,
+        boolean reload
+    ) throws ReflectiveOperationException {
+        if (WORLD_MODULES.isEmpty()) {
+            discoverWorldModules();
+        }
+
+        LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS_FILE);
+
+        for (Field moduleField : WORLD_MODULES) {
+            WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
+            ConfigBinder.bind(module, null, config, false, reload);
+        }
+
+        return config;
+    }
+
+    public static LeafWorldConfig loadWorldOverride(
+        ConfigFile configFile,
+        LeafWorldConfig worldDefaults,
+        boolean reload
+    ) throws ReflectiveOperationException {
+        LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_OVERRIDE_FILE);
+
+        for (Field moduleField : WORLD_MODULES) {
+            WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
+
+            WorldConfigModule worldDefaultModule = (WorldConfigModule) moduleField.get(worldDefaults);
+            ConfigBinder.bind(module, worldDefaultModule, config, false, reload);
+        }
+
+        return config;
+    }
+
+    public static void loadAfterBootstrap() {
+        for (ConfigModule module : GLOBAL_MODULES) {
+            module.onRegistriesLoaded();
+        }
+
+        try {
+            globalConfig.saveConfig();
+            finalizeGlobalConfigMigration();
+        } catch (Exception exception) {
+            LOGGER.error("Failed to save config file!", exception);
+        }
+    }
+
+    private static void collectEnabledFields(
+        Class<?> moduleClass,
+        List<Field> enabledExperimentalFields,
+        List<Field> enabledDeprecatedFields
+    ) throws IllegalAccessException {
+        for (Field field : moduleClass.getDeclaredFields()) {
+            boolean experimental = field.isAnnotationPresent(Experimental.class);
+            boolean deprecated = field.isAnnotationPresent(Deprecated.class);
+            if ((!experimental && !deprecated) || !Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            field.setAccessible(true);
+            if (field.get(null) instanceof Boolean enabled && enabled) {
+                if (experimental) {
+                    enabledExperimentalFields.add(field);
+                }
+                if (deprecated) {
+                    enabledDeprecatedFields.add(field);
+                }
+            }
+        }
+    }
+
+    private static void warnEnabledModules(List<Field> fields, String message) {
+        if (fields.isEmpty()) {
+            return;
+        }
+        LOGGER.warn(message, fields.stream()
+            .map(field -> field.getDeclaringClass().getSimpleName() + "." + field.getName())
+            .toList());
     }
 
     static void finalizeGlobalConfigMigration() {

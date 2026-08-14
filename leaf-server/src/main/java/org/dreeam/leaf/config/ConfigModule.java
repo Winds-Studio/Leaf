@@ -1,7 +1,5 @@
 package org.dreeam.leaf.config;
 
-import java.lang.reflect.InvocationTargetException;
-
 /**
  * Marker and lifecycle contract for a server-wide Leaf configuration module.
  *
@@ -22,18 +20,5 @@ public interface ConfigModule {
      * Runs after this module's configuration fields have been loaded and core registries are available.
      */
     default void onRegistriesLoaded() {
-    }
-
-    static void initModules()
-        throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
-        ConfigModuleLoader.initModules();
-    }
-
-    static void loadAfterBootstrap() {
-        ConfigModuleLoader.loadAfterBootstrap();
-    }
-
-    static void clearModules() {
-        ConfigModuleLoader.clearModules();
     }
 }
