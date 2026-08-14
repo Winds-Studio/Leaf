@@ -115,6 +115,7 @@ public final class DespawnMap implements Consumer<Entity> {
             final double hardDist = this.hard[category];
             double maxDist = hardDist + 0.0001;
             if (mob instanceof PatrollingMonster) {
+                // [PatrollingMonster#removeWhenFarAway]
                 maxDist = Math.max(16384.0001, maxDist);
             }
             final Vec3 pos = mob.position;
