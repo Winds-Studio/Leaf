@@ -76,12 +76,12 @@ final class ConfigModuleLoader {
 
     static void loadAfterBootstrap() {
         for (ConfigModule module : LOADED_MODULES) {
-            module.onPostLoaded();
+            module.onRegistriesLoaded();
         }
 
         try {
             LeafConfig.globalConfig().saveConfig();
-            LeafConfig.completeGlobalConfigMigration();
+            LeafConfig.finalizeGlobalConfigMigration();
         } catch (Exception exception) {
             LeafConfig.LOGGER.error("Failed to save config file!", exception);
         }

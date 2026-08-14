@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config;
+package org.dreeam.leaf.config.migration;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
 

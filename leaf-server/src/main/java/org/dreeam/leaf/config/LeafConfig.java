@@ -7,6 +7,7 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.config.migration.LeafConfigMigration;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.jspecify.annotations.NullMarked;
@@ -140,7 +141,7 @@ public class LeafConfig {
             previousWorldDefaults
         );
         worldDefaultsConfig.saveConfig();
-        GaleConfigMigration.completeWorldDefaults(worldDefaultsFile.toPath());
+        GaleConfigMigration.finalizeWorldDefaultsMigration();
         ConfigModuleLoader.markInitialized();
     }
 
@@ -175,8 +176,8 @@ public class LeafConfig {
         }
     }
 
-    static void completeGlobalConfigMigration() {
-        GaleConfigMigration.completeGlobal(CONFIG_DIRECTORY.toPath().resolve(GLOBAL_CONFIG_FILE));
+    static void finalizeGlobalConfigMigration() {
+        GaleConfigMigration.finalizeGlobalMigration();
     }
 
     static boolean isChineseLocale() {

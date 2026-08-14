@@ -2,6 +2,7 @@ package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
+import org.dreeam.leaf.config.migration.ConfigPathMigration;
 import org.jspecify.annotations.Nullable;
 
 import java.io.File;

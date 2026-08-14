@@ -4,6 +4,7 @@ import org.dreeam.leaf.config.annotations.ConfigClassInfo;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
+import org.dreeam.leaf.config.util.ConfigPaths;
 import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.Field;
@@ -48,7 +49,7 @@ final class ConfigBinder {
                 + " is missing @ConfigClassInfo");
         }
 
-        String basePath = ConfigPathResolver.modulePath(moduleClass);
+        String basePath = ConfigPaths.modulePath(moduleClass);
         String sectionComment = config.pickStringRegionBased(classInfo.comments());
         if (sectionComment != null && (!(config instanceof LeafWorldConfig worldConfig) || worldConfig.isDefaultsConfig())) {
             config.addComment(basePath, sectionComment);
@@ -71,7 +72,7 @@ final class ConfigBinder {
             field.setAccessible(true);
 
             Object target = global ? null : module;
-            String path = ConfigPathResolver.fieldPath(moduleClass, field);
+            String path = ConfigPaths.fieldPath(moduleClass, field);
             Object defaultValue = field.get(target);
             String comment = config.pickStringRegionBased(configInfo.comments());
             // Always call readValue, to keep comments on reloading

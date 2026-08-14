@@ -21,7 +21,7 @@ public interface ConfigModule {
     /**
      * Runs after this module's configuration fields have been loaded and core registries are available.
      */
-    default void onPostLoaded() {
+    default void onRegistriesLoaded() {
     }
 
     static void initModules()

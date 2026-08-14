@@ -4,12 +4,12 @@ import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigPathResolver;
 import org.dreeam.leaf.config.LeafWorldConfig;
 import org.dreeam.leaf.config.WorldConfigModule;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.modules.gameplay.BookWriting;
 import org.dreeam.leaf.config.modules.opt.SaveFireworks;
+import org.dreeam.leaf.config.util.ConfigPaths;
 import org.jspecify.annotations.Nullable;
 
 import java.io.File;
@@ -24,12 +24,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Migrates the removed Gale configuration files into Leaf configuration modules. */
+/**
+ * Migrates the removed Gale configuration files into Leaf configuration modules.
+ */
 public final class GaleConfigMigration {
 
     private static final Logger LOGGER = LogManager.getLogger(GaleConfigMigration.class.getSimpleName());
@@ -42,14 +43,10 @@ public final class GaleConfigMigration {
     private static Path configDirectory;
     private static List<Mapping> globalMappings = List.of();
     private static List<Mapping> worldMappings = List.of();
-    private static Map<String, ResolvedTarget> resolvedWorldMappings = Map.of();
+    private static Map<String, String> resolvedWorldMappings = Map.of();
     private static PendingMigration globalMigration;
     private static PendingMigration worldDefaultsMigration;
     private static Path backupDirectory;
-    private static boolean migrationEnabled;
-
-    private GaleConfigMigration() {
-    }
 
     public static void migrate(Path directory, ConfigFile leafGlobalConfig, ConfigFile leafWorldDefaultsConfig) {
         configDirectory = Objects.requireNonNull(directory, "directory").normalize();
@@ -59,21 +56,16 @@ public final class GaleConfigMigration {
 
         Path globalPath = configDirectory.resolve(GLOBAL_FILE);
         Path worldDefaultsPath = configDirectory.resolve(WORLD_DEFAULTS_FILE);
-        migrationEnabled = Files.isRegularFile(globalPath) || Files.isRegularFile(worldDefaultsPath);
-        if (!migrationEnabled) {
-            globalMappings = List.of();
-            worldMappings = List.of();
-            resolvedWorldMappings = Map.of();
-            return;
-        }
 
         registerMappings();
-        Map<String, ResolvedTarget> resolvedGlobalMappings = resolveMappings(globalMappings, true);
+
+        Map<String, String> resolvedGlobalMappings = resolveMappings(globalMappings, true);
         resolvedWorldMappings = resolveMappings(worldMappings, false);
-        globalMigration = collectMigration(globalPath, Path.of(""), resolvedGlobalMappings);
-        worldDefaultsMigration = collectMigration(worldDefaultsPath, Path.of(""), resolvedWorldMappings);
-        migrateValues(globalMigration, leafGlobalConfig);
-        migrateValues(worldDefaultsMigration, leafWorldDefaultsConfig);
+        globalMigration = collectMigration(globalPath, resolvedGlobalMappings);
+        worldDefaultsMigration = collectMigration(worldDefaultsPath, resolvedWorldMappings);
+
+        applyMigration(globalMigration, leafGlobalConfig);
+        applyMigration(worldDefaultsMigration, leafWorldDefaultsConfig);
     }
 
     private static void registerMappings() {
@@ -83,34 +75,23 @@ public final class GaleConfigMigration {
         addGlobalMapping("gameplay-mechanics.enable-book-writing", BookWriting.class, "enabled");
 
         addWorldMapping("small-optimizations.save-fireworks", SaveFireworks.class, "enabled");
-
-        globalMappings = List.copyOf(globalMappings);
-        worldMappings = List.copyOf(worldMappings);
     }
 
-    private static void addGlobalMapping(
-        String oldPath,
-        Class<?> moduleClass,
-        String fieldName
-    ) {
+    private static void addGlobalMapping(String oldPath, Class<? extends ConfigModule> moduleClass, String fieldName) {
         globalMappings.add(new Mapping(oldPath, moduleClass, fieldName));
     }
 
-    private static void addWorldMapping(
-        String oldPath,
-        Class<?> moduleClass,
-        String fieldName
-    ) {
+    private static void addWorldMapping(String oldPath, Class<? extends WorldConfigModule> moduleClass, String fieldName) {
         worldMappings.add(new Mapping(oldPath, moduleClass, fieldName));
     }
 
-    public static void completeGlobal(Path leafFile) {
-        complete(globalMigration, leafFile);
+    public static void finalizeGlobalMigration() {
+        finalizeMigration(globalMigration);
         globalMigration = null;
     }
 
-    public static void completeWorldDefaults(Path leafFile) {
-        complete(worldDefaultsMigration, leafFile);
+    public static void finalizeWorldDefaultsMigration() {
+        finalizeMigration(worldDefaultsMigration);
         worldDefaultsMigration = null;
     }
 
@@ -119,66 +100,35 @@ public final class GaleConfigMigration {
      *
      * @return the newly created Leaf override, or {@code null} when normal Leaf loading should continue
      */
-    public static @Nullable LeafWorldConfig migrateWorldOverride(
-        Path worldDirectory,
-        File leafFile,
-        LeafWorldConfig defaults
-    ) {
-        if (!migrationEnabled) {
-            return null;
-        }
-
+    public static @Nullable LeafWorldConfig migrateWorldOverride(Path worldDirectory, File leafFile, LeafWorldConfig defaults) {
         Path leafPath = leafFile.toPath();
         Path galePath = worldDirectory.resolve(WORLD_OVERRIDE_FILE);
 
-        if (LeafWorldConfig.exists(leafFile)) {
-            if (Files.isRegularFile(galePath)) {
-                renameOverride(galePath, "A Leaf world override already exists for " + worldDirectory + '.');
-            }
-            return null;
-        }
         if (!Files.isRegularFile(galePath)) {
-            return null;
-        }
-
-        PendingMigration migration = collectMigration(
-            galePath,
-            worldContext(worldDirectory),
-            resolvedWorldMappings
-        );
-        if (migration == null) {
-            return null;
-        }
-        if (!migration.hasValues()) {
-            archive(migration);
-            return null;
-        }
-        if (!migration.unmappedPaths().isEmpty()) {
-            LOGGER.warn(
-                "Gale world config {} has option path(s) without Leaf mappings: {}. Deferring the whole override migration.",
-                galePath,
-                migration.unmappedPaths()
-            );
-            return null;
-        }
-        if (!migration.invalidPaths().isEmpty()) {
-            renameOverride(galePath, "The Gale world override could not be converted.");
             return null;
         }
 
         boolean leafFileCreated = false;
         try {
+            if (LeafWorldConfig.exists(leafFile)) {
+                LOGGER.warn(
+                    "Could not migrate Gale world config {} because Leaf world override {} already exists.",
+                    galePath, leafPath
+                );
+                return null;
+            }
+
+            PendingMigration migration = collectMigration(galePath, resolvedWorldMappings);
+            if (migration == null || !migration.hasValues()) {
+                return null;
+            }
+
             Files.createFile(leafPath);
             leafFileCreated = true;
             ConfigFile leafConfig = ConfigFile.loadConfig(leafFile);
-            migrateValues(migration, leafConfig);
+            applyMigration(migration, leafConfig);
             LeafWorldConfig migrated = LeafWorldConfig.loadOverride(leafConfig, defaults);
             migrated.saveConfig();
-            if (!containsAll(leafPath, migration.values().keySet())) {
-                throw new IllegalStateException("Not all Gale world values were written to " + leafPath);
-            }
-
-            archive(migration);
             return migrated;
         } catch (Exception exception) {
             if (leafFileCreated) {
@@ -188,57 +138,36 @@ public final class GaleConfigMigration {
                     exception.addSuppressed(cleanupException);
                 }
             }
-            LOGGER.error("Failed to migrate Gale world config for {}; using Leaf world defaults.", worldDirectory, exception);
-            renameOverride(galePath, "The Leaf world override could not be saved.");
+            LOGGER.error(
+                "Failed to migrate Gale world config {} for {}; using Leaf world defaults.",
+                galePath, worldDirectory, exception
+            );
             return null;
+        } finally {
+            archiveWorldOverride(galePath, worldDirectory);
+            LOGGER.warn(
+                "Finished processing Gale world config for {}. Please manually check the Leaf configuration used by this world.",
+                worldDirectory
+            );
         }
     }
 
-    private static void migrateValues(@Nullable PendingMigration migration, ConfigFile leafConfig) {
+    private static void applyMigration(@Nullable PendingMigration migration, ConfigFile leafConfig) {
         if (migration == null) {
             return;
         }
         migration.values().forEach(leafConfig::set);
     }
 
-    private static void complete(@Nullable PendingMigration migration, Path leafFile) {
+    private static void finalizeMigration(@Nullable PendingMigration migration) {
         if (migration == null) {
-            return;
-        }
-        List<String> remainingPaths = new ArrayList<>(migration.unmappedPaths());
-        remainingPaths.addAll(migration.invalidPaths());
-        if (!remainingPaths.isEmpty()) {
-            LOGGER.warn("Gale config {} still has unmigrated option path(s): {}. Leaving it in place.",
-                migration.sourcePath(), remainingPaths);
-            return;
-        }
-        try {
-            if (!containsAll(leafFile, migration.values().keySet())) {
-                LOGGER.error("Gale values were not all written to {}; leaving {} in place.",
-                    leafFile, migration.sourcePath());
-                return;
-            }
-        } catch (Exception exception) {
-            LOGGER.error("Failed to verify migrated Leaf config {}; leaving {} in place.",
-                leafFile, migration.sourcePath(), exception);
             return;
         }
         archive(migration);
     }
 
-    private static boolean containsAll(Path leafFile, Set<String> paths) throws Exception {
-        if (paths.isEmpty()) {
-            return true;
-        }
-        ConfigFile config = ConfigFile.loadConfig(leafFile.toFile());
-        return paths.stream().allMatch(config::contains);
-    }
-
-    private static Map<String, ResolvedTarget> resolveMappings(
-        List<Mapping> mappings,
-        boolean global
-    ) {
-        Map<String, ResolvedTarget> resolvedMappings = new LinkedHashMap<>();
+    private static Map<String, String> resolveMappings(List<Mapping> mappings, boolean global) {
+        Map<String, String> resolvedMappings = new LinkedHashMap<>();
         for (Mapping mapping : mappings) {
             String oldPath = mapping.oldPath();
             if (oldPath.isBlank()) {
@@ -252,23 +181,12 @@ public final class GaleConfigMigration {
                 throw new IllegalArgumentException("Invalid Gale migration target "
                     + mapping.moduleClass().getName() + '.' + mapping.fieldName(), exception);
             }
-            validateTarget(field, global);
 
-            String leafPath = ConfigPathResolver.fieldPath(mapping.moduleClass(), field);
+            String leafPath = ConfigPaths.fieldPath(mapping.moduleClass(), field);
 
-            resolvedMappings.put(oldPath, new ResolvedTarget(field, leafPath));
+            resolvedMappings.put(oldPath, leafPath);
         }
-        return Map.copyOf(resolvedMappings);
-    }
-
-    private static void validateTarget(Field field, boolean global) {
-        Class<?> expectedModuleType = global ? ConfigModule.class : WorldConfigModule.class;
-        if (!expectedModuleType.isAssignableFrom(field.getDeclaringClass())
-            || !field.isAnnotationPresent(ConfigInfo.class)
-            || Modifier.isStatic(field.getModifiers()) != global
-            || Modifier.isFinal(field.getModifiers())) {
-            throw new IllegalArgumentException("Invalid Gale migration target: " + field);
-        }
+        return resolvedMappings;
     }
 
     private static Path worldContext(Path worldDirectory) {
@@ -277,31 +195,6 @@ public final class GaleConfigMigration {
         return absolute.startsWith(workingDirectory)
             ? workingDirectory.relativize(absolute)
             : absolute.subpath(0, absolute.getNameCount());
-    }
-
-    private static void renameOverride(Path source, String reason) {
-        Path target = uniqueOldPath(source);
-        try {
-            Files.move(source, target);
-            LOGGER.warn("{} Renamed Gale config from {} to {}.", reason, source, target);
-        } catch (IOException exception) {
-            LOGGER.error("Failed to rename Gale config {}; leaving it in place.", source, exception);
-        }
-    }
-
-    private static Path uniqueOldPath(Path source) {
-        Path target = source.resolveSibling(source.getFileName() + "_old");
-        if (!Files.exists(target)) {
-            return target;
-        }
-        String suffix = BACKUP_TIME_FORMAT.format(LocalDateTime.now());
-        for (int counter = 0; ; counter++) {
-            Path candidate = source.resolveSibling(source.getFileName() + "_old-" + suffix
-                + (counter == 0 ? "" : '-' + Integer.toString(counter)));
-            if (!Files.exists(candidate)) {
-                return candidate;
-            }
-        }
     }
 
     private static synchronized Path backupDirectory() throws IOException {
@@ -324,55 +217,27 @@ public final class GaleConfigMigration {
 
     private static @Nullable PendingMigration collectMigration(
         Path sourcePath,
-        Path worldContext,
-        Map<String, ResolvedTarget> mappings
+        Map<String, String> mappings
     ) {
         if (!Files.isRegularFile(sourcePath)) {
             return null;
         }
         try {
             ConfigFile config = ConfigFile.loadConfig(sourcePath.toFile());
-            List<String> valuePaths = new ArrayList<>();
-            collectValuePaths(config, "", valuePaths);
-            valuePaths.removeAll(IGNORED_PATHS);
-
-            List<String> unmappedPaths = valuePaths.stream()
-                .filter(path -> !mappings.containsKey(path))
-                .toList();
+            boolean hasValues = hasConfigValues(config, "");
             Map<String, Object> values = new LinkedHashMap<>();
-            List<String> invalidPaths = new ArrayList<>();
-            for (Map.Entry<String, ResolvedTarget> entry : mappings.entrySet()) {
+            for (Map.Entry<String, String> entry : mappings.entrySet()) {
                 String oldPath = entry.getKey();
                 if (!config.contains(oldPath)) {
                     continue;
                 }
-                Object oldValue = config.get(oldPath);
-                if (oldValue == null || oldValue instanceof Map<?, ?>) {
-                    LOGGER.warn("Gale path '{}' in {} is not an option; leaving it unmigrated.",
-                        oldPath, sourcePath);
-                    invalidPaths.add(oldPath);
-                    continue;
-                }
-                try {
-                    ResolvedTarget target = entry.getValue();
-                    values.put(target.leafPath(), convertValue(oldValue, target.field()));
-                } catch (IllegalArgumentException exception) {
-                    LOGGER.warn("Gale path '{}' in {} is invalid for {}; leaving it unmigrated.",
-                        oldPath, sourcePath, entry.getValue().field(), exception);
-                    invalidPaths.add(oldPath);
-                }
+                // Gale has already validated the source option; migration preserves its raw value.
+                values.put(entry.getValue(), config.get(oldPath));
             }
-
-            Path backupPath = worldContext.toString().isEmpty()
-                ? Path.of(sourcePath.getFileName().toString())
-                : Path.of("world-overrides").resolve(worldContext).resolve(sourcePath.getFileName().toString());
             return new PendingMigration(
                 sourcePath,
-                backupPath,
                 Map.copyOf(values),
-                List.copyOf(unmappedPaths),
-                List.copyOf(invalidPaths),
-                !valuePaths.isEmpty()
+                hasValues
             );
         } catch (Exception exception) {
             LOGGER.error("Failed to read Gale config {}; migration was skipped.", sourcePath, exception);
@@ -382,71 +247,52 @@ public final class GaleConfigMigration {
 
     private static void archive(PendingMigration migration) {
         try {
-            Path relative = migration.backupPath().normalize();
-            if (relative.isAbsolute() || relative.startsWith("..")) {
-                throw new IOException("Invalid Gale backup path: " + relative);
-            }
-            Path target = backupDirectory().resolve(relative).normalize();
-            Files.createDirectories(target.getParent());
-            Files.move(migration.sourcePath(), target);
-            LOGGER.warn("Moved migrated Gale config {} to {}.", migration.sourcePath(), target);
+            Path backupPath = Path.of(migration.sourcePath().getFileName().toString());
+            moveToBackup(migration.sourcePath(), backupPath);
         } catch (IOException exception) {
-            LOGGER.error("Failed to back up Gale config {}; leaving it in place.",
-                migration.sourcePath(), exception);
+            logBackupFailure(migration.sourcePath(), exception);
         }
     }
 
-    private static void collectValuePaths(Map<?, ?> values, String parent, List<String> paths) {
+    private static void archiveWorldOverride(Path sourcePath, Path worldDirectory) {
+        try {
+            Path fileName = Path.of(sourcePath.getFileName().toString());
+            Path backupPath = Path.of("world-overrides").resolve(worldContext(worldDirectory)).resolve(fileName);
+            moveToBackup(sourcePath, backupPath);
+        } catch (IOException exception) {
+            logBackupFailure(sourcePath, exception);
+        }
+    }
+
+    private static void moveToBackup(Path sourcePath, Path backupPath) throws IOException {
+        Path relative = backupPath.normalize();
+        if (relative.isAbsolute() || relative.startsWith("..")) {
+            throw new IOException("Invalid Gale backup path: " + relative);
+        }
+        Path target = backupDirectory().resolve(relative).normalize();
+        Files.createDirectories(target.getParent());
+        Files.move(sourcePath, target);
+        LOGGER.warn("Moved Gale config {} to {}.", sourcePath, target);
+    }
+
+    private static void logBackupFailure(Path sourcePath, IOException exception) {
+        LOGGER.error("Failed to back up Gale config {}; leaving it in place.", sourcePath, exception);
+    }
+
+    private static boolean hasConfigValues(Map<?, ?> values, String parent) {
         for (Map.Entry<?, ?> entry : values.entrySet()) {
             String name = String.valueOf(entry.getKey());
             String path = parent.isEmpty() ? name : parent + '.' + name;
             Object value = entry.getValue();
             if (value instanceof Map<?, ?> nested) {
-                collectValuePaths(nested, path, paths);
-            } else if (value != null) {
-                paths.add(path);
-            }
-        }
-    }
-
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Object convertValue(Object value, Field field) {
-        Class<?> type = field.getType();
-        if (type == boolean.class || type == Boolean.class) {
-            if (value instanceof Boolean booleanValue) {
-                return booleanValue;
-            }
-            String booleanValue = String.valueOf(value);
-            if (booleanValue.equalsIgnoreCase("true")) {
+                if (hasConfigValues(nested, path)) {
+                    return true;
+                }
+            } else if (!IGNORED_PATHS.contains(path)) {
                 return true;
             }
-            if (booleanValue.equalsIgnoreCase("false")) {
-                return false;
-            }
-            throw new IllegalArgumentException("Not a boolean: " + value);
         }
-        if (type == int.class || type == Integer.class) {
-            return value instanceof Number number ? number.intValue() : Integer.parseInt(String.valueOf(value));
-        }
-        if (type == long.class || type == Long.class) {
-            return value instanceof Number number ? number.longValue() : Long.parseLong(String.valueOf(value));
-        }
-        if (type == double.class || type == Double.class) {
-            return value instanceof Number number ? number.doubleValue() : Double.parseDouble(String.valueOf(value));
-        }
-        if (type == String.class) {
-            return String.valueOf(value);
-        }
-        if (List.class.isAssignableFrom(type) && value instanceof List<?> list) {
-            return list.stream().map(String::valueOf).toList();
-        }
-        if (type.isEnum()) {
-            return Enum.valueOf((Class<? extends Enum>) type, String.valueOf(value).toUpperCase(Locale.ROOT));
-        }
-        throw new IllegalArgumentException("Unsupported migrated config field type: " + field);
-    }
-
-    private record ResolvedTarget(Field field, String leafPath) {
+        return false;
     }
 
     private record Mapping(String oldPath, Class<?> moduleClass, String fieldName) {
@@ -454,10 +300,7 @@ public final class GaleConfigMigration {
 
     private record PendingMigration(
         Path sourcePath,
-        Path backupPath,
         Map<String, Object> values,
-        List<String> unmappedPaths,
-        List<String> invalidPaths,
         boolean hasValues
     ) {
     }

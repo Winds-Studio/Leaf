@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config;
+package org.dreeam.leaf.config.util;
 
 import org.dreeam.leaf.config.annotations.ConfigClassInfo;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
@@ -6,7 +6,7 @@ import org.dreeam.leaf.config.annotations.ConfigInfo;
 import java.lang.reflect.Field;
 
 /** Resolves annotation-driven module and option paths. */
-public final class ConfigPathResolver {
+public final class ConfigPaths {
 
     public static String modulePath(Class<?> moduleClass) {
         ConfigClassInfo info = moduleClass.getAnnotation(ConfigClassInfo.class);

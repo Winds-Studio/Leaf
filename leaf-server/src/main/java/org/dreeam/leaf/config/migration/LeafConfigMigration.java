@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config;
+package org.dreeam.leaf.config.migration;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
@@ -8,12 +8,12 @@ import java.util.Objects;
 /**
  * Applies versioned migrations to the loaded Leaf configuration instances before defaults are added.
  */
-final class LeafConfigMigration {
+public final class LeafConfigMigration {
 
     private LeafConfigMigration() {
     }
 
-    static void migrate(ConfigFile globalConfig, ConfigFile worldDefaultsConfig) throws Exception {
+    public static void migrate(ConfigFile globalConfig, ConfigFile worldDefaultsConfig) throws Exception {
         String storedVersion = globalConfig.getString("config-version", null);
         MigrationContext context = new MigrationContext(globalConfig, worldDefaultsConfig);
 

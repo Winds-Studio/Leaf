@@ -70,7 +70,7 @@ public class DynamicActivationofBrain extends ConfigModule {
     }
 
     @Override
-    public void onPostLoaded() {
+    public void onRegistriesLoaded() {
         for (EntityType<?> entityType : BuiltInRegistries.ENTITY_TYPE) {
             entityType.dabEnabled = true; // reset all, before setting the ones to true
         }
