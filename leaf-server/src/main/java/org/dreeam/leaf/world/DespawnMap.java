@@ -4,12 +4,10 @@ import io.papermc.paper.configuration.WorldConfiguration;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Difficulty;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntitySelector;
-import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.monster.PatrollingMonster;
 import net.minecraft.world.entity.projectile.ShulkerBullet;
 import net.minecraft.world.level.entity.EntityTickList;
 import net.minecraft.world.phys.Vec3;
@@ -66,20 +64,22 @@ public final class DespawnMap implements Consumer<Entity> {
                 sort[i] = hard[i];
             }
         }
-        ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
-        final double[] pxl = new double[players.length];
-        final double[] pyl = new double[players.length];
-        final double[] pzl = new double[players.length];
+        final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
+        final double[] playerX = new double[players.length];
+        final double[] playerY = new double[players.length];
+        final double[] playerZ = new double[players.length];
         int i = 0;
-        for (ServerPlayer p : players) {
+        for (int j = 0; j < players.length; j++) {
+            final ServerPlayer p = players[j];
             if (EntitySelector.PLAYER_AFFECTS_SPAWNING.test(p)) {
-                pxl[i] = p.getX();
-                pyl[i] = p.getY();
-                pzl[i] = p.getZ();
+                playerX[i] = p.getX();
+                playerY[i] = p.getY();
+                playerZ[i] = p.getZ();
+                players[i] = p;
                 i++;
             }
         }
-        tree.build(new double[][]{pxl, pyl, pzl}, new int[i]);
+        tree.build(new double[][]{playerX, playerY, playerZ}, new int[i]);
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
         if (fallback) {
             return false;
@@ -90,60 +90,54 @@ public final class DespawnMap implements Consumer<Entity> {
     }
 
     private boolean checkDespawn(final Entity entity) {
-        // ShulkerBullet#checkDespawn
-        if (!(entity instanceof Mob mob)) {
-            return entity instanceof ShulkerBullet && difficultyIsPeaceful;
-        }
-
-        // Mob#checkDespawn
-        if (!(mob instanceof EnderDragon || mob instanceof WitherBoss)) {
-            return checkDespawnMob(mob);
-        }
-
-        // EnderDragon#checkDespawn nop
-        if (mob instanceof EnderDragon) {
+        EntityType<?> t = entity.getType();
+        if (entity instanceof final EnderDragon enderDragon) {
+            // [EnderDragon#checkDespawn()]
             return false;
-        }
+        } else if (entity instanceof WitherBoss witherBoss) {
+            // [WitherBoss#checkDespawn()]
+            if (difficultyIsPeaceful && !t.isAllowedInPeaceful()) {
+                return true;
+            }
+            witherBoss.noActionTime = 0;
+            return false;
+        } else if (entity instanceof final Mob mob) {
+            if (difficultyIsPeaceful && !t.isAllowedInPeaceful()) {
+                return true;
+            }
+            if (mob.isPersistenceRequired() || mob.requiresCustomPersistence()) {
+                mob.noActionTime = 0;
+                return false;
+            }
 
-        // WitherBoss#checkDespawn
-        if (difficultyIsPeaceful && !mob.getType().isAllowedInPeaceful()) {
-            return true;
-        }
-        mob.noActionTime = 0;
-        return false;
-
-    }
-
-    private boolean checkDespawnMob(Mob mob) {
-        if (difficultyIsPeaceful && !mob.getType().isAllowedInPeaceful()) {
-            return true;
-        }
-
-        if (mob.isPersistenceRequired() || mob.requiresCustomPersistence()) {
+            final int category = t.getCategory().ordinal();
+            final double hardDist = this.hard[category];
+            double maxDist = hardDist + 0.0001;
+            if (mob instanceof PatrollingMonster) {
+                maxDist = Math.max(16384.0001, maxDist);
+            }
+            final Vec3 pos = mob.position;
+            final double dist = this.tree.nearestSqr(pos.x, pos.y, pos.z, maxDist);
+            if (dist == Double.POSITIVE_INFINITY) {
+                return false;
+            }
+            if (dist > hardDist) {
+                return mob.removeWhenFarAway(dist);
+            }
+            if (dist > this.sort[category]) {
+                return mob.noActionTime > 600
+                    && mob.getRandom().nextInt(800) == 0
+                    && mob.removeWhenFarAway(dist);
+            }
             mob.noActionTime = 0;
             return false;
-        }
-        final int category = mob.getType().getCategory().ordinal();
-        final double hardDist = this.hard[category];
-        final Vec3 pos = mob.position;
-        final double dist = this.tree.nearestSqr(pos.x, pos.y, pos.z, hardDist);
-
-        if (dist == Double.POSITIVE_INFINITY) {
+        } else if (entity instanceof ShulkerBullet) {
+            // [ShulkerBullet#checkDespawn()]
+            return difficultyIsPeaceful;
+        } else {
+            // [Entity#checkDespawn()]
             return false;
         }
-
-        if (dist >= hardDist) {
-            return mob.removeWhenFarAway(dist);
-        }
-
-        if (dist > this.sort[category]) {
-            return mob.noActionTime > 600
-                && mob.getRandom().nextInt(800) == 0
-                && mob.removeWhenFarAway(dist);
-        }
-
-        mob.noActionTime = 0;
-        return false;
     }
 
     @Override
