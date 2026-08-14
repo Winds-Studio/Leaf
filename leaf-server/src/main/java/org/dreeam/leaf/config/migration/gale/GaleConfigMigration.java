@@ -6,7 +6,6 @@ import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.ConfigModule;
 import org.dreeam.leaf.config.LeafWorldConfig;
 import org.dreeam.leaf.config.WorldConfigModule;
-import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.modules.gameplay.BookWriting;
 import org.dreeam.leaf.config.modules.opt.SaveFireworks;
 import org.dreeam.leaf.config.util.ConfigPaths;
@@ -15,13 +14,11 @@ import org.jspecify.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +31,6 @@ import java.util.Set;
 public final class GaleConfigMigration {
 
     private static final Logger LOGGER = LogManager.getLogger(GaleConfigMigration.class.getSimpleName());
-    private static final DateTimeFormatter BACKUP_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final String GLOBAL_FILE = "gale-global.yml";
     private static final String WORLD_DEFAULTS_FILE = "gale-world-defaults.yml";
     private static final String WORLD_OVERRIDE_FILE = "gale-world.yml";
@@ -44,28 +40,18 @@ public final class GaleConfigMigration {
     private static List<Mapping> globalMappings = List.of();
     private static List<Mapping> worldMappings = List.of();
     private static Map<String, String> resolvedWorldMappings = Map.of();
-    private static PendingMigration globalMigration;
-    private static PendingMigration worldDefaultsMigration;
-    private static Path backupDirectory;
 
     public static void migrate(Path directory, ConfigFile leafGlobalConfig, ConfigFile leafWorldDefaultsConfig) {
         configDirectory = Objects.requireNonNull(directory, "directory").normalize();
-        backupDirectory = null;
-        globalMigration = null;
-        worldDefaultsMigration = null;
 
         Path globalPath = configDirectory.resolve(GLOBAL_FILE);
         Path worldDefaultsPath = configDirectory.resolve(WORLD_DEFAULTS_FILE);
 
         registerMappings();
-
-        Map<String, String> resolvedGlobalMappings = resolveMappings(globalMappings, true);
-        resolvedWorldMappings = resolveMappings(worldMappings, false);
-        globalMigration = collectMigration(globalPath, resolvedGlobalMappings);
-        worldDefaultsMigration = collectMigration(worldDefaultsPath, resolvedWorldMappings);
-
-        applyMigration(globalMigration, leafGlobalConfig);
-        applyMigration(worldDefaultsMigration, leafWorldDefaultsConfig);
+        Map<String, String> resolvedGlobalMappings = resolveMappings(globalMappings);
+        resolvedWorldMappings = resolveMappings(worldMappings);
+        migrateValues(globalPath, resolvedGlobalMappings, leafGlobalConfig);
+        migrateValues(worldDefaultsPath, resolvedWorldMappings, leafWorldDefaultsConfig);
     }
 
     private static void registerMappings() {
@@ -86,13 +72,11 @@ public final class GaleConfigMigration {
     }
 
     public static void finalizeGlobalMigration() {
-        finalizeMigration(globalMigration);
-        globalMigration = null;
+        archive(configDirectory.resolve(GLOBAL_FILE));
     }
 
     public static void finalizeWorldDefaultsMigration() {
-        finalizeMigration(worldDefaultsMigration);
-        worldDefaultsMigration = null;
+        archive(configDirectory.resolve(WORLD_DEFAULTS_FILE));
     }
 
     /**
@@ -118,15 +102,15 @@ public final class GaleConfigMigration {
                 return null;
             }
 
-            PendingMigration migration = collectMigration(galePath, resolvedWorldMappings);
-            if (migration == null || !migration.hasValues()) {
+            ConfigFile galeConfig = loadSrcConfig(galePath);
+            if (galeConfig == null || !hasConfigValues(galeConfig, "")) {
                 return null;
             }
 
             Files.createFile(leafPath);
             leafFileCreated = true;
             ConfigFile leafConfig = ConfigFile.loadConfig(leafFile);
-            applyMigration(migration, leafConfig);
+            applyMappings(galeConfig, resolvedWorldMappings, leafConfig);
             LeafWorldConfig migrated = LeafWorldConfig.loadOverride(leafConfig, defaults);
             migrated.saveConfig();
             return migrated;
@@ -152,28 +136,31 @@ public final class GaleConfigMigration {
         }
     }
 
-    private static void applyMigration(@Nullable PendingMigration migration, ConfigFile leafConfig) {
-        if (migration == null) {
+    private static void migrateValues(Path srcPath, Map<String, String> mappings, ConfigFile leafConfig) {
+        ConfigFile srcConfig = loadSrcConfig(srcPath);
+        if (srcConfig == null) {
             return;
         }
-        migration.values().forEach(leafConfig::set);
+        applyMappings(srcConfig, mappings, leafConfig);
     }
 
-    private static void finalizeMigration(@Nullable PendingMigration migration) {
-        if (migration == null) {
-            return;
+    private static void applyMappings(
+        ConfigFile srcConfig,
+        Map<String, String> mappings,
+        ConfigFile leafConfig
+    ) {
+        for (Map.Entry<String, String> entry : mappings.entrySet()) {
+            String oldPath = entry.getKey();
+            if (srcConfig.contains(oldPath)) {
+                leafConfig.set(entry.getValue(), srcConfig.get(oldPath));
+            }
         }
-        archive(migration);
     }
 
-    private static Map<String, String> resolveMappings(List<Mapping> mappings, boolean global) {
+    private static Map<String, String> resolveMappings(List<Mapping> mappings) {
         Map<String, String> resolvedMappings = new LinkedHashMap<>();
         for (Mapping mapping : mappings) {
             String oldPath = mapping.oldPath();
-            if (oldPath.isBlank()) {
-                throw new IllegalArgumentException("Gale config path must not be blank");
-            }
-
             Field field;
             try {
                 field = mapping.moduleClass().getDeclaredField(mapping.fieldName());
@@ -197,86 +184,49 @@ public final class GaleConfigMigration {
             : absolute.subpath(0, absolute.getNameCount());
     }
 
-    private static synchronized Path backupDirectory() throws IOException {
-        if (backupDirectory != null) {
-            return backupDirectory;
-        }
-        Path root = configDirectory.resolve("backup");
-        Files.createDirectories(root);
-        String name = "backup-" + BACKUP_TIME_FORMAT.format(LocalDateTime.now());
-        for (int counter = 0; ; counter++) {
-            Path candidate = root.resolve(counter == 0 ? name : name + '-' + counter);
-            try {
-                Files.createDirectory(candidate);
-                backupDirectory = candidate;
-                return candidate;
-            } catch (FileAlreadyExistsException ignored) {
-            }
-        }
-    }
-
-    private static @Nullable PendingMigration collectMigration(
-        Path sourcePath,
-        Map<String, String> mappings
-    ) {
-        if (!Files.isRegularFile(sourcePath)) {
+    private static @Nullable ConfigFile loadSrcConfig(Path srcPath) {
+        if (!Files.isRegularFile(srcPath)) {
             return null;
         }
         try {
-            ConfigFile config = ConfigFile.loadConfig(sourcePath.toFile());
-            boolean hasValues = hasConfigValues(config, "");
-            Map<String, Object> values = new LinkedHashMap<>();
-            for (Map.Entry<String, String> entry : mappings.entrySet()) {
-                String oldPath = entry.getKey();
-                if (!config.contains(oldPath)) {
-                    continue;
-                }
-                // Gale has already validated the source option; migration preserves its raw value.
-                values.put(entry.getValue(), config.get(oldPath));
-            }
-            return new PendingMigration(
-                sourcePath,
-                Map.copyOf(values),
-                hasValues
-            );
+            return ConfigFile.loadConfig(srcPath.toFile());
         } catch (Exception exception) {
-            LOGGER.error("Failed to read Gale config {}; migration was skipped.", sourcePath, exception);
+            LOGGER.error("Failed to read Gale config {}; migration was skipped.", srcPath, exception);
             return null;
         }
     }
 
-    private static void archive(PendingMigration migration) {
+    private static void archive(Path srcPath) {
+        if (!Files.isRegularFile(srcPath)) return;
         try {
-            Path backupPath = Path.of(migration.sourcePath().getFileName().toString());
-            moveToBackup(migration.sourcePath(), backupPath);
+            Path backupPath = Path.of(srcPath.getFileName().toString());
+            moveToBackup(srcPath, backupPath);
         } catch (IOException exception) {
-            logBackupFailure(migration.sourcePath(), exception);
+            LOGGER.error("Failed to back up Gale config {}; leaving it in place.", srcPath, exception);
         }
     }
 
-    private static void archiveWorldOverride(Path sourcePath, Path worldDirectory) {
+    private static void archiveWorldOverride(Path srcPath, Path worldDirectory) {
         try {
-            Path fileName = Path.of(sourcePath.getFileName().toString());
+            Path fileName = Path.of(srcPath.getFileName().toString());
             Path backupPath = Path.of("world-overrides").resolve(worldContext(worldDirectory)).resolve(fileName);
-            moveToBackup(sourcePath, backupPath);
+            moveToBackup(srcPath, backupPath);
         } catch (IOException exception) {
-            logBackupFailure(sourcePath, exception);
+            LOGGER.error("Failed to back up Gale config {}; leaving it in place.", srcPath, exception);
         }
     }
 
-    private static void moveToBackup(Path sourcePath, Path backupPath) throws IOException {
+    private static void moveToBackup(Path srcPath, Path backupPath) throws IOException {
         Path relative = backupPath.normalize();
         if (relative.isAbsolute() || relative.startsWith("..")) {
             throw new IOException("Invalid Gale backup path: " + relative);
         }
-        Path target = backupDirectory().resolve(relative).normalize();
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyMMddhhmmss");
+        Path backupDirectory = configDirectory.resolve("backup" + dateFormat.format(new Date()));
+        Path target = backupDirectory.resolve(relative).normalize();
         Files.createDirectories(target.getParent());
-        Files.move(sourcePath, target);
-        LOGGER.warn("Moved Gale config {} to {}.", sourcePath, target);
-    }
-
-    private static void logBackupFailure(Path sourcePath, IOException exception) {
-        LOGGER.error("Failed to back up Gale config {}; leaving it in place.", sourcePath, exception);
+        Files.move(srcPath, target);
+        LOGGER.warn("Moved Gale config {} to {}.", srcPath, target);
     }
 
     private static boolean hasConfigValues(Map<?, ?> values, String parent) {
@@ -296,12 +246,5 @@ public final class GaleConfigMigration {
     }
 
     private record Mapping(String oldPath, Class<?> moduleClass, String fieldName) {
-    }
-
-    private record PendingMigration(
-        Path sourcePath,
-        Map<String, Object> values,
-        boolean hasValues
-    ) {
     }
 }

@@ -53,7 +53,7 @@ public class LeafConfig {
     private static final String REGION_COUNTRY_CODE = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT);
     private static final boolean IS_CHINESE_LOCALE = REGION_COUNTRY_CODE.equals("CN");
 
-    protected static final File CONFIG_DIRECTORY = new File("config");
+    public static final File CONFIG_DIRECTORY = new File("config");
     protected static final String CONFIG_MODULE_PACKAGE = "org.dreeam.leaf.config.modules";
     protected static final String GLOBAL_CONFIG_FILE = "leaf-global.yml";
     protected static final String DEFAULT_WORLD_CONFIG_FILE = "leaf-world-defaults.yml";
@@ -434,9 +434,8 @@ public class LeafConfig {
         String leafConfigV1 = "leaf.yml";
         String leafConfigV2 = "leaf_config";
 
-        Date date = new Date();
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyMMddhhmmss");
-        String backupDir = "config/backup" + dateFormat.format(date) + "/";
+        String backupDir = "config/backup" + dateFormat.format(new Date()) + "/";
 
         File pufferfishConfigFile = new File(pufferfishConfig);
         File leafConfigV1File = new File(leafConfigV1);
