@@ -72,12 +72,23 @@ public final class GaleConfigMigration {
         worldMappings.add(new Mapping(oldPath, moduleClass, fieldName));
     }
 
-    public static void finalizeGlobalMigration() {
-        archive(configDirectory.resolve(GLOBAL_FILE));
-    }
+    public static void finalizeMigration(MinecraftServer server) {
+        if (configDirectory == null) {
+            return;
+        }
 
-    public static void finalizeWorldDefaultsMigration() {
-        archive(configDirectory.resolve(WORLD_DEFAULTS_FILE));
+        boolean galeConfigFound = archive(configDirectory.resolve(GLOBAL_FILE));
+        galeConfigFound |= archive(configDirectory.resolve(WORLD_DEFAULTS_FILE));
+        for (ServerLevel level : server.getAllLevels()) {
+            Path worldDirectory = server.storageSource.getDimensionPath(level.dimension());
+            galeConfigFound |= archiveWorldOverride(worldDirectory.resolve(WORLD_OVERRIDE_FILE), worldDirectory);
+        }
+
+        if (galeConfigFound) {
+            LOGGER.warn(
+                "Gale configuration migration has finished. Please manually check the migrated Leaf configuration files for correctness."
+            );
+        }
     }
 
     /**
@@ -88,8 +99,7 @@ public final class GaleConfigMigration {
     public static @Nullable LeafWorldConfig migrateWorldOverride(
         Path worldDirectory,
         File leafFile,
-        LeafWorldConfig defaults,
-        boolean reload
+        LeafWorldConfig defaults
     ) {
         Path leafPath = leafFile.toPath();
         Path galePath = worldDirectory.resolve(WORLD_OVERRIDE_FILE);
@@ -117,7 +127,7 @@ public final class GaleConfigMigration {
             leafFileCreated = true;
             ConfigFile leafConfig = ConfigFile.loadConfig(leafFile);
             applyMappings(galeConfig, resolvedWorldMappings, leafConfig);
-            LeafWorldConfig migrated = LeafConfig.loadWorldOverride(leafConfig, defaults, reload);
+            LeafWorldConfig migrated = LeafConfig.loadWorldOverride(leafConfig, defaults);
             migrated.saveConfig();
             return migrated;
         } catch (Exception exception) {
@@ -133,12 +143,6 @@ public final class GaleConfigMigration {
                 galePath, worldDirectory, exception
             );
             return null;
-        } finally {
-            archiveWorldOverride(galePath, worldDirectory);
-            LOGGER.warn(
-                "Finished processing Gale world config for {}. Please manually check the Leaf configuration used by this world.",
-                worldDirectory
-            );
         }
     }
 
@@ -202,17 +206,19 @@ public final class GaleConfigMigration {
         }
     }
 
-    private static void archive(Path srcPath) {
-        if (!Files.isRegularFile(srcPath)) return;
+    private static boolean archive(Path srcPath) {
+        if (!Files.isRegularFile(srcPath)) return false;
         try {
             Path backupPath = Path.of(srcPath.getFileName().toString());
             moveToBackup(srcPath, backupPath);
         } catch (IOException exception) {
             LOGGER.error("Failed to back up Gale config {}; leaving it in place.", srcPath, exception);
         }
+        return true;
     }
 
-    private static void archiveWorldOverride(Path srcPath, Path worldDirectory) {
+    private static boolean archiveWorldOverride(Path srcPath, Path worldDirectory) {
+        if (!Files.isRegularFile(srcPath)) return false;
         try {
             Path fileName = Path.of(srcPath.getFileName().toString());
             Path backupPath = Path.of("world-overrides").resolve(worldContext(worldDirectory)).resolve(fileName);
@@ -220,6 +226,7 @@ public final class GaleConfigMigration {
         } catch (IOException exception) {
             LOGGER.error("Failed to back up Gale config {}; leaving it in place.", srcPath, exception);
         }
+        return true;
     }
 
     private static void moveToBackup(Path srcPath, Path backupPath) throws IOException {

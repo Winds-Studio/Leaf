@@ -120,6 +120,32 @@ final class ConfigBinder {
         }
     }
 
+    static void applyWorldDefaults(
+        Object module,
+        Object defaultsModule,
+        boolean alreadyInitialized
+    ) throws IllegalAccessException {
+        Class<?> moduleClass = module.getClass();
+        if (defaultsModule.getClass() != moduleClass) {
+            throw new IllegalArgumentException("Configuration modules must have the same type");
+        }
+        if (alreadyInitialized && moduleClass.isAnnotationPresent(HotReloadUnsupported.class)) {
+            return;
+        }
+
+        for (Field field : moduleClass.getDeclaredFields()) {
+            if (field.getAnnotation(DoNotLoad.class) != null
+                || field.getAnnotation(ConfigInfo.class) == null
+                || alreadyInitialized && field.getAnnotation(HotReloadUnsupported.class) != null) {
+                continue;
+            }
+
+            validateField(moduleClass, field, false);
+            field.setAccessible(true);
+            field.set(module, copyValue(field.get(defaultsModule)));
+        }
+    }
+
     // TODO[To-GitHub-issue]: Not sure whether needs to validate, we don't expose LeafConfig as public framework
     private static void validateField(Class<?> moduleClass, Field field, boolean global) {
         int modifiers = field.getModifiers();

@@ -12,9 +12,13 @@ import java.util.Map;
 /** Shared configuration-file utilities for global and world configuration views. */
 abstract class LeafConfigAccessor {
 
-    protected final ConfigFile configFile;
+    protected ConfigFile configFile;
 
     protected LeafConfigAccessor(ConfigFile configFile) {
+        this.configFile = configFile;
+    }
+
+    void setConfigFile(ConfigFile configFile) {
         this.configFile = configFile;
     }
 
