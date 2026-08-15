@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.opt;
 
 import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.annotations.Experimental;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
 
 public class DensityFunctionCompiler extends ConfigModule {
@@ -10,7 +11,9 @@ public class DensityFunctionCompiler extends ConfigModule {
         return ConfigCategory.PERF.basePath() + ".density-function-compiler";
     }
 
-    public static @HotReloadUnsupported boolean enabled = true;
+    @HotReloadUnsupported
+    @Experimental
+    public static boolean enabled = false;
     private static boolean densityFunctionCompilerInitialized;
 
     @Override
