@@ -3,6 +3,7 @@ package org.dreeam.leaf.config;
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
 import org.dreeam.leaf.config.migration.ConfigPathMigration;
+import org.dreeam.leaf.config.util.ConfigFileIO;
 import org.jspecify.annotations.Nullable;
 
 import java.io.File;
@@ -23,7 +24,7 @@ abstract class LeafConfigAccessor {
     }
 
     public void saveConfig() throws Exception {
-        configFile.save();
+        ConfigFileIO.saveAtomically(configFile);
     }
 
     boolean contains(String path) {
@@ -181,6 +182,7 @@ abstract class LeafConfigAccessor {
         configFile.addComment(path, LeafConfig.isChineseLocale() ? cn : en);
     }
 
+    // TODO - why so complicated?
     public @Nullable String pickStringRegionBased(String... localizedStrings) {
         if (localizedStrings == null || localizedStrings.length == 0) return null;
         if (localizedStrings.length == 1) return localizedStrings[0];

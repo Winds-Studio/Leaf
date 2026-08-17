@@ -7,11 +7,12 @@ import java.util.Objects;
 /** The server-wide Leaf configuration. */
 public final class LeafGlobalConfig extends LeafConfigAccessor {
 
-    LeafGlobalConfig(ConfigFile configFile) {
+    LeafGlobalConfig(ConfigFile configFile, boolean loadPreviousVersion) {
         super(configFile);
 
-        LeafConfig.loadPreviousConfigVersion(getString("config-version"));
-
+        if (loadPreviousVersion) {
+            LeafConfig.loadPreviousConfigVersion(getString("config-version"));
+        }
 
         configFile.set("config-version", LeafConfig.CURRENT_CONFIG_VERSION);
 

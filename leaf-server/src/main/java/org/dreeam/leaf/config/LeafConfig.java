@@ -13,6 +13,7 @@ import org.dreeam.leaf.config.annotations.Experimental;
 import org.dreeam.leaf.config.migration.LeafConfigMigration;
 import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
+import org.dreeam.leaf.config.util.ConfigFileIO;
 import org.jspecify.annotations.NullMarked;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -73,7 +74,6 @@ public class LeafConfig {
 
     private static final List<ConfigModule> GLOBAL_MODULES = new ArrayList<>();
     private static final List<Field> WORLD_MODULES = new ArrayList<>();
-    private static boolean modulesInitialized;
 
     private static ConfigVersion previousConfigVersion = ConfigVersion.initial();
 
@@ -86,9 +86,32 @@ public class LeafConfig {
             try {
                 long begin = System.nanoTime();
 
-                loadConfig(false);
-                reloadWorldConfig(server);
-                loadAfterBootstrap();
+                createDirectory(CONFIG_DIRECTORY);
+
+                ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
+                ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
+                LeafGlobalConfig loadedGlobalConfig = new LeafGlobalConfig(globalConfigFile, false);
+                LeafWorldConfig loadedWorldDefaults = loadWorldDefaults(worldDefaultsFile);
+
+                List<ConfigBinder.PendingValue> pendingValues = new ArrayList<>();
+                if (GLOBAL_MODULES.isEmpty()) {
+                    discoverGlobalModules();
+                }
+                for (ConfigModule module : GLOBAL_MODULES) {
+                    ConfigBinder.collectGlobalReload(module, loadedGlobalConfig, pendingValues);
+                }
+                collectWorldReloadValues(worldDefaultsConfig, loadedWorldDefaults, pendingValues);
+
+                List<WorldReload> worldReloads = new ArrayList<>();
+                for (ServerLevel level : server.getAllLevels()) {
+                    Path worldDirectory = server.storageSource.getDimensionPath(level.dimension());
+                    LeafWorldConfig loadedConfig = loadWorldConfig(worldDirectory, loadedWorldDefaults);
+                    LeafWorldConfig currentConfig = level.leafConfig();
+                    collectWorldReloadValues(currentConfig, loadedConfig, pendingValues);
+                    worldReloads.add(new WorldReload(currentConfig, loadedConfig.configFile, currentConfig.configFile));
+                }
+
+                commitReload(loadedGlobalConfig, loadedWorldDefaults, worldReloads, pendingValues);
 
                 final String success = String.format("Successfully reloaded config in %sms.", (System.nanoTime() - begin) / 1_000_000);
                 Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));
@@ -99,49 +122,24 @@ public class LeafConfig {
         }, server);
     }
 
-    private static void reloadWorldConfig(MinecraftServer server) throws Exception {
-        for (ServerLevel level : server.getAllLevels()) {
-            Path worldDirectory = server.storageSource.getDimensionPath(level.dimension());
-            LeafWorldConfig config = level.leafConfig();
-            reloadWorldConfig(config, worldDirectory);
-            level.setLeafConfig(config);
-        }
-    }
-
-    private static void reloadWorldConfig(
-        LeafWorldConfig config,
-        Path worldDirectory
-    ) throws Exception {
-        applyWorldConfig(config, worldDirectory, true);
-    }
-
-    private static LeafWorldConfig loadWorldConfig(Path worldDirectory) throws Exception {
+    private static LeafWorldConfig loadWorldConfig(Path worldDirectory, LeafWorldConfig defaults) throws Exception {
         LeafWorldConfig config = new LeafWorldConfig(
-            worldDefaultsConfig.configFile,
-            LeafWorldConfig.Source.WORLD_CONFIG
+            defaults.configFile,
+            LeafWorldConfig.Source.WORLD_OVERRIDE
         );
-        applyWorldConfig(config, worldDirectory, false);
-        return config;
-    }
-
-    private static void applyWorldConfig(
-        LeafWorldConfig config,
-        Path worldDirectory,
-        boolean alreadyInitialized
-    ) throws Exception {
-        applyWorldDefaults(config, worldDefaultsConfig, alreadyInitialized);
+        applyWorldDefaults(config, defaults);
 
         File worldConfigFile = worldDirectory.resolve(WORLD_CONFIG_FILE).toFile();
         if (!worldConfigFile.isFile()) {
-            config.setConfigFile(worldDefaultsConfig.configFile);
-            return;
+            config.setConfigFile(defaults.configFile);
+            return config;
         }
         applyWorldOverride(
             config,
-            ConfigFile.loadConfig(worldConfigFile),
-            worldDefaultsConfig,
-            alreadyInitialized
+            ConfigFileIO.load(worldConfigFile),
+            defaults
         );
+        return config;
     }
 
     // Init config
@@ -151,7 +149,30 @@ public class LeafConfig {
             LOGGER.info("Loading config...");
 
             purgeOutdated();
-            loadConfig(true);
+            createDirectory(CONFIG_DIRECTORY);
+
+            ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
+            ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
+
+            // Migrate the same raw config instances that will be bound and saved below.
+            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile);
+            GaleConfigMigration.migrate(
+                CONFIG_DIRECTORY.toPath(),
+                globalConfigFile,
+                worldDefaultsFile
+            );
+
+            globalConfig = new LeafGlobalConfig(globalConfigFile, true);
+            if (GLOBAL_MODULES.isEmpty()) {
+                discoverGlobalModules();
+            }
+            for (ConfigModule module : GLOBAL_MODULES) {
+                ConfigBinder.bind(module, null, globalConfig, true);
+            }
+            runGlobalModuleCallbacks();
+
+            worldDefaultsConfig = loadWorldDefaults(worldDefaultsFile);
+            worldDefaultsConfig.saveConfig();
 
             LOGGER.info("Successfully loaded config in {}ms.", (System.nanoTime() - begin) / 1_000_000);
         } catch (Exception e) {
@@ -160,37 +181,6 @@ public class LeafConfig {
     }
 
     /* Load Global Config */
-
-    private static void loadConfig(boolean init) throws Exception {
-        // Create config folder
-        createDirectory(CONFIG_DIRECTORY);
-
-        ConfigFile globalConfigFile = ConfigFile.loadConfig(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
-        ConfigFile worldDefaultsFile = ConfigFile.loadConfig(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
-
-        if (init) {
-            // Migrate the same raw config instances that will be bound and saved below.
-            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile);
-
-            GaleConfigMigration.migrate(
-                CONFIG_DIRECTORY.toPath(),
-                globalConfigFile,
-                worldDefaultsFile
-            );
-        }
-
-        globalConfig = new LeafGlobalConfig(globalConfigFile);
-
-        loadGlobalModules();
-
-        if (init) {
-            worldDefaultsConfig = loadWorldDefaults(worldDefaultsFile);
-        } else {
-            reloadWorldDefaults(worldDefaultsFile);
-        }
-        worldDefaultsConfig.saveConfig();
-        modulesInitialized = true;
-    }
 
     public static LeafGlobalConfig globalConfig() {
         return globalConfig;
@@ -215,7 +205,7 @@ public class LeafConfig {
             return migratedConfig;
         }
         try {
-            return loadWorldConfig(worldDirectory);
+            return loadWorldConfig(worldDirectory, worldDefaultsConfig);
         } catch (Exception exception) {
             throw new RuntimeException("Could not load Leaf world config for " + worldDirectory, exception);
         }
@@ -235,35 +225,35 @@ public class LeafConfig {
             }
 
             ConfigModule module = (ConfigModule) moduleClass.getConstructor().newInstance();
+            ConfigBinder.registerGlobalDefaults(module);
             GLOBAL_MODULES.add(module);
         }
     }
 
-    private static void discoverWorldModules() {
-        Field[] fields = LeafWorldConfig.class.getDeclaredFields();
-        ObjectArrays.quickSort(fields, Comparator.comparing((Field field) -> field.getType().getSimpleName())
-            .thenComparing(field -> field.getType().getName()));
-        for (Field field : fields) {
-            if (WorldConfigModule.class.isAssignableFrom(field.getType())) {
-                WORLD_MODULES.add(field);
-            }
-        }
-    }
-
-    private static void loadGlobalModules() throws ReflectiveOperationException {
-        if (GLOBAL_MODULES.isEmpty()) {
-            discoverGlobalModules();
-        }
-
+    private static void runGlobalModuleCallbacks() throws IllegalAccessException {
         List<Field> enabledExperimentalModules = new ArrayList<>();
         List<Field> deprecatedModules = new ArrayList<>();
 
         for (ConfigModule module : GLOBAL_MODULES) {
-            ConfigBinder.bind(module, null, globalConfig, true, modulesInitialized);
             module.onLoaded();
 
             Class<?> moduleClass = module.getClass();
-            collectEnabledFields(moduleClass, enabledExperimentalModules, deprecatedModules);
+            for (Field field : moduleClass.getDeclaredFields()) {
+                boolean experimental = field.isAnnotationPresent(Experimental.class);
+                boolean deprecated = field.isAnnotationPresent(Deprecated.class);
+                if ((!experimental && !deprecated) || !Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                field.setAccessible(true);
+                if (field.get(null) instanceof Boolean enabled && enabled) {
+                    if (experimental) {
+                        enabledExperimentalModules.add(field);
+                    }
+                    if (deprecated) {
+                        deprecatedModules.add(field);
+                    }
+                }
+            }
         }
 
         warnEnabledModules(
@@ -276,62 +266,116 @@ public class LeafConfig {
         );
     }
 
-    private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile) throws ReflectiveOperationException {
-        if (WORLD_MODULES.isEmpty()) {
-            discoverWorldModules();
-        }
-
-        LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS_FILE);
-        applyWorldDefaultsFile(config, configFile, false);
-        return config;
-    }
-
-    private static void reloadWorldDefaults(ConfigFile configFile) throws ReflectiveOperationException {
-        applyWorldDefaultsFile(worldDefaultsConfig, configFile, true);
-    }
-
-    private static void applyWorldDefaultsFile(
+    private static void collectWorldReloadValues(
         LeafWorldConfig config,
-        ConfigFile configFile,
-        boolean alreadyInitialized
-    ) throws ReflectiveOperationException {
-        config.setConfigFile(configFile);
-
+        LeafWorldConfig loadedConfig,
+        List<ConfigBinder.PendingValue> pendingValues
+    ) throws IllegalAccessException {
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
-            ConfigBinder.bind(module, null, config, false, alreadyInitialized);
+            WorldConfigModule loadedModule = (WorldConfigModule) moduleField.get(loadedConfig);
+            ConfigBinder.collectWorldReload(module, loadedModule, pendingValues);
         }
+    }
+
+    private static void commitReload(
+        LeafGlobalConfig loadedGlobalConfig,
+        LeafWorldConfig loadedWorldDefaults,
+        List<WorldReload> worldReloads,
+        List<ConfigBinder.PendingValue> pendingValues
+    ) throws Exception {
+        LeafGlobalConfig previousGlobalConfig = globalConfig;
+        ConfigFile previousWorldDefaultsFile = worldDefaultsConfig.configFile;
+        int appliedValues = 0;
+
+        try {
+            globalConfig = loadedGlobalConfig;
+            worldDefaultsConfig.setConfigFile(loadedWorldDefaults.configFile);
+            for (WorldReload worldReload : worldReloads) {
+                worldReload.config().setConfigFile(worldReload.loadedConfigFile());
+            }
+            for (ConfigBinder.PendingValue pendingValue : pendingValues) {
+                pendingValue.apply();
+                appliedValues++;
+            }
+
+            runGlobalModuleCallbacks();
+            runAfterBootstrapCallbacks();
+            ConfigFileIO.saveAtomically(worldDefaultsConfig.configFile, globalConfig.configFile);
+        } catch (Exception exception) {
+            for (int index = appliedValues - 1; index >= 0; index--) {
+                try {
+                    pendingValues.get(index).restore();
+                } catch (IllegalAccessException restoreException) {
+                    exception.addSuppressed(restoreException);
+                }
+            }
+            globalConfig = previousGlobalConfig;
+            worldDefaultsConfig.setConfigFile(previousWorldDefaultsFile);
+            for (WorldReload worldReload : worldReloads) {
+                worldReload.config().setConfigFile(worldReload.previousConfigFile());
+            }
+
+            try {
+                runGlobalModuleCallbacks();
+            } catch (Exception callbackException) {
+                exception.addSuppressed(callbackException);
+            }
+            try {
+                runAfterBootstrapCallbacks();
+            } catch (Exception callbackException) {
+                exception.addSuppressed(callbackException);
+            }
+            throw exception;
+        }
+    }
+
+    private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile) throws ReflectiveOperationException {
+        if (WORLD_MODULES.isEmpty()) {
+            Field[] fields = LeafWorldConfig.class.getDeclaredFields();
+            ObjectArrays.quickSort(fields, Comparator.comparing((Field field) -> field.getType().getSimpleName())
+                .thenComparing(field -> field.getType().getName()));
+            for (Field field : fields) {
+                if (WorldConfigModule.class.isAssignableFrom(field.getType())) {
+                    WORLD_MODULES.add(field);
+                }
+            }
+        }
+
+        LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
+        for (Field moduleField : WORLD_MODULES) {
+            WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
+            ConfigBinder.bind(module, null, config, false);
+        }
+        return config;
     }
 
     public static LeafWorldConfig loadWorldOverride(
         ConfigFile configFile,
         LeafWorldConfig worldDefaults
     ) throws ReflectiveOperationException {
-        LeafWorldConfig config = new LeafWorldConfig(worldDefaults.configFile, LeafWorldConfig.Source.WORLD_CONFIG);
-        applyWorldDefaults(config, worldDefaults, false);
-        applyWorldOverride(config, configFile, worldDefaults, false);
+        LeafWorldConfig config = new LeafWorldConfig(worldDefaults.configFile, LeafWorldConfig.Source.WORLD_OVERRIDE);
+        applyWorldDefaults(config, worldDefaults);
+        applyWorldOverride(config, configFile, worldDefaults);
         return config;
     }
 
     private static void applyWorldOverride(
         LeafWorldConfig config,
         ConfigFile configFile,
-        LeafWorldConfig worldDefaults,
-        boolean alreadyInitialized
+        LeafWorldConfig worldDefaults
     ) throws ReflectiveOperationException {
         config.setConfigFile(configFile);
 
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             WorldConfigModule worldDefaultModule = (WorldConfigModule) moduleField.get(worldDefaults);
-            ConfigBinder.bind(module, worldDefaultModule, config, false, alreadyInitialized);
+            ConfigBinder.bind(module, worldDefaultModule, config, false);
         }
     }
 
     public static void loadAfterBootstrap() {
-        for (ConfigModule module : GLOBAL_MODULES) {
-            module.onRegistriesLoaded();
-        }
+        runAfterBootstrapCallbacks();
 
         try {
             globalConfig.saveConfig();
@@ -340,26 +384,9 @@ public class LeafConfig {
         }
     }
 
-    private static void collectEnabledFields(
-        Class<?> moduleClass,
-        List<Field> enabledExperimentalFields,
-        List<Field> enabledDeprecatedFields
-    ) throws IllegalAccessException {
-        for (Field field : moduleClass.getDeclaredFields()) {
-            boolean experimental = field.isAnnotationPresent(Experimental.class);
-            boolean deprecated = field.isAnnotationPresent(Deprecated.class);
-            if ((!experimental && !deprecated) || !Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            field.setAccessible(true);
-            if (field.get(null) instanceof Boolean enabled && enabled) {
-                if (experimental) {
-                    enabledExperimentalFields.add(field);
-                }
-                if (deprecated) {
-                    enabledDeprecatedFields.add(field);
-                }
-            }
+    private static void runAfterBootstrapCallbacks() {
+        for (ConfigModule module : GLOBAL_MODULES) {
+            module.onRegistriesLoaded();
         }
     }
 
@@ -372,19 +399,14 @@ public class LeafConfig {
             .toList());
     }
 
-    public static void finalizeGaleConfigMigration(MinecraftServer server) {
-        GaleConfigMigration.finalizeMigration(server);
-    }
-
     private static void applyWorldDefaults(
         LeafWorldConfig config,
-        LeafWorldConfig defaults,
-        boolean alreadyInitialized
+        LeafWorldConfig defaults
     ) throws IllegalAccessException {
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             WorldConfigModule defaultsModule = (WorldConfigModule) moduleField.get(defaults);
-            ConfigBinder.applyWorldDefaults(module, defaultsModule, alreadyInitialized);
+            ConfigBinder.applyWorldDefaults(module, defaultsModule);
         }
     }
 
@@ -541,6 +563,13 @@ public class LeafConfig {
             }
             return ConfigVersion.initial();
         }
+    }
+
+    private record WorldReload(
+        LeafWorldConfig config,
+        ConfigFile loadedConfigFile,
+        ConfigFile previousConfigFile
+    ) {
     }
 
     private record ConfigVersion(List<Integer> components) implements Comparable<ConfigVersion> {
