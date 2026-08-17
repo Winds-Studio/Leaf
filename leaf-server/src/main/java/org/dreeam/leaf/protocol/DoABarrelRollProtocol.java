@@ -111,7 +111,7 @@ public class DoABarrelRollProtocol implements Protocol {
                 var rolling = rollSyncC2SPacket.rolling();
                 var roll = rollSyncC2SPacket.roll();
                 isRollingMap.put(player.connection, rolling);
-                if (Float.isInfinite(roll)) {
+                if (!Float.isFinite(roll)) {
                     roll = 0.0F;
                 }
                 rollMap.put(player.connection, roll);
