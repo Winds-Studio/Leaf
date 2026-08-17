@@ -12,7 +12,7 @@ public class DenseSectionPushIndex extends ConfigModule {
 
     @Experimental
     public static boolean enabled = false;
-    public static int threshold = 300;
+    public static int threshold = 64;
 
     @Override
     public void onLoaded() {
