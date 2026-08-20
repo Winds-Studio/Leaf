@@ -1,20 +1,14 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class ServerBrand extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.MISC, name = "rebrand")
+public class ServerBrand implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.MISC.basePath() + ".rebrand";
-    }
-
+    @ConfigInfo(name = "server-mod-name")
     public static String serverModName = io.papermc.paper.ServerBuildInfo.buildInfo().brandName();
-    public static String serverGUIName = io.papermc.paper.ServerBuildInfo.buildInfo().brandName() + " Console";
 
-    @Override
-    public void onLoaded() {
-        serverModName = globalConfig.getString(basePath() + ".server-mod-name", serverModName);
-        serverGUIName = globalConfig.getString(basePath() + ".server-gui-name", serverGUIName);
-    }
+    @ConfigInfo(name = "server-gui-name")
+    public static String serverGUIName = io.papermc.paper.ServerBuildInfo.buildInfo().brandName() + " Console";
 }

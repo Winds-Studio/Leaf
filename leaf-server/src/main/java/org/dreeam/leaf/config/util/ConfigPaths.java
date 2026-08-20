@@ -15,7 +15,9 @@ public final class ConfigPaths {
                 + " is missing @ConfigClassInfo");
         }
 
-        return info.category().basePath() + '.' + info.name();
+        return info.name().isEmpty()
+            ? info.category().basePath()
+            : info.category().basePath() + '.' + info.name();
     }
 
     public static String fieldPath(Class<?> moduleClass, Field field) {

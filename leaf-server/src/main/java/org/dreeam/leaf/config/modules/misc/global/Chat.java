@@ -1,9 +1,7 @@
 package org.dreeam.leaf.config.modules.misc.global;
 
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.annotations.ConfigClassInfo;
-import org.dreeam.leaf.config.annotations.ConfigInfo;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
 @ConfigClassInfo(category = ConfigCategory.MISC, name = "chat-logging")
 public final class Chat implements ConfigModule {

@@ -30,7 +30,7 @@ public class AsyncPathfinding implements ConfigModule {
             FLUSH_ALL: 所有等待中的任务都将在主线程上运行.
             CALLER_RUNS: 新提交的任务将在主线程上运行."""
     })
-    public static String rejectPolicy = "CALLER_RUNS";
+    public static String rejectPolicy = "default";
 
     public static @DoNotLoad PathfindTaskRejectPolicy rejectPolicyType = PathfindTaskRejectPolicy.CALLER_RUNS;
 
@@ -50,11 +50,15 @@ public class AsyncPathfinding implements ConfigModule {
             queueSize = maxThreads * 256;
         }
 
-        rejectPolicyType = PathfindTaskRejectPolicy.fromString(globalConfig.getString(basePath() + ".reject-policy",
-            availableProcessors >= 12 && queueSize < 512
+        String policyStr = rejectPolicy;
+
+        if ("default".equalsIgnoreCase(policyStr)) {
+            policyStr = availableProcessors >= 12 && queueSize < 512
                 ? PathfindTaskRejectPolicy.FLUSH_ALL.toString()
-                : PathfindTaskRejectPolicy.CALLER_RUNS.toString())
-        );
+                : PathfindTaskRejectPolicy.CALLER_RUNS.toString();
+        }
+
+        rejectPolicyType = PathfindTaskRejectPolicy.fromString(policyStr);
 
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", maxThreads);

@@ -1,18 +1,11 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class VanillaHopper extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.GAMEPLAY)
+public class VanillaHopper implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.GAMEPLAY.basePath() + ".use-vanilla-hopper";
-    }
-
+    @ConfigInfo(name = "use-vanilla-hopper")
     public static boolean enabled = false;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath(), enabled);
-    }
 }

@@ -10,6 +10,7 @@ import net.minecraft.server.level.ServerLevel;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
 import org.dreeam.leaf.config.migration.LeafConfigMigration;
 import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
@@ -169,7 +170,7 @@ public class LeafConfig {
             for (ConfigModule module : GLOBAL_MODULES) {
                 ConfigBinder.bind(module, null, globalConfig, true);
             }
-            runGlobalModuleCallbacks();
+            runGlobalModuleCallbacks(false);
 
             worldDefaultsConfig = loadWorldDefaults(worldDefaultsFile);
             worldDefaultsConfig.saveConfig();
@@ -230,14 +231,18 @@ public class LeafConfig {
         }
     }
 
-    private static void runGlobalModuleCallbacks() throws IllegalAccessException {
+    private static void runGlobalModuleCallbacks(boolean reload) throws IllegalAccessException {
         List<Field> enabledExperimentalModules = new ArrayList<>();
         List<Field> deprecatedModules = new ArrayList<>();
 
         for (ConfigModule module : GLOBAL_MODULES) {
+            Class<?> moduleClass = module.getClass();
+            if (reload && moduleClass.isAnnotationPresent(HotReloadUnsupported.class)) {
+                continue;
+            }
+
             module.onLoaded();
 
-            Class<?> moduleClass = module.getClass();
             for (Field field : moduleClass.getDeclaredFields()) {
                 boolean experimental = field.isAnnotationPresent(Experimental.class);
                 boolean deprecated = field.isAnnotationPresent(Deprecated.class);
@@ -299,8 +304,8 @@ public class LeafConfig {
                 appliedValues++;
             }
 
-            runGlobalModuleCallbacks();
-            runAfterBootstrapCallbacks();
+            runGlobalModuleCallbacks(true);
+            runAfterBootstrapCallbacks(true);
             ConfigFileIO.saveAtomically(worldDefaultsConfig.configFile, globalConfig.configFile);
         } catch (Exception exception) {
             for (int index = appliedValues - 1; index >= 0; index--) {
@@ -317,12 +322,12 @@ public class LeafConfig {
             }
 
             try {
-                runGlobalModuleCallbacks();
+                runGlobalModuleCallbacks(true);
             } catch (Exception callbackException) {
                 exception.addSuppressed(callbackException);
             }
             try {
-                runAfterBootstrapCallbacks();
+                runAfterBootstrapCallbacks(true);
             } catch (Exception callbackException) {
                 exception.addSuppressed(callbackException);
             }
@@ -375,7 +380,7 @@ public class LeafConfig {
     }
 
     public static void loadAfterBootstrap() {
-        runAfterBootstrapCallbacks();
+        runAfterBootstrapCallbacks(false);
 
         try {
             globalConfig.saveConfig();
@@ -384,8 +389,11 @@ public class LeafConfig {
         }
     }
 
-    private static void runAfterBootstrapCallbacks() {
+    private static void runAfterBootstrapCallbacks(boolean reload) {
         for (ConfigModule module : GLOBAL_MODULES) {
+            if (reload && module.getClass().isAnnotationPresent(HotReloadUnsupported.class)) {
+                continue;
+            }
             module.onRegistriesLoaded();
         }
     }

@@ -15,7 +15,7 @@ public @interface ConfigClassInfo {
 
     ConfigCategory category();
 
-    String name();
+    String name() default "";
 
     /**
      * Optional section comment. Text blocks are supported.

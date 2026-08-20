@@ -1,28 +1,39 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class EntityGoal extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF, name = "entity-goal")
+public class EntityGoal implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".entity-goal";
-    }
+    @ConfigInfo(name = "start-tick-chance.nearest-attackable-target")
+    private static int configuredChanceTarget = -1;
 
-    public static int chanceTarget = -1; // only all <= 10
-    public static int chanceFollowParent = -1;
-    public static int chanceAvoidEntity = -1;
-    public static int chanceTempt = -1;
-    public static int chanceEndermanLookForPlayer = -1;
+    @ConfigInfo(name = "start-tick-chance.follow-parent")
+    private static int configuredChanceFollowParent = -1;
+
+    @ConfigInfo(name = "start-tick-chance.avoid-entity")
+    private static int configuredChanceAvoidEntity = -1;
+
+    @ConfigInfo(name = "start-tick-chance.temptation")
+    private static int configuredChanceTempt = -1;
+
+    @ConfigInfo(name = "start-tick-chance.enderman-look-for-player")
+    private static int configuredChanceEndermanLookForPlayer = -1;
+
+    public static @DoNotLoad int chanceTarget = -1; // only all <= 10
+    public static @DoNotLoad int chanceFollowParent = -1;
+    public static @DoNotLoad int chanceAvoidEntity = -1;
+    public static @DoNotLoad int chanceTempt = -1;
+    public static @DoNotLoad int chanceEndermanLookForPlayer = -1;
 
     @Override
     public void onLoaded() {
-        String path = basePath() + ".start-tick-chance";
-        chanceTarget = globalConfig.getInt(path + ".nearest-attackable-target", -1);
-        chanceFollowParent = globalConfig.getInt(path + ".follow-parent", -1);
-        chanceAvoidEntity = globalConfig.getInt(path + ".avoid-entity", -1);
-        chanceTempt = globalConfig.getInt(path + ".temptation", -1);
-        chanceEndermanLookForPlayer = globalConfig.getInt(path + ".enderman-look-for-player", -1);
+        chanceTarget = configuredChanceTarget;
+        chanceFollowParent = configuredChanceFollowParent;
+        chanceAvoidEntity = configuredChanceAvoidEntity;
+        chanceTempt = configuredChanceTempt;
+        chanceEndermanLookForPlayer = configuredChanceEndermanLookForPlayer;
 
         // expect nearest_attackable_target
         if (chanceFollowParent < 1) {
