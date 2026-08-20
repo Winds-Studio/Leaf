@@ -17,6 +17,34 @@ index 8fb7ed05e0e158d153fe1fbaefc4e4b2c845d0c7..fb2ebf64bdf441071d914837aa36b7f6
      // Paper start - improve tick loop
      public final ca.spottedleaf.common.time.TickData tickTimes1s  = new ca.spottedleaf.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(1L));
      public final ca.spottedleaf.common.time.TickData tickTimes5s  = new ca.spottedleaf.common.time.TickData(java.util.concurrent.TimeUnit.SECONDS.toNanos(5L));
+diff --git a/net/minecraft/server/level/ServerPlayerGameMode.java b/net/minecraft/server/level/ServerPlayerGameMode.java
+index 185a14c96741d9c394c07b1c7747e908282e9452..2f3d9f13f1b3c98e89f18b5b038222abfc180079 100644
+--- a/net/minecraft/server/level/ServerPlayerGameMode.java
++++ b/net/minecraft/server/level/ServerPlayerGameMode.java
+@@ -605,8 +605,21 @@ public class ServerPlayerGameMode {
+         if (this.player.level().purpurConfig.shiftRightClickRepairsMendingPoints > 0 && this.player.isShiftKeyDown() && this.player.getBukkitEntity().hasPermission("purpur.mending_shift_click")) {
+             int points = Math.min(this.player.totalExperience, this.player.level().purpurConfig.shiftRightClickRepairsMendingPoints);
+             if (points > 0 && itemstack.isDamaged() && net.minecraft.world.item.enchantment.EnchantmentHelper.getItemEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.MENDING, itemstack) > 0) {
+-                this.player.giveExperiencePoints(itemstack.getDamageValue() == 1 ? -2 : -points);
+-                this.player.level().addFreshEntity(new net.minecraft.world.entity.ExperienceOrb(this.player.level(), this.player.getX(), this.player.getY(), this.player.getZ(), itemstack.getDamageValue() == 1 ? 1 : points, org.bukkit.entity.ExperienceOrb.SpawnReason.UNKNOWN, this.player, this.player));
++                // Leaf start - Improve Purpur shift-click mending
++                final boolean repairsSinglePoint = itemstack.getDamageValue() == 1;
++                final int experienceToRemove = repairsSinglePoint ? 2 : points;
++                if (this.player.totalExperience < experienceToRemove) {
++                    return false;
++                }
++                net.minecraft.world.entity.ExperienceOrb experienceOrb = new net.minecraft.world.entity.ExperienceOrb(this.player.level(), this.player.getX(), this.player.getY(), this.player.getZ(), repairsSinglePoint ? 1 : points, org.bukkit.entity.ExperienceOrb.SpawnReason.UNKNOWN, this.player, this.player);
++                experienceOrb.leaf$skipInitialMerge = true;
++                if (!this.player.level().addFreshEntity(experienceOrb)) {
++                    return false;
++                }
++                experienceOrb.leaf$skipInitialMerge = false;
++                this.player.giveExperiencePoints(-experienceToRemove);
++                experienceOrb.leaf$playerTouchInstantly(this.player);
++                // Leaf end - Improve Purpur shift-click mending
+                 return true;
+             }
+         }
 diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 index 7ff0b360c054e8757015adc1135165612ef610c0..1c145986fe42128a2107fa596ad7423f94459b26 100644
 --- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
@@ -32,6 +60,63 @@ index 7ff0b360c054e8757015adc1135165612ef610c0..1c145986fe42128a2107fa596ad7423f
                  this.disconnectAsync(Component.literal("Book too large!"), org.bukkit.event.player.PlayerKickEvent.Cause.ILLEGAL_ACTION); // Paper - kick event cause // Paper - add proper async disconnect
                  return;
              }
+diff --git a/net/minecraft/world/entity/ExperienceOrb.java b/net/minecraft/world/entity/ExperienceOrb.java
+index b44467e1f9a876c696a97585c8d4a1107a8055b5..4f5ce9f1b19ea42abd682451af712c093f9e76f1 100644
+--- a/net/minecraft/world/entity/ExperienceOrb.java
++++ b/net/minecraft/world/entity/ExperienceOrb.java
+@@ -43,6 +43,7 @@ public class ExperienceOrb extends Entity {
+     public int count = 1;
+     private @Nullable Player followingPlayer;
+     private final InterpolationHandler interpolation = new InterpolationHandler(this);
++    public boolean leaf$skipInitialMerge; // Leaf - Fix Pufferfish and Purpur patches - Improve Purpur shift-click mending
+     // Paper start
+     public java.util.@Nullable UUID sourceEntityId;
+     public java.util.@Nullable UUID triggerEntityId;
+@@ -355,22 +356,32 @@ public class ExperienceOrb extends Entity {
+ 
+     @Override
+     public void playerTouch(final Player player) {
+-        if (player instanceof ServerPlayer serverPlayer) {
+-            if (player.takeXpDelay == 0 && new com.destroystokyo.paper.event.player.PlayerPickupExperienceEvent(serverPlayer.getBukkitEntity(), (org.bukkit.entity.ExperienceOrb) this.getBukkitEntity()).callEvent()) { // Paper - PlayerPickupExperienceEvent
+-                player.takeXpDelay = org.bukkit.craftbukkit.event.CraftEventFactory.callPlayerXpCooldownEvent(player, this.level().purpurConfig.playerExpPickupDelay, org.bukkit.event.player.PlayerExpCooldownChangeEvent.ChangeReason.PICKUP_ORB).getNewCooldown(); // CraftBukkit - entity.takeXpDelay = 2; // Purpur - Configurable player pickup exp delay
+-                player.take(this, 1);
+-                int remaining = this.repairPlayerItems(serverPlayer, this.getValue());
+-                if (remaining > 0) {
+-                    player.giveExperiencePoints(org.bukkit.craftbukkit.event.CraftEventFactory.callPlayerExpChangeEvent(player, this, remaining).getAmount()); // CraftBukkit - remaining -> event.getAmount() // Paper - supply experience orb
+-                }
++        if (player instanceof ServerPlayer serverPlayer && player.takeXpDelay == 0) {
++            this.playerTouch0(serverPlayer);
++        }
++    }
+ 
+-                this.count--;
+-                if (this.count == 0) {
+-                    this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.PICKUP); // CraftBukkit - add Bukkit remove cause
+-                }
++    // Leaf start - Fix Pufferfish and Purpur patches - Improve Purpur shift-click mending
++    public void leaf$playerTouchInstantly(final ServerPlayer player) {
++        this.playerTouch0(player);
++    }
++
++    private void playerTouch0(final ServerPlayer player) {
++        if (new com.destroystokyo.paper.event.player.PlayerPickupExperienceEvent(player.getBukkitEntity(), (org.bukkit.entity.ExperienceOrb) this.getBukkitEntity()).callEvent()) { // Paper - PlayerPickupExperienceEvent
++            player.takeXpDelay = org.bukkit.craftbukkit.event.CraftEventFactory.callPlayerXpCooldownEvent(player, this.level().purpurConfig.playerExpPickupDelay, org.bukkit.event.player.PlayerExpCooldownChangeEvent.ChangeReason.PICKUP_ORB).getNewCooldown(); // CraftBukkit - entity.takeXpDelay = 2; // Purpur - Configurable player pickup exp delay
++            player.take(this, 1);
++            int remaining = this.repairPlayerItems(player, this.getValue());
++            if (remaining > 0) {
++                player.giveExperiencePoints(org.bukkit.craftbukkit.event.CraftEventFactory.callPlayerExpChangeEvent(player, this, remaining).getAmount()); // CraftBukkit - remaining -> event.getAmount() // Paper - supply experience orb
++            }
++
++            this.count--;
++            if (this.count == 0) {
++                this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.PICKUP); // CraftBukkit - add Bukkit remove cause
+             }
+         }
+     }
++    // Leaf end - Fix Pufferfish and Purpur patches - Improve Purpur shift-click mending
+ 
+     private int repairPlayerItems(final ServerPlayer player, final int amount) {
+         Optional<EnchantedItemInUse> selected = level().purpurConfig.useBetterMending ? EnchantmentHelper.getMostDamagedItemWith(EnchantmentEffectComponents.REPAIR_WITH_XP, player) :EnchantmentHelper.getRandomItemWith(// Purpur - Add option to mend the most damaged equipment first
 diff --git a/net/minecraft/world/entity/projectile/Projectile.java b/net/minecraft/world/entity/projectile/Projectile.java
 index e4959bc6ccf709c1e9bfda72bd1f4543cfd37b92..b41e1ead7e9016cd0dd74c2adb7bad0e58410c79 100644
 --- a/net/minecraft/world/entity/projectile/Projectile.java
