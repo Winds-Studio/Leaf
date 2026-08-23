@@ -10,8 +10,7 @@ public record EntityCollisionCache(
     ObjectArrayList<AABB> entityAABBs
 ) {
     public EntityCollisionCache() {
-        this(new ObjectArrayList<>(), new ObjectArrayList<>(), new ObjectArrayList<>());
-    }
+        this(new ObjectArrayList<>(16), new ObjectArrayList<>(16), new ObjectArrayList<>(16));}
 
     public void clear() {
         potentialCollisionsVoxel.clear();

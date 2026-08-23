@@ -43,14 +43,14 @@ public final class TrackerCtx {
     private static final Object2ObjectFunction<ServerPlayerConnection, ObjectArrayList<Packet<?>>> INIT_PACKET_LIST = x -> ObjectArrayList.wrap(new Packet[16], 0);
     private final Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>> packets = new Object2ObjectOpenHashMap<>();
     private final ServerLevel world;
-    private final ObjectArrayList<ItemFrame> itemFrames = new ObjectArrayList<>();
-    private final ObjectArrayList<StopSeen> stopSeen = new ObjectArrayList<>();
-    private final ObjectArrayList<StartSeen> startSeen = new ObjectArrayList<>();
-    private final ObjectArrayList<ChunkMap.TrackedEntity> resync = new ObjectArrayList<>();
-    private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
-    private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
-    private final ObjectArrayList<Entity> debugRegistration = new ObjectArrayList<>();
-    private final ObjectArrayList<ChunkMap.TrackedEntity> updateData = new ObjectArrayList<>();
+    private final ObjectArrayList<ItemFrame> itemFrames = new ObjectArrayList<>(16);
+    private final ObjectArrayList<StopSeen> stopSeen = new ObjectArrayList<>(16);
+    private final ObjectArrayList<StartSeen> startSeen = new ObjectArrayList<>(16);
+    private final ObjectArrayList<ChunkMap.TrackedEntity> resync = new ObjectArrayList<>(16);
+    private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>(16);
+    private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>(16);
+    private final ObjectArrayList<Entity> debugRegistration = new ObjectArrayList<>(16);
+    private final ObjectArrayList<ChunkMap.TrackedEntity> updateData = new ObjectArrayList<>(16);
 
     private record StopSeen(Entity e, ObjectArrayList<ServerPlayerConnection> q) {
     }
@@ -65,7 +65,7 @@ public final class TrackerCtx {
 
     public void stopSeenByPlayer(ServerPlayerConnection connection, Entity entity) {
         if (stopSeen.isEmpty() || !stopSeen.getLast().e.equals(entity)) {
-            stopSeen.add(new StopSeen(entity, new ObjectArrayList<>()));
+            stopSeen.add(new StopSeen(entity, new ObjectArrayList<>(4)));
         }
         ObjectArrayList<ServerPlayerConnection> players = stopSeen.getLast().q;
         if (players.isEmpty() || players.getLast() != connection) {
@@ -75,7 +75,7 @@ public final class TrackerCtx {
 
     public void startSeenByPlayer(ServerPlayerConnection connection, Entity entity, boolean flag) {
         if (startSeen.isEmpty() || !startSeen.getLast().e.equals(entity)) {
-            startSeen.add(new StartSeen(entity, new ObjectArrayList<>()));
+            startSeen.add(new StartSeen(entity, new ObjectArrayList<>(4)));
         }
         startSeen.getLast().q.add(connection);
         if (flag) {
