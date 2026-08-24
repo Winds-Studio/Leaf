@@ -26,9 +26,10 @@ explicitly requests otherwise.
 
 ## Patch restrictions
 
-Do not create, modify, delete, rename, regenerate, or reformat patch files.
+Do not create, modify, delete, rename, regenerate, reformat, apply, rebuild,
+reset, or export patch files or patch metadata.
 
-This includes, but is not limited to:
+This includes:
 
 - Paper patches
 - Minecraft patches
@@ -39,18 +40,9 @@ This includes, but is not limited to:
 - Patch metadata
 - Patch ordering or series files
 
-Do not run tasks or scripts that apply, rebuild, regenerate, reset, export, or
-otherwise modify patches.
-
-In particular, do not:
-
-- run patch rebuild tasks;
-- run patch generation tasks;
-- edit `.patch` files directly;
-- convert source changes into patches;
-- update an existing patch to include source changes;
-- reset applied sources from patches;
-- update Paper or Minecraft upstream references.
+Do not run patch rebuild or generation tasks, convert source changes into
+patches, reset applied sources from patches, or update Paper or Minecraft
+upstream references.
 
 Applied source files are the editing target for the current task, even when
 patch files are the canonical persisted form used by the project.
@@ -83,23 +75,12 @@ navigation hints rather than authoritative source code.
 
 Before editing:
 
-1. Use CodeGraph to identify relevant symbols and relationships when the task
-   crosses files or modules.
+1. Use CodeGraph to identify relevant symbols and relationships.
 2. Open and inspect the actual applied source files returned by the query.
 3. Verify important callers, overrides, signatures, and control flow against
    the current working tree.
 4. Search the source directly when CodeGraph returns no result or conflicts
    with the checked-out code.
-
-Only analyze applied source code in the allowed scope:
-
-- Minecraft sources under `leaf-server`;
-- applied Paper API sources;
-- applied Paper server sources;
-- existing Leaf source files alongside those sources.
-
-Do not use CodeGraph results as a reason to modify patch files, generated
-patches, upstream metadata, or files outside the allowed editing scope.
 
 Do not update, rebuild, or reconfigure the CodeGraph index unless the user
 explicitly requests it.
@@ -110,19 +91,18 @@ affected the change or when the index appeared incomplete or stale.
 ## Editing workflow
 
 1. Read the relevant applied source and its surrounding implementation.
-2. For cross-file or cross-module behavior, use CodeGraph to locate callers,
-   callees, implementations, overrides, and state access.
-3. Verify relevant CodeGraph results against the actual checked-out source.
-4. Identify ownership, lifecycle, and threading assumptions when they affect
+2. For cross-file or cross-module behavior, inspect relevant relationships and
+   verify them against the checked-out source.
+3. Identify ownership, lifecycle, and threading assumptions when they affect
    the requested change.
-5. Modify only the applied source files required for the task.
-6. Keep the diff focused and avoid unrelated formatting or cleanup.
-7. Review the resulting source diff for correctness.
-8. Report the changed files and any assumptions or risks.
+4. Modify only the applied source files required for the task.
+5. Keep the diff focused and avoid unrelated formatting or cleanup.
+6. Review the resulting source diff for correctness.
+7. Report the changed files and any assumptions or risks.
 
 Stop after modifying and reviewing the applied source. Leave patch creation,
-patch rebuilding, compilation, testing, benchmarking, and runtime validation
-to the repository owner.
+compilation, testing, benchmarking, and runtime validation to the repository
+owner.
 
 ## Validation policy
 
@@ -264,5 +244,5 @@ At the end of a task, report:
 - important threading, compatibility, or performance considerations;
 - anything that still requires manual verification.
 
-Do not report patch files, generated patches, build results, test results, or
-benchmark results unless the user separately supplied or requested them.
+Do not report build, test, benchmark, or runtime results unless the user
+separately supplied them.
