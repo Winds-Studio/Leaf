@@ -78,15 +78,15 @@ public class AsyncPathProcessor {
     }
 
     private static int getMaxPoolSize() {
-        return AsyncPathfinding.asyncPathfindingMaxThreads;
+        return AsyncPathfinding.maxThreads;
     }
 
     private static long getKeepAliveTime() {
-        return AsyncPathfinding.asyncPathfindingKeepalive;
+        return AsyncPathfinding.keepalive;
     }
 
     private static BlockingQueue<Runnable> getQueueImpl() {
-        final int queueCapacity = AsyncPathfinding.asyncPathfindingQueueSize;
+        final int queueCapacity = AsyncPathfinding.queueSize;
 
         return new LinkedBlockingQueue<>(queueCapacity);
     }
@@ -103,7 +103,7 @@ public class AsyncPathProcessor {
         return (Runnable rejectedTask, ThreadPoolExecutor executor) -> {
             BlockingQueue<Runnable> workQueue = executor.getQueue();
             if (!executor.isShutdown()) {
-                switch (AsyncPathfinding.asyncPathfindingRejectPolicy) {
+                switch (AsyncPathfinding.rejectPolicyType) {
                     case FLUSH_ALL -> {
                         if (!workQueue.isEmpty()) {
                             List<Runnable> pendingTasks = new ArrayList<>(workQueue.size());
