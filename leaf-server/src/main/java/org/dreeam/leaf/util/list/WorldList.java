@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config;
+package org.dreeam.leaf.util.list;
 
 import org.jspecify.annotations.NullMarked;
 
@@ -29,11 +29,10 @@ public final class WorldList {
             if (entry == null || entry.isBlank()) {
                 continue;
             }
-            String trimmed = entry.trim();
-            if (trimmed.indexOf('*') == -1) {
-                this.names.add(trimmed);
+            if (entry.indexOf('*') == -1) {
+                this.names.add(entry);
             } else {
-                patterns.add(compile(trimmed));
+                patterns.add(compile(entry));
             }
         }
         this.patterns = patterns.toArray(NO_PATTERNS);

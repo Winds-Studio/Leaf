@@ -3,7 +3,7 @@ package org.dreeam.leaf.config.modules.misc;
 import net.minecraft.server.level.ServerLevel;
 import org.dreeam.leaf.config.ConfigModule;
 import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.WorldList;
+import org.dreeam.leaf.util.list.WorldList;
 
 import java.util.ArrayList;
 
