@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.net.ConnectException;
 
 final class IocpErrors {
+    // Reference: https://learn.microsoft.com/zh-cn/windows/win32/winsock/windows-sockets-error-codes-2
     static final int ERROR_INVALID_HANDLE = 6;
     static final int ERROR_OPERATION_ABORTED = 995;
     static final int ERROR_NOT_FOUND = 1168;

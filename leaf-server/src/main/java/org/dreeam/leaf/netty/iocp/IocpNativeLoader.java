@@ -7,7 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 final class IocpNativeLoader {
-    static final int ABI_VERSION = 3;
+    static final int ABI_VERSION = 3; // TODO: Update when C ABI version changes
     private static final String NATIVE_LIBRARY_RESOURCE = "/native/windows-x86_64-iocp-transport-abi-" + ABI_VERSION + ".dll";
     private static boolean loaded;
 
