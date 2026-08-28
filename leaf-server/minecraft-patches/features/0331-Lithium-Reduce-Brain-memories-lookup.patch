@@ -1,0 +1,172 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Mon, 1 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Lithium: Reduce Brain memories lookup
+
+Cache Behavior#hasRequiredMemories until the associated Brain's memory registration or value-presence state changes.
+
+Upstream revision:
+01597fb879b7a6d17c2420ec4e25a98df3bc8e7b
+
+This patch is based on the following Lithium mixins:
+* "net/caffeinemc/mods/lithium/mixin/ai/task/memory_changes/BehaviorMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/ai/task/memory_changes/BrainMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/ai/task/memory_changes/MemorySlotMixin.java"
+
+It also ports the following supporting source:
+* "net/caffeinemc/mods/lithium/common/ai/brain/memories/MemoryModificationCounter.java"
+By: 2No2Name <2No2Name@web.de>
+As part of: Lithium (https://github.com/CaffeineMC/lithium)
+Licensed under: LGPL-3.0-only (https://www.gnu.org/licenses/lgpl-3.0.html)
+
+diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
+index e810840bacb2d500ce29907db96e2abf810d451b..8bb7ad63ecb73ec44a9bf7dc3441ae646d9556cd 100644
+--- a/net/minecraft/world/entity/ai/Brain.java
++++ b/net/minecraft/world/entity/ai/Brain.java
+@@ -35,8 +35,9 @@ import net.minecraft.world.entity.schedule.Activity;
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class Brain<E extends LivingEntity> {
++public class Brain<E extends LivingEntity> implements net.caffeinemc.mods.lithium.common.ai.brain.memories.MemoryModificationCounter { // Leaf - Lithium - Reduce Brain memories lookup
+     private static final int SCHEDULE_UPDATE_DELAY = 20;
++    private long memoryModCount = 1L; // Leaf - Lithium - Reduce Brain memories lookup
+     // Leaf start - Replace brain maps with optimized collection
+     private final Map<MemoryModuleType<?>, MemorySlot<?>> memories = new it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap<>();
+     private final Map<SensorType<? extends Sensor<? super E>>, Sensor<? super E>> sensors = new it.unimi.dsi.fastutil.objects.Reference2ReferenceArrayMap<>();
+@@ -112,6 +113,7 @@ public class Brain<E extends LivingEntity> {
+ 
+     private void registerMemory(final MemoryModuleType<?> memoryType) {
+         this.memories.putIfAbsent(memoryType, MemorySlot.create());
++        this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+     }
+ 
+     public Brain() {
+@@ -164,11 +166,13 @@ public class Brain<E extends LivingEntity> {
+         this.memories.values().forEach(MemorySlot::clear);
+         this.availableBehaviorsByPriorityArray = EMPTY_MAP_ARRAY; // Leaf - Replace brain maps with optimized collection
+         this.activeBehaviors = EMPTY_BEHAVIOR_ARRAY; // Leaf - Replace brain maps with optimized collection
++        this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+     }
+ 
+     public <U> void eraseMemory(final MemoryModuleType<U> type) {
+         MemorySlot<U> slot = this.getMemorySlotIfPresent(type);
+         if (slot != null) {
++            if (slot.hasValue()) this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+             slot.clear();
+         }
+     }
+@@ -202,8 +206,10 @@ public class Brain<E extends LivingEntity> {
+             }
+ 
+             if (value == null) {
++                if (slot.hasValue()) this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+                 slot.clear();
+             } else {
++                if (!slot.hasValue()) this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+                 slot.set(value, tileToLive);
+             }
+         }
+@@ -217,8 +223,10 @@ public class Brain<E extends LivingEntity> {
+             }
+ 
+             if (value == null) {
++                if (slot.hasValue()) this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+                 slot.clear();
+             } else {
++                if (slot.hasValue() == (value == null)) this.lithium$onMemoryModified(); // Leaf - Lithium - Reduce Brain memories lookup
+                 slot.set(value);
+             }
+         }
+@@ -410,8 +418,30 @@ public class Brain<E extends LivingEntity> {
+     }
+ 
+     private void forgetOutdatedMemories() {
+-        this.memories.values().forEach(MemorySlot::tick);
++        // Leaf start - Lithium - Reduce Brain memories lookup
++        this.memories.values().forEach(slot -> {
++            boolean canExpire = slot.canExpire(); // canExpire implies hasValue now after Lithium's TTL fix
++            if (canExpire) {
++                slot.tick();
++                if (!slot.hasValue()) {
++                    this.lithium$onMemoryModified();
++                }
++            }
++        });
++        // Leaf end - Lithium - Reduce Brain memories lookup
++    }
++
++    // Leaf start - Lithium - Reduce Brain memories lookup
++    @Override
++    public long lithium$getMemoryValueModCount() {
++        return this.memoryModCount;
++    }
++
++    @Override
++    public void lithium$onMemoryModified() {
++        this.memoryModCount++;
+     }
++    // Leaf end - Lithium - Reduce Brain memories lookup
+ 
+     public void stopAll(final ServerLevel level, final E body) {
+         long timestamp = body.level().getGameTime();
+diff --git a/net/minecraft/world/entity/ai/behavior/Behavior.java b/net/minecraft/world/entity/ai/behavior/Behavior.java
+index f78464bcbf82fdc7cbf43c2ee586586b2cdfa552..3fe7a403ae54525de189414908c2d6331a1c9f27 100644
+--- a/net/minecraft/world/entity/ai/behavior/Behavior.java
++++ b/net/minecraft/world/entity/ai/behavior/Behavior.java
+@@ -11,6 +11,10 @@ import net.minecraft.world.entity.ai.memory.MemoryStatus;
+ public abstract class Behavior<E extends LivingEntity> implements BehaviorControl<E> {
+     public static final int DEFAULT_DURATION = 60;
+     protected final Map<MemoryModuleType<?>, MemoryStatus> entryCondition;
++    // Leaf start - Lithium - Reduce Brain memories lookup
++    private long cachedMemoryModCount = -1L;
++    private boolean cachedHasRequiredMemoryState;
++    // Leaf end - Lithium - Reduce Brain memories lookup
+     private Behavior.Status status = Behavior.Status.STOPPED;
+     private long endTimestamp;
+     private final int minDuration;
+@@ -110,15 +114,25 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+     }
+ 
+     protected boolean hasRequiredMemories(final E body) {
++        // Leaf start - Lithium - Reduce Brain memories lookup
++        net.minecraft.world.entity.ai.Brain<?> brain = body.getBrain();
++        long modCount = brain.lithium$getMemoryValueModCount();
++        if (this.cachedMemoryModCount == modCount) {
++            return this.cachedHasRequiredMemoryState;
++        }
++        this.cachedMemoryModCount = modCount;
++        // Leaf end - Lithium - Reduce Brain memories lookup
+         for (Entry<MemoryModuleType<?>, MemoryStatus> entry : this.entryCondition.entrySet()) {
+             MemoryModuleType<?> memoryType = entry.getKey();
+             MemoryStatus requiredStatus = entry.getValue();
+-            if (!body.getBrain().checkMemory(memoryType, requiredStatus)) {
+-                return false;
++            // Leaf start - Lithium - Reduce Brain memories lookup
++            if (!brain.checkMemory(memoryType, requiredStatus)) {
++                return this.cachedHasRequiredMemoryState = false;
++                // Leaf end - Lithium - Reduce Brain memories lookup
+             }
+         }
+ 
+-        return true;
++        return this.cachedHasRequiredMemoryState = true; // Leaf - Lithium - Reduce Brain memories lookup
+     }
+ 
+     public enum Status {
+diff --git a/net/minecraft/world/entity/ai/memory/MemorySlot.java b/net/minecraft/world/entity/ai/memory/MemorySlot.java
+index 88a89b4c72cc99dc89d3f3cc928b2dfda4125759..0745ef1bf981830909ce2e740f9f183903c36121 100644
+--- a/net/minecraft/world/entity/ai/memory/MemorySlot.java
++++ b/net/minecraft/world/entity/ai/memory/MemorySlot.java
+@@ -30,6 +30,11 @@ public class MemorySlot<T> {
+     public void set(final T value, final long timeToLive) {
+         this.value = value;
+         this.timeToLive = timeToLive;
++        // Leaf start - Lithium - Reduce Brain memories lookup
++        if (value == null && timeToLive != Long.MAX_VALUE) {
++            this.timeToLive = Long.MAX_VALUE;
++        }
++        // Leaf end - Lithium - Reduce Brain memories lookup
+     }
+ 
+     public void set(final T value) {
