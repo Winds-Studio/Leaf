@@ -1,7 +1,10 @@
 package su.plo.matter;
 
-import com.google.common.collect.Iterables;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.RandomSequence;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.RandomSupport;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -12,8 +15,15 @@ public class Globals {
     public static final int WORLD_SEED_LONGS = 16;
     public static final int WORLD_SEED_BITS = WORLD_SEED_LONGS * 64;
 
-    public static final long[] worldSeed = new long[WORLD_SEED_LONGS];
-    public static final ThreadLocal<Integer> dimension = ThreadLocal.withInitial(() -> 0);
+    private static final int CUSTOM_DIMENSION_ID = -1;
+    private static final DimensionSeed OVERWORLD_DIMENSION_SEED = new DimensionSeed(0, 0L, 0L);
+    private static final DimensionSeed NETHER_DIMENSION_SEED = new DimensionSeed(1, 0L, 0L);
+    private static final DimensionSeed END_DIMENSION_SEED = new DimensionSeed(2, 0L, 0L);
+    private static final ThreadLocal<long[]> WORLD_SEED = ThreadLocal.withInitial(() -> new long[WORLD_SEED_LONGS]);
+    private static final ThreadLocal<DimensionSeed> DIMENSION_SEED = ThreadLocal.withInitial(() -> OVERWORLD_DIMENSION_SEED);
+
+    public record DimensionSeed(int legacyId, long seedLo, long seedHi) {
+    }
 
     public enum Salt {
         UNDEFINED,
@@ -39,12 +49,29 @@ public class Globals {
     public static void setupGlobals(ServerLevel world) {
         if (!org.dreeam.leaf.config.modules.misc.SecureSeed.enabled) return;
 
-        long[] seed = world.getServer().getWorldGenSettings().options().featureSeed();
-        System.arraycopy(seed, 0, worldSeed, 0, WORLD_SEED_LONGS);
-        int worldIndex = Iterables.indexOf(world.getServer().levelKeys(), it -> it == world.dimension());
-        if (worldIndex == -1)
-            worldIndex = world.getServer().levelKeys().size(); // if we are in world construction it may not have been added to the map yet
-        dimension.set(worldIndex);
+        copyWorldSeed(world, WORLD_SEED.get());
+        DIMENSION_SEED.set(world.matter$dimensionSeed);
+    }
+
+    public static DimensionSeed createDimensionSeed(ResourceKey<Level> dimension) {
+        if (dimension == Level.OVERWORLD) return OVERWORLD_DIMENSION_SEED;
+        if (dimension == Level.NETHER) return NETHER_DIMENSION_SEED;
+        if (dimension == Level.END) return END_DIMENSION_SEED;
+
+        RandomSupport.Seed128bit seed = RandomSequence.seedForKey(dimension.identifier());
+        return new DimensionSeed(CUSTOM_DIMENSION_ID, seed.seedLo(), seed.seedHi());
+    }
+
+    static void copyWorldSeed(long[] destination) {
+        System.arraycopy(WORLD_SEED.get(), 0, destination, 0, WORLD_SEED_LONGS);
+    }
+
+    static void copyWorldSeed(ServerLevel world, long[] destination) {
+        System.arraycopy(world.worldGenSettings.options().featureSeed(), 0, destination, 0, WORLD_SEED_LONGS);
+    }
+
+    static DimensionSeed dimensionSeed() {
+        return DIMENSION_SEED.get();
     }
 
     public static long[] createRandomWorldSeed() {

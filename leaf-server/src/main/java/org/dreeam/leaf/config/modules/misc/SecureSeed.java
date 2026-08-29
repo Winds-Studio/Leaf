@@ -10,6 +10,7 @@ public class SecureSeed extends ConfigModule {
     }
 
     public static boolean enabled = false;
+    private static boolean secureSeedInitialized;
 
     @Override
     public void onLoaded() {
@@ -18,6 +19,12 @@ public class SecureSeed extends ConfigModule {
                 instead of using 64-bit seed in vanilla, made seed cracker become impossible.""",
             """
                 安全种子开启后, 所有矿物与结构都将使用1024位的种子进行生成, 无法被破解.""");
+
+        if (secureSeedInitialized) {
+            globalConfig.getConfigSection(basePath());
+            return;
+        }
+        secureSeedInitialized = true;
 
         enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
     }
