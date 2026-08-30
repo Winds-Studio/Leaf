@@ -11,7 +11,7 @@ import org.slf4j.Logger;
 
 public final class TerrainCrypto {
     public static final int SCHEMA_VERSION = 1;
-    public static final String ALGORITHM = "hmac_sha256_v1";
+    public static final String ALGORITHM = "blake2b_256_kdf_chacha12_v1";
     public static final int MASTER_SEED_BYTES = 32;
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();

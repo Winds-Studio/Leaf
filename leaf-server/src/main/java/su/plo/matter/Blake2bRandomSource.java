@@ -1,31 +1,24 @@
 package su.plo.matter;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import javax.crypto.Mac;
+import java.util.Objects;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.levelgen.MarsagliaPolarGaussian;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 
-final class HmacSha256RandomSource implements BitRandomSource {
-    private static final int BLOCK_BITS = 256;
-    private final byte[] baseKey;
-    private byte[] streamKey;
-    private final byte[] block = new byte[TerrainCrypto.MASTER_SEED_BYTES];
+final class Blake2bRandomSource implements BitRandomSource {
+    private static final int BLOCK_BITS = Blake2b.OUTPUT_BYTES * Byte.SIZE;
+    private final Blake2b.PreparedKey baseKey;
+    private Blake2b.PreparedKey streamKey;
+    private final byte[] block = new byte[Blake2b.OUTPUT_BYTES];
     private final MarsagliaPolarGaussian gaussianSource = new MarsagliaPolarGaussian(this);
-    private Mac blockMac;
     private long counter;
     private boolean exhausted;
     private int bitIndex = BLOCK_BITS;
 
-    HmacSha256RandomSource(final byte[] key) {
-        if (key.length != TerrainCrypto.MASTER_SEED_BYTES) {
-            throw new IllegalArgumentException("HMAC random source key must be exactly " + TerrainCrypto.MASTER_SEED_BYTES + " bytes");
-        }
-        this.baseKey = key.clone();
-        this.streamKey = key.clone();
-        this.blockMac = TerrainHashing.createMac(this.streamKey);
+    Blake2bRandomSource(final Blake2b.PreparedKey key) {
+        this.baseKey = Objects.requireNonNull(key, "key");
+        this.streamKey = key;
     }
 
     @Override
@@ -52,22 +45,19 @@ final class HmacSha256RandomSource implements BitRandomSource {
 
     @Override
     public RandomSource fork() {
-        return new HmacSha256RandomSource(
-            TerrainHashing.derive(this.streamKey, TerrainHashing.FORK, this.consumeMasterSeed())
-        );
+        byte[] forkSeed = this.consumeMasterSeed();
+        return new Blake2bRandomSource(TerrainHashing.derivePrepared(this.streamKey, TerrainHashing.FORK, forkSeed));
     }
 
     @Override
     public PositionalRandomFactory forkPositional() {
-        return new HmacPositionalRandomFactory(
-            TerrainHashing.derive(this.streamKey, TerrainHashing.POSITIONAL_FORK, this.consumeMasterSeed())
-        );
+        byte[] forkSeed = this.consumeMasterSeed();
+        return new Blake2bPositionalRandomFactory(TerrainHashing.derivePrepared(this.streamKey, TerrainHashing.POSITIONAL_FORK, forkSeed));
     }
 
     @Override
     public void setSeed(final long seed) {
-        this.streamKey = TerrainHashing.derive(this.baseKey, TerrainHashing.SET_SEED, TerrainHashing.longContext(seed));
-        this.blockMac = TerrainHashing.createMac(this.streamKey);
+        this.streamKey = TerrainHashing.derivePreparedLong(this.baseKey, TerrainHashing.SET_SEED, seed);
         this.counter = 0L;
         this.exhausted = false;
         this.bitIndex = BLOCK_BITS;
@@ -116,7 +106,7 @@ final class HmacSha256RandomSource implements BitRandomSource {
             return;
         }
         if (this.exhausted) {
-            throw new IllegalStateException("HMAC random source counter exhausted");
+            throw new IllegalStateException("BLAKE2b random source counter exhausted");
         }
 
         long blockCounter = this.counter;
@@ -125,7 +115,7 @@ final class HmacSha256RandomSource implements BitRandomSource {
         } else {
             this.counter = blockCounter + 1L;
         }
-        TerrainHashing.deriveBlock(this.blockMac, blockCounter, this.block);
+        TerrainHashing.deriveBlock(this.streamKey, blockCounter, this.block);
         this.bitIndex = 0;
     }
 
@@ -134,13 +124,13 @@ final class HmacSha256RandomSource implements BitRandomSource {
             return;
         }
         if (this.exhausted) {
-            throw new IllegalStateException("HMAC random source counter exhausted");
+            throw new IllegalStateException("BLAKE2b random source counter exhausted");
         }
 
         long nextCounter = this.counter + blocks;
         if (Long.compareUnsigned(nextCounter, this.counter) < 0) {
             if (nextCounter != 0L) {
-                throw new IllegalStateException("HMAC random source counter exhausted");
+                throw new IllegalStateException("BLAKE2b random source counter exhausted");
             }
             this.exhausted = true;
         }
@@ -148,44 +138,42 @@ final class HmacSha256RandomSource implements BitRandomSource {
     }
 
     private byte[] consumeMasterSeed() {
-        ByteBuffer buffer = ByteBuffer.allocate(TerrainCrypto.MASTER_SEED_BYTES).order(ByteOrder.BIG_ENDIAN);
-        for (int i = 0; i < TerrainCrypto.MASTER_SEED_BYTES / Integer.BYTES; i++) {
-            buffer.putInt(this.next(Integer.SIZE));
+        byte[] seed = new byte[Blake2b.OUTPUT_BYTES];
+        for (int i = 0; i < seed.length; i += Integer.BYTES) {
+            int value = this.next(Integer.SIZE);
+            seed[i] = (byte) (value >>> 24);
+            seed[i + 1] = (byte) (value >>> 16);
+            seed[i + 2] = (byte) (value >>> 8);
+            seed[i + 3] = (byte) value;
         }
-        return buffer.array();
+        return seed;
     }
 
-    private static final class HmacPositionalRandomFactory implements PositionalRandomFactory {
-        private final byte[] key;
+    private static final class Blake2bPositionalRandomFactory implements PositionalRandomFactory {
+        private final Blake2b.PreparedKey key;
 
-        private HmacPositionalRandomFactory(final byte[] key) {
-            this.key = key.clone();
+        private Blake2bPositionalRandomFactory(final Blake2b.PreparedKey key) {
+            this.key = key;
         }
 
         @Override
         public RandomSource at(final int x, final int y, final int z) {
-            return new HmacSha256RandomSource(
-                TerrainHashing.derive(this.key, TerrainHashing.POSITIONAL_AT, TerrainHashing.positionContext(x, y, z))
-            );
+            return new Blake2bRandomSource(TerrainHashing.derivePreparedPosition(this.key, TerrainHashing.POSITIONAL_AT, x, y, z));
         }
 
         @Override
         public RandomSource fromHashOf(final String name) {
-            return new HmacSha256RandomSource(
-                TerrainHashing.derive(this.key, TerrainHashing.POSITIONAL_HASH, TerrainHashing.stringContext(name))
-            );
+            return new Blake2bRandomSource(TerrainHashing.derivePrepared(this.key, TerrainHashing.POSITIONAL_HASH, TerrainHashing.stringToBytes(name)));
         }
 
         @Override
         public RandomSource fromSeed(final long seed) {
-            return new HmacSha256RandomSource(
-                TerrainHashing.derive(this.key, TerrainHashing.POSITIONAL_SEED, TerrainHashing.longContext(seed))
-            );
+            return new Blake2bRandomSource(TerrainHashing.derivePreparedLong(this.key, TerrainHashing.POSITIONAL_SEED, seed));
         }
 
         @Override
         public void parityConfigString(final StringBuilder sb) {
-            sb.append("HmacSha256PositionalRandomFactory");
+            sb.append("Blake2bPositionalRandomFactory");
         }
     }
 }

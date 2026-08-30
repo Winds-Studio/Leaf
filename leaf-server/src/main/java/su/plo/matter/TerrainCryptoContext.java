@@ -1,21 +1,19 @@
 package su.plo.matter;
 
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
-import net.minecraft.world.level.levelgen.RandomSupport;
-import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.levelgen.WorldOptions;
+import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import org.dreeam.leaf.config.modules.misc.SecureSeed;
 import org.jspecify.annotations.Nullable;
 
 public final class TerrainCryptoContext {
-    private final byte[] dimensionKey;
+    private final Blake2b.PreparedKey dimensionKey;
 
-    private TerrainCryptoContext(final byte[] dimensionKey) {
-        this.dimensionKey = dimensionKey.clone();
+    private TerrainCryptoContext(final Blake2b.PreparedKey dimensionKey) {
+        this.dimensionKey = dimensionKey;
     }
 
     public static @Nullable TerrainCryptoContext create(final WorldOptions options, final ResourceKey<Level> dimension) {
@@ -28,75 +26,57 @@ public final class TerrainCryptoContext {
             throw new IllegalStateException("Secure terrain is enabled but the world has no terrain master seed");
         }
 
-        byte[] dimensionKey = TerrainHashing.derive(
+        Blake2b.PreparedKey dimensionKey = TerrainHashing.derivePrepared(
             terrainCrypto.masterSeed(),
             TerrainHashing.DIMENSION,
-            TerrainHashing.stringContext(dimension.identifier().toString())
+            TerrainHashing.stringToBytes(dimension.identifier().toString())
         );
         return new TerrainCryptoContext(dimensionKey);
     }
 
     public RandomSource initializationRandom(final String domain) {
-        return new HmacSha256RandomSource(this.domainKey(domain));
+        return new Blake2bRandomSource(this.domainKey(domain));
     }
 
     public PositionalRandomFactory runtimeFactory(final String domain) {
-        byte[] domainKey = this.domainKey(domain);
-        byte[] factoryKey = TerrainHashing.derive(domainKey, TerrainHashing.FAST_FACTORY, new byte[0]);
-        int attempt = 0;
-        while (true) {
-            long seedLo = TerrainHashing.readLong(factoryKey, 0);
-            long seedHi = TerrainHashing.readLong(factoryKey, Long.BYTES);
-            if ((seedLo | seedHi) != 0L) { // probability ~2^-128, how could that be possible
-                return new SecureRuntimeRandomFactory(seedLo, seedHi);
-            }
-
-            seedLo = TerrainHashing.readLong(factoryKey, Long.BYTES * 2);
-            seedHi = TerrainHashing.readLong(factoryKey, Long.BYTES * 3);
-            if ((seedLo | seedHi) != 0L) {
-                return new SecureRuntimeRandomFactory(seedLo, seedHi);
-            }
-
-            if (attempt == Integer.MAX_VALUE) {
-                throw new IllegalStateException("Unable to derive a non-zero secure terrain runtime seed");
-            }
-            factoryKey = TerrainHashing.derive(domainKey, TerrainHashing.FAST_FACTORY_RETRY, TerrainHashing.intContext(++attempt));
-        }
+        return new SecureRuntimeRandomFactory(this.domainKey(domain));
     }
 
-    private byte[] domainKey(final String domain) {
-        return TerrainHashing.derive(this.dimensionKey, TerrainHashing.DOMAIN, TerrainHashing.stringContext(domain));
+    private Blake2b.PreparedKey domainKey(final String domain) {
+        return TerrainHashing.derivePrepared(this.dimensionKey, TerrainHashing.DOMAIN, TerrainHashing.stringToBytes(domain));
     }
 
     private static final class SecureRuntimeRandomFactory implements PositionalRandomFactory {
-        private final long seedLo;
-        private final long seedHi;
+        private static final Blake2b.Seed128Factory<RandomSource> BLAKE2B_XOROSHIRO_FACTORY = XoroshiroRandomSource::new;
+        private static final ChaCha12.Seed128Factory<RandomSource> CHACHA12_XOROSHIRO_FACTORY = XoroshiroRandomSource::new;
+        private final Blake2b.PreparedKey hashKey;
+        private final ChaCha12.PreparedKey positionKey;
+        private final ChaCha12.PreparedKey seedKey;
 
-        private SecureRuntimeRandomFactory(final long seedLo, final long seedHi) {
-            this.seedLo = seedLo;
-            this.seedHi = seedHi;
+        private SecureRuntimeRandomFactory(final Blake2b.PreparedKey key) {
+            this.hashKey = key;
+            this.positionKey = TerrainHashing.deriveChaChaKey(key, TerrainHashing.RUNTIME_AT);
+            this.seedKey = TerrainHashing.deriveChaChaKey(key, TerrainHashing.RUNTIME_SEED);
         }
 
         @Override
         public RandomSource at(final int x, final int y, final int z) {
-            long positionalSeed = Mth.getSeed(x, y, z);
-            return new XoroshiroRandomSource(positionalSeed ^ this.seedLo, this.seedHi);
+            return TerrainHashing.deriveRuntimePosition(this.positionKey, x, y, z, CHACHA12_XOROSHIRO_FACTORY);
         }
 
         @Override
         public RandomSource fromHashOf(final String name) {
-            RandomSupport.Seed128bit seed = RandomSupport.seedFromHashOf(name);
-            return new XoroshiroRandomSource(seed.xor(this.seedLo, this.seedHi));
+            return TerrainHashing.deriveRuntimeHash(this.hashKey, name, BLAKE2B_XOROSHIRO_FACTORY);
         }
 
         @Override
         public RandomSource fromSeed(final long seed) {
-            return new XoroshiroRandomSource(seed ^ this.seedLo, seed ^ this.seedHi);
+            return TerrainHashing.deriveRuntimeSeed(this.seedKey, seed, CHACHA12_XOROSHIRO_FACTORY);
         }
 
         @Override
         public void parityConfigString(final StringBuilder sb) {
-            sb.append("SecureRuntimeRandomFactory");
+            sb.append("SecureChaCha12RuntimeRandomFactory");
         }
     }
 }
