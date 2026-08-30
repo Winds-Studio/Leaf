@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kameshek_f <ivanbanyt@gmail.com>
+Date: Mon, 31 Aug 2026 00:35:49 +0300
+Subject: [PATCH] perf(item): Pass maxSearch bound directly to entity chunk
+ slice lookup during merge
+
+
+diff --git a/net/minecraft/world/entity/item/ItemEntity.java b/net/minecraft/world/entity/item/ItemEntity.java
+index f3909e8c6020aaf3bbe02e0b530688292e885698..ba797541e522c7f33d5172f6d4ffab5d62cff093 100644
+--- a/net/minecraft/world/entity/item/ItemEntity.java
++++ b/net/minecraft/world/entity/item/ItemEntity.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.entity.item;
+ 
++import java.util.List;
+ import java.util.Objects;
+ import java.util.UUID;
+ import net.minecraft.core.BlockPos;
+@@ -250,10 +251,24 @@ public class ItemEntity extends Entity implements TraceableEntity, net.caffeinem
+ 
+     private void mergeWithNeighbours() {
+         if (this.isMergable()) {
+-            double radius = this.level().spigotConfig.itemMerge; // Spigot
+-            for (ItemEntity itemEntity : this.level()
+-                .getEntitiesOfClass(ItemEntity.class, this.getBoundingBox().inflate(radius, this.level().paperConfig().entities.behavior.onlyMergeItemsHorizontally ? 0 : radius - 0.5D, radius), neighbour -> neighbour != this && neighbour.isMergable())) { // Spigot // Paper - configuration to only merge items horizontally
++            final ItemStack item = this.getItem();
++            final int needed = item.getMaxStackSize() - item.getCount();
++            if (needed <= 0) {
++                return;
++            }
++
++            final double radius = this.level().spigotConfig.itemMerge; // Spigot
++            final int maxSearch = Math.min(needed, 8); // Leaf - Bounded spatial merge lookup (#802)
++
++            final List<ItemEntity> nearby = this.level().getEntitiesOfClass(
++                ItemEntity.class,
++                this.getBoundingBox().inflate(radius, this.level().paperConfig().entities.behavior.onlyMergeItemsHorizontally ? 0 : radius - 0.5D, radius),
++                neighbour -> neighbour != this && neighbour.isMergable() && neighbour.getItem().getItem() == item.getItem(),
++                maxSearch
++            );
++
++            for (int i = 0, size = nearby.size(); i < size; ++i) {
++                final ItemEntity itemEntity = nearby.get(i);
+                 if (itemEntity.isMergable()) {
+                     // Paper start - Fix items merging through walls
+                     if (this.level().paperConfig().fixes.fixItemsMergingThroughWalls) {
+@@ -264,10 +279,8 @@ public class ItemEntity extends Entity implements TraceableEntity, net.caffeinem
+                     }
+                     // Paper end - Fix items merging through walls
+                     // Leaf start - Skip item merge checks for full stacks
+-                    final ItemStack item = this.getItem();
+                     this.tryToMerge(itemEntity, item, itemEntity.getItem());
+                     if (this.isRemoved() || item.getCount() >= item.getMaxStackSize()) {
+                         // Leaf end - Skip item merge checks for full stacks
+                         break;
+                     }
+diff --git a/net/minecraft/world/level/EntityGetter.java b/net/minecraft/world/level/EntityGetter.java
+index 6e91a8a045c0174363afb82c4cc7fce05cc39170..001eb8e935b55c0fa9956b60f00dfc09513cb16d 100644
+--- a/net/minecraft/world/level/EntityGetter.java
++++ b/net/minecraft/world/level/EntityGetter.java
+@@ -24,6 +24,15 @@ public interface EntityGetter extends ca.spottedleaf.moonrise.patches.chunk_syst
+         return this.getEntities(EntityTypeTest.forClass(entityClass), area, filter);
+     }
+ 
++    default <T extends Entity> List<T> getEntitiesOfClass(Class<T> entityClass, AABB area, Predicate<? super T> filter, int maxCount) {
++        if (this instanceof Level level) {
++            final List<T> ret = new java.util.ArrayList<>(Math.min(maxCount, 32));
++            level.getEntities(EntityTypeTest.forClass(entityClass), area, filter, ret, maxCount);
++            return ret;
++        }
++        return this.getEntitiesOfClass(entityClass, area, filter);
++    }
++
+     List<? extends Player> players();
+ 
+     default List<Entity> getEntities(@Nullable Entity entity, AABB area) {
