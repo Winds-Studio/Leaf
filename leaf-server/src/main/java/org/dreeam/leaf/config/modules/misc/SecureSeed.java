@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.misc;
 
 import org.dreeam.leaf.config.ConfigModule;
 import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.annotations.Experimental;
 
 public class SecureSeed extends ConfigModule {
 
@@ -10,7 +11,13 @@ public class SecureSeed extends ConfigModule {
     }
 
     public static boolean enabled = false;
+    @Experimental
+    public static boolean terrainEnabled = false;
     private static boolean secureSeedInitialized;
+
+    public static boolean isSecureTerrainEnabled() {
+        return enabled && terrainEnabled;
+    }
 
     @Override
     public void onLoaded() {
@@ -27,5 +34,12 @@ public class SecureSeed extends ConfigModule {
         secureSeedInitialized = true;
 
         enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
+        terrainEnabled = globalConfig.getBoolean(basePath() + ".terrain-enabled", terrainEnabled, globalConfig.pickStringRegionBased(
+            """
+                Use an independent 256-bit seed to protect terrain generation.
+                """,
+            """
+                使用独立的 256-bit 种子来保护地形生成.""")
+        );
     }
 }
