@@ -360,11 +360,14 @@ public final class TrackerCtx {
     }
 
     private static void sendPacket(ServerLevel world, ServerPlayerConnection connection, ObjectArrayList<Packet<?>> list) {
-        if (world == connection.getPlayer().level()) {
-            Packet<?>[] packetsRaw = list.elements();
-            for (int i = 0, size = list.size(); i < size; i++) {
-                connection.send(packetsRaw[i]);
-            }
+        if (world != connection.getPlayer().level() || list.isEmpty()) {
+            return;
+        }
+        if (list.size() == 1) {
+            connection.send(list.get(0));
+        } else {
+            // Leaf - bundle to reduce netty wakeups (ClientboundBundlePacket is vanilla, already used for startSeen)
+            connection.send(new ClientboundBundlePacket(new java.util.ArrayList<>(list)));
         }
     }
 }
