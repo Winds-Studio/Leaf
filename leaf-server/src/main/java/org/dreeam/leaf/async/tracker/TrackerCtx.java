@@ -7,6 +7,7 @@ import it.unimi.dsi.fastutil.objects.Object2ObjectFunction;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.core.Holder;
+import net.minecraft.network.protocol.BundlerInfo;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
@@ -359,15 +360,22 @@ public final class TrackerCtx {
         packets.clear();
     }
 
+    // Leaf  bundle multiple packets per player per tick to reduce netty wakeups
+    // Splits into chunks of BundlerInfo.BUNDLE_SIZE_LIMIT to respect client bundle hard limit
     private static void sendPacket(ServerLevel world, ServerPlayerConnection connection, ObjectArrayList<Packet<?>> list) {
         if (world != connection.getPlayer().level() || list.isEmpty()) {
             return;
         }
+
         if (list.size() == 1) {
             connection.send(list.get(0));
-        } else {
-            // Leaf - bundle to reduce netty wakeups (ClientboundBundlePacket is vanilla, already used for startSeen)
-            connection.send(new ClientboundBundlePacket(new java.util.ArrayList<>(list)));
+            return;
+        }
+
+        final int maxPackets = BundlerInfo.BUNDLE_SIZE_LIMIT;
+        for (int i = 0, size = list.size(); i < size; i += maxPackets) {
+            int end = Math.min(i + maxPackets, size);
+            connection.send(new ClientboundBundlePacket(list.subList(i, end)));
         }
     }
 }
