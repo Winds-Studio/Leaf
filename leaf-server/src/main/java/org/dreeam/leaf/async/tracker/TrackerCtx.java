@@ -360,8 +360,8 @@ public final class TrackerCtx {
         packets.clear();
     }
 
-    // Leaf  bundle multiple packets per player per tick to reduce netty wakeups
-    // Splits into chunks of BundlerInfo.BUNDLE_SIZE_LIMIT to respect client bundle hard limit
+    // Leaf - bundle multiple packets per player per tick to reduce Netty wakeups
+    // Leave room for the start/end BundleDelimiter packets counted by the client bundle limit.
     private static void sendPacket(ServerLevel world, ServerPlayerConnection connection, ObjectArrayList<Packet<?>> list) {
         if (world != connection.getPlayer().level() || list.isEmpty()) {
             return;
@@ -372,7 +372,7 @@ public final class TrackerCtx {
             return;
         }
 
-        final int maxPackets = BundlerInfo.BUNDLE_SIZE_LIMIT;
+        final int maxPackets = BundlerInfo.BUNDLE_SIZE_LIMIT - 2;
         for (int i = 0, size = list.size(); i < size; i += maxPackets) {
             int end = Math.min(i + maxPackets, size);
             connection.send(new ClientboundBundlePacket(list.subList(i, end)));
