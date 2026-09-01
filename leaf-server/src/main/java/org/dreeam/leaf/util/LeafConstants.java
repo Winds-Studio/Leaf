@@ -12,6 +12,8 @@ public final class LeafConstants {
     public static final boolean DISABLE_VANILLA_DEBUG_FEATURE = Boolean.getBoolean("Leaf.disable-vanilla-debug-feature");
     public static final String LINEAR_V2_READ_ONLY_FLAG = "Leaf.linear-v2-read-only";
     public static final boolean LINEAR_V2_READ_ONLY = Boolean.getBoolean(LINEAR_V2_READ_ONLY_FLAG);
+    public static final String DISABLE_SECURE_SEED_INTEGRITY_CHECK_FLAG = "Leaf.disable-secure-seed-integrity-check";
+    public static final boolean DISABLE_SECURE_SEED_INTEGRITY_CHECK = Boolean.getBoolean(DISABLE_SECURE_SEED_INTEGRITY_CHECK_FLAG);
 
     public static final String DISABLE_VANILLA_PROFILER_DOCS_URL = "https://www.leafmc.one/docs/config/system-properties#dleaf-disable-vanilla-profiler";
 }

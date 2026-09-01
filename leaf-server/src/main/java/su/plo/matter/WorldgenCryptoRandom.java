@@ -1,13 +1,17 @@
 package su.plo.matter;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
+import net.minecraft.world.level.levelgen.PositionalRandomFactory;
+import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 @NullMarked
 public class WorldgenCryptoRandom extends WorldgenRandom {
@@ -16,6 +20,9 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
     private static final long[] HASHED_ZERO_SEED = Hashing.hashWorldSeed(new long[Globals.WORLD_SEED_LONGS]);
     private static final ThreadLocal<long[]> LAST_SEEN_WORLD_SEED = ThreadLocal.withInitial(() -> new long[Globals.WORLD_SEED_LONGS]);
     private static final ThreadLocal<long[]> HASHED_WORLD_SEED = ThreadLocal.withInitial(() -> HASHED_ZERO_SEED);
+    private static final long POSITIONAL_AT_DOMAIN = 1L;
+    private static final long POSITIONAL_HASH_DOMAIN = 2L;
+    private static final long POSITIONAL_SEED_DOMAIN = 3L;
 
     private final long[] worldSeed = new long[Globals.WORLD_SEED_LONGS];
     private final long[] randomBits = new long[8];
@@ -33,12 +40,37 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
         }
     }
 
+    private WorldgenCryptoRandom(long[] worldSeed, long input0, long input1, long input2, long domain) {
+        this(0, 0, null, 0);
+        System.arraycopy(worldSeed, 0, this.worldSeed, 0, this.worldSeed.length);
+        this.message[0] = input0;
+        this.message[1] = input1;
+        this.message[2] = input2;
+        this.message[3] = this.counter = 0;
+        this.message[4] = domain;
+        this.randomBitIndex = MAX_RANDOM_BIT_INDEX;
+    }
+
+    // Slime chunk checks can run without a worldgen ThreadLocal context, so snapshot the target level directly.
+    private WorldgenCryptoRandom(ServerLevel level, int x, int z, Globals.Salt typeSalt, long salt) {
+        this(0, 0, null, 0);
+        Globals.copyWorldSeed(level, this.worldSeed);
+        this.setSecureSeed(x, z, typeSalt, salt, Objects.requireNonNull(level.matter$dimensionSeed));
+    }
+
     public void setSecureSeed(int x, int z, Globals.Salt typeSalt, long salt) {
-        System.arraycopy(Globals.worldSeed, 0, this.worldSeed, 0, Globals.WORLD_SEED_LONGS);
+        Globals.copyWorldSeed(this.worldSeed);
+        this.setSecureSeed(x, z, typeSalt, salt, Globals.dimensionSeed());
+    }
+
+    private void setSecureSeed(int x, int z, Globals.Salt typeSalt, long salt, Globals.DimensionSeed dimensionSeed) {
         message[0] = ((long) x << 32) | ((long) z & 0xffffffffL);
-        message[1] = ((long) Globals.dimension.get() << 32) | (salt & 0xffffffffL);
+        message[1] = ((long) dimensionSeed.legacyId() << 32) | (salt & 0xffffffffL);
         message[2] = typeSalt.ordinal();
         message[3] = counter = 0;
+        message[4] = 0;
+        message[5] = dimensionSeed.seedLo();
+        message[6] = dimensionSeed.seedHi();
         randomBitIndex = MAX_RANDOM_BIT_INDEX;
     }
 
@@ -56,46 +88,63 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
         Hashing.hash(message, randomBits, cachedInternalState, 64, true);
     }
 
+    private static long lowMask(int bits) {
+        return bits == Long.SIZE ? -1L : (1L << bits) - 1L;
+    }
+
     private long getBits(int count) {
+        if (count < 0 || count > Long.SIZE) {
+            throw new IllegalArgumentException("Bit count must be between 0 and " + Long.SIZE + ": " + count);
+        }
+
         if (randomBitIndex >= MAX_RANDOM_BIT_INDEX) {
             moreRandomBits();
             randomBitIndex -= MAX_RANDOM_BIT_INDEX;
         }
 
         int alignment = randomBitIndex & 63;
-        if ((randomBitIndex >>> 6) == ((randomBitIndex + count) >>> 6)) {
-            long result = (randomBits[randomBitIndex >>> 6] >>> alignment) & ((1L << count) - 1);
+        int availableBits = Long.SIZE - alignment;
+        long result;
+        if (count <= availableBits) {
+            result = (randomBits[randomBitIndex >>> 6] >>> alignment) & lowMask(count);
             randomBitIndex += count;
-            return result;
         } else {
-            long result = (randomBits[randomBitIndex >>> 6] >>> alignment) & ((1L << (64 - alignment)) - 1);
-            randomBitIndex += count;
+            result = (randomBits[randomBitIndex >>> 6] >>> alignment) & lowMask(availableBits);
+            randomBitIndex += availableBits;
             if (randomBitIndex >= MAX_RANDOM_BIT_INDEX) {
                 moreRandomBits();
                 randomBitIndex -= MAX_RANDOM_BIT_INDEX;
             }
-            alignment = randomBitIndex & 63;
-            result <<= alignment;
-            result |= (randomBits[randomBitIndex >>> 6] >>> (64 - alignment)) & ((1L << alignment) - 1);
 
-            return result;
+            int remainingBits = count - availableBits;
+            result |= (randomBits[randomBitIndex >>> 6] & lowMask(remainingBits)) << availableBits;
+            randomBitIndex += remainingBits;
+
         }
+        return result;
     }
 
     @Override
     public RandomSource fork() {
         WorldgenCryptoRandom fork = new WorldgenCryptoRandom(0, 0, null, 0);
 
-        System.arraycopy(Globals.worldSeed, 0, fork.worldSeed, 0, Globals.WORLD_SEED_LONGS);
-        fork.message[0] = this.message[0];
-        fork.message[1] = this.message[1];
-        fork.message[2] = this.message[2];
-        fork.message[3] = this.message[3];
+        System.arraycopy(this.worldSeed, 0, fork.worldSeed, 0, this.worldSeed.length);
+        System.arraycopy(this.randomBits, 0, fork.randomBits, 0, this.randomBits.length);
+        System.arraycopy(this.message, 0, fork.message, 0, this.message.length);
         fork.randomBitIndex = this.randomBitIndex;
         fork.counter = this.counter;
         fork.nextLong();
 
         return fork;
+    }
+
+    @Override
+    public PositionalRandomFactory forkPositional() {
+        long[] factorySeed = new long[Globals.WORLD_SEED_LONGS];
+        for (int i = 0; i < factorySeed.length; i++) {
+            factorySeed[i] = this.nextLong();
+        }
+        return new CryptoPositionalRandomFactory(factorySeed);
     }
 
     @Override
@@ -156,7 +205,36 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
         super.setLargeFeatureWithSalt(worldSeed, regionX, regionZ, salt);
     }
 
-    public static RandomSource seedSlimeChunk(int chunkX, int chunkZ) {
-        return new WorldgenCryptoRandom(chunkX, chunkZ, Globals.Salt.SLIME_CHUNK, 0);
+    public static RandomSource seedSlimeChunk(ServerLevel level, int chunkX, int chunkZ) {
+        return new WorldgenCryptoRandom(level, chunkX, chunkZ, Globals.Salt.SLIME_CHUNK, 0);
+    }
+
+    private static final class CryptoPositionalRandomFactory implements PositionalRandomFactory {
+        private final long[] worldSeed;
+
+        private CryptoPositionalRandomFactory(long[] worldSeed) {
+            this.worldSeed = worldSeed;
+        }
+
+        @Override
+        public RandomSource at(int x, int y, int z) {
+            return new WorldgenCryptoRandom(this.worldSeed, x, y, z, POSITIONAL_AT_DOMAIN);
+        }
+
+        @Override
+        public RandomSource fromHashOf(String name) {
+            RandomSupport.Seed128bit seed = RandomSupport.seedFromHashOf(name);
+            return new WorldgenCryptoRandom(this.worldSeed, seed.seedLo(), seed.seedHi(), 0L, POSITIONAL_HASH_DOMAIN);
+        }
+
+        @Override
+        public RandomSource fromSeed(long seed) {
+            return new WorldgenCryptoRandom(this.worldSeed, seed, 0L, 0L, POSITIONAL_SEED_DOMAIN);
+        }
+
+        @Override
+        public void parityConfigString(StringBuilder sb) {
+            sb.append("CryptoPositionalRandomFactory");
+        }
     }
 }
