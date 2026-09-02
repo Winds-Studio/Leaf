@@ -382,16 +382,15 @@ public final class TrackerCtx {
         int i = 0;
         int j = 0;
         while (j < list.size()) {
-            if (list.get(j) instanceof BundlePacket<?>) {
+            if (list.get(j) instanceof BundlePacket<?> packet) {
                 connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
                 i = j;
-            } else {
-                j++;
-                if (j - i == BundlerInfo.BUNDLE_SIZE_LIMIT) {
-                    connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
-                    i = j;
-                }
+                connection.send(packet);
+            } else if (j - i == BundlerInfo.BUNDLE_SIZE_LIMIT) {
+                connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
+                i = j;
             }
+            j++;
         }
         if (i != j) {
             connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
