@@ -49,13 +49,12 @@ public final class TrackerCtx {
     private final ObjectArrayList<ChunkMap.TrackedEntity> resync = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
-    private final ObjectArrayList<Entity> debugRegistration = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> updateData = new ObjectArrayList<>();
 
-    private record StopSeen(Entity e, ObjectArrayList<ServerPlayerConnection> q) {
+    private record StopSeen(ChunkMap.TrackedEntity tracker, ObjectArrayList<ServerPlayerConnection> q) {
     }
 
-    private record StartSeen(Entity e,
+    private record StartSeen(ChunkMap.TrackedEntity tracker,
                              ObjectArrayList<ServerPlayerConnection> q) {
     }
 
@@ -63,9 +62,9 @@ public final class TrackerCtx {
         this.world = world;
     }
 
-    public void stopSeenByPlayer(ServerPlayerConnection connection, Entity entity) {
-        if (stopSeen.isEmpty() || !stopSeen.getLast().e.equals(entity)) {
-            stopSeen.add(new StopSeen(entity, new ObjectArrayList<>()));
+    public void collectStopSeenByPlayer(ServerPlayerConnection connection, ChunkMap.TrackedEntity tracker) {
+        if (stopSeen.isEmpty() || stopSeen.getLast().tracker != tracker) {
+            stopSeen.add(new StopSeen(tracker, new ObjectArrayList<>()));
         }
         ObjectArrayList<ServerPlayerConnection> players = stopSeen.getLast().q;
         if (players.isEmpty() || players.getLast() != connection) {
@@ -73,14 +72,11 @@ public final class TrackerCtx {
         }
     }
 
-    public void startSeenByPlayer(ServerPlayerConnection connection, Entity entity, boolean flag) {
-        if (startSeen.isEmpty() || !startSeen.getLast().e.equals(entity)) {
-            startSeen.add(new StartSeen(entity, new ObjectArrayList<>()));
+    public void collectStartSeenByPlayer(ServerPlayerConnection connection, ChunkMap.TrackedEntity tracker) {
+        if (startSeen.isEmpty() || startSeen.getLast().tracker != tracker) {
+            startSeen.add(new StartSeen(tracker, new ObjectArrayList<>()));
         }
         startSeen.getLast().q.add(connection);
-        if (flag) {
-            debugRegistration.add(entity);
-        }
     }
 
 
@@ -132,7 +128,6 @@ public final class TrackerCtx {
         pluginEntity.addAll(other.pluginEntity);
         resync.addAll(other.resync);
         syncAttributes.addAll(other.syncAttributes);
-        debugRegistration.addAll(other.debugRegistration);
         updateData.addAll(other.updateData);
         return other.packets;
     }
@@ -144,7 +139,6 @@ public final class TrackerCtx {
         pluginEntity.clear();
         resync.clear();
         syncAttributes.clear();
-        debugRegistration.clear();
         updateData.clear();
         packets.clear();
     }
@@ -153,14 +147,6 @@ public final class TrackerCtx {
         if (!pluginEntity.isEmpty()) {
             for (ChunkMap.TrackedEntity tracker : pluginEntity) {
                 handlePlugin(tracker);
-            }
-        }
-
-        if (!debugRegistration.isEmpty()) {
-            for (Entity entity : debugRegistration) {
-                if (entity.moonrise$getTrackedEntity() != null && !entity.isRemoved()) {
-                    world.debugSynchronizers().registerEntity(entity);
-                }
             }
         }
 
@@ -200,27 +186,12 @@ public final class TrackerCtx {
         }
 
         flush(world, this.packets);
-        if (!startSeen.isEmpty()) {
-            for (StartSeen track : startSeen) {
-                Entity entity = track.e;
-                for (ServerPlayerConnection connection : track.q) {
-                    entity.startSeenByPlayer(connection.getPlayer());
-                }
-            }
-        }
-
         if (!stopSeen.isEmpty()) {
             for (StopSeen untrack : stopSeen) {
                 handleStopTrack(untrack);
             }
         }
         flush(world, this.packets);
-        for (StopSeen untrack : stopSeen) {
-            Entity entity = untrack.e;
-            for (ServerPlayerConnection connection : untrack.q) {
-                entity.stopSeenByPlayer(connection.getPlayer());
-            }
-        }
     }
 
     private static void handlePlugin(ChunkMap.TrackedEntity tracker) {
@@ -259,39 +230,76 @@ public final class TrackerCtx {
     }
 
     private void handleStartTrack(StartSeen startSeen, boolean callEvent) {
-        ChunkMap.TrackedEntity tracker = startSeen.e.moonrise$getTrackedEntity();
-        if (tracker == null) {
+        ChunkMap.TrackedEntity tracker = startSeen.tracker;
+        Entity entity = tracker.serverEntity.entity;
+
+        if (entity.isRemoved() || entity.level() != world || entity.moonrise$getTrackedEntity() != tracker) {
             return;
         }
         for (ServerPlayerConnection connection : startSeen.q) {
             ServerPlayer player = connection.getPlayer();
-            ObjectArrayList<Packet<? super ClientGamePacketListener>> list = new ObjectArrayList<>(4);
-            tracker.serverEntity.sendPairingData(player, list::add);
-            if (callEvent
-                && !new PlayerTrackEntityEvent(
-                player.getBukkitEntity(),
-                startSeen.e.getBukkitEntity()
-            ).callEvent()) {
-                continue;
-            } else if (player.level() != world) {
+            if (player == entity || player.level() != world) {
                 // do not send old entities if it changed dimension
                 continue;
             }
-            connection.send(new ClientboundBundlePacket(list)); // #startTrackingEntity call after #send
-            world.debugSynchronizers().startTrackingEntity(player, startSeen.e);
+            if (tracker.seenBy.add(connection)) {
+                tracker.seenByUpdated();
+                if (callEvent
+                    && !new PlayerTrackEntityEvent(
+                    player.getBukkitEntity(),
+                    entity.getBukkitEntity()
+                ).callEvent()) {
+                    tracker.serverEntity.onPlayerAdd();
+                    continue;
+                }
+                ObjectArrayList<Packet<? super ClientGamePacketListener>> list = new ObjectArrayList<>(4);
+
+                tracker.serverEntity.sendPairingData(player, list::add);
+                connection.send(new ClientboundBundlePacket(list)); // #startTrackingEntity call after #send
+                entity.startSeenByPlayer(player);
+
+                if (tracker.seenBy.size() == 1) {
+                    world.debugSynchronizers().registerEntity(entity);
+                }
+                world.debugSynchronizers().startTrackingEntity(player, entity);
+                tracker.serverEntity.onPlayerAdd();
+            }
         }
     }
 
     private void handleStopTrack(StopSeen untrack) {
-        ChunkMap.TrackedEntity tracker = untrack.e.moonrise$getTrackedEntity();
-        for (ServerPlayerConnection connection : untrack.q) {
-            if (tracker == null || !tracker.seenBy.contains(connection)) {
-                // client side will clean entities if it has changed dimension
-                send(connection, new ClientboundRemoveEntitiesPacket(untrack.e.getId()));
+        ChunkMap.TrackedEntity tracker = untrack.tracker;
+        Entity entity = tracker.serverEntity.entity;
+        ChunkMap.TrackedEntity currentTracker = entity.moonrise$getTrackedEntity();
+
+        if (currentTracker == null) {
+            for (ServerPlayerConnection connection : untrack.q) {
+                send(connection, new ClientboundRemoveEntitiesPacket(entity.getId()));
             }
+            world.debugSynchronizers().dropEntity(entity);
+            return;
         }
-        if (tracker == null || tracker.seenBy.isEmpty()) {
-            world.debugSynchronizers().dropEntity(untrack.e);
+        // Dimension changed
+        if (entity.level() != world || currentTracker != tracker) {
+            return;
+        }
+        boolean updated = false;
+        for (ServerPlayerConnection connection : untrack.q) {
+            ServerPlayer player = connection.getPlayer();
+            if (!tracker.seenBy.remove(connection)) {
+                continue;
+            }
+            entity.stopSeenByPlayer(player);
+            updated = true;
+
+            // client side will clean entities if it has changed dimension
+            send(connection, new ClientboundRemoveEntitiesPacket(entity.getId()));
+        }
+        if (updated) {
+            tracker.seenByUpdated();
+            if (tracker.seenBy.isEmpty()) {
+                world.debugSynchronizers().dropEntity(entity);
+            }
         }
     }
 
