@@ -32,6 +32,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
+import org.dreeam.leaf.util.LeafConstants;
 import org.dreeam.leaf.util.map.AttributeInstanceArrayMap;
 import org.jspecify.annotations.NullMarked;
 
@@ -361,10 +362,15 @@ public final class TrackerCtx {
         packets.clear();
     }
 
-    // Leaf - bundle multiple packets per player per tick to reduce Netty wakeups
-    // Leave room for the start/end BundleDelimiter packets counted by the client bundle limit.
     private static void sendPacket(ServerLevel world, ServerPlayerConnection connection, ObjectArrayList<Packet<?>> list) {
-        if (world != connection.getPlayer().level() || list.isEmpty()) {
+        if (world != connection.getPlayer().level()) {
+            return;
+        }
+        if (!LeafConstants.ASYNC_TRACKER_PROTOCOL_LIB_FIX) {
+            Packet<?>[] packetsRaw = list.elements();
+            for (int i = 0, size = list.size(); i < size; i++) {
+                connection.send(packetsRaw[i]);
+            }
             return;
         }
 
@@ -381,12 +387,14 @@ public final class TrackerCtx {
                 i = j;
             } else {
                 j++;
-                if (j - 1 == BundlerInfo.BUNDLE_SIZE_LIMIT) {
+                if (j - i == BundlerInfo.BUNDLE_SIZE_LIMIT) {
                     connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
                     i = j;
                 }
             }
         }
-        connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
+        if (i != j) {
+            connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
+        }
     }
 }
