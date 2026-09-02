@@ -7,6 +7,7 @@ import it.unimi.dsi.fastutil.objects.Object2ObjectFunction;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.core.Holder;
+import net.minecraft.network.protocol.BundlePacket;
 import net.minecraft.network.protocol.BundlerInfo;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
@@ -372,11 +373,20 @@ public final class TrackerCtx {
             return;
         }
 
-        final int maxPackets = BundlerInfo.BUNDLE_SIZE_LIMIT - 2;
-        for (int i = 0, size = list.size(); i < size; i += maxPackets) {
-            int end = Math.min(i + maxPackets, size);
-            //noinspection unchecked
-            connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, end)));
+        int i = 0;
+        int j = 0;
+        while (j < list.size()) {
+            if (list.get(j) instanceof BundlePacket<?>) {
+                connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
+                i = j;
+            } else {
+                j++;
+                if (j - 1 == BundlerInfo.BUNDLE_SIZE_LIMIT) {
+                    connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
+                    i = j;
+                }
+            }
         }
+        connection.send(new ClientboundBundlePacket((Iterable) list.subList(i, j)));
     }
 }
