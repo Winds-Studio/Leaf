@@ -279,7 +279,7 @@ public final class TrackerCtx {
             world.debugSynchronizers().dropEntity(entity);
             return;
         }
-        // Dimension changed
+        // Dimension changed or tracker doesn't match
         if (entity.level() != world || currentTracker != tracker) {
             return;
         }
