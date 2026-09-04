@@ -12,6 +12,7 @@ public final class LeafConstants {
     public static final boolean DISABLE_VANILLA_DEBUG_FEATURE = Boolean.getBoolean("Leaf.disable-vanilla-debug-feature");
     public static final String LINEAR_V2_READ_ONLY_FLAG = "Leaf.linear-v2-read-only";
     public static final boolean LINEAR_V2_READ_ONLY = Boolean.getBoolean(LINEAR_V2_READ_ONLY_FLAG);
+    public static final boolean ASYNC_TRACKER_PROTOCOL_LIB_FIX = Boolean.getBoolean("Leaf.async-tracker-protocol-lib-fix");
 
     public static final String DISABLE_VANILLA_PROFILER_DOCS_URL = "https://www.leafmc.one/docs/config/system-properties#dleaf-disable-vanilla-profiler";
 }
