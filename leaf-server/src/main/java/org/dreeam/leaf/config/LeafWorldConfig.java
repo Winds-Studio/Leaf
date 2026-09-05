@@ -5,7 +5,6 @@ import org.dreeam.leaf.config.modules.fixes.world.Fixes;
 import org.dreeam.leaf.config.modules.gameplay.world.EnderDragonRespawn;
 import org.dreeam.leaf.config.modules.gameplay.world.HideFlamesOnEntitiesWithFireResistance;
 import org.dreeam.leaf.config.modules.gameplay.world.RandomStrollIntoNonTickingChunks;
-import org.dreeam.leaf.config.modules.misc.WorldConfigExample;
 import org.dreeam.leaf.config.modules.misc.world.SecureSeed;
 import org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDuration;
 import org.dreeam.leaf.config.modules.opt.world.LoadChunks;
@@ -32,7 +31,6 @@ public final class LeafWorldConfig extends LeafConfigAccessor {
 
     private final Source source;
 
-    public WorldConfigExample worldConfigExample = new WorldConfigExample();
     public SaveFireworks saveFireworks = new SaveFireworks();
     public OptimizedSheepOffspringColor optimizedSheepOffspringColor = new OptimizedSheepOffspringColor();
     public MaxProjectileChunkLoads maxProjectileChunkLoads = new MaxProjectileChunkLoads();

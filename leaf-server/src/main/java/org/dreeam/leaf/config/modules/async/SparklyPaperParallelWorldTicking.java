@@ -4,6 +4,7 @@ import org.dreeam.leaf.async.world.UnsafeReadPolicy;
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
 
+@HotReloadUnsupported
 @ConfigClassInfo(category = ConfigCategory.ASYNC, name = "parallel-world-ticking", comments = {
     """
         **Experimental feature**

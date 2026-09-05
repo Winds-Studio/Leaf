@@ -9,6 +9,12 @@ import org.dreeam.leaf.config.ConfigModule;
 import org.dreeam.leaf.config.LeafConfig;
 import org.dreeam.leaf.config.LeafWorldConfig;
 import org.dreeam.leaf.config.WorldConfigModule;
+import org.dreeam.leaf.config.migration.ConfigBackupSession;
+import org.dreeam.leaf.config.modules.fixes.world.Fixes;
+import org.dreeam.leaf.config.modules.gameplay.BookWriting;
+import org.dreeam.leaf.config.modules.network.ChatOrderVerification;
+import org.dreeam.leaf.config.modules.network.Keepalive;
+import org.dreeam.leaf.config.modules.network.PremiumAccountSlowLoginTimeout;
 import org.dreeam.leaf.config.util.ConfigFileIO;
 import org.dreeam.leaf.config.util.ConfigPaths;
 import org.jspecify.annotations.Nullable;
@@ -18,9 +24,8 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,18 +47,25 @@ public final class GaleConfigMigration {
     private static List<Mapping> globalMappings = List.of();
     private static List<Mapping> worldMappings = List.of();
     private static Map<String, String> resolvedWorldMappings = Map.of();
+    private static ConfigBackupSession backupSession;
+    private static final Set<Path> RETAINED_GALE_SOURCES = new HashSet<>();
 
-    public static void migrate(Path directory, ConfigFile leafGlobalConfig, ConfigFile leafWorldDefaultsConfig) {
+    public static void migrate(
+        Path directory,
+        ConfigFile leafGlobalConfig,
+        ConfigFile leafWorldDefaultsConfig,
+        ConfigBackupSession session
+    ) {
         configDirectory = Objects.requireNonNull(directory, "directory").normalize();
+        backupSession = Objects.requireNonNull(session, "session");
+        RETAINED_GALE_SOURCES.clear();
 
         Path globalPath = configDirectory.resolve(GLOBAL_FILE);
         Path worldDefaultsPath = configDirectory.resolve(WORLD_DEFAULTS_FILE);
 
         registerMappings();
-        Map<String, String> resolvedGlobalMappings = resolveMappings(globalMappings);
-        resolvedWorldMappings = resolveMappings(worldMappings);
-        migrateValues(globalPath, resolvedGlobalMappings, leafGlobalConfig);
-        migrateValues(worldDefaultsPath, resolvedWorldMappings, leafWorldDefaultsConfig);
+        migrateStage(globalPath, globalMappings, leafGlobalConfig);
+        resolvedWorldMappings = migrateStage(worldDefaultsPath, worldMappings, leafWorldDefaultsConfig);
     }
 
     private static void registerMappings() {
@@ -62,10 +74,10 @@ public final class GaleConfigMigration {
 
         addGlobalMapping("small-optimizations.reduced-intervals.increase-time-statistics", org.dreeam.leaf.config.modules.opt.global.ReducedIntervals.class, "increaseTimeStatistics");
         addGlobalMapping("small-optimizations.reduced-intervals.update-entity-line-of-sight", org.dreeam.leaf.config.modules.opt.global.ReducedIntervals.class, "updateEntityLineOfSight");
-        addGlobalMapping("gameplay-mechanics.enable-book-writing", org.dreeam.leaf.config.modules.gameplay.global.GameplayMechanics.class, "enableBookWriting");
-        addGlobalMapping("misc.verify-chat-order", org.dreeam.leaf.config.modules.network.global.ChatOrderVerification.class, "enabled");
-        addGlobalMapping("misc.premium-account-slow-login-timeout", org.dreeam.leaf.config.modules.network.global.PremiumAccountSlowLoginTimeout.class, "ticks");
-        addGlobalMapping("misc.keepalive.send-multiple", org.dreeam.leaf.config.modules.network.global.Keepalive.class, "sendMultiple");
+        addGlobalMapping("gameplay-mechanics.enable-book-writing", BookWriting.class, "enabled");
+        addGlobalMapping("misc.verify-chat-order", ChatOrderVerification.class, "enabled");
+        addGlobalMapping("misc.premium-account-slow-login-timeout", PremiumAccountSlowLoginTimeout.class, "ticks");
+        addGlobalMapping("misc.keepalive.send-multiple", Keepalive.class, "sendMultiple");
         addGlobalMapping("misc.last-tick-time-in-tps-command.enabled", org.dreeam.leaf.config.modules.misc.global.LastTickTimeInTpsCommand.class, "enabled");
         addGlobalMapping("misc.last-tick-time-in-tps-command.add-oversleep", org.dreeam.leaf.config.modules.misc.global.LastTickTimeInTpsCommand.class, "addOversleep");
         addGlobalMapping("log-to-console.invalid-statistics", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "invalidStatistics");
@@ -93,9 +105,9 @@ public final class GaleConfigMigration {
         addWorldMapping("small-optimizations.reduced-intervals.villager-item-repickup", org.dreeam.leaf.config.modules.opt.world.ReducedIntervals.class, "villagerItemRepickup");
         addWorldMapping("small-optimizations.load-chunks.to-spawn-phantoms", org.dreeam.leaf.config.modules.opt.world.LoadChunks.class, "toSpawnPhantoms");
         addWorldMapping("small-optimizations.load-chunks.to-activate-climbing-entities", org.dreeam.leaf.config.modules.opt.world.LoadChunks.class, "toActivateClimbingEntities");
-        addWorldMapping("gameplay-mechanics.fixes.broadcast-crit-animations-as-the-entity-being-critted", org.dreeam.leaf.config.modules.fixes.world.Fixes.class, "broadcastCritAnimationsAsTheEntityBeingCritted");
-        addWorldMapping("gameplay-mechanics.fixes.mc-238526", org.dreeam.leaf.config.modules.fixes.world.Fixes.class, "mc238526");
-        addWorldMapping("gameplay-mechanics.fixes.mc-121706", org.dreeam.leaf.config.modules.fixes.world.Fixes.class, "mc121706");
+        addWorldMapping("gameplay-mechanics.fixes.broadcast-crit-animations-as-the-entity-being-critted", Fixes.class, "broadcastCritAnimationsAsTheEntityBeingCritted");
+        addWorldMapping("gameplay-mechanics.fixes.mc-238526", Fixes.class, "mc238526");
+        addWorldMapping("gameplay-mechanics.fixes.mc-121706", Fixes.class, "mc121706");
         addWorldMapping("gameplay-mechanics.entities-can-random-stroll-into-non-ticking-chunks", org.dreeam.leaf.config.modules.gameplay.world.RandomStrollIntoNonTickingChunks.class, "enabled");
         addWorldMapping("gameplay-mechanics.entity-wake-up-duration-ratio-standard-deviation", org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDuration.class, "ratioStandardDeviation");
         addWorldMapping("gameplay-mechanics.hide-flames-on-entities-with-fire-resistance", org.dreeam.leaf.config.modules.gameplay.world.HideFlamesOnEntitiesWithFireResistance.class, "enabled");
@@ -136,6 +148,29 @@ public final class GaleConfigMigration {
     }
 
     /**
+     * Keeps the legacy source file when Paper-style persistence could not write the corresponding
+     * Leaf target. The loaded values remain active for this process, while the source remains
+     * available for the next startup.
+     */
+    public static void recordLeafPersistence(ConfigFileIO.SaveReport report) {
+        if (configDirectory == null || !report.hasAccessDenied()) {
+            return;
+        }
+        Path leafGlobal = configDirectory.resolve("leaf-global.yml").toAbsolutePath().normalize();
+        Path leafDefaults = configDirectory.resolve("leaf-world-defaults.yml").toAbsolutePath().normalize();
+        for (ConfigFileIO.SaveResult result : report.results()) {
+            if (result.status() != ConfigFileIO.SaveStatus.ACCESS_DENIED) {
+                continue;
+            }
+            if (result.target().equals(leafGlobal)) {
+                RETAINED_GALE_SOURCES.add(configDirectory.resolve(GLOBAL_FILE).toAbsolutePath().normalize());
+            } else if (result.target().equals(leafDefaults)) {
+                RETAINED_GALE_SOURCES.add(configDirectory.resolve(WORLD_DEFAULTS_FILE).toAbsolutePath().normalize());
+            }
+        }
+    }
+
+    /**
      * Attempts to create a Leaf override from Gale values.
      *
      * @return the newly created Leaf override, or {@code null} when normal Leaf loading should continue
@@ -152,7 +187,6 @@ public final class GaleConfigMigration {
             return null;
         }
 
-        boolean leafFileCreated = false;
         try {
             if (leafFile.isFile()) {
                 LOGGER.warn(
@@ -177,21 +211,15 @@ public final class GaleConfigMigration {
                 return null;
             }
 
-            Files.createFile(leafPath);
-            leafFileCreated = true;
             ConfigFile leafConfig = ConfigFileIO.load(leafFile);
             applyMappings(galeConfig, resolvedWorldMappings, leafConfig);
             LeafWorldConfig migrated = LeafConfig.loadWorldOverride(leafConfig, defaults);
-            migrated.saveConfig();
+            ConfigFileIO.SaveReport report = ConfigFileIO.save(leafConfig);
+            if (report.hasAccessDenied()) {
+                RETAINED_GALE_SOURCES.add(galePath.toAbsolutePath().normalize());
+            }
             return migrated;
         } catch (Exception exception) {
-            if (leafFileCreated) {
-                try {
-                    Files.deleteIfExists(leafPath);
-                } catch (IOException cleanupException) {
-                    exception.addSuppressed(cleanupException);
-                }
-            }
             LOGGER.error(
                 "Failed to migrate Gale world config {} for {}; using Leaf world defaults.",
                 galePath, worldDirectory, exception
@@ -200,12 +228,25 @@ public final class GaleConfigMigration {
         }
     }
 
-    private static void migrateValues(Path srcPath, Map<String, String> mappings, ConfigFile leafConfig) {
+    private static Map<String, String> migrateStage(Path srcPath, List<Mapping> mappings, ConfigFile leafConfig) {
+        final Map<String, String> resolvedMappings;
+        try {
+            resolvedMappings = resolveMappings(mappings);
+        } catch (Exception exception) {
+            LOGGER.error("Failed to resolve Gale migration targets for {}; no values from this file were applied.", srcPath, exception);
+            return Map.of();
+        }
+
         ConfigFile srcConfig = loadSrcConfig(srcPath);
         if (srcConfig == null) {
-            return;
+            return resolvedMappings;
         }
-        applyMappings(srcConfig, mappings, leafConfig);
+        try {
+            applyMappings(srcConfig, resolvedMappings, leafConfig);
+        } catch (Exception exception) {
+            LOGGER.error("Failed to migrate Gale config {}; no values from this file were applied.", srcPath, exception);
+        }
+        return resolvedMappings;
     }
 
     private static void applyMappings(
@@ -213,11 +254,25 @@ public final class GaleConfigMigration {
         Map<String, String> mappings,
         ConfigFile leafConfig
     ) {
+        Map<String, PreviousValue> previousValues = new LinkedHashMap<>();
+        Map<String, Object> values = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : mappings.entrySet()) {
             String oldPath = entry.getKey();
             if (srcConfig.contains(oldPath)) {
-                leafConfig.set(entry.getValue(), srcConfig.get(oldPath));
+                String targetPath = entry.getValue();
+                previousValues.putIfAbsent(targetPath, new PreviousValue(leafConfig.contains(targetPath), leafConfig.get(targetPath)));
+                values.put(targetPath, srcConfig.get(oldPath));
             }
+        }
+        try {
+            for (Map.Entry<String, Object> entry : values.entrySet()) {
+                leafConfig.set(entry.getKey(), entry.getValue());
+            }
+        } catch (RuntimeException exception) {
+            for (Map.Entry<String, PreviousValue> entry : previousValues.entrySet()) {
+                leafConfig.set(entry.getKey(), entry.getValue().present() ? entry.getValue().value() : null);
+            }
+            throw exception;
         }
     }
 
@@ -254,17 +309,18 @@ public final class GaleConfigMigration {
 
     private static boolean archive(Path srcPath, Path backupPath) {
         if (!Files.isRegularFile(srcPath)) return false;
+        if (RETAINED_GALE_SOURCES.contains(srcPath.toAbsolutePath().normalize())) {
+            LOGGER.error("Retaining Gale config {} because its migrated Leaf file was not saved.", srcPath);
+            return true;
+        }
         try {
             Path relative = backupPath.normalize();
             if (relative.isAbsolute() || relative.startsWith("..")) {
                 throw new IOException("Invalid Gale backup path: " + relative);
             }
-            SimpleDateFormat dateFormat = new SimpleDateFormat("yyMMddhhmmss");
-            Path backupDirectory = configDirectory.resolve("backup" + dateFormat.format(new Date()));
-            Path target = backupDirectory.resolve(relative).normalize();
-            Files.createDirectories(target.getParent());
-            Files.move(srcPath, target);
-            LOGGER.warn("Moved Gale config {} to {}.", srcPath, target);
+            if (backupSession.move(srcPath, relative)) {
+                LOGGER.warn("Moved Gale config {} to {}.", srcPath, backupSession.directory().resolve(relative));
+            }
         } catch (IOException exception) {
             LOGGER.error("Failed to back up Gale config {}; leaving it in place.", srcPath, exception);
         }
@@ -272,5 +328,8 @@ public final class GaleConfigMigration {
     }
 
     private record Mapping(String oldPath, Class<?> moduleClass, String fieldName) {
+    }
+
+    private record PreviousValue(boolean present, Object value) {
     }
 }

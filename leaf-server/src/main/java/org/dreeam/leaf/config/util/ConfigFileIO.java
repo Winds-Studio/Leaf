@@ -3,7 +3,6 @@ package org.dreeam.leaf.config.util;
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.jspecify.annotations.Nullable;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -13,10 +12,9 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -24,7 +22,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * ConfigurationMaster file loading and atomic saving utilities.
+ * ConfigurationMaster file loading and saving utilities.
  */
 public final class ConfigFileIO {
 
@@ -48,104 +46,90 @@ public final class ConfigFileIO {
         return ConfigFile.loadConfig(file);
     }
 
-    public static void saveAtomically(ConfigFile... configs) throws Exception {
+    /**
+     * Saves each configuration after all callers have completed their validation.
+     *
+     * <p>This deliberately follows Paper's configuration persistence policy: an access-denied
+     * failure is reported but leaves the fully loaded configuration active in memory. Other save
+     * failures are reported to the caller after every requested target has been attempted. There
+     * is no cross-file rollback.</p>
+     */
+    public static SaveReport save(ConfigFile... configs) throws ConfigSaveException {
         Set<Path> targets = new HashSet<>();
-        List<SerializedConfig> serializedConfigs = new ArrayList<>(configs.length);
+        List<SaveResult> results = new ArrayList<>(configs.length);
+        Exception firstFailure = null;
         for (ConfigFile config : configs) {
             Objects.requireNonNull(config, "config");
             Path target = config.getFile().toPath().toAbsolutePath().normalize();
             if (!targets.add(target)) {
                 throw new IllegalArgumentException("Cannot save the same config file twice: " + target);
             }
-            serializedConfigs.add(new SerializedConfig(target, config.saveToString()));
-        }
-
-        List<StagedConfig> stagedConfigs = new ArrayList<>(serializedConfigs.size());
-        List<Path> temporaryFiles = new ArrayList<>(serializedConfigs.size() * 2);
-        try {
-            for (SerializedConfig serializedConfig : serializedConfigs) {
-                Path target = serializedConfig.target();
-                Path parent = Objects.requireNonNull(target.getParent(), "Config file has no parent: " + target);
-                Files.createDirectories(parent);
-
-                String prefix = "." + target.getFileName() + ".";
-                Path staged = Files.createTempFile(parent, prefix, ".tmp");
-                temporaryFiles.add(staged);
-
-                boolean targetExisted = Files.exists(target);
-                @Nullable Path rollback = null;
-                if (targetExisted) {
-                    rollback = Files.createTempFile(parent, prefix, ".rollback");
-                    temporaryFiles.add(rollback);
-                    Files.copy(target, rollback, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-                    try {
-                        Files.setPosixFilePermissions(staged, Files.getPosixFilePermissions(target));
-                    } catch (UnsupportedOperationException ignored) {
-                    }
-                }
-
-                Files.writeString(
-                    staged,
-                    serializedConfig.content(),
-                    StandardCharsets.UTF_8,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE
-                );
-                stagedConfigs.add(new StagedConfig(target, staged, rollback, targetExisted));
-            }
-
-            int committed = 0;
             try {
-                for (StagedConfig stagedConfig : stagedConfigs) {
-                    Files.move(
-                        stagedConfig.staged(),
-                        stagedConfig.target(),
-                        StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING
-                    );
-                    committed++;
-                }
+                Files.createDirectories(Objects.requireNonNull(target.getParent(), "Config file has no parent: " + target));
+                config.save();
+                results.add(new SaveResult(target, SaveStatus.SAVED, null));
             } catch (Exception exception) {
-                for (int index = committed - 1; index >= 0; index--) {
-                    StagedConfig stagedConfig = stagedConfigs.get(index);
-                    try {
-                        if (stagedConfig.targetExisted()) {
-                            Files.move(
-                                Objects.requireNonNull(stagedConfig.rollback()),
-                                stagedConfig.target(),
-                                StandardCopyOption.ATOMIC_MOVE,
-                                StandardCopyOption.REPLACE_EXISTING
-                            );
-                        } else {
-                            Files.deleteIfExists(stagedConfig.target());
-                        }
-                    } catch (Exception rollbackException) {
-                        exception.addSuppressed(rollbackException);
-                        if (stagedConfig.rollback() != null) {
-                            temporaryFiles.remove(stagedConfig.rollback());
-                            LOGGER.error(
-                                "Failed to restore config {}; rollback copy was left at {}.",
-                                stagedConfig.target(), stagedConfig.rollback(), rollbackException
-                            );
-                        }
+                if (isAccessDenied(exception)) {
+                    results.add(new SaveResult(target, SaveStatus.ACCESS_DENIED, exception));
+                    LOGGER.warn("Could not save Leaf config {}; using the in-memory configuration for this run.", target, exception);
+                } else {
+                    results.add(new SaveResult(target, SaveStatus.FAILED, exception));
+                    if (firstFailure == null) {
+                        firstFailure = exception;
+                    } else {
+                        firstFailure.addSuppressed(exception);
                     }
-                }
-                throw exception;
-            }
-        } finally {
-            for (Path temporaryFile : temporaryFiles) {
-                try {
-                    Files.deleteIfExists(temporaryFile);
-                } catch (IOException exception) {
-                    LOGGER.warn("Failed to delete temporary config file {}.", temporaryFile, exception);
                 }
             }
         }
+        SaveReport report = new SaveReport(List.copyOf(results));
+        if (firstFailure != null) {
+            throw new ConfigSaveException(report, firstFailure);
+        }
+        return report;
     }
 
-    private record SerializedConfig(Path target, String content) {
+    private static boolean isAccessDenied(Throwable throwable) {
+        for (Throwable current = throwable; current != null && current != current.getCause(); current = current.getCause()) {
+            if (current instanceof AccessDeniedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private record StagedConfig(Path target, Path staged, @Nullable Path rollback, boolean targetExisted) {
+    public enum SaveStatus {
+        SAVED,
+        ACCESS_DENIED,
+        FAILED
+    }
+
+    public record SaveResult(Path target, SaveStatus status, Exception failure) {
+    }
+
+    public record SaveReport(List<SaveResult> results) {
+        public boolean hasAccessDenied() {
+            return this.results.stream().anyMatch(result -> result.status == SaveStatus.ACCESS_DENIED);
+        }
+
+        public String describe() {
+            return this.results.stream()
+                .map(result -> result.status + ": " + result.target)
+                .collect(java.util.stream.Collectors.joining(", "));
+        }
+    }
+
+    public static final class ConfigSaveException extends Exception {
+
+        private final SaveReport report;
+
+        private ConfigSaveException(SaveReport report, Exception cause) {
+            super("Failed to save Leaf config files: " + report.describe(), cause);
+            this.report = report;
+        }
+
+        public SaveReport report() {
+            return this.report;
+        }
     }
 }

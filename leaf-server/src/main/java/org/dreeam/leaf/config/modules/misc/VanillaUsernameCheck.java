@@ -8,6 +8,7 @@ import java.util.regex.Pattern;
 @ConfigClassInfo(category = ConfigCategory.MISC, name = "vanilla-username-check")
 public class VanillaUsernameCheck implements ConfigModule {
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "remove-all-check", comments = {
         """
             Remove Vanilla username check,
@@ -20,6 +21,7 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static @Deprecated boolean removeAllCheck = false;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "enforce-skull-validation", comments = {
         """
             Enforce skull validation,
@@ -30,6 +32,7 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static boolean enforceSkullValidation = true;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "allow-old-players-join", comments = {
         """
             Allow old players to join the server after the username regex is changed,
@@ -40,6 +43,7 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static @Experimental boolean allowOldPlayersJoin = false;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "use-username-regex", comments = {
         """
             Use username regex to validate usernames,
@@ -50,6 +54,7 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static boolean useUsernameRegex = false;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "username-regex", comments = {
         """
             Username regex,

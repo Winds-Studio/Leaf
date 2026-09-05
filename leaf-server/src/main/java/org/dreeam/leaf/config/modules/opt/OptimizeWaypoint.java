@@ -1,19 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class OptimizeWaypoint extends ConfigModule {
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".optimize-waypoint";
-    }
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class OptimizeWaypoint implements ConfigModule {
 
     @Experimental
+    @ConfigInfo(name = "optimize-waypoint")
     public static boolean enabled = false;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath(), enabled);
-    }
 }

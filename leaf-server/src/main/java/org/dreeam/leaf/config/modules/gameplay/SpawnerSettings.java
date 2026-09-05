@@ -2,6 +2,7 @@ package org.dreeam.leaf.config.modules.gameplay;
 
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
+import org.dreeam.leaf.config.util.ConfigPaths;
 
 @ConfigClassInfo(category = ConfigCategory.GAMEPLAY, name = "spawner-settings", comments = {
     "This section contains settings for mob spawner blocks.",
@@ -65,7 +66,7 @@ public class SpawnerSettings implements ConfigModule {
 
     @Override
     public void onLoaded() {
-        globalConfig.addCommentRegionBased(basePath() + ".checks",
+        LeafConfig.globalConfig().addCommentRegionBased(ConfigPaths.modulePath(SpawnerSettings.class) + ".checks",
             "Various checks that can be enabled or disabled for spawner blocks.",
             "可以为刷怪笼启用或禁用的各种检查."
         );

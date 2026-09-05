@@ -60,6 +60,7 @@ public class DynamicActivationofBrain implements ConfigModule {
     })
     public static double activationDistanceMod = 8.0;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "blacklisted-entities", comments = {
         "A list of entities to ignore for activation",
         "不会被 DAB 影响的实体列表"

@@ -2,7 +2,6 @@ package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
-import org.dreeam.leaf.config.migration.ConfigPathMigration;
 import org.dreeam.leaf.config.util.ConfigFileIO;
 import org.jspecify.annotations.Nullable;
 
@@ -24,15 +23,11 @@ abstract class LeafConfigAccessor {
     }
 
     public void saveConfig() throws Exception {
-        ConfigFileIO.saveAtomically(configFile);
+        ConfigFileIO.save(configFile);
     }
 
     boolean contains(String path) {
         return configFile.contains(path);
-    }
-
-    public boolean migratePath(String oldPath, String newPath) {
-        return ConfigPathMigration.migrate(configFile, oldPath, newPath);
     }
 
     public void createTitledSection(String title, String path) {

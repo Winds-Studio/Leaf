@@ -1,5 +1,6 @@
 package org.dreeam.leaf.config;
 
+import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import org.dreeam.leaf.config.annotations.ConfigClassInfo;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
@@ -8,9 +9,9 @@ import org.dreeam.leaf.config.util.ConfigPaths;
 import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -22,6 +23,8 @@ final class ConfigBinder {
 
     // Static fields no longer expose their code defaults after the first successful bind.
     private static final Map<Field, Object> GLOBAL_DEFAULT_VALUES = new HashMap<>();
+    private static final Map<Field, Object> INITIAL_GLOBAL_RELOAD_VALUES = new HashMap<>();
+    private static final Map<Object, Map<Field, Object>> INITIAL_WORLD_RELOAD_VALUES = new IdentityHashMap<>();
 
     static void registerGlobalDefaults(Object module) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
@@ -31,10 +34,10 @@ final class ConfigBinder {
                 continue;
             }
 
-            validateField(moduleClass, field, true);
             field.setAccessible(true);
             Object defaultValue = field.get(null);
             if (defaultValue == null) {
+                // TODO: move it to test
                 throw new IllegalStateException("Configuration field has a null default value: " + field);
             }
             GLOBAL_DEFAULT_VALUES.putIfAbsent(field, copyValue(defaultValue));
@@ -44,7 +47,7 @@ final class ConfigBinder {
     static void collectGlobalReload(
         Object module,
         LeafConfigAccessor config,
-        List<PendingValue> pendingValues
+        List<ReloadValue> pendingValues
     ) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
         ConfigClassInfo classInfo = moduleClass.getAnnotation(ConfigClassInfo.class);
@@ -68,43 +71,40 @@ final class ConfigBinder {
                 continue;
             }
 
-            validateField(moduleClass, field, true);
             field.setAccessible(true);
 
             String path = ConfigPaths.fieldPath(moduleClass, field);
-            Object defaultValue = globalDefaultValue(field);
+            Object defaultValue = copyValue(field.get(null));
 
             String comment = config.pickStringRegionBased(configInfo.comments());
             Object loadedValue = readValue(config, path, comment, field, defaultValue, true);
-            if (!skipModuleReload && !field.isAnnotationPresent(HotReloadUnsupported.class)) {
-                pendingValues.add(new PendingValue(null, field, loadedValue));
-            }
+            pendingValues.add(new ReloadValue(null, field, skipModuleReload || field.isAnnotationPresent(HotReloadUnsupported.class)
+                ? initialReloadValue(null, field)
+                : loadedValue));
         }
     }
 
     static void collectWorldReload(
         Object module,
         Object loadedModule,
-        List<PendingValue> pendingValues
+        List<ReloadValue> pendingValues
     ) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
         if (loadedModule.getClass() != moduleClass) {
             throw new IllegalArgumentException("Configuration modules must have the same type");
         }
-        if (moduleClass.isAnnotationPresent(HotReloadUnsupported.class)) {
-            return;
-        }
-
         for (Field field : moduleClass.getDeclaredFields()) {
             if (field.getAnnotation(ConfigInfo.class) == null
                 || field.isAnnotationPresent(DoNotLoad.class)
-                || field.isAnnotationPresent(HotReloadUnsupported.class)) {
+                ) {
                 continue;
             }
 
-            validateField(moduleClass, field, false);
             field.setAccessible(true);
-            pendingValues.add(new PendingValue(module, field, field.get(loadedModule)));
+            pendingValues.add(new ReloadValue(module, field,
+                moduleClass.isAnnotationPresent(HotReloadUnsupported.class) || field.isAnnotationPresent(HotReloadUnsupported.class)
+                    ? initialReloadValue(module, field)
+                    : field.get(loadedModule)));
         }
     }
 
@@ -143,13 +143,38 @@ final class ConfigBinder {
         }
     }
 
+    static void bindWorldDefaultsForReload(
+        Object module,
+        Object activeModule,
+        LeafConfigAccessor config
+    ) throws IllegalAccessException {
+        Class<?> moduleClass = module.getClass();
+        ConfigClassInfo classInfo = moduleClass.getAnnotation(ConfigClassInfo.class);
+        String basePath = ConfigPaths.modulePath(moduleClass);
+        String sectionComment = config.pickStringRegionBased(classInfo.comments());
+        if (sectionComment != null) {
+            config.addComment(basePath, sectionComment);
+        }
+
+        for (Field field : moduleClass.getDeclaredFields()) {
+            ConfigInfo configInfo = field.getAnnotation(ConfigInfo.class);
+            if (configInfo == null || field.isAnnotationPresent(DoNotLoad.class)) {
+                continue;
+            }
+            field.setAccessible(true);
+            String path = ConfigPaths.fieldPath(moduleClass, field);
+            Object defaultValue = copyValue(field.get(activeModule));
+            String comment = config.pickStringRegionBased(configInfo.comments());
+            field.set(module, readValue(config, path, comment, field, defaultValue, true));
+        }
+    }
+
     private static void bindGlobal(
         Class<?> moduleClass,
         Field field,
         ConfigInfo configInfo,
         LeafConfigAccessor config
     ) throws IllegalAccessException {
-        validateField(moduleClass, field, true);
         field.setAccessible(true);
 
         String path = ConfigPaths.fieldPath(moduleClass, field);
@@ -168,7 +193,6 @@ final class ConfigBinder {
         ConfigInfo configInfo,
         LeafConfigAccessor config
     ) throws IllegalAccessException {
-        validateField(moduleClass, field, false);
         field.setAccessible(true);
 
         String path = ConfigPaths.fieldPath(moduleClass, field);
@@ -205,24 +229,44 @@ final class ConfigBinder {
                 continue;
             }
 
-            validateField(moduleClass, field, false);
             field.setAccessible(true);
             field.set(module, copyValue(field.get(defaultsModule)));
         }
     }
 
-    // TODO[To-GitHub-issue]: Not sure whether needs to validate, we don't expose LeafConfig as public framework
-    private static void validateField(Class<?> moduleClass, Field field, boolean global) {
-        int modifiers = field.getModifiers();
-        if (Modifier.isFinal(modifiers)) {
-            throw new IllegalStateException("@ConfigInfo field must be mutable: "
-                + moduleClass.getName() + "." + field.getName());
+    static void captureInitialReloadValues(Object module, boolean global) throws IllegalAccessException {
+        Class<?> moduleClass = module.getClass();
+        boolean moduleUnsupported = moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
+        Map<Field, Object> worldValues = global ? null : INITIAL_WORLD_RELOAD_VALUES.computeIfAbsent(module, ignored -> new HashMap<>());
+        for (Field field : moduleClass.getDeclaredFields()) {
+            if (field.getAnnotation(ConfigInfo.class) == null || field.isAnnotationPresent(DoNotLoad.class)
+                || (!moduleUnsupported && !field.isAnnotationPresent(HotReloadUnsupported.class))) {
+                continue;
+            }
+            field.setAccessible(true);
+            if (global) {
+                INITIAL_GLOBAL_RELOAD_VALUES.putIfAbsent(field, copyValue(field.get(null)));
+            } else {
+                worldValues.putIfAbsent(field, copyValue(field.get(module)));
+            }
         }
-        if (Modifier.isStatic(modifiers) != global) {
-            String expected = global ? "static" : "an instance field";
-            throw new IllegalStateException("@ConfigInfo field must be " + expected + ": "
-                + moduleClass.getName() + "." + field.getName());
+    }
+
+    static List<PendingValue> preparePendingValues(List<ReloadValue> values) throws IllegalAccessException {
+        List<PendingValue> pendingValues = new ArrayList<>(values.size());
+        for (ReloadValue value : values) {
+            pendingValues.add(new PendingValue(value.target, value.field, value.value));
         }
+        return pendingValues;
+    }
+
+    private static Object initialReloadValue(@Nullable Object target, Field field) {
+        Object value = target == null ? INITIAL_GLOBAL_RELOAD_VALUES.get(field)
+            : INITIAL_WORLD_RELOAD_VALUES.getOrDefault(target, Map.of()).get(field);
+        if (value == null) {
+            throw new IllegalStateException("Initial reload value was not captured for configuration field: " + field);
+        }
+        return copyValue(value);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -306,6 +350,7 @@ final class ConfigBinder {
         if (value instanceof List<?> list) {
             return new ArrayList<>(list);
         }
+        // Other primitive type values
         return value;
     }
 
@@ -322,21 +367,29 @@ final class ConfigBinder {
         private final @Nullable Object target;
         private final Field field;
         private final Object value;
-        private final Object previousValue;
 
-        private PendingValue(@Nullable Object target, Field field, Object value) throws IllegalAccessException {
+        private PendingValue(@Nullable Object target, Field field, Object value) {
             this.target = target;
             this.field = field;
             this.value = copyValue(value);
-            this.previousValue = copyValue(field.get(target));
         }
 
         void apply() throws IllegalAccessException {
             this.field.set(this.target, copyValue(this.value));
         }
 
-        void restore() throws IllegalAccessException {
-            this.field.set(this.target, copyValue(this.previousValue));
+    }
+
+    static final class ReloadValue {
+
+        private final @Nullable Object target;
+        private final Field field;
+        private final Object value;
+
+        private ReloadValue(@Nullable Object target, Field field, Object value) {
+            this.target = target;
+            this.field = field;
+            this.value = copyValue(value);
         }
     }
 }

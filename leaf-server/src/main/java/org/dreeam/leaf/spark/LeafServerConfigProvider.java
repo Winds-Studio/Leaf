@@ -109,8 +109,7 @@ public class LeafServerConfigProvider extends ServerConfigProvider {
             .put("paper/", SplitYamlConfigParser.INSTANCE)
             .put("purpur.yml", YamlConfigParser.INSTANCE)
             .put("pufferfish.yml", YamlConfigParser.INSTANCE)
-            .put("leaf/", SplitYamlConfigParser.INSTANCE) // Leaf configurations
-            .put("gale/", SplitYamlConfigParser.INSTANCE); // Gale configurations
+            .put("leaf/", SplitYamlConfigParser.INSTANCE); // Leaf configurations
 
         for (String config : getSystemPropertyList("spark.serverconfigs.extra")) {
             files.put(config, YamlConfigParser.INSTANCE);

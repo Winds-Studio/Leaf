@@ -6,18 +6,23 @@ import org.dreeam.leaf.config.annotations.*;
 @ConfigClassInfo(category = ConfigCategory.PERF, name = "entity-goal")
 public class EntityGoal implements ConfigModule {
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.nearest-attackable-target")
     private static int configuredChanceTarget = -1;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.follow-parent")
     private static int configuredChanceFollowParent = -1;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.avoid-entity")
     private static int configuredChanceAvoidEntity = -1;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.temptation")
     private static int configuredChanceTempt = -1;
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.enderman-look-for-player")
     private static int configuredChanceEndermanLookForPlayer = -1;
 

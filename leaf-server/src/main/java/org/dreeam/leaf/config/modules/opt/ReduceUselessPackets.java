@@ -1,22 +1,15 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class ReduceUselessPackets extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF, name = "reduce-packets")
+public class ReduceUselessPackets implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".reduce-packets";
-    }
-
+    @ConfigInfo(name = "reduce-entity-move-packets")
     public static boolean reduceUselessEntityMovePackets = false;
+    @ConfigInfo(name = "reduce-entity-motion-packets")
     public static boolean filterClientboundSetEntityMotionPacket = false;
+    @ConfigInfo(name = "disable-useless-particles")
     public static boolean disableUselessParticles = false;
-
-    @Override
-    public void onLoaded() {
-        reduceUselessEntityMovePackets = globalConfig.getBoolean(basePath() + ".reduce-entity-move-packets", reduceUselessEntityMovePackets);
-        filterClientboundSetEntityMotionPacket = globalConfig.getBoolean(basePath() + ".reduce-entity-motion-packets", filterClientboundSetEntityMotionPacket);
-        disableUselessParticles = globalConfig.getBoolean(basePath() + ".disable-useless-particles", disableUselessParticles);
-    }
 }

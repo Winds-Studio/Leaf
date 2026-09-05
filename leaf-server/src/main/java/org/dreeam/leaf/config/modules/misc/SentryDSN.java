@@ -9,6 +9,7 @@ public class SentryDSN implements ConfigModule {
 
     public static @DoNotLoad String sentryDsnConfigPath = "misc.sentry.dsn";
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "dsn", comments = {
         """
             Sentry DSN for improved error logging, leave blank to disable,
@@ -18,12 +19,14 @@ public class SentryDSN implements ConfigModule {
     })
     public static String sentryDsn = "";
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "log-level", comments = {
         "Logs with a level higher than or equal to this level will be recorded.",
         "大于等于该等级的日志会被记录."
     })
     public static String logLevel = "WARN";
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "only-log-thrown", comments = {
         "Only log with a Throwable will be recorded after enabling this.",
         "是否仅记录带有 Throwable 的日志."
