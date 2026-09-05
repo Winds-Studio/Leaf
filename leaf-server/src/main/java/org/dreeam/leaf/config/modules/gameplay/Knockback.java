@@ -2,7 +2,6 @@ package org.dreeam.leaf.config.modules.gameplay;
 
 import org.dreeam.leaf.config.ConfigModule;
 import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
 
 public class Knockback extends ConfigModule {
 
@@ -13,9 +12,8 @@ public class Knockback extends ConfigModule {
     public static boolean snowballCanKnockback = false;
     public static boolean eggCanKnockback = false;
     public static boolean canPlayerKnockbackZombie = true;
-    @Experimental
-    public static boolean flushKnockback = false;
     public static boolean oldBlastProtectionKnockbackBehavior = false;
+    public static boolean useLegacyTrackerTicking = false;
 
     @Override
     public void onLoaded() {
@@ -34,11 +32,7 @@ public class Knockback extends ConfigModule {
                 "Make players can knockback zombie.",
                 "使玩家可以击退僵尸."
             ));
-        flushKnockback = globalConfig.getBoolean(basePath() + ".flush-location-while-knockback-player", flushKnockback,
-            globalConfig.pickStringRegionBased(
-                "Synchronize player immediately when knocked back.",
-                "被击退时立即同步玩家."
-            ));
         oldBlastProtectionKnockbackBehavior = globalConfig.getBoolean(basePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
+        useLegacyTrackerTicking =  globalConfig.getBoolean(basePath() + ".use-legacy-tracker-ticking", useLegacyTrackerTicking);
     }
 }
