@@ -394,7 +394,7 @@ public final class TrackerCtx {
                 if (end != start) {
                     connection.send(new ClientboundBundlePacket((Iterable) list.subList(end, start)));
                 }
-                end = start;
+                end = start + 1;
                 connection.send(packet);
             } else if (start - end == BundlerInfo.BUNDLE_SIZE_LIMIT) {
                 connection.send(new ClientboundBundlePacket((Iterable) list.subList(end, start)));
