@@ -387,23 +387,23 @@ public final class TrackerCtx {
             return;
         }
 
-        int end = 0;
         int start = 0;
-        while (start < list.size()) {
-            if (list.get(start) instanceof BundlePacket<?> packet) {
-                if (end != start) {
-                    connection.send(new ClientboundBundlePacket((Iterable) list.subList(end, start)));
+        int end = 0;
+        while (end < list.size()) {
+            if (list.get(end) instanceof BundlePacket<?> packet) {
+                if (start != end) {
+                    connection.send(new ClientboundBundlePacket((Iterable) list.subList(start, end)));
                 }
-                end = start + 1;
+                start = end + 1;
                 connection.send(packet);
-            } else if (start - end == BundlerInfo.BUNDLE_SIZE_LIMIT) {
-                connection.send(new ClientboundBundlePacket((Iterable) list.subList(end, start)));
-                end = start;
+            } else if (end - start == BundlerInfo.BUNDLE_SIZE_LIMIT) {
+                connection.send(new ClientboundBundlePacket((Iterable) list.subList(start, end)));
+                start = end;
             }
-            start++;
+            end++;
         }
-        if (end != start) {
-            connection.send(new ClientboundBundlePacket((Iterable) list.subList(end, start)));
+        if (start != end) {
+            connection.send(new ClientboundBundlePacket((Iterable) list.subList(start, end)));
         }
     }
 }
