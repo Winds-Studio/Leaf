@@ -53,8 +53,9 @@ public final class DespawnMap implements Consumer<Entity> {
                 fallback = true;
             }
         }
-        // Leaf - early exit before expensive work when falling back to vanilla
+
         this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
+
         if (fallback) {
             return false;
         }
