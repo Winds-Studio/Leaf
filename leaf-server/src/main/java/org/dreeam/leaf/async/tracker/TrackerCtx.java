@@ -333,6 +333,9 @@ public final class TrackerCtx {
         ObjectArrayList<ClientboundUpdateAttributesPacket.AttributeSnapshot> attributes;
         if (attributeMap.attributes instanceof AttributeInstanceArrayMap map) {
             int[] ids = attributeMap.getAttributesToSyncIds();
+            if (ids.length == 0) {
+                return;
+            }
             attributes = new ObjectArrayList<>(ids.length);
             for (int attributeIdx : ids) {
                 AttributeInstance instance = map.getInstance(attributeIdx);
@@ -347,6 +350,9 @@ public final class TrackerCtx {
             }
         } else {
             Set<AttributeInstance> toSync = attributeMap.getAttributesToSync();
+            if (toSync.isEmpty()) {
+                return;
+            }
             attributes = new ObjectArrayList<>(toSync.size());
             for (AttributeInstance instance : toSync) {
                 if (instance == null) {
