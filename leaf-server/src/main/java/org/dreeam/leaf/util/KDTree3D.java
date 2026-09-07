@@ -14,9 +14,9 @@ public final class KDTree3D {
     private static final int SENTINEL = -1;
     private Node[] stack = EMPTY_NODES;
     private int[] search = EMPTY_INTS;
-    /// Right node index for internal or [#SENTINEL] for leaf
+    /// [#SENTINEL] for leaf / right node index for internal
     private int[] nrl = EMPTY_INTS;
-    // split for internal or x coordinate for leaf
+    // x coordinate for leaf / split for internal
     private double[] nxl = EMPTY_DOUBLES;
     // y coordinate for leaf
     private double[] nyl = EMPTY_DOUBLES;
@@ -122,9 +122,9 @@ public final class KDTree3D {
         if (stack.length == 0 || stack[0] == SENTINEL) {
             return Double.POSITIVE_INFINITY;
         }
-        int i = 0, j = 0, curr = 0;
+        int i = 0, j = 0, curr = 0, right;
         while (true) {
-            final int right = nrl[j];
+            right = nrl[j];
             if (right == SENTINEL) {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
@@ -132,28 +132,29 @@ public final class KDTree3D {
                 dist = Math.min(dist, euclideanDistanceSquared(dx, dy, dz));
                 break;
             } else {
-                final int next = ((curr + 1) % 3) << 30;
+                final int axis = curr == 2 ? 0 : curr + 1;
+                final int mark = axis << 30;
                 final int left = j + 1;
                 final double delta = (curr == 0 ? tx : curr == 1 ? ty : tz) - nxl[j];
                 final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     if (push) {
-                        stack[i++] = right | next;
+                        stack[i++] = right | mark;
                     }
                     j = left;
                 } else {
                     if (push) {
-                        stack[i++] = left | next;
+                        stack[i++] = left | mark;
                     }
                     j = right;
                 }
-                curr = ((curr + 1) % 3);
+                curr = axis;
             }
         }
         while (i != 0) {
             j = stack[--i];
             final int k = j & 0x3FFF_FFFF;
-            final int right = nrl[k];
+            right = nrl[k];
             if (right == SENTINEL) {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
@@ -161,14 +162,14 @@ public final class KDTree3D {
                 dist = Math.min(dist, euclideanDistanceSquared(dx, dy, dz));
             } else {
                 final int axis = j >>> 30;
-                final int next = ((axis + 1) % 3) << 30;
-                final int left = (k + 1) | next;
+                final int mark = (axis == 2 ? 0 : axis + 1) << 30;
+                final int left = (k + 1) | mark;
                 final double delta = (axis == 0 ? tx : axis == 1 ? ty : tz) - nxl[k];
                 final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     // near = left, far = right, left first
                     if (push) {
-                        stack[i++] = right | next;
+                        stack[i++] = right | mark;
                     }
                     stack[i++] = left;
                 } else {
@@ -176,7 +177,7 @@ public final class KDTree3D {
                     if (push) {
                         stack[i++] = left;
                     }
-                    stack[i++] = right | next;
+                    stack[i++] = right | mark;
                 }
             }
         }
@@ -192,9 +193,9 @@ public final class KDTree3D {
         if (stack.length == 0 || stack[0] == SENTINEL) {
             return -1;
         }
-        int i = 0, j = 0, curr = 0, nearest = -1;
+        int i = 0, j = 0, curr = 0, nearest = -1, right;
         while (true) {
-            final int right = nrl[j];
+            right = nrl[j];
             if (right == SENTINEL) {
                 final double dx = nxl[j] - tx;
                 final double dy = nyl[j] - ty;
@@ -206,28 +207,29 @@ public final class KDTree3D {
                 }
                 break;
             } else {
-                final int next = ((curr + 1) % 3) << 30;
+                final int axis = curr == 2 ? 0 : curr + 1;
+                final int mark = axis << 30;
                 final int left = j + 1;
                 final double delta = (curr == 0 ? tx : curr == 1 ? ty : tz) - nxl[j];
                 final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     if (push) {
-                        stack[i++] = right | next;
+                        stack[i++] = right | mark;
                     }
                     j = left;
                 } else {
                     if (push) {
-                        stack[i++] = left | next;
+                        stack[i++] = left | mark;
                     }
                     j = right;
                 }
-                curr = ((curr + 1) % 3);
+                curr = axis;
             }
         }
         while (i != 0) {
             j = stack[--i];
             final int k = j & 0x3FFF_FFFF;
-            final int right = nrl[k];
+            right = nrl[k];
             if (right == SENTINEL) {
                 final double dx = nxl[k] - tx;
                 final double dy = nyl[k] - ty;
@@ -239,14 +241,14 @@ public final class KDTree3D {
                 }
             } else {
                 final int axis = j >>> 30;
-                final int next = ((axis + 1) % 3) << 30;
-                final int left = (k + 1) | next;
+                final int mark = (axis == 2 ? 0 : axis + 1) << 30;
+                final int left = (k + 1) | mark;
                 final double delta = (axis == 0 ? tx : axis == 1 ? ty : tz) - nxl[k];
                 final boolean push = delta * delta < dist;
                 if (delta < 0.0) {
                     // near = left, far = right, left first
                     if (push) {
-                        stack[i++] = right | next;
+                        stack[i++] = right | mark;
                     }
                     stack[i++] = left;
                 } else {
@@ -254,7 +256,7 @@ public final class KDTree3D {
                     if (push) {
                         stack[i++] = left;
                     }
-                    stack[i++] = right | next;
+                    stack[i++] = right | mark;
                 }
             }
         }

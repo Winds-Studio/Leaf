@@ -61,9 +61,9 @@ import org.leavesmc.leaves.protocol.jade.util.PriorityStore;
 import org.leavesmc.leaves.protocol.jade.util.WrappedHierarchyLookup;
 
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @LeavesProtocol.Register(namespace = "jade")
 public class JadeProtocol implements LeavesProtocol {
@@ -73,7 +73,7 @@ public class JadeProtocol implements LeavesProtocol {
     public static final HierarchyLookup<ServerDataProvider<EntityAccessor>> entityDataProviders = new HierarchyLookup<>(Entity.class);
     public static final PairHierarchyLookup<ServerDataProvider<BlockAccessor>> blockDataProviders = new PairHierarchyLookup<>(new HierarchyLookup<>(Block.class), new HierarchyLookup<>(BlockEntity.class));
     public static final WrappedHierarchyLookup<ServerExtensionProvider<ItemStack>> itemStorageProviders = WrappedHierarchyLookup.forAccessor();
-    private static final Set<ServerPlayer> enabledPlayers = new HashSet<>();
+    private static final Set<ServerPlayer> enabledPlayers = ConcurrentHashMap.newKeySet();
 
     public static PriorityStore<Identifier, JadeProvider> priorities;
     private static List<Block> shearableBlocks = null;
@@ -160,6 +160,10 @@ public class JadeProtocol implements LeavesProtocol {
 
     @ProtocolHandler.PayloadReceiver(payload = RequestEntityPayload.class)
     public static void requestEntityData(ServerPlayer player, RequestEntityPayload payload) {
+        if (player == null || !enabledPlayers.contains(player)) {
+            return;
+        }
+
         Bukkit.getGlobalRegionScheduler().run(MinecraftInternalPlugin.INSTANCE, (task) -> {
             EntityAccessor accessor = payload.data().unpack(player);
             if (accessor == null) {
@@ -196,19 +200,24 @@ public class JadeProtocol implements LeavesProtocol {
 
     @ProtocolHandler.PayloadReceiver(payload = RequestBlockPayload.class)
     public static void requestBlockData(ServerPlayer player, RequestBlockPayload payload) {
+        if (player == null || !enabledPlayers.contains(player)) {
+            return;
+        }
+
         Bukkit.getGlobalRegionScheduler().run(MinecraftInternalPlugin.INSTANCE, (task) -> {
+            BlockPos pos = payload.data().hit().getBlockPos();
+            double maxDistance = Mth.square(player.blockInteractionRange() + 21); // Previous version of Jade uses 21 constant
+            if (pos.distSqr(player.blockPosition()) > maxDistance || !player.level().isLoaded(pos)) {
+                return;
+            }
+
             BlockAccessor accessor = payload.data().unpack(player);
             if (accessor == null) {
                 return;
             }
 
-            BlockPos pos = accessor.getPosition();
             Block block = accessor.getBlock();
             BlockEntity blockEntity = accessor.getBlockEntity();
-            double maxDistance = Mth.square(player.blockInteractionRange() + 21);
-            if (pos.distSqr(player.blockPosition()) > maxDistance || !accessor.getLevel().isLoaded(pos)) {
-                return;
-            }
 
             List<ServerDataProvider<BlockAccessor>> providers;
             if (blockEntity != null) {
