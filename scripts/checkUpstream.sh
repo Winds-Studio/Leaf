@@ -3,10 +3,11 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/checkUpstream.sh [--target REF]
+Usage: bash scripts/checkUpstream.sh [--target REF] [--verbose]
 
 Scan leaf-server/{minecraft,paper}-patches and leaf-api/paper-patches.
 Skip headers containing "AUTO SYNC REVISION DISABLED".
+Use --verbose to also show checks, clones, revisions and unchanged/skipped patches.
 
 A header may contain multiple independent blocks:
     // SYNC SOURCE START
@@ -22,9 +23,11 @@ EOF
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '%s\n' "$*" >&2; }
+verbose_log() { if (( verbose )); then log "$@"; fi; }
 
 (( BASH_VERSINFO[0] >= 4 )) || die 'Bash 4 or newer is required (use Git Bash on Windows).'
 target_override=''
+verbose=0
 while (( $# )); do
     case "$1" in
         --target)
@@ -32,6 +35,7 @@ while (( $# )); do
             target_override=$2
             shift 2
             ;;
+        --verbose) verbose=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown argument: $1" ;;
     esac
@@ -163,7 +167,7 @@ get_repository() {
     fi
     repository_count=$((repository_count + 1))
     repo_dir="$temp_dir/repo-$repository_count.git"
-    log "CLONE $url"
+    verbose_log "CLONE $url"
     if ! git -c protocol.ext.allow=never clone --bare --quiet -- "$url" "$repo_dir"; then
         repositories[$url]=FAILED
         return 1
@@ -232,7 +236,7 @@ compare_source() {
     local old new target ref path tree matched status first second output
     local -a paths=()
     local -A available=() referenced=()
-    log "CHECK ${patch#"$root/"} [block $block]"
+    verbose_log "CHECK ${patch#"$root/"} [block $block]"
     if [[ -z "$repository" || -z "$revision" || -z "$tracks" ]]; then
         log 'ERROR: each block requires repo, rev and a nonempty track list.'
         return 1
@@ -260,7 +264,7 @@ compare_source() {
         log "ERROR: output path is a directory: $output"
         return 1
     fi
-    log "  $old -> $new ($target)"
+    verbose_log "  $old -> $new ($target)"
     git -C "$repo_dir" ls-tree -r --name-only -z "$old" > "$temp_dir/old-tree" || return 1
     git -C "$repo_dir" ls-tree -r --name-only -z "$new" > "$temp_dir/new-tree" || return 1
     for tree in "$temp_dir/old-tree" "$temp_dir/new-tree"; do
@@ -320,7 +324,7 @@ compare_source() {
     if (( !${#paths[@]} )); then
         rm -f -- "$output" || return 1
         unchanged=$((unchanged + 1))
-        log '  UNCHANGED'
+        verbose_log '  UNCHANGED'
         return 0
     fi
 
@@ -336,6 +340,7 @@ compare_source() {
     mv -f -- "$output_tmp" "$output" || return 1
     output_tmp=''
     changed=$((changed + 1))
+    log "CHANGED ${patch#"$root/"} [block $block]"
     log "  DIFF ${output#"$root/"}"
 }
 
@@ -345,7 +350,7 @@ compare_patch() {
     # A disabled header is skipped even if its blocks are incomplete or malformed.
     if (( header_disabled )); then
         skipped=$((skipped + 1))
-        log "SKIP ${patch#"$root/"}: AUTO SYNC REVISION DISABLED"
+        verbose_log "SKIP ${patch#"$root/"}: AUTO SYNC REVISION DISABLED"
         return 0
     fi
     if (( ${#header_errors[@]} )); then
