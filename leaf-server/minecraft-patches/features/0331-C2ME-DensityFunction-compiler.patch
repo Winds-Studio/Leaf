@@ -1,0 +1,2079 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] C2ME: DensityFunction compiler
+
+This patch is based on the following mixins:
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSampler.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSampler1.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSamplerCache2D.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSamplerCacheOnce.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSamplerCellCache.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSamplerDensityInterpolator.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinChunkNoiseSamplerFlatCache.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinDensityFunctionVisitorWrapper.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinDFTBinaryOperation.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinDFTWrapping.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinNoiseConfig.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinNoiseRouter.java"
+* "com/ishland/c2me/opts/dfc/mixin/MixinSplineImplementation.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinDensityFunctionNoise.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinDFTEndIslands.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinDoublePerlinNoiseSampler.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinInterpolatedNoiseSampler.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinOctavePerlinNoiseSampler.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinPerlinNoiseSampler.java"
+* "com/ishland/c2me/opts/dfc/mixin/equality/MixinSimplexNoiseSampler.java"
+
+Supporting sources adapted:
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/ast/**"
+  excluding "common/ast/integration/**"
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/ducks/**"
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/gen/CodeEmitter.java"
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/gen/CodeGenRegistry.java"
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/gen/DelegatingBlendingCachingAwareVisitor.java"
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/gen/jvm/**"
+  excluding "common/gen/jvm/emitters/integration/**"
+* "c2me-opts-dfc/src/main/java/com/ishland/c2me/opts/dfc/common/gen/meta/**"
+* "c2me-base/src/main/java/com/ishland/c2me/base/mixin/access/IChunkNoiseSampler.java"
+* "c2me-base/src/main/java/com/ishland/c2me/base/mixin/access/IChunkNoiseSamplerDensityInterpolator.java"
+
+Fabric related code, optional Lithostitched and Tectonic integrations, and DOT/debug dumping sources are excluded.
+
+Commit revision:
+https://github.com/RelativityMC/C2ME-fabric/tree/e5f9ed26349b2f9504f73cac48aa09a490d137a3
+
+Additional supporting source:
+* "com/ishland/flowsched/util/Assertions.java"
+  from https://github.com/RelativityMC/FlowSched/tree/fae2126839607b68d4059e3933a492886fe8b8f5
+
+By: ishland <ishlandmc@yeah.net>
+As part of: C2ME-fabric (https://github.com/RelativityMC/C2ME-fabric)
+Licensed under: MIT (https://opensource.org/licenses/MIT)
+
+diff --git a/net/minecraft/util/CubicSpline.java b/net/minecraft/util/CubicSpline.java
+index 110e50665256d1bf9fe49c7769be927ec50168a9..9a0df155af1e211c2be46780a6e2e08a10617886 100644
+--- a/net/minecraft/util/CubicSpline.java
++++ b/net/minecraft/util/CubicSpline.java
+@@ -270,8 +270,49 @@ public sealed interface CubicSpline<I> permits CubicSpline.Multipoint, CubicSpli
+         }
+ 
+         private static int findIntervalStart(final float[] locations, final float input) {
+-            return Mth.binarySearch(0, locations.length, i -> input < locations[i]) - 1;
++            // Leaf start - C2ME - DensityFunction compiler
++            int min = 0;
++            int length = locations.length;
++
++            while (length > 0) {
++                int half = length / 2;
++                int middle = min + half;
++                if (input < locations[middle]) {
++                    length = half;
++                } else {
++                    min = middle + 1;
++                    length -= half + 1;
++                }
++            }
++
++            return min - 1;
++            // Leaf end - C2ME - DensityFunction compiler
++        }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public boolean equals(final Object object) {
++            if (this == object) return true;
++            if (object == null || this.getClass() != object.getClass()) return false;
++            CubicSpline.Multipoint<?> that = (CubicSpline.Multipoint<?>)object;
++            return java.util.Objects.equals(this.coordinate, that.coordinate())
++                && java.util.Arrays.equals(this.locations, that.locations())
++                && java.util.Objects.equals(this.values, that.values())
++                && java.util.Arrays.equals(this.derivatives, that.derivatives());
++        }
++
++        @Override
++        public int hashCode() {
++            int result = 1;
++
++            result = 31 * result + java.util.Objects.hashCode(this.coordinate);
++            result = 31 * result + java.util.Arrays.hashCode(this.locations);
++            result = 31 * result + java.util.Objects.hashCode(this.values);
++            result = 31 * result + java.util.Arrays.hashCode(this.derivatives);
++
++            return result;
+         }
++        // Leaf end - C2ME - DensityFunction compiler
+ 
+         @VisibleForTesting
+         @Override
+diff --git a/net/minecraft/world/level/levelgen/DensityFunction.java b/net/minecraft/world/level/levelgen/DensityFunction.java
+index a8a7ef3ba147015d12d89e00c4f3e30da22546d7..97a0bb934b64c82c7c152abef15499e2d9f406a3 100644
+--- a/net/minecraft/world/level/levelgen/DensityFunction.java
++++ b/net/minecraft/world/level/levelgen/DensityFunction.java
+@@ -29,7 +29,7 @@ public interface DensityFunction {
+     DensityFunction mapChildren(final DensityFunction.Visitor visitor);
+ 
+     default DensityFunction mapAll(final DensityFunction.Visitor visitor) {
+-        class RecursiveVisitor implements DensityFunction.Visitor {
++        class RecursiveVisitor implements DensityFunction.Visitor, com.ishland.c2me.opts.dfc.common.ducks.IBlendingAwareVisitor, com.ishland.c2me.opts.dfc.common.ducks.ICompiledCachingAwareVisitor { // Leaf - C2ME - DensityFunction compiler
+             @Override
+             public DensityFunction apply(final DensityFunction input) {
+                 return visitor.apply(input.mapChildren(this));
+@@ -39,6 +39,24 @@ public interface DensityFunction {
+             public DensityFunction.NoiseHolder visitNoise(final DensityFunction.NoiseHolder noise) {
+                 return visitor.visitNoise(noise);
+             }
++            // Leaf start - C2ME - DensityFunction compiler
++            @Override
++            public boolean c2me$isBlendingEnabled() {
++                return visitor instanceof com.ishland.c2me.opts.dfc.common.ducks.IBlendingAwareVisitor blendingAwareVisitor
++                    && blendingAwareVisitor.c2me$isBlendingEnabled();
++            }
++
++            @Override
++            public com.ishland.c2me.opts.dfc.common.gen.jvm.CompiledEntry c2me$visitIfAbsent(
++                final com.ishland.c2me.opts.dfc.common.gen.jvm.CompiledEntry entry,
++                final com.ishland.c2me.opts.dfc.common.gen.jvm.internalapi.ArgumentVisitor argumentVisitor
++            ) {
++                if (visitor instanceof com.ishland.c2me.opts.dfc.common.ducks.ICompiledCachingAwareVisitor cachingAwareVisitor) {
++                    return cachingAwareVisitor.c2me$visitIfAbsent(entry, argumentVisitor);
++                }
++                return entry.newInstance(entry.getArgs(), argumentVisitor);
++            }
++            // Leaf end - C2ME - DensityFunction compiler
+         }
+ 
+         return new RecursiveVisitor().apply(this);
+@@ -111,6 +129,27 @@ public interface DensityFunction {
+         public double maxValue() {
+             return this.noise == null ? 2.0 : this.noise.maxValue();
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public boolean equals(final Object object) {
++            if (this == object) {
++                return true;
++            }
++            if (object == null || this.getClass() != object.getClass()) {
++                return false;
++            }
++            final DensityFunction.NoiseHolder other = (DensityFunction.NoiseHolder)object;
++            return this.noise != null || other.noise != null
++                ? java.util.Objects.equals(this.noise, other.noise)
++                : java.util.Objects.equals(this.noiseData, other.noiseData);
++        }
++
++        @Override
++        public int hashCode() {
++            return this.noise != null ? this.noise.hashCode() : java.util.Objects.hashCode(this.noiseData);
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+     interface SimpleFunction extends DensityFunction {
+diff --git a/net/minecraft/world/level/levelgen/DensityFunctions.java b/net/minecraft/world/level/levelgen/DensityFunctions.java
+index 053e8b52af29403db190283fc9ce2298a549417d..aa805d062260cce94e538f116fa626f7977e4813 100644
+--- a/net/minecraft/world/level/levelgen/DensityFunctions.java
++++ b/net/minecraft/world/level/levelgen/DensityFunctions.java
+@@ -278,13 +278,13 @@ public final class DensityFunctions {
+         return new DensityFunctions.FindTopSurface(density, upperBound, lowerBound, stepSize);
+     }
+ 
+-    private record Ap2(
++    public record Ap2( // Leaf - C2ME - DensityFunction compiler - private -> public
+         @Override DensityFunctions.TwoArgumentSimpleFunction.Type type,
+         @Override DensityFunction argument1,
+         @Override DensityFunction argument2,
+         @Override double minValue,
+         @Override double maxValue
+-    ) implements DensityFunctions.TwoArgumentSimpleFunction {
++    ) implements DensityFunctions.TwoArgumentSimpleFunction { // Leaf - C2ME - DensityFunction compiler
+         @Override
+         public double compute(final DensityFunction.FunctionContext context) {
+             double v1 = this.argument1.compute(context);
+@@ -301,14 +301,25 @@ public final class DensityFunctions {
+         public void fillArray(final double[] output, final DensityFunction.ContextProvider contextProvider) {
+             this.argument1.fillArray(output, contextProvider);
+             switch (this.type) {
+-                case ADD:
+-                    double[] v2 = new double[output.length];
++                // Leaf start - C2ME - DensityFunction compiler
++                case ADD: {
++                    final com.ishland.c2me.opts.dfc.common.gen.jvm.util.DfcObjectCache objectCache =
++                        contextProvider instanceof com.ishland.c2me.opts.dfc.common.ducks.IDfcObjectCacheCapable cacheCapable
++                            ? cacheCapable.c2me$getDfcObjectCache()
++                            : null;
++                    final double[] v2 = objectCache == null ? new double[output.length] : objectCache.getDoubleArray(output.length, false);
+                     this.argument2.fillArray(v2, contextProvider);
+ 
+                     for (int i = 0; i < output.length; i++) {
+                         output[i] += v2[i];
+                     }
++
++                    if (objectCache != null) {
++                        objectCache.recycle(v2);
++                    }
+                     break;
++                }
++                // Leaf end - C2ME - DensityFunction compiler
+                 case MUL:
+                     for (int i = 0; i < output.length; i++) {
+                         double v = output[i];
+@@ -339,7 +350,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    enum BeardifierMarker implements DensityFunctions.BeardifierOrMarker {
++    public enum BeardifierMarker implements DensityFunctions.BeardifierOrMarker { // Leaf - C2ME - DensityFunction compiler - package-private -> public
+         INSTANCE;
+ 
+         @Override
+@@ -372,7 +383,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    enum BlendAlpha implements DensityFunction.SimpleFunction {
++    public enum BlendAlpha implements DensityFunction.SimpleFunction { // Leaf - C2ME - DensityFunction compiler - package-private -> public
+         INSTANCE;
+ 
+         public static final KeyDispatchDataCodec<DensityFunction> CODEC = KeyDispatchDataCodec.of(MapCodec.unit(INSTANCE));
+@@ -403,7 +414,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    enum BlendOffset implements DensityFunction.SimpleFunction {
++    public enum BlendOffset implements DensityFunction.SimpleFunction { // Leaf - C2ME - DensityFunction compiler - package-private -> public
+         INSTANCE;
+ 
+         public static final KeyDispatchDataCodec<DensityFunction> CODEC = KeyDispatchDataCodec.of(MapCodec.unit(INSTANCE));
+@@ -434,7 +445,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record Clamp(@Override DensityFunction input, @Override double minValue, @Override double maxValue) implements DensityFunctions.PureTransformer {
++    public record Clamp(@Override DensityFunction input, @Override double minValue, @Override double maxValue) implements DensityFunctions.PureTransformer { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         private static final MapCodec<DensityFunctions.Clamp> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.CODEC.fieldOf("input").forGetter(DensityFunctions.Clamp::input),
+@@ -461,7 +472,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    private record Constant(double value) implements DensityFunction.SimpleFunction {
++    public record Constant(double value) implements DensityFunction.SimpleFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         private static final KeyDispatchDataCodec<DensityFunctions.Constant> CODEC = DensityFunctions.singleArgumentCodec(
+             DensityFunctions.NOISE_VALUE_CODEC, DensityFunctions.Constant::new, DensityFunctions.Constant::value
+         );
+@@ -493,7 +504,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected static final class EndIslandDensityFunction implements DensityFunction.SimpleFunction {
++    public static final class EndIslandDensityFunction implements DensityFunction.SimpleFunction { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         public static final KeyDispatchDataCodec<DensityFunctions.EndIslandDensityFunction> CODEC = KeyDispatchDataCodec.of(
+             MapCodec.unit(new DensityFunctions.EndIslandDensityFunction(0L))
+         );
+@@ -577,9 +588,27 @@ public final class DensityFunctions {
+         public KeyDispatchDataCodec<? extends DensityFunction> codec() {
+             return CODEC;
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public boolean equals(final Object object) {
++            if (this == object) {
++                return true;
++            }
++            if (object == null || this.getClass() != object.getClass()) {
++                return false;
++            }
++            return java.util.Objects.equals(this.islandNoise, ((DensityFunctions.EndIslandDensityFunction)object).islandNoise);
++        }
++
++        @Override
++        public int hashCode() {
++            return java.util.Objects.hashCode(this.islandNoise);
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+-    private record FindTopSurface(DensityFunction density, DensityFunction upperBound, int lowerBound, int cellHeight) implements DensityFunction {
++    public record FindTopSurface(DensityFunction density, DensityFunction upperBound, int lowerBound, int cellHeight) implements DensityFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         private static final MapCodec<DensityFunctions.FindTopSurface> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.CODEC.fieldOf("density").forGetter(DensityFunctions.FindTopSurface::density),
+@@ -668,7 +697,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    private record IntervalSelect(DensityFunction input, DoubleList thresholds, List<DensityFunction> functions) implements DensityFunction {
++    public record IntervalSelect(DensityFunction input, DoubleList thresholds, List<DensityFunction> functions) implements DensityFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         private static final Codec<DoubleList> THRESHOLDS_CODEC = DensityFunctions.NOISE_VALUE_CODEC.listOf().xmap(DoubleArrayList::new, Function.identity());
+         public static final MapCodec<DensityFunctions.IntervalSelect> DATA_CODEC = RecordCodecBuilder.<DensityFunctions.IntervalSelect>mapCodec(
+                 i -> i.group(
+@@ -755,8 +784,8 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record Mapped(DensityFunctions.Mapped.Type type, @Override DensityFunction input, @Override double minValue, @Override double maxValue)
+-        implements DensityFunctions.PureTransformer {
++    public record Mapped(DensityFunctions.Mapped.Type type, @Override DensityFunction input, @Override double minValue, @Override double maxValue)
++        implements DensityFunctions.PureTransformer { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         public static DensityFunctions.Mapped create(final DensityFunctions.Mapped.Type type, final DensityFunction input) {
+             double minValue = input.minValue();
+             double maxValue = input.maxValue();
+@@ -828,7 +857,8 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    record Marker(@Override DensityFunctions.Marker.Type type, @Override DensityFunction wrapped) implements DensityFunctions.MarkerOrMarked {
++    public record Marker(@Override DensityFunctions.Marker.Type type, @Override DensityFunction wrapped)
++        implements DensityFunctions.MarkerOrMarked, com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike { // Leaf - C2ME - DensityFunction compiler - package-private -> public
+         @Override
+         public double compute(final DensityFunction.FunctionContext context) {
+             return this.wrapped.compute(context);
+@@ -849,6 +879,77 @@ public final class DensityFunctions {
+             return this.type == DensityFunctions.Marker.Type.BlendDensity ? Double.POSITIVE_INFINITY : this.wrapped.maxValue();
+         }
+ 
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public double c2me$getCached(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            return Double.longBitsToDouble(com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike.CACHE_MISS_NAN_BITS);
++        }
++
++        @Override
++        public boolean c2me$getCached(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            return false;
++        }
++
++        @Override
++        public void c2me$cache(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType,
++            final double cached
++        ) {
++        }
++
++        @Override
++        public void c2me$cache(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++        }
++
++        @Override
++        public boolean c2me$isActualCache() {
++            return switch (this.type) {
++                case FlatCache, CacheAllInCell, Cache2D, CacheOnce -> true;
++                default -> false;
++            };
++        }
++
++        @Override
++        public String c2me$describeCacheLike() {
++            return "wrapping, " + this.type.getSerializedName();
++        }
++
++        @Override
++        public DensityFunction c2me$getDelegate() {
++            return this.wrapped;
++        }
++
++        @Override
++        public DensityFunction c2me$withDelegate(final DensityFunction delegate) {
++            return new DensityFunctions.Marker(this.type, delegate);
++        }
++
++        @Override
++        public DensityFunction mapAll(final DensityFunction.Visitor visitor) {
++            return visitor.apply(this.c2me$withDelegate(this.wrapped.mapAll(visitor)));
++        }
++        // Leaf end - C2ME - DensityFunction compiler
++
+         public enum Type implements StringRepresentable {
+             Interpolated("interpolated"),
+             FlatCache("flat_cache"),
+@@ -889,9 +990,9 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    private record MulOrAdd(
++    public record MulOrAdd(
+         DensityFunctions.MulOrAdd.Type specificType, @Override DensityFunction input, @Override double minValue, @Override double maxValue, double argument
+-    ) implements DensityFunctions.TwoArgumentSimpleFunction, DensityFunctions.PureTransformer {
++    ) implements DensityFunctions.TwoArgumentSimpleFunction, DensityFunctions.PureTransformer { // Leaf - C2ME - DensityFunction compiler - private -> public
+         @Override
+         public DensityFunctions.TwoArgumentSimpleFunction.Type type() {
+             return this.specificType == DensityFunctions.MulOrAdd.Type.MUL
+@@ -944,7 +1045,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record Noise(DensityFunction.NoiseHolder noise, @Deprecated double xzScale, double yScale) implements DensityFunction {
++    public record Noise(DensityFunction.NoiseHolder noise, @Deprecated double xzScale, double yScale) implements DensityFunction { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         public static final MapCodec<DensityFunctions.Noise> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.NoiseHolder.CODEC.fieldOf("noise").forGetter(DensityFunctions.Noise::noise),
+@@ -1006,8 +1107,8 @@ public final class DensityFunctions {
+         double transform(final double input);
+     }
+ 
+-    private record RangeChoice(DensityFunction input, double minInclusive, double maxExclusive, DensityFunction whenInRange, DensityFunction whenOutOfRange)
+-        implements DensityFunction {
++    public record RangeChoice(DensityFunction input, double minInclusive, double maxExclusive, DensityFunction whenInRange, DensityFunction whenOutOfRange)
++        implements DensityFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         public static final MapCodec<DensityFunctions.RangeChoice> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.CODEC.fieldOf("input").forGetter(DensityFunctions.RangeChoice::input),
+@@ -1063,7 +1164,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record Shift(@Override DensityFunction.NoiseHolder offsetNoise) implements DensityFunctions.ShiftNoise {
++    public record Shift(@Override DensityFunction.NoiseHolder offsetNoise) implements DensityFunctions.ShiftNoise { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         private static final KeyDispatchDataCodec<DensityFunctions.Shift> CODEC = DensityFunctions.singleArgumentCodec(
+             DensityFunction.NoiseHolder.CODEC, DensityFunctions.Shift::new, DensityFunctions.Shift::offsetNoise
+         );
+@@ -1084,7 +1185,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record ShiftA(@Override DensityFunction.NoiseHolder offsetNoise) implements DensityFunctions.ShiftNoise {
++    public record ShiftA(@Override DensityFunction.NoiseHolder offsetNoise) implements DensityFunctions.ShiftNoise { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         private static final KeyDispatchDataCodec<DensityFunctions.ShiftA> CODEC = DensityFunctions.singleArgumentCodec(
+             DensityFunction.NoiseHolder.CODEC, DensityFunctions.ShiftA::new, DensityFunctions.ShiftA::offsetNoise
+         );
+@@ -1105,7 +1206,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record ShiftB(@Override DensityFunction.NoiseHolder offsetNoise) implements DensityFunctions.ShiftNoise {
++    public record ShiftB(@Override DensityFunction.NoiseHolder offsetNoise) implements DensityFunctions.ShiftNoise { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         private static final KeyDispatchDataCodec<DensityFunctions.ShiftB> CODEC = DensityFunctions.singleArgumentCodec(
+             DensityFunction.NoiseHolder.CODEC, DensityFunctions.ShiftB::new, DensityFunctions.ShiftB::offsetNoise
+         );
+@@ -1149,9 +1250,9 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    protected record ShiftedNoise(
++    public record ShiftedNoise(
+         DensityFunction shiftX, DensityFunction shiftY, DensityFunction shiftZ, double xzScale, double yScale, DensityFunction.NoiseHolder noise
+-    ) implements DensityFunction {
++    ) implements DensityFunction { // Leaf - C2ME - DensityFunction compiler - protected -> public
+         private static final MapCodec<DensityFunctions.ShiftedNoise> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.CODEC.fieldOf("shift_x").forGetter(DensityFunctions.ShiftedNoise::shiftX),
+@@ -1401,7 +1502,7 @@ public final class DensityFunctions {
+         }
+     }
+ 
+-    private record YClampedGradient(int fromY, int toY, double fromValue, double toValue) implements DensityFunction.SimpleFunction {
++    public record YClampedGradient(int fromY, int toY, double fromValue, double toValue) implements DensityFunction.SimpleFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         private static final MapCodec<DensityFunctions.YClampedGradient> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     Codec.intRange(DimensionType.MIN_Y * 2, DimensionType.MAX_Y * 2).fieldOf("from_y").forGetter(DensityFunctions.YClampedGradient::fromY),
+diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
+index 117c3e33d49b92ca0807c576237fe135e40c524d..42514c31744ca8e8d4c837300fba789239881765 100644
+--- a/net/minecraft/world/level/levelgen/NoiseChunk.java
++++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -21,7 +21,7 @@ import net.minecraft.world.level.levelgen.blending.Blender;
+ import net.minecraft.world.level.levelgen.material.MaterialRuleList;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunction.ContextProvider {
++public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunction.ContextProvider, com.ishland.c2me.base.mixin.access.IChunkNoiseSampler, com.ishland.c2me.opts.dfc.common.ducks.IDfcObjectCacheCapable, com.ishland.c2me.opts.dfc.common.ducks.ICoordinatesFilling, com.ishland.c2me.opts.dfc.common.ducks.IPreloadedCoordinates { // Leaf - C2ME - DensityFunction compiler
+     private final int cellCountXZ;
+     private final int cellCountY;
+     private final int cellNoiseMinY;
+@@ -57,7 +57,25 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+     private long interpolationCounter;
+     private long arrayInterpolationCounter;
+     private int arrayIndex;
+-    private final DensityFunction.ContextProvider sliceFillingContextProvider = new DensityFunction.ContextProvider() {
++
++    // Leaf start - C2ME - DensityFunction compiler
++    private int c2me$oldStartBlockX = Integer.MAX_VALUE;
++    private int c2me$oldStartBlockY = Integer.MAX_VALUE;
++    private int c2me$oldStartBlockZ = Integer.MAX_VALUE;
++    private int[] c2me$cachedXArray;
++    private int[] c2me$cachedYArray;
++    private int[] c2me$cachedZArray;
++    NoiseChunk.NoiseInterpolator[] c2me$interpolatorsArray;
++    private final com.ishland.c2me.opts.dfc.common.gen.jvm.util.DfcObjectCache c2Me$dfcObjectCache =
++        org.dreeam.leaf.config.modules.opt.DensityFunctionCompiler.enabled
++            ? new com.ishland.c2me.opts.dfc.common.gen.jvm.util.DfcObjectCache.Impl()
++            : com.ishland.c2me.opts.dfc.common.gen.jvm.util.DfcObjectCache.Noop.INSTANCE;
++    private final Map<com.ishland.c2me.opts.dfc.common.gen.jvm.CompiledEntry, com.ishland.c2me.opts.dfc.common.gen.jvm.CompiledEntry>
++        c2me$compiledEntryCache = new it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap<>();
++    // Leaf end - C2ME - DensityFunction compiler
++
++    private final DensityFunction.ContextProvider sliceFillingContextProvider = new NoiseChunk.SliceFillingContextProvider(); // Leaf - C2ME - DensityFunction compiler
++    private final class SliceFillingContextProvider implements DensityFunction.ContextProvider, com.ishland.c2me.opts.dfc.common.ducks.IDfcObjectCacheCapable, com.ishland.c2me.opts.dfc.common.ducks.ICoordinatesFilling { // Leaf - C2ME - DensityFunction compiler
+         @Override
+         public DensityFunction.FunctionContext forIndex(final int cellYIndex) {
+             NoiseChunk.this.cellStartBlockY = (cellYIndex + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
+@@ -77,7 +95,23 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+                 output[cellYIndex] = function.compute(NoiseChunk.this);
+             }
+         }
+-    };
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public com.ishland.c2me.opts.dfc.common.gen.jvm.util.DfcObjectCache c2me$getDfcObjectCache() {
++            return NoiseChunk.this.c2me$getDfcObjectCache();
++        }
++
++        @Override
++        public void c2me$fillCoordinates(final int[] x, final int[] y, final int[] z) {
++            for (int i = 0; i < NoiseChunk.this.cellCountY + 1; i++) {
++                x[i] = NoiseChunk.this.cellStartBlockX + NoiseChunk.this.inCellX;
++                y[i] = (i + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
++                z[i] = NoiseChunk.this.cellStartBlockZ + NoiseChunk.this.inCellZ;
++            }
++        }
++    }
++    // Leaf end - C2ME - DensityFunction compiler
+ 
+     public static NoiseChunk forChunk(
+         final ChunkAccess chunk,
+@@ -140,7 +174,7 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         }
+ 
+         NoiseRouter router = randomState.router();
+-        NoiseRouter wrappedRouter = router.mapAll(this::wrap);
++        NoiseRouter wrappedRouter = router.mapAll(this.c2me$wrapVisitor(this::wrap)); // Leaf - C2ME - DensityFunction compiler
+         this.preliminarySurfaceLevel = wrappedRouter.preliminarySurfaceLevel();
+         if (!settings.isAquifersEnabled()) {
+             this.aquifer = Aquifer.createDisabled(globalFluidPicker);
+@@ -153,10 +187,16 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         }
+ 
+         List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
+-        DensityFunction fullNoiseValue = DensityFunctions.cacheAllInCell(
+-                DensityFunctions.add(wrappedRouter.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE)
+-            )
+-            .mapAll(this::wrap);
++        // Leaf start - C2ME - DensityFunction compiler
++        DensityFunction fullNoiseValueTemp = wrappedRouter.c2me$getFinalFinalDensity();
++        if (fullNoiseValueTemp == null) {
++            fullNoiseValueTemp = DensityFunctions.cacheAllInCell(
++                    DensityFunctions.add(wrappedRouter.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE)
++                )
++                .mapAll(this.c2me$wrapVisitor(this::wrap));
++        }
++        final DensityFunction fullNoiseValue = fullNoiseValueTemp;
++        // Leaf end - C2ME - DensityFunction compiler
+         this.fullNoiseDensity = fullNoiseValue;
+         builder.add(context -> this.aquifer.computeSubstance(context, fullNoiseValue.compute(context)));
+         if (settings.oreVeinsEnabled()) {
+@@ -168,12 +208,14 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+ 
+     protected Climate.Sampler cachedClimateSampler(final NoiseRouter noises, final List<Climate.ParameterPoint> spawnTarget) {
+         return new Climate.Sampler(
+-            noises.temperature().mapAll(this::wrap),
+-            noises.vegetation().mapAll(this::wrap),
+-            noises.continents().mapAll(this::wrap),
+-            noises.erosion().mapAll(this::wrap),
+-            noises.depth().mapAll(this::wrap),
+-            noises.ridges().mapAll(this::wrap),
++            // Leaf start - C2ME - DensityFunction compiler
++            noises.temperature().mapAll(this.c2me$wrapVisitor(this::wrap)),
++            noises.vegetation().mapAll(this.c2me$wrapVisitor(this::wrap)),
++            noises.continents().mapAll(this.c2me$wrapVisitor(this::wrap)),
++            noises.erosion().mapAll(this.c2me$wrapVisitor(this::wrap)),
++            noises.depth().mapAll(this.c2me$wrapVisitor(this::wrap)),
++            noises.ridges().mapAll(this.c2me$wrapVisitor(this::wrap)),
++            // Leaf end - C2ME - DensityFunction compiler
+             spawnTarget
+         );
+     }
+@@ -201,6 +243,179 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         return this.cellStartBlockZ + this.inCellZ;
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public com.ishland.c2me.opts.dfc.common.gen.jvm.util.DfcObjectCache c2me$getDfcObjectCache() {
++        return this.c2Me$dfcObjectCache;
++    }
++
++    @Override
++    public void c2me$fillCoordinates(final int[] x, final int[] y, final int[] z) {
++        int index = 0;
++        for (int yInCell = this.cellHeight - 1; yInCell >= 0; yInCell--) {
++            final int blockY = this.cellStartBlockY + yInCell;
++            for (int xInCell = 0; xInCell < this.cellWidth; xInCell++) {
++                final int blockX = this.cellStartBlockX + xInCell;
++                for (int zInCell = 0; zInCell < this.cellWidth; zInCell++) {
++                    x[index] = blockX;
++                    y[index] = blockY;
++                    z[index] = this.cellStartBlockZ + zInCell;
++                    index++;
++                }
++            }
++        }
++    }
++
++    private void c2me$reloadCachedArrays() {
++        if (this.c2me$cachedXArray == null || this.c2me$cachedYArray == null || this.c2me$cachedZArray == null) {
++            final int length = this.cellWidth * this.cellWidth * this.cellHeight;
++            this.c2me$cachedXArray = this.c2Me$dfcObjectCache.getIntArray(length, false);
++            this.c2me$cachedYArray = this.c2Me$dfcObjectCache.getIntArray(length, false);
++            this.c2me$cachedZArray = this.c2Me$dfcObjectCache.getIntArray(length, false);
++        }
++        if (this.c2me$oldStartBlockX != this.cellStartBlockX
++            || this.c2me$oldStartBlockY != this.cellStartBlockY
++            || this.c2me$oldStartBlockZ != this.cellStartBlockZ) {
++            this.c2me$fillCoordinates(this.c2me$cachedXArray, this.c2me$cachedYArray, this.c2me$cachedZArray);
++            this.c2me$oldStartBlockX = this.cellStartBlockX;
++            this.c2me$oldStartBlockY = this.cellStartBlockY;
++            this.c2me$oldStartBlockZ = this.cellStartBlockZ;
++        }
++    }
++
++    @Override
++    public int[] c2me$getXArray() {
++        this.c2me$reloadCachedArrays();
++        return this.c2me$cachedXArray;
++    }
++
++    @Override
++    public int[] c2me$getYArray() {
++        this.c2me$reloadCachedArrays();
++        return this.c2me$cachedYArray;
++    }
++
++    @Override
++    public int[] c2me$getZArray() {
++        this.c2me$reloadCachedArrays();
++        return this.c2me$cachedZArray;
++    }
++
++    private DensityFunction.Visitor c2me$wrapVisitor(final DensityFunction.Visitor visitor) {
++        if (!org.dreeam.leaf.config.modules.opt.DensityFunctionCompiler.enabled) {
++            return visitor;
++        }
++        return new com.ishland.c2me.opts.dfc.common.gen.DelegatingBlendingCachingAwareVisitor(
++            visitor, this.c2me$compiledEntryCache, !this.blender.isEmpty()
++        );
++    }
++
++    @Override
++    public int getStartBlockX() {
++        return this.cellStartBlockX;
++    }
++
++    @Override
++    public int getStartBlockY() {
++        return this.cellStartBlockY;
++    }
++
++    @Override
++    public int getStartBlockZ() {
++        return this.cellStartBlockZ;
++    }
++
++    @Override
++    public int getHorizontalCellBlockCount() {
++        return this.cellWidth;
++    }
++
++    @Override
++    public int getVerticalCellBlockCount() {
++        return this.cellHeight;
++    }
++
++    @Override
++    public boolean getIsInInterpolationLoop() {
++        return this.interpolating;
++    }
++
++    @Override
++    public boolean getIsSamplingForCaches() {
++        return this.fillingCell;
++    }
++
++    @Override
++    public int getStartBiomeX() {
++        return this.firstNoiseX;
++    }
++
++    @Override
++    public int getStartBiomeZ() {
++        return this.firstNoiseZ;
++    }
++
++    @Override
++    public int getHorizontalCellCount() {
++        return this.cellCountXZ;
++    }
++
++    @Override
++    public int getVerticalCellCount() {
++        return this.cellCountY;
++    }
++
++    @Override
++    public int getMinimumCellY() {
++        return this.cellNoiseMinY;
++    }
++
++    @Override
++    public int getCellBlockX() {
++        return this.inCellX;
++    }
++
++    @Override
++    public int getCellBlockY() {
++        return this.inCellY;
++    }
++
++    @Override
++    public int getCellBlockZ() {
++        return this.inCellZ;
++    }
++
++    @Override
++    public BlockState invokeSampleBlockState() {
++        return this.getInterpolatedState();
++    }
++
++    @Override
++    public int getHorizontalBiomeEnd() {
++        return this.noiseSizeXZ;
++    }
++
++    @Override
++    public DensityFunctions.BeardifierOrMarker getBeardifying() {
++        return this.beardifier;
++    }
++
++    @Override
++    public int getStartCellX() {
++        return this.firstCellX;
++    }
++
++    @Override
++    public int getStartCellZ() {
++        return this.firstCellZ;
++    }
++
++    @Override
++    public Blender getBlender() {
++        return this.blender;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     public int maxPreliminarySurfaceLevel(final int minBlockX, final int minBlockZ, final int maxBlockX, final int maxBlockZ) {
+         int maxY = Integer.MIN_VALUE;
+ 
+@@ -311,10 +526,20 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         this.fillingCell = false;
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    private NoiseChunk.NoiseInterpolator[] c2me$initInterpolatorsArray() {
++        NoiseChunk.NoiseInterpolator[] interpolatorsArray = this.c2me$interpolatorsArray;
++        if (interpolatorsArray == null) {
++            interpolatorsArray = this.c2me$interpolatorsArray = this.interpolators.toArray(NoiseChunk.NoiseInterpolator[]::new);
++        }
++        return interpolatorsArray;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     public void updateForY(final int posY, final double factorY) {
+         this.inCellY = posY - this.cellStartBlockY;
+ 
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.c2me$initInterpolatorsArray()) { // Leaf - C2ME - DensityFunction compiler - array iteration
+             i.updateForY(factorY);
+         }
+     }
+@@ -322,7 +547,7 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+     public void updateForX(final int posX, final double factorX) {
+         this.inCellX = posX - this.cellStartBlockX;
+ 
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.c2me$initInterpolatorsArray()) { // Leaf - C2ME - DensityFunction compiler - array iteration
+             i.updateForX(factorX);
+         }
+     }
+@@ -331,7 +556,7 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         this.inCellZ = posZ - this.cellStartBlockZ;
+         this.interpolationCounter++;
+ 
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.c2me$initInterpolatorsArray()) { // Leaf - C2ME - DensityFunction compiler - array iteration
+             i.updateForZ(factorZ);
+         }
+     }
+@@ -345,7 +570,11 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+     }
+ 
+     public void swapSlices() {
+-        this.interpolators.forEach(NoiseChunk.NoiseInterpolator::swapSlices);
++        // Leaf start - C2ME - DensityFunction compiler
++        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.c2me$initInterpolatorsArray()) {
++            noiseInterpolator.swapSlices();
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+     public Aquifer aquifer() {
+@@ -377,6 +606,13 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+     }
+ 
+     private DensityFunction wrapNew(final DensityFunction function) {
++        // Leaf start - C2ME - DensityFunction compiler
++        if (org.dreeam.leaf.config.modules.opt.DensityFunctionCompiler.enabled
++            && this.interpolating
++            && function instanceof DensityFunctions.Marker) {
++            throw new IllegalStateException("Cannot create more wrapping during interpolation loop");
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+         return switch (function) {
+             case DensityFunctions.Marker(DensityFunctions.Marker.Type type, DensityFunction wrapped) -> {
+                 switch (type) {
+@@ -407,7 +643,7 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         };
+     }
+ 
+-    private class BlendAlpha implements NoiseChunk.NoiseChunkDensityFunction {
++    public class BlendAlpha implements NoiseChunk.NoiseChunkDensityFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         @Override
+         public DensityFunction wrapped() {
+             return DensityFunctions.BlendAlpha.INSTANCE;
+@@ -487,7 +723,7 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         }
+     }
+ 
+-    private class BlendOffset implements NoiseChunk.NoiseChunkDensityFunction {
++    public class BlendOffset implements NoiseChunk.NoiseChunkDensityFunction { // Leaf - C2ME - DensityFunction compiler - private -> public
+         @Override
+         public DensityFunction wrapped() {
+             return DensityFunctions.BlendOffset.INSTANCE;
+@@ -529,8 +765,8 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         @Nullable BlockState calculate(final DensityFunction.FunctionContext context);
+     }
+ 
+-    private static class Cache2D implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked {
+-        private final DensityFunction function;
++    public static class Cache2D implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked, com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike { // Leaf - C2ME - DensityFunction compiler - private -> public
++        private DensityFunction function; // Leaf - C2ME - DensityFunction compiler - private final -> private
+         private long lastPos2D = ChunkPos.INVALID_CHUNK_POS;
+         private double lastValue;
+ 
+@@ -567,10 +803,78 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         public DensityFunctions.Marker.Type type() {
+             return DensityFunctions.Marker.Type.Cache2D;
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public double c2me$getCached(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            return this.lastPos2D == ChunkPos.pack(x, z)
++                ? this.lastValue
++                : Double.longBitsToDouble(com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike.CACHE_MISS_NAN_BITS);
++        }
++
++        @Override
++        public boolean c2me$getCached(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            return false;
++        }
++
++        @Override
++        public void c2me$cache(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType,
++            final double cached
++        ) {
++            this.lastPos2D = ChunkPos.pack(x, z);
++            this.lastValue = cached;
++        }
++
++        @Override
++        public void c2me$cache(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++        }
++
++        @Override
++        public boolean c2me$isActualCache() {
++            return true;
++        }
++
++        @Override
++        public String c2me$describeCacheLike() {
++            return "cache_2d";
++        }
++
++        @Override
++        public DensityFunction c2me$getDelegate() {
++            return this.function;
++        }
++
++        @Override
++        public DensityFunction c2me$withDelegate(final DensityFunction delegate) {
++            this.function = delegate;
++            return this;
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+-    private class CacheAllInCell implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked {
+-        private final DensityFunction noiseFiller;
++    private class CacheAllInCell implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked, com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike { // Leaf - C2ME - DensityFunction compiler
++        private DensityFunction noiseFiller; // Leaf - C2ME - DensityFunction compiler - private final -> private
+         private final double[] values;
+ 
+         private CacheAllInCell(final DensityFunction noiseFiller) {
+@@ -581,6 +885,19 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+ 
+         @Override
+         public double compute(final DensityFunction.FunctionContext context) {
++            // Leaf start - C2ME - DensityFunction compiler
++            if (!(context instanceof NoiseChunk)
++                && context instanceof com.ishland.c2me.opts.dfc.common.gen.jvm.vif.NoisePosVanillaInterface vanillaInterface
++                && vanillaInterface.getType() == com.ishland.c2me.opts.dfc.common.ast.EvalType.INTERPOLATION
++                && NoiseChunk.this.interpolating) {
++                final int x = context.blockX() - NoiseChunk.this.cellStartBlockX;
++                final int y = context.blockY() - NoiseChunk.this.cellStartBlockY;
++                final int z = context.blockZ() - NoiseChunk.this.cellStartBlockZ;
++                return x >= 0 && y >= 0 && z >= 0 && x < NoiseChunk.this.cellWidth && y < NoiseChunk.this.cellHeight && z < NoiseChunk.this.cellWidth
++                    ? this.values[((NoiseChunk.this.cellHeight - 1 - y) * NoiseChunk.this.cellWidth + x) * NoiseChunk.this.cellWidth + z]
++                    : this.noiseFiller.compute(context);
++            }
++            // Leaf end - C2ME - DensityFunction compiler
+             if (context != NoiseChunk.this) {
+                 return this.noiseFiller.compute(context);
+             }
+@@ -611,14 +928,119 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         public DensityFunctions.Marker.Type type() {
+             return DensityFunctions.Marker.Type.CacheAllInCell;
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public double c2me$getCached(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (evalType == com.ishland.c2me.opts.dfc.common.ast.EvalType.INTERPOLATION && NoiseChunk.this.interpolating) {
++                final int cellX = x - NoiseChunk.this.cellStartBlockX;
++                final int cellY = y - NoiseChunk.this.cellStartBlockY;
++                final int cellZ = z - NoiseChunk.this.cellStartBlockZ;
++                if (cellX >= 0
++                    && cellY >= 0
++                    && cellZ >= 0
++                    && cellX < NoiseChunk.this.cellWidth
++                    && cellY < NoiseChunk.this.cellHeight
++                    && cellZ < NoiseChunk.this.cellWidth) {
++                    return this.values[((NoiseChunk.this.cellHeight - 1 - cellY) * NoiseChunk.this.cellWidth + cellX) * NoiseChunk.this.cellWidth + cellZ];
++                }
++            }
++            return Double.longBitsToDouble(com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike.CACHE_MISS_NAN_BITS);
++        }
++
++        @Override
++        public boolean c2me$getCached(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (evalType == com.ishland.c2me.opts.dfc.common.ast.EvalType.INTERPOLATION && NoiseChunk.this.interpolating) {
++                for (int i = 0; i < result.length; i++) {
++                    final int cellX = x[i] - NoiseChunk.this.cellStartBlockX;
++                    final int cellY = y[i] - NoiseChunk.this.cellStartBlockY;
++                    final int cellZ = z[i] - NoiseChunk.this.cellStartBlockZ;
++                    if (cellX >= 0
++                        && cellY >= 0
++                        && cellZ >= 0
++                        && cellX < NoiseChunk.this.cellWidth
++                        && cellY < NoiseChunk.this.cellHeight
++                        && cellZ < NoiseChunk.this.cellWidth) {
++                        result[i] = this.values[((NoiseChunk.this.cellHeight - 1 - cellY) * NoiseChunk.this.cellWidth + cellX) * NoiseChunk.this.cellWidth + cellZ];
++                    } else {
++                        System.out.println("partial cell cache hit");
++                        return false;
++                    }
++                }
++            }
++            return false;
++        }
++
++        @Override
++        public void c2me$cache(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType,
++            final double cached
++        ) {
++        }
++
++        @Override
++        public void c2me$cache(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++        }
++
++        @Override
++        public boolean c2me$isActualCache() {
++            return true;
++        }
++
++        @Override
++        public String c2me$describeCacheLike() {
++            return "cache_all_in_cell";
++        }
++
++        @Override
++        public DensityFunction c2me$getDelegate() {
++            return this.noiseFiller;
++        }
++
++        @Override
++        public DensityFunction c2me$withDelegate(final DensityFunction delegate) {
++            this.noiseFiller = delegate;
++            return this;
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+-    private class CacheOnce implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked {
+-        private final DensityFunction function;
++    public class CacheOnce implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked, com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike { // Leaf - C2ME - DensityFunction compiler - private -> public
++        private DensityFunction function; // Leaf - C2ME - DensityFunction compiler - private final -> private
+         private long lastCounter;
+         private long lastArrayCounter;
+         private double lastValue;
+         private double @Nullable [] lastArray;
++        // Leaf start - C2ME - DensityFunction compiler
++        private double c2me$lastValue = Double.NaN;
++        private int c2me$lastX = Integer.MIN_VALUE;
++        private int c2me$lastY = Integer.MIN_VALUE;
++        private int c2me$lastZ = Integer.MIN_VALUE;
++        private int[] c2me$lastXa;
++        private int[] c2me$lastYa;
++        private int[] c2me$lastZa;
++        private double[] c2me$lastValuea;
++        // Leaf end - C2ME - DensityFunction compiler
+ 
+         private CacheOnce(final DensityFunction function) {
+             this.function = function;
+@@ -626,6 +1048,32 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+ 
+         @Override
+         public double compute(final DensityFunction.FunctionContext context) {
++            // Leaf start - C2ME - DensityFunction compiler
++            if (!(context instanceof NoiseChunk)) {
++                final int blockX = context.blockX();
++                final int blockY = context.blockY();
++                final int blockZ = context.blockZ();
++                if (this.c2me$lastValuea != null) {
++                    for (int i = 0; i < this.c2me$lastValuea.length; i++) {
++                        if (this.c2me$lastXa[i] == blockX && this.c2me$lastYa[i] == blockY && this.c2me$lastZa[i] == blockZ) {
++                            return this.c2me$lastValuea[i];
++                        }
++                    }
++                }
++                if (!Double.isNaN(this.c2me$lastValue)
++                    && this.c2me$lastX == blockX
++                    && this.c2me$lastY == blockY
++                    && this.c2me$lastZ == blockZ) {
++                    return this.c2me$lastValue;
++                }
++                final double value = this.function.compute(context);
++                this.c2me$lastValue = value;
++                this.c2me$lastX = blockX;
++                this.c2me$lastY = blockY;
++                this.c2me$lastZ = blockZ;
++                return value;
++            }
++            // Leaf end - C2ME - DensityFunction compiler
+             if (context != NoiseChunk.this) {
+                 return this.function.compute(context);
+             }
+@@ -646,6 +1094,27 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+ 
+         @Override
+         public void fillArray(final double[] output, final DensityFunction.ContextProvider contextProvider) {
++            // Leaf start - C2ME - DensityFunction compiler
++            if (!(contextProvider instanceof NoiseChunk)) {
++                if (contextProvider instanceof com.ishland.c2me.opts.dfc.common.gen.jvm.vif.EachApplierVanillaInterface vanillaInterface) {
++                    if (this.c2me$lastValuea != null
++                        && java.util.Arrays.equals(vanillaInterface.getY(), this.c2me$lastYa)
++                        && java.util.Arrays.equals(vanillaInterface.getX(), this.c2me$lastXa)
++                        && java.util.Arrays.equals(vanillaInterface.getZ(), this.c2me$lastZa)) {
++                        System.arraycopy(this.c2me$lastValuea, 0, output, 0, this.c2me$lastValuea.length);
++                    } else {
++                        this.function.fillArray(output, contextProvider);
++                        this.c2me$lastValuea = java.util.Arrays.copyOf(output, output.length);
++                        this.c2me$lastXa = vanillaInterface.getX();
++                        this.c2me$lastYa = vanillaInterface.getY();
++                        this.c2me$lastZa = vanillaInterface.getZ();
++                    }
++                } else {
++                    this.function.fillArray(output, contextProvider);
++                }
++                return;
++            }
++            // Leaf end - C2ME - DensityFunction compiler
+             if (this.lastArray != null && this.lastArrayCounter == NoiseChunk.this.arrayInterpolationCounter) {
+                 System.arraycopy(this.lastArray, 0, output, 0, output.length);
+             } else {
+@@ -669,10 +1138,109 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         public DensityFunctions.Marker.Type type() {
+             return DensityFunctions.Marker.Type.CacheOnce;
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public double c2me$getCached(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (this.c2me$lastValuea != null) {
++                for (int i = 0; i < this.c2me$lastValuea.length; i++) {
++                    if (this.c2me$lastXa[i] == x && this.c2me$lastYa[i] == y && this.c2me$lastZa[i] == z) {
++                        return this.c2me$lastValuea[i];
++                    }
++                }
++            }
++            if (!Double.isNaN(this.c2me$lastValue)
++                && this.c2me$lastX == x
++                && this.c2me$lastY == y
++                && this.c2me$lastZ == z) {
++                return this.c2me$lastValue;
++            }
++            return Double.longBitsToDouble(com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike.CACHE_MISS_NAN_BITS);
++        }
++
++        @Override
++        public boolean c2me$getCached(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (this.c2me$lastValuea != null
++                && java.util.Arrays.equals(y, this.c2me$lastYa)
++                && java.util.Arrays.equals(x, this.c2me$lastXa)
++                && java.util.Arrays.equals(z, this.c2me$lastZa)) {
++                System.arraycopy(this.c2me$lastValuea, 0, result, 0, this.c2me$lastValuea.length);
++                return true;
++            }
++            return false;
++        }
++
++        @Override
++        public void c2me$cache(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType,
++            final double cached
++        ) {
++            this.c2me$lastValue = cached;
++            this.c2me$lastX = x;
++            this.c2me$lastY = y;
++            this.c2me$lastZ = z;
++        }
++
++        @Override
++        public void c2me$cache(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (this.c2me$lastValuea != null && this.c2me$lastValuea.length == result.length) {
++                System.arraycopy(result, 0, this.c2me$lastValuea, 0, result.length);
++                System.arraycopy(x, 0, this.c2me$lastXa, 0, result.length);
++                System.arraycopy(y, 0, this.c2me$lastYa, 0, result.length);
++                System.arraycopy(z, 0, this.c2me$lastZa, 0, result.length);
++            } else {
++                this.c2me$lastValuea = java.util.Arrays.copyOf(result, result.length);
++                this.c2me$lastXa = java.util.Arrays.copyOf(x, x.length);
++                this.c2me$lastYa = java.util.Arrays.copyOf(y, y.length);
++                this.c2me$lastZa = java.util.Arrays.copyOf(z, z.length);
++            }
++        }
++
++        @Override
++        public boolean c2me$isActualCache() {
++            return true;
++        }
++
++        @Override
++        public String c2me$describeCacheLike() {
++            return "cache_once";
++        }
++
++        @Override
++        public DensityFunction c2me$getDelegate() {
++            return this.function;
++        }
++
++        @Override
++        public DensityFunction c2me$withDelegate(final DensityFunction delegate) {
++            this.function = delegate;
++            return this;
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+-    private class FlatCache implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked {
+-        private final DensityFunction noiseFiller;
++    public class FlatCache implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked, com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike { // Leaf - C2ME - DensityFunction compiler - private -> public
++        private DensityFunction noiseFiller; // Leaf - C2ME - DensityFunction compiler - mutable delegate
+         private final double[] values;
+         private final int sizeXZ;
+ 
+@@ -717,6 +1285,84 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         public DensityFunctions.Marker.Type type() {
+             return DensityFunctions.Marker.Type.FlatCache;
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public double c2me$getCached(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            final int localX = QuartPos.fromBlock(x) - NoiseChunk.this.firstNoiseX;
++            final int localZ = QuartPos.fromBlock(z) - NoiseChunk.this.firstNoiseZ;
++            return localX >= 0 && localZ >= 0 && localX < this.sizeXZ && localZ < this.sizeXZ
++                ? this.values[localX + localZ * this.sizeXZ]
++                : Double.longBitsToDouble(com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike.CACHE_MISS_NAN_BITS);
++        }
++
++        @Override
++        public boolean c2me$getCached(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            for (int i = 0; i < result.length; i++) {
++                final int localX = QuartPos.fromBlock(x[i]) - NoiseChunk.this.firstNoiseX;
++                final int localZ = QuartPos.fromBlock(z[i]) - NoiseChunk.this.firstNoiseZ;
++                if (localX >= 0 && localZ >= 0 && localX < this.sizeXZ && localZ < this.sizeXZ) {
++                    result[i] = this.values[localX + localZ * this.sizeXZ];
++                } else {
++                    System.out.println("partial flat cache hit");
++                    return false;
++                }
++            }
++            return true;
++        }
++
++        @Override
++        public void c2me$cache(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType,
++            final double cached
++        ) {
++        }
++
++        @Override
++        public void c2me$cache(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++        }
++
++        @Override
++        public boolean c2me$isActualCache() {
++            return true;
++        }
++
++        @Override
++        public String c2me$describeCacheLike() {
++            return "flat_cache";
++        }
++
++        @Override
++        public DensityFunction c2me$getDelegate() {
++            return this.noiseFiller;
++        }
++
++        @Override
++        public DensityFunction c2me$withDelegate(final DensityFunction delegate) {
++            this.noiseFiller = delegate;
++            return this;
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+     private interface NoiseChunkDensityFunction extends DensityFunction {
+@@ -733,10 +1379,10 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         }
+     }
+ 
+-    public class NoiseInterpolator implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked {
++    public class NoiseInterpolator implements NoiseChunk.NoiseChunkDensityFunction, DensityFunctions.MarkerOrMarked, com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike, com.ishland.c2me.base.mixin.access.IChunkNoiseSamplerDensityInterpolator { // Leaf - C2ME - DensityFunction compiler
+         private double[][] slice0;
+         private double[][] slice1;
+-        private final DensityFunction noiseFiller;
++        private DensityFunction noiseFiller; // Leaf - C2ME - DensityFunction compiler - private final -> private
+         private double noise000;
+         private double noise001;
+         private double noise100;
+@@ -801,6 +1447,33 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+ 
+         @Override
+         public double compute(final DensityFunction.FunctionContext context) {
++            // Leaf start - C2ME - DensityFunction compiler
++            if (!(context instanceof NoiseChunk)
++                && context instanceof com.ishland.c2me.opts.dfc.common.gen.jvm.vif.NoisePosVanillaInterface vanillaInterface
++                && vanillaInterface.getType() == com.ishland.c2me.opts.dfc.common.ast.EvalType.INTERPOLATION) {
++                if (!NoiseChunk.this.interpolating) {
++                    return this.noiseFiller.compute(context);
++                }
++                final int cellX = context.blockX() - NoiseChunk.this.cellStartBlockX;
++                final int cellY = context.blockY() - NoiseChunk.this.cellStartBlockY;
++                final int cellZ = context.blockZ() - NoiseChunk.this.cellStartBlockZ;
++                return NoiseChunk.this.fillingCell
++                    ? Mth.lerp3(
++                        (double)cellX / NoiseChunk.this.cellWidth,
++                        (double)cellY / NoiseChunk.this.cellHeight,
++                        (double)cellZ / NoiseChunk.this.cellWidth,
++                        this.noise000,
++                        this.noise100,
++                        this.noise010,
++                        this.noise110,
++                        this.noise001,
++                        this.noise101,
++                        this.noise011,
++                        this.noise111
++                    )
++                    : this.value;
++            }
++            // Leaf end - C2ME - DensityFunction compiler
+             if (context != NoiseChunk.this) {
+                 return this.noiseFiller.compute(context);
+             } else if (!NoiseChunk.this.interpolating) {
+@@ -848,5 +1521,136 @@ public class NoiseChunk implements DensityFunction.FunctionContext, DensityFunct
+         public DensityFunctions.Marker.Type type() {
+             return DensityFunctions.Marker.Type.Interpolated;
+         }
++
++        // Leaf start - C2ME - DensityFunction compiler
++        @Override
++        public double c2me$getCached(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (evalType == com.ishland.c2me.opts.dfc.common.ast.EvalType.INTERPOLATION) {
++                if (!NoiseChunk.this.interpolating) {
++                    throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
++                }
++                if (NoiseChunk.this.fillingCell) {
++                    final int cellX = x - NoiseChunk.this.cellStartBlockX;
++                    final int cellY = y - NoiseChunk.this.cellStartBlockY;
++                    final int cellZ = z - NoiseChunk.this.cellStartBlockZ;
++                    return Mth.lerp3(
++                        (double)cellX / NoiseChunk.this.cellWidth,
++                        (double)cellY / NoiseChunk.this.cellHeight,
++                        (double)cellZ / NoiseChunk.this.cellWidth,
++                        this.noise000,
++                        this.noise100,
++                        this.noise010,
++                        this.noise110,
++                        this.noise001,
++                        this.noise101,
++                        this.noise011,
++                        this.noise111
++                    );
++                }
++                return this.value;
++            }
++            return Double.longBitsToDouble(com.ishland.c2me.opts.dfc.common.ducks.IFastCacheLike.CACHE_MISS_NAN_BITS);
++        }
++
++        @Override
++        public boolean c2me$getCached(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++            if (evalType == com.ishland.c2me.opts.dfc.common.ast.EvalType.INTERPOLATION
++                && NoiseChunk.this.interpolating
++                && NoiseChunk.this.fillingCell) {
++                for (int i = 0; i < result.length; i++) {
++                    final int cellX = x[i] - NoiseChunk.this.cellStartBlockX;
++                    final int cellY = y[i] - NoiseChunk.this.cellStartBlockY;
++                    final int cellZ = z[i] - NoiseChunk.this.cellStartBlockZ;
++                    result[i] = Mth.lerp3(
++                        (double)cellX / NoiseChunk.this.cellWidth,
++                        (double)cellY / NoiseChunk.this.cellHeight,
++                        (double)cellZ / NoiseChunk.this.cellWidth,
++                        this.noise000,
++                        this.noise100,
++                        this.noise010,
++                        this.noise110,
++                        this.noise001,
++                        this.noise101,
++                        this.noise011,
++                        this.noise111
++                    );
++                }
++                return true;
++            }
++            return false;
++        }
++
++        @Override
++        public void c2me$cache(
++            final int x,
++            final int y,
++            final int z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType,
++            final double cached
++        ) {
++        }
++
++        @Override
++        public void c2me$cache(
++            final double[] result,
++            final int[] x,
++            final int[] y,
++            final int[] z,
++            final com.ishland.c2me.opts.dfc.common.ast.EvalType evalType
++        ) {
++        }
++
++        @Override
++        public boolean c2me$isActualCache() {
++            return false;
++        }
++
++        @Override
++        public String c2me$describeCacheLike() {
++            return "interpolated";
++        }
++
++        @Override
++        public DensityFunction c2me$getDelegate() {
++            return this.noiseFiller;
++        }
++
++        @Override
++        public DensityFunction c2me$withDelegate(final DensityFunction delegate) {
++            this.noiseFiller = delegate;
++            return this;
++        }
++
++        @Override
++        public void invokeInterpolateX(final double deltaX) {
++            this.updateForX(deltaX);
++        }
++
++        @Override
++        public void invokeInterpolateY(final double deltaY) {
++            this.updateForY(deltaY);
++        }
++
++        @Override
++        public void invokeInterpolateZ(final double deltaZ) {
++            this.updateForZ(deltaZ);
++        }
++
++        @Override
++        public void invokeSwapBuffers() {
++            this.swapSlices();
++        }
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ }
+diff --git a/net/minecraft/world/level/levelgen/NoiseRouter.java b/net/minecraft/world/level/levelgen/NoiseRouter.java
+index 04890a6423432bf506a7465693000fcee4d66f98..8286e5b6e4c3a98a7ac8df09a14c6c5a54e33b2e 100644
+--- a/net/minecraft/world/level/levelgen/NoiseRouter.java
++++ b/net/minecraft/world/level/levelgen/NoiseRouter.java
+@@ -4,23 +4,27 @@ import com.mojang.serialization.Codec;
+ import com.mojang.serialization.codecs.RecordCodecBuilder;
+ import java.util.function.Function;
+ 
+-public record NoiseRouter(
+-    DensityFunction barrierNoise,
+-    DensityFunction fluidLevelFloodednessNoise,
+-    DensityFunction fluidLevelSpreadNoise,
+-    DensityFunction lavaNoise,
+-    DensityFunction temperature,
+-    DensityFunction vegetation,
+-    DensityFunction continents,
+-    DensityFunction erosion,
+-    DensityFunction depth,
+-    DensityFunction ridges,
+-    DensityFunction preliminarySurfaceLevel,
+-    DensityFunction finalDensity,
+-    DensityFunction veinToggle,
+-    DensityFunction veinRidged,
+-    DensityFunction veinGap
+-) {
++// Leaf start - C2ME - DensityFunction compiler
++public final class NoiseRouter implements com.ishland.c2me.opts.dfc.common.ducks.NoiseRouterExtension {
++    private final DensityFunction barrierNoise;
++    private final DensityFunction fluidLevelFloodednessNoise;
++    private final DensityFunction fluidLevelSpreadNoise;
++    private final DensityFunction lavaNoise;
++    private final DensityFunction temperature;
++    private final DensityFunction vegetation;
++    private final DensityFunction continents;
++    private final DensityFunction erosion;
++    private final DensityFunction depth;
++    private final DensityFunction ridges;
++    private final DensityFunction preliminarySurfaceLevel;
++    private final DensityFunction finalDensity;
++    private final DensityFunction veinToggle;
++    private final DensityFunction veinRidged;
++    private final DensityFunction veinGap;
++    private DensityFunction c2me$finalFinalDensity;
++    private NoiseRouter c2me$originalNoiseRouter;
++// Leaf end - C2ME - DensityFunction compiler
++
+     public static final Codec<NoiseRouter> CODEC = RecordCodecBuilder.create(
+         i -> i.group(
+                 field("barrier", NoiseRouter::barrierNoise),
+@@ -42,12 +46,131 @@ public record NoiseRouter(
+             .apply(i, NoiseRouter::new)
+     );
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    public NoiseRouter(
++        final DensityFunction barrierNoise,
++        final DensityFunction fluidLevelFloodednessNoise,
++        final DensityFunction fluidLevelSpreadNoise,
++        final DensityFunction lavaNoise,
++        final DensityFunction temperature,
++        final DensityFunction vegetation,
++        final DensityFunction continents,
++        final DensityFunction erosion,
++        final DensityFunction depth,
++        final DensityFunction ridges,
++        final DensityFunction preliminarySurfaceLevel,
++        final DensityFunction finalDensity,
++        final DensityFunction veinToggle,
++        final DensityFunction veinRidged,
++        final DensityFunction veinGap
++    ) {
++        this.barrierNoise = barrierNoise;
++        this.fluidLevelFloodednessNoise = fluidLevelFloodednessNoise;
++        this.fluidLevelSpreadNoise = fluidLevelSpreadNoise;
++        this.lavaNoise = lavaNoise;
++        this.temperature = temperature;
++        this.vegetation = vegetation;
++        this.continents = continents;
++        this.erosion = erosion;
++        this.depth = depth;
++        this.ridges = ridges;
++        this.preliminarySurfaceLevel = preliminarySurfaceLevel;
++        this.finalDensity = finalDensity;
++        this.veinToggle = veinToggle;
++        this.veinRidged = veinRidged;
++        this.veinGap = veinGap;
++    }
++
++    public DensityFunction barrierNoise() {
++        return this.barrierNoise;
++    }
++
++    public DensityFunction fluidLevelFloodednessNoise() {
++        return this.fluidLevelFloodednessNoise;
++    }
++
++    public DensityFunction fluidLevelSpreadNoise() {
++        return this.fluidLevelSpreadNoise;
++    }
++
++    public DensityFunction lavaNoise() {
++        return this.lavaNoise;
++    }
++
++    public DensityFunction temperature() {
++        return this.temperature;
++    }
++
++    public DensityFunction vegetation() {
++        return this.vegetation;
++    }
++
++    public DensityFunction continents() {
++        return this.continents;
++    }
++
++    public DensityFunction erosion() {
++        return this.erosion;
++    }
++
++    public DensityFunction depth() {
++        return this.depth;
++    }
++
++    public DensityFunction ridges() {
++        return this.ridges;
++    }
++
++    public DensityFunction preliminarySurfaceLevel() {
++        return this.preliminarySurfaceLevel;
++    }
++
++    public DensityFunction finalDensity() {
++        return this.finalDensity;
++    }
++
++    public DensityFunction veinToggle() {
++        return this.veinToggle;
++    }
++
++    public DensityFunction veinRidged() {
++        return this.veinRidged;
++    }
++
++    public DensityFunction veinGap() {
++        return this.veinGap;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     private static RecordCodecBuilder<NoiseRouter, DensityFunction> field(final String name, final Function<NoiseRouter, DensityFunction> getter) {
+         return DensityFunction.CODEC.fieldOf(name).forGetter(getter);
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public DensityFunction c2me$getFinalFinalDensity() {
++        return this.c2me$finalFinalDensity;
++    }
++
++    @Override
++    public void c2me$setFinalFinalDensity(final DensityFunction densityFunction) {
++        this.c2me$finalFinalDensity = densityFunction;
++    }
++
++    @Override
++    public void c2me$setOriginalNoiseRouter(final NoiseRouter originalNoiseRouter) {
++        this.c2me$originalNoiseRouter = originalNoiseRouter;
++    }
++
++    @Override
++    public NoiseRouter c2me$getOriginalNoiseRouter() {
++        return this.c2me$originalNoiseRouter;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     public NoiseRouter mapAll(final DensityFunction.Visitor visitor) {
+-        return new NoiseRouter(
++        // Leaf start - C2ME - DensityFunction compiler
++        final NoiseRouter mapped = new NoiseRouter(
+             this.barrierNoise.mapAll(visitor),
+             this.fluidLevelFloodednessNoise.mapAll(visitor),
+             this.fluidLevelSpreadNoise.mapAll(visitor),
+@@ -64,5 +187,78 @@ public record NoiseRouter(
+             this.veinRidged.mapAll(visitor),
+             this.veinGap.mapAll(visitor)
+         );
++        final DensityFunction finalFinalDensity = this.c2me$getFinalFinalDensity();
++        if (finalFinalDensity != null) {
++            mapped.c2me$setFinalFinalDensity(finalFinalDensity.mapAll(visitor));
++        }
++        mapped.c2me$setOriginalNoiseRouter(this.c2me$getOriginalNoiseRouter());
++        return mapped;
++        // Leaf end - C2ME - DensityFunction compiler
++    }
++
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public boolean equals(final Object object) {
++        if (this == object) {
++            return true;
++        }
++        if (!(object instanceof NoiseRouter other)) {
++            return false;
++        }
++        return java.util.Objects.equals(this.barrierNoise, other.barrierNoise)
++            && java.util.Objects.equals(this.fluidLevelFloodednessNoise, other.fluidLevelFloodednessNoise)
++            && java.util.Objects.equals(this.fluidLevelSpreadNoise, other.fluidLevelSpreadNoise)
++            && java.util.Objects.equals(this.lavaNoise, other.lavaNoise)
++            && java.util.Objects.equals(this.temperature, other.temperature)
++            && java.util.Objects.equals(this.vegetation, other.vegetation)
++            && java.util.Objects.equals(this.continents, other.continents)
++            && java.util.Objects.equals(this.erosion, other.erosion)
++            && java.util.Objects.equals(this.depth, other.depth)
++            && java.util.Objects.equals(this.ridges, other.ridges)
++            && java.util.Objects.equals(this.preliminarySurfaceLevel, other.preliminarySurfaceLevel)
++            && java.util.Objects.equals(this.finalDensity, other.finalDensity)
++            && java.util.Objects.equals(this.veinToggle, other.veinToggle)
++            && java.util.Objects.equals(this.veinRidged, other.veinRidged)
++            && java.util.Objects.equals(this.veinGap, other.veinGap);
++    }
++
++    @Override
++    public int hashCode() {
++        int result = java.util.Objects.hashCode(this.barrierNoise);
++        result = 31 * result + java.util.Objects.hashCode(this.fluidLevelFloodednessNoise);
++        result = 31 * result + java.util.Objects.hashCode(this.fluidLevelSpreadNoise);
++        result = 31 * result + java.util.Objects.hashCode(this.lavaNoise);
++        result = 31 * result + java.util.Objects.hashCode(this.temperature);
++        result = 31 * result + java.util.Objects.hashCode(this.vegetation);
++        result = 31 * result + java.util.Objects.hashCode(this.continents);
++        result = 31 * result + java.util.Objects.hashCode(this.erosion);
++        result = 31 * result + java.util.Objects.hashCode(this.depth);
++        result = 31 * result + java.util.Objects.hashCode(this.ridges);
++        result = 31 * result + java.util.Objects.hashCode(this.preliminarySurfaceLevel);
++        result = 31 * result + java.util.Objects.hashCode(this.finalDensity);
++        result = 31 * result + java.util.Objects.hashCode(this.veinToggle);
++        result = 31 * result + java.util.Objects.hashCode(this.veinRidged);
++        result = 31 * result + java.util.Objects.hashCode(this.veinGap);
++        return result;
++    }
++
++    @Override
++    public String toString() {
++        return "NoiseRouter[barrierNoise=" + this.barrierNoise
++            + ", fluidLevelFloodednessNoise=" + this.fluidLevelFloodednessNoise
++            + ", fluidLevelSpreadNoise=" + this.fluidLevelSpreadNoise
++            + ", lavaNoise=" + this.lavaNoise
++            + ", temperature=" + this.temperature
++            + ", vegetation=" + this.vegetation
++            + ", continents=" + this.continents
++            + ", erosion=" + this.erosion
++            + ", depth=" + this.depth
++            + ", ridges=" + this.ridges
++            + ", preliminarySurfaceLevel=" + this.preliminarySurfaceLevel
++            + ", finalDensity=" + this.finalDensity
++            + ", veinToggle=" + this.veinToggle
++            + ", veinRidged=" + this.veinRidged
++            + ", veinGap=" + this.veinGap + ']';
+     }
++    // Leaf end - C2ME - DensityFunction compiler
+ }
+diff --git a/net/minecraft/world/level/levelgen/RandomState.java b/net/minecraft/world/level/levelgen/RandomState.java
+index 7b74440fbbe79c018ad59d24b99da0c6d4a9d007..d5f1c65ab7f5922f8473faad5f5718ff0867d629 100644
+--- a/net/minecraft/world/level/levelgen/RandomState.java
++++ b/net/minecraft/world/level/levelgen/RandomState.java
+@@ -81,7 +81,7 @@ public final class RandomState {
+             }
+         }
+ 
+-        this.router = settings.noiseRouter().mapAll(new NoiseWiringHelper());
++        NoiseRouter wiredRouter = settings.noiseRouter().mapAll(new NoiseWiringHelper()); // Leaf - C2ME - DensityFunction compiler
+         DensityFunction.Visitor noiseFlattener = new DensityFunction.Visitor() {
+             private final Map<DensityFunction, DensityFunction> wrapped = new HashMap<>();
+ 
+@@ -98,15 +98,63 @@ public final class RandomState {
+                 return this.wrapped.computeIfAbsent(input, this::wrapNew);
+             }
+         };
+-        this.sampler = new Climate.Sampler(
+-            this.router.temperature().mapAll(noiseFlattener),
+-            this.router.vegetation().mapAll(noiseFlattener),
+-            this.router.continents().mapAll(noiseFlattener),
+-            this.router.erosion().mapAll(noiseFlattener),
+-            this.router.depth().mapAll(noiseFlattener),
+-            this.router.ridges().mapAll(noiseFlattener),
++        // Leaf start - C2ME - DensityFunction compiler
++        Climate.Sampler wiredSampler = new Climate.Sampler(
++            wiredRouter.temperature().mapAll(noiseFlattener),
++            wiredRouter.vegetation().mapAll(noiseFlattener),
++            wiredRouter.continents().mapAll(noiseFlattener),
++            wiredRouter.erosion().mapAll(noiseFlattener),
++            wiredRouter.depth().mapAll(noiseFlattener),
++            wiredRouter.ridges().mapAll(noiseFlattener),
+             settings.spawnTarget()
+         );
++        // Leaf end - C2ME - DensityFunction compiler
++
++        // Leaf start - C2ME - DensityFunction compiler
++        if (org.dreeam.leaf.config.modules.opt.DensityFunctionCompiler.enabled) {
++            final com.google.common.base.Stopwatch stopwatch = com.google.common.base.Stopwatch.createStarted();
++            final DensityFunction finalFinalDensity = DensityFunctions.add(wiredRouter.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE);
++            final NoiseRouter originalRouter = wiredRouter;
++            originalRouter.c2me$setFinalFinalDensity(finalFinalDensity);
++
++            final com.ishland.c2me.opts.dfc.common.gen.jvm.BytecodeGen.Context generationContext =
++                com.ishland.c2me.opts.dfc.common.gen.jvm.BytecodeGen.initContext();
++            wiredRouter = new NoiseRouter(
++                generationContext.compileDelayed("barrier", wiredRouter.barrierNoise()),
++                generationContext.compileDelayed("fluid_level_floodedness", wiredRouter.fluidLevelFloodednessNoise()),
++                generationContext.compileDelayed("fluid_level_spread", wiredRouter.fluidLevelSpreadNoise()),
++                generationContext.compileDelayed("lava", wiredRouter.lavaNoise()),
++                generationContext.compileDelayed("temperature", wiredRouter.temperature()),
++                generationContext.compileDelayed("vegetation", wiredRouter.vegetation()),
++                generationContext.compileDelayed("continents", wiredRouter.continents()),
++                generationContext.compileDelayed("erosion", wiredRouter.erosion()),
++                generationContext.compileDelayed("depth", wiredRouter.depth()),
++                generationContext.compileDelayed("ridges", wiredRouter.ridges()),
++                generationContext.compileDelayed("preliminary_surface_level", wiredRouter.preliminarySurfaceLevel()),
++                generationContext.compileDelayed("final_density", wiredRouter.finalDensity()),
++                generationContext.compileDelayed("vein_toggle", wiredRouter.veinToggle()),
++                generationContext.compileDelayed("vein_ridged", wiredRouter.veinRidged()),
++                generationContext.compileDelayed("vein_gap", wiredRouter.veinGap())
++            );
++            wiredRouter.c2me$setFinalFinalDensity(generationContext.compileDelayed("final_final_density", finalFinalDensity));
++            wiredRouter.c2me$setOriginalNoiseRouter(originalRouter);
++
++            wiredSampler = new Climate.Sampler(
++                generationContext.compileDelayed("multiNoiseSampler_temperature", wiredSampler.temperature()),
++                generationContext.compileDelayed("multiNoiseSampler_vegetation", wiredSampler.humidity()),
++                generationContext.compileDelayed("multiNoiseSampler_continents", wiredSampler.continentalness()),
++                generationContext.compileDelayed("multiNoiseSampler_erosion", wiredSampler.erosion()),
++                generationContext.compileDelayed("multiNoiseSampler_depth", wiredSampler.depth()),
++                generationContext.compileDelayed("multiNoiseSampler_ridges", wiredSampler.weirdness()),
++                wiredSampler.spawnTarget()
++            );
++            com.ishland.c2me.opts.dfc.common.gen.jvm.BytecodeGen.finalizeCompilation(generationContext);
++            stopwatch.stop();
++            org.dreeam.leaf.config.LeafConfig.LOGGER.info("Density function compilation finished in {}", stopwatch);
++        }
++        this.router = wiredRouter;
++        this.sampler = wiredSampler;
++        // Leaf end - C2ME - DensityFunction compiler
+     }
+ 
+     public NormalNoise getOrCreateNoise(final ResourceKey<NormalNoise.NoiseParameters> noise) {
+diff --git a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+index d586f52614c946d1931a2759b08537a92c300094..e40fa63754906f7e54f73730d43e7e94c9291b39 100644
+--- a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+@@ -154,6 +154,39 @@ public class BlendedNoise implements DensityFunction.SimpleFunction {
+         return this.maxValue;
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public boolean equals(final Object object) {
++        if (this == object) return true;
++        if (object == null || this.getClass() != object.getClass()) return false;
++        BlendedNoise that = (BlendedNoise)object;
++        return Double.compare(this.xzMultiplier, that.xzMultiplier) == 0
++            && Double.compare(this.yMultiplier, that.yMultiplier) == 0
++            && Double.compare(this.xzFactor, that.xzFactor) == 0
++            && Double.compare(this.yFactor, that.yFactor) == 0
++            && Double.compare(this.smearScaleMultiplier, that.smearScaleMultiplier) == 0
++            && java.util.Objects.equals(this.minLimitNoise, that.minLimitNoise)
++            && java.util.Objects.equals(this.maxLimitNoise, that.maxLimitNoise)
++            && java.util.Objects.equals(this.mainNoise, that.mainNoise);
++    }
++
++    @Override
++    public int hashCode() {
++        int result = 1;
++
++        result = 31 * result + java.util.Objects.hashCode(this.minLimitNoise);
++        result = 31 * result + java.util.Objects.hashCode(this.maxLimitNoise);
++        result = 31 * result + java.util.Objects.hashCode(this.mainNoise);
++        result = 31 * result + Double.hashCode(this.xzMultiplier);
++        result = 31 * result + Double.hashCode(this.yMultiplier);
++        result = 31 * result + Double.hashCode(this.xzFactor);
++        result = 31 * result + Double.hashCode(this.yFactor);
++        result = 31 * result + Double.hashCode(this.smearScaleMultiplier);
++
++        return result;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     @VisibleForTesting
+     public void parityConfigString(final StringBuilder sb) {
+         sb.append("BlendedNoise{minLimitNoise=");
+diff --git a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+index beb7dc9692a2b75780688ceff350e0e1f206a6eb..8ae8c9b6ee5d7de341015ba3615d46e82f25ade1 100644
+--- a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+@@ -225,6 +225,31 @@ public final class ImprovedNoise {
+         return Mth.lerp3(xAlpha, yAlpha, zAlpha, d000, d100, d010, d110, d001, d101, d011, d111);
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public boolean equals(final Object object) {
++        if (this == object) return true;
++        if (object == null || this.getClass() != object.getClass()) return false;
++        ImprovedNoise that = (ImprovedNoise)object;
++        return Double.compare(this.xo, that.xo) == 0
++            && Double.compare(this.yo, that.yo) == 0
++            && Double.compare(this.zo, that.zo) == 0
++            && java.util.Arrays.equals(this.p, that.p);
++    }
++
++    @Override
++    public int hashCode() {
++        int result = 1;
++
++        result = 31 * result + java.util.Arrays.hashCode(this.p);
++        result = 31 * result + Double.hashCode(this.xo);
++        result = 31 * result + Double.hashCode(this.yo);
++        result = 31 * result + Double.hashCode(this.zo);
++
++        return result;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     @VisibleForTesting
+     public void parityConfigString(final StringBuilder sb) {
+         NoiseUtils.parityNoiseOctaveConfigString(sb, this.xo, this.yo, this.zo, this.p);
+diff --git a/net/minecraft/world/level/levelgen/synth/NormalNoise.java b/net/minecraft/world/level/levelgen/synth/NormalNoise.java
+index 868b96065b665c2653d5005bc91da8ef5f149211..536caddb9daedff5f034a0bb974f8e458a873485 100644
+--- a/net/minecraft/world/level/levelgen/synth/NormalNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/NormalNoise.java
+@@ -83,6 +83,29 @@ public class NormalNoise {
+         return this.parameters;
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public boolean equals(final Object object) {
++        if (this == object) return true;
++        if (object == null || this.getClass() != object.getClass()) return false;
++        NormalNoise that = (NormalNoise)object;
++        return Double.compare(this.valueFactor, that.valueFactor) == 0
++            && java.util.Objects.equals(this.first, that.first)
++            && java.util.Objects.equals(this.second, that.second);
++    }
++
++    @Override
++    public int hashCode() {
++        int result = 1;
++
++        result = 31 * result + Double.hashCode(this.valueFactor);
++        result = 31 * result + java.util.Objects.hashCode(this.first);
++        result = 31 * result + java.util.Objects.hashCode(this.second);
++
++        return result;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     @VisibleForTesting
+     public void parityConfigString(final StringBuilder sb) {
+         sb.append("NormalNoise {");
+diff --git a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+index 7544c8bedebdfc2e908f5fb3fe9d8709829926e1..11462b2f402ab13795dffc25f4656e056e06d577 100644
+--- a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+@@ -220,6 +220,31 @@ public class PerlinNoise {
+         return this.amplitudes;
+     }
+ 
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public boolean equals(final Object object) {
++        if (this == object) return true;
++        if (object == null || this.getClass() != object.getClass()) return false;
++        PerlinNoise that = (PerlinNoise)object;
++        return Double.compare(this.lowestFreqValueFactor, that.lowestFreqValueFactor) == 0
++            && Double.compare(this.lowestFreqInputFactor, that.lowestFreqInputFactor) == 0
++            && Arrays.equals(this.noiseLevels, that.noiseLevels)
++            && Arrays.equals(this.amplitudes.toDoubleArray(), that.amplitudes.toDoubleArray());
++    }
++
++    @Override
++    public int hashCode() {
++        int result = 1;
++
++        result = 31 * result + Arrays.hashCode(this.noiseLevels);
++        result = 31 * result + Arrays.hashCode(this.amplitudes.toDoubleArray());
++        result = 31 * result + Double.hashCode(this.lowestFreqValueFactor);
++        result = 31 * result + Double.hashCode(this.lowestFreqInputFactor);
++
++        return result;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
++
+     @VisibleForTesting
+     public void parityConfigString(final StringBuilder sb) {
+         sb.append("PerlinNoise{");
+diff --git a/net/minecraft/world/level/levelgen/synth/SimplexNoise.java b/net/minecraft/world/level/levelgen/synth/SimplexNoise.java
+index 0ad59c736d2f38bd28608c5ab807425a1609e758..261ed0de50cd833455ed5c5a5bd89fe9fb11d36e 100644
+--- a/net/minecraft/world/level/levelgen/synth/SimplexNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/SimplexNoise.java
+@@ -191,4 +191,29 @@ public class SimplexNoise {
+         double n3 = this.getCornerNoise3D(gi3, x3, y3, z3, 0.6);
+         return 32.0 * (n0 + n1 + n2 + n3);
+     }
++
++    // Leaf start - C2ME - DensityFunction compiler
++    @Override
++    public boolean equals(final Object object) {
++        if (this == object) return true;
++        if (object == null || this.getClass() != object.getClass()) return false;
++        SimplexNoise that = (SimplexNoise) object;
++        return Double.compare(this.xo, that.xo) == 0
++            && Double.compare(this.yo, that.yo) == 0
++            && Double.compare(this.zo, that.zo) == 0
++            && java.util.Arrays.equals(this.p, that.p);
++    }
++
++    @Override
++    public int hashCode() {
++        int result = 1;
++
++        result = 31 * result + java.util.Arrays.hashCode(this.p);
++        result = 31 * result + Double.hashCode(this.xo);
++        result = 31 * result + Double.hashCode(this.yo);
++        result = 31 * result + Double.hashCode(this.zo);
++
++        return result;
++    }
++    // Leaf end - C2ME - DensityFunction compiler
+ }
