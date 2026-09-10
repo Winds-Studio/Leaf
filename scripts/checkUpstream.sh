@@ -168,7 +168,7 @@ get_repository() {
     repository_count=$((repository_count + 1))
     repo_dir="$temp_dir/repo-$repository_count.git"
     verbose_log "CLONE $url"
-    if ! git -c protocol.ext.allow=never clone --bare --quiet -- "$url" "$repo_dir"; then
+    if ! git -c protocol.ext.allow=never clone --bare --quiet --depth=1 -- "$url" "$repo_dir"; then
         repositories[$url]=FAILED
         return 1
     fi
@@ -182,7 +182,7 @@ resolve_commit() {
         return 0
     fi
     # A recorded commit might no longer be reachable from any branch
-    git -C "$repo_dir" fetch --quiet --no-tags origin "$ref" || return 1
+    git -C "$repo_dir" fetch --quiet --no-tags --depth=1 origin "$ref" || return 1
     commit=$(git -C "$repo_dir" rev-parse --verify 'FETCH_HEAD^{commit}')
 }
 
