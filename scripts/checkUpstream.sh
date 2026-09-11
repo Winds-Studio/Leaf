@@ -57,6 +57,7 @@ discard_output_tmp() {
 cleanup() {
     discard_output_tmp || true
     if [[ -n "$temp_dir" && "$temp_dir" == "$temp_base"/leaf-upstream.* && -d "$temp_dir" ]]; then
+        verbose_log "CLEANUP $(du -sh -- "$temp_dir")";
         rm -rf -- "$temp_dir"
     fi
 }
