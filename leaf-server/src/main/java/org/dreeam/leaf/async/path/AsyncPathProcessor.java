@@ -40,6 +40,9 @@ public final class AsyncPathProcessor {
                 getThreadFactory(),
                 getRejectedPolicy()
             );
+            if (getKeepAliveTime() > 0L) {
+                PATH_PROCESSING_EXECUTOR.allowCoreThreadTimeOut(true);
+            }
         } else {
             // Temp no-op
             //throw new IllegalStateException();
@@ -51,7 +54,7 @@ public final class AsyncPathProcessor {
     }
 
     private static int getCorePoolSize() {
-        return 1;
+        return getMaxPoolSize(); // Grow to the configured thread count before queueing
     }
 
     private static int getMaxPoolSize() {
