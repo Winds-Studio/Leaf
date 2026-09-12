@@ -239,6 +239,7 @@ public final class TrackerCtx {
         if (entity.isRemoved() || entity.level() != world || entity.moonrise$getTrackedEntity() != tracker) {
             return;
         }
+        boolean updated = false;
         for (ServerPlayerConnection connection : startSeen.q) {
             ServerPlayer player = connection.getPlayer();
             if (player == entity || player.level() != world) {
@@ -246,7 +247,7 @@ public final class TrackerCtx {
                 continue;
             }
             if (tracker.seenBy.add(connection)) {
-                tracker.seenByUpdated();
+                updated = true;
                 if (callEvent
                     && !new PlayerTrackEntityEvent(
                     player.getBukkitEntity(),
@@ -267,6 +268,10 @@ public final class TrackerCtx {
                 world.debugSynchronizers().startTrackingEntity(player, entity);
                 tracker.serverEntity.onPlayerAdd();
             }
+        }
+
+        if (updated) {
+            tracker.seenByUpdated();
         }
     }
 
