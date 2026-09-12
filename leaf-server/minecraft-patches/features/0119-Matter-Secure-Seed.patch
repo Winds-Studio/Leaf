@@ -9,11 +9,36 @@ Original project: https://github.com/plasmoapp/matter
 Co-authored-by: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
 Co-authored-by: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
 
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index e5b7132b2b310d2e501c0a82ea6e7663f66bec65..7284b138fac14223abf68572425b5d843ae5308f 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -719,6 +719,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         );
+         final org.bukkit.generator.ChunkGenerator chunkGenerator = this.server.getGenerator(loading.data().bukkitName());
+         org.bukkit.generator.BiomeProvider biomeProvider = this.server.getBiomeProvider(loading.data().bukkitName());
++        // Leaf start - Matter - Secure Seed
++        final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCryptoContext terrainCryptoContext = su.plo.matter.TerrainCryptoContext.create(
++            worldDataAndGenSettings.genSettings().options(),
++            dimensionKey
++        );
++        // Leaf end - Matter - Secure Seed
+         final org.bukkit.generator.WorldInfo worldInfo = new org.bukkit.craftbukkit.generator.CraftWorldInfo(
+             loading.data().bukkitName(),
+             org.bukkit.craftbukkit.util.CraftNamespacedKey.fromMinecraft(loading.info().dimensionKey().identifier()),
+@@ -728,6 +734,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             levelStem.type().value(),
+             levelStem.generator(),
+             this.registryAccess(),
++            terrainCryptoContext, // Leaf - Matter - Secure Seed
+             loading.data().uuid()
+         );
+         if (biomeProvider == null && chunkGenerator != null) {
 diff --git a/net/minecraft/server/dedicated/DedicatedServerProperties.java b/net/minecraft/server/dedicated/DedicatedServerProperties.java
-index 425d071c5cb51c596748093b16bb2ac8386e10dd..68c39bd35fefeaf98e351dd76498cb475899dfcb 100644
+index 425d071c5cb51c596748093b16bb2ac8386e10dd..082374cd06b10c537d97aaea225e025886d31d95 100644
 --- a/net/minecraft/server/dedicated/DedicatedServerProperties.java
 +++ b/net/minecraft/server/dedicated/DedicatedServerProperties.java
-@@ -140,7 +140,17 @@ public class DedicatedServerProperties extends Settings<DedicatedServerPropertie
+@@ -140,7 +140,40 @@ public class DedicatedServerProperties extends Settings<DedicatedServerPropertie
          String levelSeed = this.get("level-seed", "");
          boolean generateStructures = this.get("generate-structures", true);
          long seed = WorldOptions.parseSeed(levelSeed).orElse(WorldOptions.randomSeed());
@@ -23,8 +48,31 @@ index 425d071c5cb51c596748093b16bb2ac8386e10dd..68c39bd35fefeaf98e351dd76498cb47
 +            String featureSeedStr = this.get("feature-level-seed", "");
 +            long[] featureSeed = su.plo.matter.Globals.parseSeed(featureSeedStr)
 +                    .orElse(su.plo.matter.Globals.createRandomWorldSeed());
++            if (org.dreeam.leaf.config.modules.misc.SecureSeed.isSecureTerrainEnabled()) {
++                String terrainSeedStr = this.get("terrain-level-seed", "");
++                su.plo.matter.TerrainCrypto terrainCrypto;
++                if (terrainSeedStr.isEmpty()) {
++                    terrainCrypto = su.plo.matter.TerrainCrypto.random();
++                } else {
++                    try {
++                        terrainCrypto = su.plo.matter.TerrainCrypto.fromHex(terrainSeedStr);
++                    } catch (IllegalArgumentException ex) {
++                        if (!org.dreeam.leaf.util.LeafConstants.DISABLE_SECURE_SEED_INTEGRITY_CHECK) {
++                            throw ex;
++                        }
++                        LOGGER.error(
++                            "Invalid terrain-level-seed was discarded because -D{}=true. A random terrain master seed will be used instead.",
++                            org.dreeam.leaf.util.LeafConstants.DISABLE_SECURE_SEED_INTEGRITY_CHECK_FLAG,
++                            ex
++                        );
++                        terrainCrypto = su.plo.matter.TerrainCrypto.random();
++                    }
++                }
 +
-+            this.worldOptions = new WorldOptions(seed, featureSeed, generateStructures, false);
++                this.worldOptions = new WorldOptions(seed, featureSeed, terrainCrypto, generateStructures, false);
++            } else {
++                this.worldOptions = new WorldOptions(seed, featureSeed, generateStructures, false);
++            }
 +        } else {
 +            this.worldOptions = new WorldOptions(seed, generateStructures, false);
 +        }
@@ -32,6 +80,19 @@ index 425d071c5cb51c596748093b16bb2ac8386e10dd..68c39bd35fefeaf98e351dd76498cb47
          this.worldDimensionData = new DedicatedServerProperties.WorldDimensionData(
              this.get("generator-settings", s -> GsonHelper.parse(!s.isEmpty() ? s : "{}"), new JsonObject()),
              this.get("level-type", v -> v.toLowerCase(Locale.ROOT), WorldPresets.NORMAL.identifier().toString())
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index e8000d4ee264c4d0e81a1417a9cafe537a910f6f..a793ab479dad54babae478136d192fa6255fabf5 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -206,7 +206,7 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+         }
+         if (randomGenerator instanceof NoiseBasedChunkGenerator noiseGenerator) {
+             // CraftBukkit end
+-            this.randomState = RandomState.create(noiseGenerator.generatorSettings().value(), registryAccess.lookupOrThrow(Registries.NOISE), levelSeed);
++            this.randomState = RandomState.create(noiseGenerator.generatorSettings().value(), registryAccess.lookupOrThrow(Registries.NOISE), levelSeed, level.leaf$terrainCryptoContext); // Leaf - Matter - Secure Seed
+         } else {
+             this.randomState = RandomState.create(NoiseGeneratorSettings.dummy(), registryAccess.lookupOrThrow(Registries.NOISE), levelSeed);
+         }
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
 index 98f07bacb2a94b368c1969dc0cfb11b72f6cea1a..6755281b1dedf2078e1623918985de772bb78dfe 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
@@ -45,10 +106,28 @@ index 98f07bacb2a94b368c1969dc0cfb11b72f6cea1a..6755281b1dedf2078e1623918985de77
      }
  
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index bc08326c6b8e0657357f57f9bc47ef3c55f7744f..306ab28189d3272efbdaaf09444accf52f570fee 100644
+index 6638155dd34519592893bf992ad5050f30c39626..e314c9975e0cd757155ad327d881a8e8da3b54ec 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -692,6 +692,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+@@ -231,6 +231,8 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final WeatherData weatherData;
+     public final net.minecraft.world.level.timers.TimerQueue<net.minecraft.server.MinecraftServer> scheduledEvents;
+     public final WorldGenSettings worldGenSettings;
++    public final su.plo.matter.Globals.@Nullable DimensionSeed matter$dimensionSeed; // Leaf - Matter - Secure Seed
++    public final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCryptoContext leaf$terrainCryptoContext; // Leaf - Matter - Secure Seed
+     private @Nullable ServerClockManager clockManager;
+     public boolean hasPhysicsEvent = true; // Paper - BlockPhysicsEvent
+     public boolean hasEntityMoveEvent; // Paper - Add EntityMoveEvent
+@@ -644,6 +646,8 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         this.uuid = loadedWorldData.uuid();
+         this.levelLoadListener = new net.minecraft.server.level.progress.LoggingLevelLoadListener(false, this);
+         this.worldGenSettings = worldGenSettings;
++        this.matter$dimensionSeed = org.dreeam.leaf.config.modules.misc.SecureSeed.enabled ? su.plo.matter.Globals.createDimensionSeed(dimension) : null; // Leaf - Matter - Secure Seed
++        this.leaf$terrainCryptoContext = su.plo.matter.TerrainCryptoContext.create(worldGenSettings.options(), dimension); // Leaf - Matter - Secure Seed
+         this.scheduledEvents = savedDataStorage.computeIfAbsent(net.minecraft.world.level.timers.TimerQueue.TYPE);
+         // CraftBukkit end
+         this.tickTime = tickTime;
+@@ -692,6 +696,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
              generator = new org.bukkit.craftbukkit.generator.CustomChunkGenerator(this, generator, gen);
          }
          // CraftBukkit end
@@ -56,8 +135,21 @@ index bc08326c6b8e0657357f57f9bc47ef3c55f7744f..306ab28189d3272efbdaaf09444accf5
          boolean syncWrites = server.forceSynchronousWrites();
          DataFixer fixerUpper = server.getFixerUpper();
          // Paper - rewrite chunk system
+diff --git a/net/minecraft/server/level/WorldGenRegion.java b/net/minecraft/server/level/WorldGenRegion.java
+index 015539951e2a6af0e7b50c05512d1f6200ef2797..0626af0efa86ac0d464f261e0ac1b96ba7de965b 100644
+--- a/net/minecraft/server/level/WorldGenRegion.java
++++ b/net/minecraft/server/level/WorldGenRegion.java
+@@ -116,7 +116,7 @@ public class WorldGenRegion implements WorldGenLevel {
+         this.level = level;
+         this.seed = level.getSeed();
+         this.levelData = level.getLevelData();
+-        this.random = level.getChunkSource().randomState().getOrCreateRandomFactory(WORLDGEN_REGION_RANDOM).at(this.center.getPos().getWorldPosition());
++        this.random = level.getChunkSource().randomState().getOrCreateWorldgenRandomFactory(WORLDGEN_REGION_RANDOM).at(this.center.getPos().getWorldPosition()); // Leaf - Matter - Secure Seed
+         this.dimensionType = level.dimensionType();
+         this.biomeManager = new BiomeManager(this, BiomeManager.obfuscateSeed(this.seed));
+         ChunkPos centerPos = center.getPos();
 diff --git a/net/minecraft/world/entity/monster/cubemob/Slime.java b/net/minecraft/world/entity/monster/cubemob/Slime.java
-index 1faab89a0c6febdbbb15c8f1345fbd8e71f3af6e..e9ccb195426b7d5631920c13f45a5611c8490f48 100644
+index 1faab89a0c6febdbbb15c8f1345fbd8e71f3af6e..5f10718fac8f0c267a2fba5f171dae3024f9f6bf 100644
 --- a/net/minecraft/world/entity/monster/cubemob/Slime.java
 +++ b/net/minecraft/world/entity/monster/cubemob/Slime.java
 @@ -169,7 +169,11 @@ public class Slime extends AbstractCubeMob implements Enemy {
@@ -67,14 +159,14 @@ index 1faab89a0c6febdbbb15c8f1345fbd8e71f3af6e..e9ccb195426b7d5631920c13f45a5611
 -            boolean slimeChunk = level.getMinecraftWorld().paperConfig().entities.spawning.allChunksAreSlimeChunks || WorldgenRandom.seedSlimeChunk(chunkPos.x(), chunkPos.z(), worldGenLevel.getSeed(), level.getMinecraftWorld().spigotConfig.slimeSeed).nextInt(10) == 0; // Paper
 +            // Leaf start - Matter - Secure Seed
 +            boolean slimeChunk = level.getMinecraftWorld().paperConfig().entities.spawning.allChunksAreSlimeChunks || (org.dreeam.leaf.config.modules.misc.SecureSeed.enabled
-+                ? level.getChunk(chunkPos.x(), chunkPos.z()).isSlimeChunk()
++                ? level.getChunk(chunkPos.x(), chunkPos.z()).isSlimeChunk(level.getMinecraftWorld())
 +                : WorldgenRandom.seedSlimeChunk(chunkPos.x(), chunkPos.z(), worldGenLevel.getSeed(), level.getMinecraftWorld().spigotConfig.slimeSeed).nextInt(10) == 0); // Paper
 +            // Leaf end - Matter - Secure Seed
              // Paper start - Replace rules for Height in Slime Chunks
              final double maxHeightSlimeChunk = level.getMinecraftWorld().paperConfig().entities.spawning.slimeSpawnHeight.slimeChunk.maximum;
              if (random.nextInt(10) == 0 && slimeChunk && pos.getY() < maxHeightSlimeChunk) {
 diff --git a/net/minecraft/world/level/chunk/ChunkAccess.java b/net/minecraft/world/level/chunk/ChunkAccess.java
-index 28f703204afd834cd50335346ef065670d6b37ad..f6cecf0ec1ebf9dd7028877dcadf191d1a2d954c 100644
+index 28f703204afd834cd50335346ef065670d6b37ad..b21a7b634f3b00c17750c57ec5b21c43570fdb75 100644
 --- a/net/minecraft/world/level/chunk/ChunkAccess.java
 +++ b/net/minecraft/world/level/chunk/ChunkAccess.java
 @@ -83,6 +83,10 @@ public abstract class ChunkAccess implements LightChunk, StructureAccess, BiomeM
@@ -88,15 +180,23 @@ index 28f703204afd834cd50335346ef065670d6b37ad..f6cecf0ec1ebf9dd7028877dcadf191d
  
      // Paper start - rewrite chunk system
      private volatile ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles;
-@@ -186,6 +190,17 @@ public abstract class ChunkAccess implements LightChunk, StructureAccess, BiomeM
+@@ -186,6 +190,25 @@ public abstract class ChunkAccess implements LightChunk, StructureAccess, BiomeM
          return GameEventListenerRegistry.NOOP;
      }
  
 +    // Leaf start - Matter - Secure Seed
 +    public boolean isSlimeChunk() {
++        if (!(this.levelHeightAccessor instanceof net.minecraft.server.level.ServerLevel level)) {
++            throw new IllegalStateException("Cannot compute slime chunk without a ServerLevel");
++        }
++
++        return this.isSlimeChunk(level);
++    }
++
++    public boolean isSlimeChunk(net.minecraft.server.level.ServerLevel level) {
 +        if (!hasComputedSlimeChunk) {
++            slimeChunk = su.plo.matter.WorldgenCryptoRandom.seedSlimeChunk(level, chunkPos.x(), chunkPos.z()).nextInt(10) == 0;
 +            hasComputedSlimeChunk = true;
-+            slimeChunk = su.plo.matter.WorldgenCryptoRandom.seedSlimeChunk(chunkPos.x(), chunkPos.z()).nextInt(10) == 0;
 +        }
 +
 +        return slimeChunk;
@@ -179,23 +279,225 @@ index 9208924f54d5024bc50ad4501fbff9eb2a289181..01d87d9c474a5f3e14713579e6a1d1e1
          if (chunk.getPersistedStatus().isBefore(this.targetStatus)) {
              ProfiledDuration profiledDuration = JvmProfiler.INSTANCE.onChunkGenerate(chunk.getPos(), context.level().dimension(), this.targetStatus.getName());
              return this.task.doWork(context, this, cache, chunk).thenApply(newCenterChunk -> this.completeChunkGeneration(newCenterChunk, profiledDuration));
+diff --git a/net/minecraft/world/level/levelgen/DensityFunctions.java b/net/minecraft/world/level/levelgen/DensityFunctions.java
+index ba8d4411b3868b60738b93e3d9e0f5df8a79639d..6e9072625314c1e8d04d44207ab943c0a642943f 100644
+--- a/net/minecraft/world/level/levelgen/DensityFunctions.java
++++ b/net/minecraft/world/level/levelgen/DensityFunctions.java
+@@ -511,7 +511,12 @@ public final class DensityFunctions {
+         // Paper end - Perf: Optimize end generation
+ 
+         public EndIslandDensityFunction(final long seed) {
+-            RandomSource islandRandom = new LegacyRandomSource(seed);
++            // Leaf start - Matter - Secure Seed
++            this(new LegacyRandomSource(seed));
++        }
++
++        public EndIslandDensityFunction(final RandomSource islandRandom) {
++        // Leaf end - Matter - Secure Seed
+             islandRandom.consumeCount(17292);
+             this.islandNoise = new SimplexNoise(islandRandom);
+         }
+diff --git a/net/minecraft/world/level/levelgen/RandomState.java b/net/minecraft/world/level/levelgen/RandomState.java
+index 7b74440fbbe79c018ad59d24b99da0c6d4a9d007..b5104e759126e93fd590b688fcb874e06c13afad 100644
+--- a/net/minecraft/world/level/levelgen/RandomState.java
++++ b/net/minecraft/world/level/levelgen/RandomState.java
+@@ -15,6 +15,7 @@ import net.minecraft.world.level.levelgen.synth.NormalNoise;
+ 
+ public final class RandomState {
+     private final PositionalRandomFactory random;
++    private final PositionalRandomFactory vanillaRandom; // Leaf - Matter - Secure Seed
+     private final HolderGetter<NormalNoise.NoiseParameters> noises;
+     private final NoiseRouter router;
+     private final Climate.Sampler sampler;
+@@ -23,23 +24,63 @@ public final class RandomState {
+     private final PositionalRandomFactory oreRandom;
+     private final Map<ResourceKey<NormalNoise.NoiseParameters>, NormalNoise> noiseIntances;
+     private final Map<Identifier, PositionalRandomFactory> positionalRandoms;
++    // Leaf start - Matter - Secure Seed
++    private final Map<Identifier, PositionalRandomFactory> vanillaPositionalRandoms;
++    private final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCryptoContext terrainCryptoContext;
++    // Leaf end - Matter - Secure Seed
+ 
+     public static RandomState create(final HolderGetter.Provider holders, final ResourceKey<NoiseGeneratorSettings> noiseSettings, final long seed) {
+-        return create(holders.lookupOrThrow(Registries.NOISE_SETTINGS).getOrThrow(noiseSettings).value(), holders.lookupOrThrow(Registries.NOISE), seed);
++        // Leaf start - Matter - Secure Seed
++        return create(holders.lookupOrThrow(Registries.NOISE_SETTINGS).getOrThrow(noiseSettings).value(), holders.lookupOrThrow(Registries.NOISE), seed, null);
++    }
++
++    public static RandomState create(final HolderGetter.Provider holders, final ResourceKey<NoiseGeneratorSettings> noiseSettings, final long seed, final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCryptoContext terrainCryptoContext) {
++        return create(
++            holders.lookupOrThrow(Registries.NOISE_SETTINGS).getOrThrow(noiseSettings).value(),
++            holders.lookupOrThrow(Registries.NOISE),
++            seed,
++            terrainCryptoContext
++        );
++        // Leaf end - Matter - Secure Seed
+     }
+ 
+     public static RandomState create(final NoiseGeneratorSettings settings, final HolderGetter<NormalNoise.NoiseParameters> noises, final long seed) {
+-        return new RandomState(settings, noises, seed);
++        // Leaf start - Matter - Secure Seed
++        return new RandomState(settings, noises, seed, null);
+     }
+ 
+-    private RandomState(final NoiseGeneratorSettings settings, final HolderGetter<NormalNoise.NoiseParameters> noises, final long seed) {
+-        this.random = settings.getRandomSource().newInstance(seed).forkPositional();
++    public static RandomState create(final NoiseGeneratorSettings settings, final HolderGetter<NormalNoise.NoiseParameters> noises, final long seed, final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCryptoContext terrainCryptoContext) {
++        return new RandomState(settings, noises, seed, terrainCryptoContext);
++        // Leaf end - Matter - Secure Seed
++    }
++
++    // Leaf start - Matter - Secure Seed
++    private RandomState(final NoiseGeneratorSettings settings, final HolderGetter<NormalNoise.NoiseParameters> noises, final long seed, final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCryptoContext terrainCryptoContext) {
++        this.terrainCryptoContext = terrainCryptoContext;
++        this.vanillaRandom = settings.getRandomSource().newInstance(seed).forkPositional();
++        this.random = terrainCryptoContext == null
++            ? this.vanillaRandom
++            : terrainCryptoContext.initializationRandom("normal_noise").forkPositional();
++        // Leaf end - Matter - Secure Seed
+         this.noises = noises;
+-        this.aquiferRandom = this.random.fromHashOf(Identifier.withDefaultNamespace("aquifer")).forkPositional();
+-        this.oreRandom = this.random.fromHashOf(Identifier.withDefaultNamespace("ore")).forkPositional();
++        // Leaf start - Matter - Secure Seed
++        this.aquiferRandom = terrainCryptoContext == null
++            ? this.random.fromHashOf(Identifier.withDefaultNamespace("aquifer")).forkPositional()
++            : terrainCryptoContext.runtimeFactory("aquifer");
++        this.oreRandom = terrainCryptoContext == null
++            ? this.random.fromHashOf(Identifier.withDefaultNamespace("ore")).forkPositional()
++            : terrainCryptoContext.runtimeFactory("ore_vein");
++        // Leaf end - Matter - Secure Seed
+         this.noiseIntances = new ConcurrentHashMap<>();
+         this.positionalRandoms = new ConcurrentHashMap<>();
+-        this.surfaceSystem = new SurfaceSystem(this, settings.defaultBlock(), settings.seaLevel(), this.random);
++        // Leaf start - Matter - Secure Seed
++        this.vanillaPositionalRandoms = terrainCryptoContext == null ? this.positionalRandoms : new ConcurrentHashMap<>();
++        PositionalRandomFactory surfaceRandom = terrainCryptoContext == null ? this.random : terrainCryptoContext.runtimeFactory("surface");
++        RandomSource clayBandsRandom = terrainCryptoContext == null
++            ? surfaceRandom.fromHashOf(Identifier.withDefaultNamespace("clay_bands"))
++            : terrainCryptoContext.initializationRandom("surface/clay_bands");
++        this.surfaceSystem = new SurfaceSystem(this, settings.defaultBlock(), settings.seaLevel(), surfaceRandom, clayBandsRandom);
++        // Leaf end - Matter - Secure Seed
+         final boolean useLegacyInit = settings.useLegacyRandomSource();
+ 
+         class NoiseWiringHelper implements DensityFunction.Visitor {
+@@ -53,10 +94,20 @@ public final class RandomState {
+             public DensityFunction.NoiseHolder visitNoise(final DensityFunction.NoiseHolder noise) {
+                 Holder<NormalNoise.NoiseParameters> noiseData = noise.noiseData();
+                 if (noiseData.is(Noises.TEMPERATURE_NETHER)) {
+-                    NormalNoise newNoise = NormalNoise.createLegacyNetherBiome(this.newLegacyInstance(0L), noiseData.value());
++                    // Leaf start - Matter - Secure Seed
++                    RandomSource random = terrainCryptoContext == null
++                        ? this.newLegacyInstance(0L)
++                        : terrainCryptoContext.initializationRandom("legacy_nether_temperature");
++                    NormalNoise newNoise = NormalNoise.createLegacyNetherBiome(random, noiseData.value());
++                    // Leaf end - Matter - Secure Seed
+                     return new DensityFunction.NoiseHolder(noiseData, newNoise);
+                 } else if (noiseData.is(Noises.VEGETATION_NETHER)) {
+-                    NormalNoise newNoise = NormalNoise.createLegacyNetherBiome(this.newLegacyInstance(1L), noiseData.value());
++                    // Leaf start - Matter - Secure Seed
++                    RandomSource random = terrainCryptoContext == null
++                        ? this.newLegacyInstance(1L)
++                        : terrainCryptoContext.initializationRandom("legacy_nether_vegetation");
++                    NormalNoise newNoise = NormalNoise.createLegacyNetherBiome(random, noiseData.value());
++                    // Leaf end - Matter - Secure Seed
+                     return new DensityFunction.NoiseHolder(noiseData, newNoise);
+                 } else {
+                     NormalNoise instantiate = RandomState.this.getOrCreateNoise(noiseData.unwrapKey().orElseThrow());
+@@ -66,12 +117,22 @@ public final class RandomState {
+ 
+             private DensityFunction wrapNew(final DensityFunction function) {
+                 if (function instanceof BlendedNoise noise) {
+-                    RandomSource terrainRandom = useLegacyInit
+-                        ? this.newLegacyInstance(0L)
+-                        : RandomState.this.random.fromHashOf(Identifier.withDefaultNamespace("terrain"));
++                    // Leaf start - Matter - Secure Seed
++                    RandomSource terrainRandom = terrainCryptoContext == null
++                        ? (useLegacyInit
++                            ? this.newLegacyInstance(0L)
++                            : RandomState.this.random.fromHashOf(Identifier.withDefaultNamespace("terrain")))
++                        : terrainCryptoContext.initializationRandom("blended_noise");
+                     return noise.withNewRandom(terrainRandom);
++                    // Leaf end - Matter - Secure Seed
+                 } else {
+-                    return function instanceof DensityFunctions.EndIslandDensityFunction ? new DensityFunctions.EndIslandDensityFunction(seed) : function;
++                    // Leaf start - Matter - Secure Seed
++                    return function instanceof DensityFunctions.EndIslandDensityFunction
++                        ? (terrainCryptoContext == null
++                            ? new DensityFunctions.EndIslandDensityFunction(seed)
++                            : new DensityFunctions.EndIslandDensityFunction(terrainCryptoContext.initializationRandom("end_islands")))
++                        : function;
++                    // Leaf end - Matter - Secure Seed
+                 }
+             }
+ 
+@@ -113,9 +174,21 @@ public final class RandomState {
+         return this.noiseIntances.computeIfAbsent(noise, key -> Noises.instantiate(this.noises, this.random, noise));
+     }
+ 
++    // Leaf start - Matter - Secure Seed
+     public PositionalRandomFactory getOrCreateRandomFactory(final Identifier name) {
+-        return this.positionalRandoms.computeIfAbsent(name, key -> this.random.fromHashOf(name).forkPositional());
++        return this.positionalRandoms.computeIfAbsent(name, key -> this.terrainCryptoContext == null ? this.random.fromHashOf(key).forkPositional() : this.terrainCryptoContext.runtimeFactory("named/" + key));
++    }
++
++    public PositionalRandomFactory getOrCreateWorldgenRandomFactory(final Identifier name) {
++        return this.terrainCryptoContext == null
++            ? this.getOrCreateRandomFactory(name)
++            : this.vanillaPositionalRandoms.computeIfAbsent(name, key -> this.vanillaRandom.fromHashOf(key).forkPositional());
++    }
++
++    public boolean usesSecureTerrain() {
++        return this.terrainCryptoContext != null;
+     }
++    // Leaf end - Matter - Secure Seed
+ 
+     public NoiseRouter router() {
+         return this.router;
+diff --git a/net/minecraft/world/level/levelgen/SurfaceSystem.java b/net/minecraft/world/level/levelgen/SurfaceSystem.java
+index cb078856e2942907750ca2d5e7a16abb7e053b65..25dc6120f58b90819e95002788362ba95dcf0b95 100644
+--- a/net/minecraft/world/level/levelgen/SurfaceSystem.java
++++ b/net/minecraft/world/level/levelgen/SurfaceSystem.java
+@@ -48,11 +48,17 @@ public class SurfaceSystem {
+     private final NormalNoise surfaceSecondaryNoise;
+ 
+     public SurfaceSystem(final RandomState randomState, final BlockState defaultBlock, final int seaLevel, final PositionalRandomFactory noiseRandom) {
++        // Leaf start - Matter - Secure Seed
++        this(randomState, defaultBlock, seaLevel, noiseRandom, noiseRandom.fromHashOf(Identifier.withDefaultNamespace("clay_bands")));
++    }
++
++    public SurfaceSystem(final RandomState randomState, final BlockState defaultBlock, final int seaLevel, final PositionalRandomFactory noiseRandom, final RandomSource clayBandsRandom) {
++    // Leaf end - Matter - Secure Seed
+         this.defaultBlock = defaultBlock;
+         this.seaLevel = seaLevel;
+         this.noiseRandom = noiseRandom;
+         this.clayBandsOffsetNoise = randomState.getOrCreateNoise(Noises.CLAY_BANDS_OFFSET);
+-        this.clayBands = generateBands(noiseRandom.fromHashOf(Identifier.withDefaultNamespace("clay_bands")));
++        this.clayBands = generateBands(clayBandsRandom); // Leaf - Matter - Secure Seed
+         this.surfaceNoise = randomState.getOrCreateNoise(Noises.SURFACE);
+         this.surfaceSecondaryNoise = randomState.getOrCreateNoise(Noises.SURFACE_SECONDARY);
+         this.badlandsPillarNoise = randomState.getOrCreateNoise(Noises.BADLANDS_PILLAR);
 diff --git a/net/minecraft/world/level/levelgen/WorldOptions.java b/net/minecraft/world/level/levelgen/WorldOptions.java
-index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..b23dd531d284647e614f07f134c41e70593d5c04 100644
+index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..5c061cb8382995d3e768a60617f01f82d2bdbf69 100644
 --- a/net/minecraft/world/level/levelgen/WorldOptions.java
 +++ b/net/minecraft/world/level/levelgen/WorldOptions.java
-@@ -10,8 +10,20 @@ import net.minecraft.util.RandomSource;
+@@ -10,8 +10,25 @@ import net.minecraft.util.RandomSource;
  import org.apache.commons.lang3.StringUtils;
  
  public class WorldOptions {
 +    // Leaf start - Matter - Secure Seed
 +    private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
 +    private static final boolean isSecureSeedEnabled = org.dreeam.leaf.config.modules.misc.SecureSeed.enabled;
++    private static final boolean isSecureTerrainEnabled = org.dreeam.leaf.config.modules.misc.SecureSeed.isSecureTerrainEnabled();
++    private static final MapCodec<Optional<su.plo.matter.TerrainCrypto>> SECURE_TERRAIN_CODEC = isSecureTerrainEnabled
++        ? su.plo.matter.TerrainCrypto.CODEC.optionalFieldOf("secure_terrain").stable()
++        : MapCodec.unit(Optional.empty());
      public static final MapCodec<WorldOptions> CODEC = RecordCodecBuilder.mapCodec(
 -        i -> i.group(
 +        i -> isSecureSeedEnabled
 +            ? i.group(
 +                Codec.LONG.fieldOf("seed").stable().forGetter(WorldOptions::seed),
 +                Codec.STRING.fieldOf("feature_seed").orElse(GSON.toJson(su.plo.matter.Globals.createRandomWorldSeed())).stable().forGetter(WorldOptions::featureSeedSerialize),
++                SECURE_TERRAIN_CODEC.forGetter(options -> Optional.ofNullable(options.terrainCrypto)),
 +                Codec.BOOL.fieldOf("generate_structures").orElse(true).stable().forGetter(WorldOptions::generateStructures),
 +                Codec.BOOL.fieldOf("bonus_chest").orElse(false).stable().forGetter(WorldOptions::generateBonusChest),
 +                Codec.STRING.lenientOptionalFieldOf("legacy_custom_options").stable().forGetter(s -> s.legacyCustomOptions)
@@ -205,7 +507,7 @@ index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..b23dd531d284647e614f07f134c41e70
                  Codec.LONG.fieldOf("seed").stable().forGetter(WorldOptions::seed),
                  ExtraCodecs.optionalAlwaysPresentFieldOf(Codec.BOOL, "generate_structures", true).stable().forGetter(WorldOptions::generateStructures),
                  ExtraCodecs.optionalAlwaysPresentFieldOf(Codec.BOOL, "bonus_chest", false).stable().forGetter(WorldOptions::generateBonusChest),
-@@ -19,8 +31,14 @@ public class WorldOptions {
+@@ -19,7 +36,14 @@ public class WorldOptions {
              )
              .apply(i, i.stable(WorldOptions::new))
      );
@@ -215,13 +517,13 @@ index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..b23dd531d284647e614f07f134c41e70
 +    public static final WorldOptions DEMO_OPTIONS = isSecureSeedEnabled
 +        ? new WorldOptions("North Carolina".hashCode(), su.plo.matter.Globals.createRandomWorldSeed(), true, true)
 +        : new WorldOptions("North Carolina".hashCode(), true, true);
++    private long[] featureSeed = su.plo.matter.Globals.createRandomWorldSeed();
++    private final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCrypto terrainCrypto;
 +    // Leaf end - Matter - Secure Seed
      private final long seed;
-+    private long[] featureSeed = su.plo.matter.Globals.createRandomWorldSeed(); // Leaf - Matter - Secure Seed
      private final boolean generateStructures;
      private final boolean generateBonusChest;
-     private final Optional<String> legacyCustomOptions;
-@@ -30,13 +48,32 @@ public class WorldOptions {
+@@ -30,24 +54,66 @@ public class WorldOptions {
      }
  
      public static WorldOptions defaultWithRandomSeed() {
@@ -239,23 +541,36 @@ index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..b23dd531d284647e614f07f134c41e70
  
 +    // Leaf start - Matter - Secure Seed
 +    public WorldOptions(final long seed, final long[] featureSeed, final boolean generateStructures, final boolean generateBonusChest) {
-+        this(seed, featureSeed, generateStructures, generateBonusChest, Optional.empty());
++        this(seed, featureSeed, isSecureTerrainEnabled ? su.plo.matter.TerrainCrypto.random() : null, generateStructures, generateBonusChest, Optional.empty());
 +    }
 +
-+    private WorldOptions(final long seed, final String featureSeedJson, final boolean generateStructures, final boolean generateBonusChest, final Optional<String> legacyCustomOptions) {
-+        this(seed, GSON.fromJson(featureSeedJson, long[].class), generateStructures, generateBonusChest, legacyCustomOptions);
++    public WorldOptions(final long seed, final long[] featureSeed, final su.plo.matter.TerrainCrypto terrainCrypto, final boolean generateStructures, final boolean generateBonusChest) {
++        this(seed, featureSeed, terrainCrypto, generateStructures, generateBonusChest, Optional.empty());
 +    }
 +
-+    private WorldOptions(final long seed, final long[] featureSeed, final boolean generateStructures, final boolean generateBonusChest, final Optional<String> legacyCustomOptions) {
-+        this(seed, generateStructures, generateBonusChest, legacyCustomOptions);
++    private WorldOptions(final long seed, final String featureSeedJson, final Optional<su.plo.matter.TerrainCrypto> terrainCrypto, final boolean generateStructures, final boolean generateBonusChest, final Optional<String> legacyCustomOptions) {
++        this(seed, GSON.fromJson(featureSeedJson, long[].class), isSecureTerrainEnabled ? terrainCrypto.orElseGet(su.plo.matter.TerrainCrypto::random) : null, generateStructures, generateBonusChest, legacyCustomOptions);
++    }
++
++    private WorldOptions(final long seed, final long[] featureSeed, final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCrypto terrainCrypto, final boolean generateStructures, final boolean generateBonusChest, final Optional<String> legacyCustomOptions) {
++        this(seed, generateStructures, generateBonusChest, legacyCustomOptions, terrainCrypto);
 +        this.featureSeed = featureSeed;
 +    }
 +    // Leaf end - Matter - Secure Seed
 +
      private WorldOptions(final long seed, final boolean generateStructures, final boolean generateBonusChest, final Optional<String> legacyCustomOptions) {
++        this(seed, generateStructures, generateBonusChest, legacyCustomOptions, isSecureTerrainEnabled ? su.plo.matter.TerrainCrypto.random() : null);
++    }
++
++    private WorldOptions(final long seed, final boolean generateStructures, final boolean generateBonusChest, final Optional<String> legacyCustomOptions, final su.plo.matter.@org.jspecify.annotations.Nullable TerrainCrypto terrainCrypto) {
          this.seed = seed;
          this.generateStructures = generateStructures;
-@@ -48,6 +85,16 @@ public class WorldOptions {
+         this.generateBonusChest = generateBonusChest;
+         this.legacyCustomOptions = legacyCustomOptions;
++        this.terrainCrypto = terrainCrypto; // Leaf - Matter - Secure Seed
+     }
+ 
+     public long seed() {
          return this.seed;
      }
  
@@ -267,12 +582,16 @@ index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..b23dd531d284647e614f07f134c41e70
 +    private String featureSeedSerialize() {
 +        return GSON.toJson(this.featureSeed);
 +    }
++
++    public su.plo.matter.@org.jspecify.annotations.Nullable TerrainCrypto terrainCrypto() {
++        return this.terrainCrypto;
++    }
 +    // Leaf end - Matter - Secure Seed
 +
      public boolean generateStructures() {
          return this.generateStructures;
      }
-@@ -60,17 +107,25 @@ public class WorldOptions {
+@@ -60,17 +126,25 @@ public class WorldOptions {
          return this.legacyCustomOptions.isPresent();
      }
  
@@ -280,21 +599,21 @@ index 4ad94af024d81b7dfe910dcee2a6ec7a9b200d56..b23dd531d284647e614f07f134c41e70
      public WorldOptions withBonusChest(final boolean generateBonusChest) {
 -        return new WorldOptions(this.seed, this.generateStructures, generateBonusChest, this.legacyCustomOptions);
 +        return isSecureSeedEnabled
-+            ? new WorldOptions(this.seed, this.featureSeed, this.generateStructures, generateBonusChest, this.legacyCustomOptions)
++            ? new WorldOptions(this.seed, this.featureSeed, isSecureTerrainEnabled ? java.util.Objects.requireNonNull(this.terrainCrypto) : null, this.generateStructures, generateBonusChest, this.legacyCustomOptions)
 +            : new WorldOptions(this.seed, this.generateStructures, generateBonusChest, this.legacyCustomOptions);
      }
  
      public WorldOptions withStructures(final boolean generateStructures) {
 -        return new WorldOptions(this.seed, generateStructures, this.generateBonusChest, this.legacyCustomOptions);
 +        return isSecureSeedEnabled
-+            ? new WorldOptions(this.seed, this.featureSeed, generateStructures, this.generateBonusChest, this.legacyCustomOptions)
++            ? new WorldOptions(this.seed, this.featureSeed, isSecureTerrainEnabled ? java.util.Objects.requireNonNull(this.terrainCrypto) : null, generateStructures, this.generateBonusChest, this.legacyCustomOptions)
 +            : new WorldOptions(this.seed, generateStructures, this.generateBonusChest, this.legacyCustomOptions);
      }
  
      public WorldOptions withSeed(final OptionalLong seed) {
 -        return new WorldOptions(seed.orElse(randomSeed()), this.generateStructures, this.generateBonusChest, this.legacyCustomOptions);
 +        return isSecureSeedEnabled
-+            ? new WorldOptions(seed.orElse(randomSeed()), su.plo.matter.Globals.createRandomWorldSeed(), this.generateStructures, this.generateBonusChest, this.legacyCustomOptions)
++            ? new WorldOptions(seed.orElse(randomSeed()), su.plo.matter.Globals.createRandomWorldSeed(), isSecureTerrainEnabled ? java.util.Objects.requireNonNull(this.terrainCrypto) : null, this.generateStructures, this.generateBonusChest, this.legacyCustomOptions)
 +            : new WorldOptions(seed.orElse(randomSeed()), this.generateStructures, this.generateBonusChest, this.legacyCustomOptions);
      }
 +    // Leaf end - Matter - Secure Seed
@@ -357,10 +676,10 @@ index 1310b2ca994b8f6d3d92bdc676fe44de3619cc09..bbb55a6d32b972546d391842d9d60223
          int spreadX = this.spreadType.evaluate(random, limit);
          int spreadZ = this.spreadType.evaluate(random, limit);
 diff --git a/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java b/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
-index 646df0237a5a2863f75e6c5f9dfe9ddf512c540f..034613cc0f00a66a1c5fe510bb0c67c37dfa06dd 100644
+index 646df0237a5a2863f75e6c5f9dfe9ddf512c540f..d2958b0a0917e79e5509dfac81e39c5a9a4f16f4 100644
 --- a/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
 +++ b/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
-@@ -119,8 +119,15 @@ public abstract class StructurePlacement {
+@@ -119,34 +119,63 @@ public abstract class StructurePlacement {
      public abstract StructurePlacementType<?> type();
  
      private static boolean probabilityReducer(final long seed, final int salt, final int sourceX, final int sourceZ, final float probability, final @org.jspecify.annotations.Nullable Integer saltOverride) { // Paper - Add missing structure set seed configs; ignore here
@@ -378,6 +697,64 @@ index 646df0237a5a2863f75e6c5f9dfe9ddf512c540f..034613cc0f00a66a1c5fe510bb0c67c3
          return random.nextFloat() < probability;
      }
  
+     private static boolean legacyProbabilityReducerWithDouble(final long seed, final int salt, final int sourceX, final int sourceZ, final float probability, final @org.jspecify.annotations.Nullable Integer saltOverride) { // Paper - Add missing structure set seed configs
+-        WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(0L));
+-        if (saltOverride == null) { // Paper - Add missing structure set seed configs
+-        random.setLargeFeatureSeed(seed, sourceX, sourceZ);
+-            // Paper start - Add missing structure set seed configs
++        // Leaf start - Matter - Secure Seed
++        WorldgenRandom random;
++        if (org.dreeam.leaf.config.modules.misc.SecureSeed.enabled) {
++            random = new su.plo.matter.WorldgenCryptoRandom(sourceX, sourceZ, su.plo.matter.Globals.Salt.MINESHAFT_FEATURE, saltOverride != null ? saltOverride : 0);
+         } else {
+-            random.setLargeFeatureWithSalt(seed, sourceX, sourceZ, saltOverride);
++            random = new WorldgenRandom(new LegacyRandomSource(0L));
++            if (saltOverride == null) { // Paper - Add missing structure set seed configs
++                random.setLargeFeatureSeed(seed, sourceX, sourceZ);
++            // Paper start - Add missing structure set seed configs
++            } else {
++                random.setLargeFeatureWithSalt(seed, sourceX, sourceZ, saltOverride);
++            }
++            // Paper end - Add missing structure set seed configs
+         }
+-        // Paper end - Add missing structure set seed configs
++        // Leaf end - Matter - Secure Seed
+         return random.nextDouble() < probability;
+     }
+ 
+     private static boolean legacyArbitrarySaltProbabilityReducer(final long seed, final int salt, final int sourceX, final int sourceZ, final float probability, final @org.jspecify.annotations.Nullable Integer saltOverride) { // Paper - Add missing structure set seed configs
+-        WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(0L));
+-        random.setLargeFeatureWithSalt(seed, sourceX, sourceZ, saltOverride != null ? saltOverride : HIGHLY_ARBITRARY_RANDOM_SALT); // Paper - Add missing structure set seed configs
++        // Leaf start - Matter - Secure Seed
++        WorldgenRandom random;
++        int effectiveSalt = saltOverride != null ? saltOverride : HIGHLY_ARBITRARY_RANDOM_SALT; // Paper - Add missing structure set seed configs
++        if (org.dreeam.leaf.config.modules.misc.SecureSeed.enabled) {
++            random = new su.plo.matter.WorldgenCryptoRandom(sourceX, sourceZ, su.plo.matter.Globals.Salt.BURIED_TREASURE_FEATURE, effectiveSalt);
++        } else {
++            random = new WorldgenRandom(new LegacyRandomSource(0L));
++            random.setLargeFeatureWithSalt(seed, sourceX, sourceZ, effectiveSalt);
++        }
++        // Leaf end - Matter - Secure Seed
+         return random.nextFloat() < probability;
+     }
+ 
+     private static boolean legacyPillagerOutpostReducer(final long seed, final int salt, final int sourceX, final int sourceZ, final float probability, final @org.jspecify.annotations.Nullable Integer saltOverride) { // Paper - Add missing structure set seed configs; ignore here
+         int cx = sourceX >> 4;
+         int cz = sourceZ >> 4;
+-        WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(0L));
+-        random.setSeed(cx ^ cz << 4 ^ seed);
++        // Leaf start - Matter - Secure Seed
++        WorldgenRandom random;
++        if (org.dreeam.leaf.config.modules.misc.SecureSeed.enabled) {
++            random = new su.plo.matter.WorldgenCryptoRandom(cx, cz, su.plo.matter.Globals.Salt.PILLAGER_OUTPOST_FEATURE, 0);
++        } else {
++            random = new WorldgenRandom(new LegacyRandomSource(0L));
++            random.setSeed(cx ^ cz << 4 ^ seed);
++        }
++        // Leaf end - Matter - Secure Seed
+         random.nextInt();
+         return random.nextInt((int)(1.0F / probability)) == 0;
+     }
 diff --git a/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java b/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java
 index b92da7acae0789d955a9f71072b95ed030b879e2..0fb398c6dd1596a25277dd506b1edadde8e71d82 100644
 --- a/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java
