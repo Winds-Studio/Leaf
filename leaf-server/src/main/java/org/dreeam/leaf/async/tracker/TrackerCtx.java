@@ -7,6 +7,8 @@ import it.unimi.dsi.fastutil.objects.Object2ObjectFunction;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.core.Holder;
+import net.minecraft.network.protocol.BundlePacket;
+import net.minecraft.network.protocol.BundlerInfo;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
@@ -30,6 +32,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
+import org.dreeam.leaf.util.LeafConstants;
 import org.dreeam.leaf.util.map.AttributeInstanceArrayMap;
 import org.jspecify.annotations.NullMarked;
 
@@ -236,6 +239,7 @@ public final class TrackerCtx {
         if (entity.isRemoved() || entity.level() != world || entity.moonrise$getTrackedEntity() != tracker) {
             return;
         }
+        boolean updated = false;
         for (ServerPlayerConnection connection : startSeen.q) {
             ServerPlayer player = connection.getPlayer();
             if (player == entity || player.level() != world) {
@@ -243,7 +247,7 @@ public final class TrackerCtx {
                 continue;
             }
             if (tracker.seenBy.add(connection)) {
-                tracker.seenByUpdated();
+                updated = true;
                 if (callEvent
                     && !new PlayerTrackEntityEvent(
                     player.getBukkitEntity(),
@@ -264,6 +268,10 @@ public final class TrackerCtx {
                 world.debugSynchronizers().startTrackingEntity(player, entity);
                 tracker.serverEntity.onPlayerAdd();
             }
+        }
+
+        if (updated) {
+            tracker.seenByUpdated();
         }
     }
 
@@ -330,6 +338,9 @@ public final class TrackerCtx {
         ObjectArrayList<ClientboundUpdateAttributesPacket.AttributeSnapshot> attributes;
         if (attributeMap.attributes instanceof AttributeInstanceArrayMap map) {
             int[] ids = attributeMap.getAttributesToSyncIds();
+            if (ids.length == 0) {
+                return;
+            }
             attributes = new ObjectArrayList<>(ids.length);
             for (int attributeIdx : ids) {
                 AttributeInstance instance = map.getInstance(attributeIdx);
@@ -344,6 +355,9 @@ public final class TrackerCtx {
             }
         } else {
             Set<AttributeInstance> toSync = attributeMap.getAttributesToSync();
+            if (toSync.isEmpty()) {
+                return;
+            }
             attributes = new ObjectArrayList<>(toSync.size());
             for (AttributeInstance instance : toSync) {
                 if (instance == null) {
@@ -368,11 +382,39 @@ public final class TrackerCtx {
     }
 
     private static void sendPacket(ServerLevel world, ServerPlayerConnection connection, ObjectArrayList<Packet<?>> list) {
-        if (world == connection.getPlayer().level()) {
+        if (world != connection.getPlayer().level()) {
+            return;
+        }
+        if (!LeafConstants.ASYNC_TRACKER_PROTOCOL_LIB_FIX) {
             Packet<?>[] packetsRaw = list.elements();
             for (int i = 0, size = list.size(); i < size; i++) {
                 connection.send(packetsRaw[i]);
             }
+            return;
+        }
+
+        if (list.size() == 1) {
+            connection.send(list.get(0));
+            return;
+        }
+
+        int start = 0;
+        int end = 0;
+        while (end < list.size()) {
+            if (list.get(end) instanceof BundlePacket<?> packet) {
+                if (start != end) {
+                    connection.send(new ClientboundBundlePacket((Iterable) list.subList(start, end)));
+                }
+                start = end + 1;
+                connection.send(packet);
+            } else if (end - start == BundlerInfo.BUNDLE_SIZE_LIMIT) {
+                connection.send(new ClientboundBundlePacket((Iterable) list.subList(start, end)));
+                start = end;
+            }
+            end++;
+        }
+        if (start != end) {
+            connection.send(new ClientboundBundlePacket((Iterable) list.subList(start, end)));
         }
     }
 }

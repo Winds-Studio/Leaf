@@ -53,6 +53,12 @@ public final class DespawnMap implements Consumer<Entity> {
                 fallback = true;
             }
         }
+
+        this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
+
+        if (fallback) {
+            return false;
+        }
         for (int i = 0; i < CATEGORIES.length; i++) {
             if (sort[i] > 0.0) {
                 sort[i] = sort[i] * sort[i];
@@ -80,13 +86,8 @@ public final class DespawnMap implements Consumer<Entity> {
             }
         }
         tree.build(new double[][]{playerX, playerY, playerZ}, new int[i]);
-        this.difficultyIsPeaceful = world.getDifficulty() == Difficulty.PEACEFUL;
-        if (fallback) {
-            return false;
-        } else {
-            entityTickList.forEach(this);
-            return true;
-        }
+        entityTickList.forEach(this);
+        return true;
     }
 
     private boolean checkDespawn(final Entity entity) {
