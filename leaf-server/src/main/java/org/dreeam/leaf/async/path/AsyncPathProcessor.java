@@ -50,22 +50,6 @@ public final class AsyncPathProcessor {
         PATH_PROCESSING_EXECUTOR.execute(path);
     }
 
-    /**
-     * takes a possibly unprocessed path, and waits until it is completed
-     * the consumer will be immediately invoked if the path is already processed
-     * the consumer will always be called on the main thread
-     *
-     * @param path            a path to wait on
-     * @param afterProcessing a consumer to be called
-     */
-    public static void awaitProcessing(@Nullable Path path, Consumer<@Nullable Path> afterProcessing) {
-        if (path != null && !path.isProcessed() && path instanceof AsyncPath asyncPath) {
-            asyncPath.schedulePostProcessing(afterProcessing); // Reduce double lambda allocation
-        } else {
-            afterProcessing.accept(path);
-        }
-    }
-
     private static int getCorePoolSize() {
         return 1;
     }

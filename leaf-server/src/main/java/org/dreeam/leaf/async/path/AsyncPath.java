@@ -22,8 +22,6 @@ public final class AsyncPath extends Path {
 
     private boolean ready = false;
 
-    private final ArrayList<Consumer<Path>> postProcessing = new ArrayList<>();
-
     /**
      * A list of positions that this path could path towards
      */
@@ -78,17 +76,6 @@ public final class AsyncPath extends Path {
     }
 
     /**
-     * Returns the future representing the processing state of this path
-     */
-    public void schedulePostProcessing(Consumer<Path> runnable) {
-        if (this.ready) {
-            runnable.accept(this);
-        } else {
-            this.postProcessing.add(runnable);
-        }
-    }
-
-    /**
      * An easy way to check if this processing path is the same as an attempted new path
      *
      * @param positions - the positions to compare against
@@ -125,10 +112,6 @@ public final class AsyncPath extends Path {
         this.canReach = bestPath.canReach();
         this.pathFn = null;
         this.ready = true;
-        for (Consumer<Path> consumer : this.postProcessing) {
-            consumer.accept(this);
-        }
-        this.postProcessing.clear();
     }
 
     /*
