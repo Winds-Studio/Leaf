@@ -1,3 +1,4 @@
+// Removed since 26.2
 package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.config.ConfigModule;
