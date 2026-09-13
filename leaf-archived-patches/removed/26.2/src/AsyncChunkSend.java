@@ -1,3 +1,4 @@
+// Removed since 26.2
 package org.dreeam.leaf.async.chunk;
 
 import net.minecraft.util.Util;
