@@ -98,7 +98,7 @@ public final class AsyncPath extends Path {
         return this.positions.equals(positions);
     }
 
-    private void process() {
+    public void process() {
         if (this.ready) {
             return;
         }

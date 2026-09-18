@@ -57,6 +57,10 @@ subprojects {
     }
 }
 
+project(":leaf-server") {
+    apply(from = rootProject.file("gradle/patch-editing.gradle.kts"))
+}
+
 paperweight {
     upstreams.paper {
         ref = providers.gradleProperty("paperCommit")
