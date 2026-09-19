@@ -43,8 +43,8 @@ public class SpawnerSettings extends ConfigModule {
 
         lightLevelCheck = globalConfig.getBoolean(basePath() + ".checks.light-level-check", lightLevelCheck,
             globalConfig.pickStringRegionBased(
-                "Check if there is the required light level to spawn the mob",
-                "检查是否有所需的光照等级来生成怪物"
+                "Apply Leaf's additional light-level check. Custom light limits are always checked.",
+                "启用 Leaf 额外的光照检查. 自定义光照区间始终检查."
             ));
 
         spawnerMaxNearbyCheck = globalConfig.getBoolean(basePath() + ".checks.spawner-max-nearby-check", spawnerMaxNearbyCheck,
@@ -61,8 +61,8 @@ public class SpawnerSettings extends ConfigModule {
 
         spawnerBlockChecks = globalConfig.getBoolean(basePath() + ".checks.spawner-block-checks", spawnerBlockChecks,
             globalConfig.pickStringRegionBased(
-                "Check if there are physical blocks obstructing the spawn location, or if custom spawn rules (isValidPosition) fail due to block conditions.",
-                "检查是否有物理方块阻挡生成位置, 或自定义生成规则(isValidPosition)因方块条件失败."
+                "Check physical collisions and mob spawn obstructions. Custom light limits are always checked.",
+                "检查生成位置的碰撞和生物的生成障碍条件. 自定义光照区间始终检查."
             ));
 
         waterPreventSpawnCheck = globalConfig.getBoolean(basePath() + ".checks.water-prevent-spawn-check", waterPreventSpawnCheck,
