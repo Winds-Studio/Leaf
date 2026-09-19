@@ -13,7 +13,7 @@ public class AsyncPathfinding extends ConfigModule {
 
     public static boolean enabled = false;
     public static int asyncPathfindingMaxThreads = 0;
-    public static int asyncPathfindingKeepalive = 60;
+    public static int asyncPathfindingKeepalive = 0;
     public static int asyncPathfindingQueueSize = 0;
     public static PathfindTaskRejectPolicy asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.FLUSH_ALL;
     private static boolean asyncPathfindingInitialized;
