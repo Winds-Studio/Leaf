@@ -1,5 +1,6 @@
 package org.dreeam.leaf.util.map;
 
+import ca.spottedleaf.moonrise.common.util.TickThread;
 import net.minecraft.core.Holder;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
@@ -16,6 +17,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     private transient @Nullable KeySet keys;
     private transient @Nullable Values values;
     private transient @Nullable EntrySet entries;
+    public boolean threadChecksEnabled;
 
     public AttributeInstanceArrayMap() {
     }
@@ -24,7 +26,14 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
         putAll(m);
     }
 
+    private void checkThread() {
+        if (this.threadChecksEnabled && !TickThread.isTickThread()) {
+            Thread.dumpStack();
+        }
+    }
+
     private void setByIndex(int index, @Nullable AttributeInstance instance) {
+        checkThread();
         boolean empty = a[index] == null;
         if (instance == null) {
             if (!empty) {
@@ -101,6 +110,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
 
     @Override
     public void clear() {
+        checkThread();
         Arrays.fill(a, null);
         size = 0;
     }
@@ -353,6 +363,7 @@ public final class AttributeInstanceArrayMap implements Map<Holder<Attribute>, A
     }
 
     public @Nullable AttributeInstance[] elements() {
+        checkThread();
         return a;
     }
 }

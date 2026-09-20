@@ -1,5 +1,6 @@
 package org.dreeam.leaf.util.map;
 
+import ca.spottedleaf.moonrise.common.util.TickThread;
 import it.unimi.dsi.fastutil.ints.IntArraySet;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
@@ -14,25 +15,36 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
 
     public AttributeInstanceSet(AttributeInstanceArrayMap map) {
         this.map = map;
+        this.map.threadChecksEnabled = true;
         inner = new IntArraySet();
+    }
+
+    private static void checkThread() {
+        if (!TickThread.isTickThread()) {
+            Thread.dumpStack();
+        }
     }
 
     @Override
     public boolean add(AttributeInstance instance) {
+        checkThread();
         return inner.add(instance.getAttribute().value().id);
     }
 
     public boolean addAttribute(Attribute attribute) {
+        checkThread();
         return inner.add(attribute.id);
     }
 
     @Override
     public boolean remove(Object o) {
+        checkThread();
         return o instanceof AttributeInstance instance && inner.remove(instance.getAttribute().value().id);
     }
 
     @Override
     public Iterator<AttributeInstance> iterator() {
+        checkThread();
         return new CloneIterator(inner.toIntArray(), map);
     }
 
@@ -48,6 +60,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
 
     @Override
     public void clear() {
+        checkThread();
         inner.clear();
     }
 
@@ -61,6 +74,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
 
     @Override
     public AttributeInstance[] toArray() {
+        checkThread();
         int[] innerClone = inner.toIntArray();
         AttributeInstance[] arr = new AttributeInstance[innerClone.length];
         for (int i = 0; i < arr.length; i++) {
@@ -72,6 +86,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
     @SuppressWarnings({"unchecked"})
     @Override
     public <T> @Nullable T[] toArray(@Nullable T @Nullable[] a) {
+        checkThread();
         if (a == null || (a.getClass() == AttributeInstance[].class && a.length == 0)) {
             return (T[]) toArray();
         }
@@ -102,6 +117,7 @@ public final class AttributeInstanceSet extends AbstractCollection<AttributeInst
 
         @Override
         public AttributeInstance next() {
+            checkThread();
             if (!hasNext()) throw new NoSuchElementException();
             return Objects.requireNonNull(map.getInstance(array[index++]));
         }
