@@ -107,10 +107,7 @@ public final class DespawnMap implements Consumer<Entity> {
             if (difficultyIsPeaceful && !t.isAllowedInPeaceful()) {
                 return true;
             }
-            if (mob.isPersistenceRequired() || mob.requiresCustomPersistence()) {
-                mob.noActionTime = 0;
-                return false;
-            }
+            boolean isPersistent = mob.isPersistenceRequired() || mob.requiresCustomPersistence();
 
             final int category = t.getCategory().ordinal();
             final double hardDist = this.hard[category];
@@ -124,11 +121,11 @@ public final class DespawnMap implements Consumer<Entity> {
             if (dist == Double.POSITIVE_INFINITY) {
                 return false;
             }
-            if (dist > hardDist) {
+            if (!isPersistent && dist > hardDist) {
                 return mob.removeWhenFarAway(dist);
             }
             if (dist > this.sort[category]) {
-                return mob.noActionTime > 600
+                return !isPersistent && mob.noActionTime > 600
                     && mob.getRandom().nextInt(800) == 0
                     && mob.removeWhenFarAway(dist);
             }
