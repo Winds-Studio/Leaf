@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Mon, 11 Aug 2025 02:19:59 +0900
+Subject: [PATCH] cache collision list
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index f3c686e180ee23c9e627fa3e948b842f2241f138..e8c621f53954df3401f5252e412b0f49309477ad 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1219,6 +1219,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final org.dreeam.leaf.world.DespawnMap despawnMap = new org.dreeam.leaf.world.DespawnMap(); // Leaf - optimize despawn
+     public final org.dreeam.leaf.world.NatureSpawnChunkMap natureSpawnChunkMap = new org.dreeam.leaf.world.NatureSpawnChunkMap(); // Leaf - optimize mob spawning
+     public final org.dreeam.leaf.world.RandomTickSystem randomTickSystem = new org.dreeam.leaf.world.RandomTickSystem(); // Leaf - optimize random tick
++    public final org.dreeam.leaf.world.EntityCollisionCache entityCollisionCache = new org.dreeam.leaf.world.EntityCollisionCache(); // Leaf - cache collision list
+     public void tickChunk(final LevelChunk chunk, final int tickSpeed) {
+         final net.minecraft.world.level.levelgen.BitRandomSource simpleRandom = this.simpleRandom; // Paper - optimise random ticking // Leaf - Faster random generator - upcasting
+         ChunkPos chunkPos = chunk.getPos();
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 4a046aad4f1d94bfbe469f3b1345304cc4b4f388..af3ac9e5bd57c3af252a931e9e965f7a01cc79ac 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1719,8 +1719,8 @@ public abstract class Entity
+ 
+         final AABB currentBox = this.getBoundingBox();
+ 
+-        final List<VoxelShape> potentialCollisionsVoxel = new ArrayList<>();
+-        final List<AABB> potentialCollisionsBB = new ArrayList<>();
++        // final List<VoxelShape> potentialCollisionsVoxel = new ArrayList<>(); // Leaf - cache collision list
++        // final List<AABB> potentialCollisionsBB = new ArrayList<>(); // Leaf - cache collision list
+ 
+         final AABB initialCollisionBox;
+         if (xZero & zZero) {
+@@ -1732,22 +1732,22 @@ public abstract class Entity
+             initialCollisionBox = currentBox.expandTowards(movement);
+         }
+ 
+-        final List<AABB> entityAABBs = new ArrayList<>();
++        org.dreeam.leaf.world.EntityCollisionCache entityCollisionCache = ((ServerLevel) this.level).entityCollisionCache; // Leaf - cache collision list
+         // Vanilla expands the entity query by maxUpStep: the step logic below tests raised positions, so
+         // entities fully above this entity's hitbox must be fetched for those checks (MC-310289). When
+         // there is no horizontal movement the step logic cannot run, so keep the smaller query.
+         final AABB entityQueryBox = (xZero & zZero) ? initialCollisionBox
+             : initialCollisionBox.expandTowards(0.0, (double)this.maxUpStep(), 0.0);
+         ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getEntityHardCollisions(
+-            this.level, (Entity)(Object)this, entityQueryBox, entityAABBs, 0, null
++            this.level, (Entity)(Object)this, entityQueryBox, entityCollisionCache.entityAABBs(), 0, null // Leaf - cache collision list
+         );
+ 
+         ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getCollisionsForBlocksOrWorldBorder(
+-            this.level, (Entity)(Object)this, initialCollisionBox, potentialCollisionsVoxel, potentialCollisionsBB,
++            this.level, (Entity)(Object)this, initialCollisionBox, entityCollisionCache.potentialCollisionsVoxel(), entityCollisionCache.potentialCollisionsBB(), // Leaf - cache collision list
+             ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.COLLISION_FLAG_CHECK_BORDER, null
+         );
+-        potentialCollisionsBB.addAll(entityAABBs);
+-        final Vec3 collided = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(movement, currentBox, potentialCollisionsVoxel, potentialCollisionsBB);
++        entityCollisionCache.potentialCollisionsBB().addAll(entityCollisionCache.entityAABBs()); // Leaf - cache collision list
++        final Vec3 collided = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(movement, currentBox, entityCollisionCache.potentialCollisionsVoxel(), entityCollisionCache.potentialCollisionsBB()); // Leaf - cache collision list
+ 
+         final boolean collidedX = collided.x != movement.x;
+         final boolean collidedY = collided.y != movement.y;
+@@ -1758,6 +1758,7 @@ public abstract class Entity
+         final double stepHeight;
+ 
+         if ((!collidedDownwards && !this.onGround) || (!collidedX && !collidedZ) || (stepHeight = (double)this.maxUpStep()) <= 0.0) {
++            entityCollisionCache.clear(); // Leaf - cache collision list
+             return collided;
+         }
+ 
+@@ -1768,7 +1769,7 @@ public abstract class Entity
+         }
+ 
+         final List<VoxelShape> stepVoxels = new ArrayList<>();
+-        final List<AABB> stepAABBs = entityAABBs;
++        final List<AABB> stepAABBs = entityCollisionCache.entityAABBs(); // Leaf // Leaf - cache collision list
+ 
+         ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getCollisionsForBlocksOrWorldBorder(
+             this.level, (Entity)(Object)this, stepRetrievalBox, stepVoxels, stepAABBs,
+@@ -1778,10 +1779,12 @@ public abstract class Entity
+         for (final float step : calculateStepHeights(collidedYBox, stepVoxels, stepAABBs, (float)stepHeight, (float)collided.y)) {
+             final Vec3 stepResult = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(new Vec3(movement.x, (double)step, movement.z), collidedYBox, stepVoxels, stepAABBs);
+             if (stepResult.horizontalDistanceSqr() > collided.horizontalDistanceSqr()) {
++                entityCollisionCache.clear(); // Leaf - cache collision list
+                 return stepResult.add(0.0, collidedYBox.minY - currentBox.minY, 0.0);
+             }
+         }
+ 
++        entityCollisionCache.clear(); // Leaf - cache collision list
+         return collided;
+         // Paper end - optimise collisions
+     }

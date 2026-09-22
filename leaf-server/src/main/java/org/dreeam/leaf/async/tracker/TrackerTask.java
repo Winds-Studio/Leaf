@@ -29,13 +29,8 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
                 continue;
             }
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
-            boolean flag = tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
-            if (!flag) {
-                FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
-                // removed in world if null
-                flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
-            }
-            if (flag || entity.needsSync) {
+            tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
+            if (tracker.serverEntity.leaf$shouldSendChanges) {
                 tracker.serverEntity.leaf$sendChanges(ctx, tracker, false);
             }
         }

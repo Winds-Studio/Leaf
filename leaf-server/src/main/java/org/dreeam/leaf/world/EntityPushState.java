@@ -57,7 +57,7 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
     }
 
     @Override
-    public AbortableIterationConsumer.Continuation accept(final Entity entity) {
+    public net.minecraft.util.Continuation accept(final Entity entity) {
         this.foundAny = true;
 
         if (this.maxEntityCollisions > 0 && this.pushableEntities.size() < this.maxEntityCollisions) {
@@ -88,6 +88,6 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
         }
         // whether we collected enough entities for collision and cramming process
         final boolean collisionsResolved = this.maxEntityCollisions <= 0 || this.pushableEntities.size() >= this.maxEntityCollisions;
-        return collisionsResolved && this.crammingResolved ? AbortableIterationConsumer.Continuation.ABORT : AbortableIterationConsumer.Continuation.CONTINUE;
+        return collisionsResolved && this.crammingResolved ? net.minecraft.util.Continuation.ABORT : net.minecraft.util.Continuation.CONTINUE;
     }
 }

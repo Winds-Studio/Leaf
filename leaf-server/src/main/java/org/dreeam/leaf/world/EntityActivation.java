@@ -147,7 +147,7 @@ public final class EntityActivation {
             final int priority;
             if (dab
                 && entity.getType().dabEnabled
-                && (!dontEnableIfInWater || !entity.isInWater() || (entity instanceof WaterAnimal || (entity instanceof final LivingEntity livingEntity && livingEntity.canBreatheUnderwater())))) {
+                && (!dontEnableIfInWater || !entity.isInWater() || entity.is(net.minecraft.tags.EntityTypeTags.CAN_BREATHE_UNDER_WATER))) {
                 final double distSq = kdTree3.nearestSqr(p.x, p.y, p.z, 16384.0);
                 //noinspection MathClampMigration
                 priority = distSq > startSq ? Math.min(maxPriority, Math.max((int) (distSq * scale), 1)) : 1;

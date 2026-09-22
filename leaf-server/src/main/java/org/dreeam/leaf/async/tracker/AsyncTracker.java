@@ -60,6 +60,20 @@ public final class AsyncTracker {
 
         Entity[] clone = new Entity[len];
         System.arraycopy(raw, 0, clone, 0, len);
+        for (Entity entity : clone) {
+            ChunkMap.TrackedEntity tracker = entity.moonrise$getTrackedEntity();
+            if (tracker == null || tracker.getClass() != ChunkMap.TrackedEntity.class) {
+                continue;
+            }
+            ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData chunkData = entity.moonrise$getChunkData();
+            ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk = chunkData == null ? null : chunkData.nearbyPlayers;
+            boolean sendChanges = chunk != null && !chunk.playersTracking.isEmpty() && tracker.moonrise$hasPlayers();
+            if (!sendChanges) {
+                net.minecraft.server.level.FullChunkStatus status = entity.moonrise$getChunkStatus();
+                sendChanges = status != null && status.isOrAfter(net.minecraft.server.level.FullChunkStatus.ENTITY_TICKING);
+            }
+            tracker.serverEntity.leaf$prepareTick(sendChanges || entity.needsSync);
+        }
         EntitySlice slice = new EntitySlice(clone);
         EntitySlice[] slices = clone.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
         @SuppressWarnings("unchecked")
@@ -75,10 +89,10 @@ public final class AsyncTracker {
         for (ServerPlayer player : world.players()) {
             player.updateDataBeforeSync();
 
-            if (!player.hurtMarked) {
+            if (!player.syncVelocity) {
                 continue;
             }
-            player.hurtMarked = false;
+            player.syncVelocity = false;
             boolean cancelled = false;
 
             org.bukkit.entity.Player craftPlayer = player.getBukkitEntity();

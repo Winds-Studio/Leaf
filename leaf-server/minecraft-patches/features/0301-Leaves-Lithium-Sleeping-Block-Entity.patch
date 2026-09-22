@@ -1,0 +1,2242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MC_XiaoHei <xor7xiaohei@gmail.com>
+Date: Thu, 31 Jul 2025 09:37:26 +0800
+Subject: [PATCH] Leaves: Lithium Sleeping Block Entity
+
+Original license: GPL-3.0-only
+Original project: https://github.com/LeavesMC/Leaves
+
+This patch is Powered by Lithium (https://github.com/CaffeineMC/lithium)
+
+26.3 reference: 11ea08adce6f94627d3eaaa65506a60e0451c8b6.
+Keeps Leaf 26.2's hopper transfer and Moonrise movement-tracker adaptations.
+Includes the shared inventory-listener API required by the applied helpers.
+Further sleeping fixes and sculk support are kept in the following fixup patch.
+
+This patch is based on the following mixins:
+* "net/caffeinemc/mods/lithium/mixin/world/block_entity_ticking/sleeping/**/*.java" (base sleeping support; sculk support is in the fixup)
+* "net/caffeinemc/mods/lithium/mixin/block/hopper/*.java"
+* "net/caffeinemc/mods/lithium/mixin/util/block_entity_retrieval/LevelMixin.java"
+* "net/caffeinemc/mods/lithium/mixin/util/inventory_change_listening/*.java"
+* "net/caffeinemc/mods/lithium/mixin/util/inventory_comparator_tracking/*.java"
+* "net/caffeinemc/mods/lithium/mixin/util/item_component_and_count_tracking/*.java"
+
+Supporting sources and existing Leaf adaptations:
+* "net/caffeinemc/mods/lithium/api/inventory/*.java"
+* "net/caffeinemc/mods/lithium/common/block/entity/*.java"
+* "net/caffeinemc/mods/lithium/common/hopper/*.java"
+* "net/caffeinemc/mods/lithium/common/tracking/entity/*.java"
+* "net/caffeinemc/mods/lithium/common/util/change_tracking/ChangePublisher.java"
+* "net/caffeinemc/mods/lithium/common/util/change_tracking/ChangeSubscriber.java"
+* "net/caffeinemc/mods/lithium/common/util/tuples/WorldSectionBox.java"
+* "net/caffeinemc/mods/lithium/common/util/DirectionConstants.java"
+* "net/caffeinemc/mods/lithium/common/world/WorldHelper.java"
+By: 2No2Name <2No2Name@web.de>
+As part of: Lithium (https://github.com/CaffeineMC/lithium)
+Licensed under: LGPL-3.0-only (https://www.gnu.org/licenses/lgpl-3.0.html)
+
+diff --git a/net/minecraft/core/NonNullList.java b/net/minecraft/core/NonNullList.java
+index 8fd27a342f7302284c48b3db7d085bb692e08cdc..8992e13df499333235e1a51b725c0ad3ccd0284d 100644
+--- a/net/minecraft/core/NonNullList.java
++++ b/net/minecraft/core/NonNullList.java
+@@ -8,7 +8,7 @@ import java.util.Objects;
+ import org.jspecify.annotations.Nullable;
+ 
+ public class NonNullList<E> extends AbstractList<E> {
+-    private final List<E> list;
++    public final List<E> list; // Leaves - private -> public
+     private final @Nullable E defaultValue;
+ 
+     public static <E> NonNullList<E> create() {
+diff --git a/net/minecraft/server/commands/data/EntityDataAccessor.java b/net/minecraft/server/commands/data/EntityDataAccessor.java
+index d8cacf975c2c35e5fe7370bd5b007fbe0d4bd031..2e3790e0cd8a3e4be0326b08d4cc40d9791a00b5 100644
+--- a/net/minecraft/server/commands/data/EntityDataAccessor.java
++++ b/net/minecraft/server/commands/data/EntityDataAccessor.java
+@@ -43,6 +43,7 @@ public class EntityDataAccessor implements DataAccessor {
+         try (ProblemReporter.ScopedCollector reporter = new ProblemReporter.ScopedCollector(this.entity.problemPath(), LOGGER)) {
+             this.entity.load(TagValueInput.create(reporter, this.entity.registryAccess(), tag));
+             this.entity.setUUID(uuid);
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.entity instanceof net.minecraft.world.entity.item.ItemEntity itemEntity) itemEntity.levelCallback.onMove(); // Leaves - Lithium Sleeping Block Entity
+             this.entity.postDataManipulated();
+         }
+     }
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 7a4d2bb6c2f6d0907dd63e4c69ae3b5bf56b6a6c..4a3ab4e7fcc089b309af2f88e3a00e4cf6bf07fb 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -3146,6 +3146,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+         for (TickingBlockEntity ticker : this.blockEntityTickers) {
+             BlockPos blockPos = ticker.getPos();
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && blockPos == null) blockPos = BlockPos.ZERO; // Leaves - Lithium Sleeping Block Entity
+             csvOutput.writeRow(blockPos.getX(), blockPos.getY(), blockPos.getZ(), ticker.getType());
+         }
+     }
+diff --git a/net/minecraft/world/Container.java b/net/minecraft/world/Container.java
+index 6e08d50794c4af4405f3e164a3fd46f376b3f78f..942c985ff067f163b4d4434625e71c9038602cd7 100644
+--- a/net/minecraft/world/Container.java
++++ b/net/minecraft/world/Container.java
+@@ -16,7 +16,7 @@ import net.minecraft.world.level.Level;
+ import net.minecraft.world.level.block.entity.BlockEntity;
+ import org.jspecify.annotations.Nullable;
+ 
+-public interface Container extends Clearable, Iterable<ItemStack>, SlotProvider {
++public interface Container extends Clearable, Iterable<ItemStack>, SlotProvider, net.caffeinemc.mods.lithium.api.inventory.LithiumCooldownReceivingInventory, net.caffeinemc.mods.lithium.api.inventory.LithiumTransferConditionInventory { // Leaves - Lithium Sleeping Block Entity
+     float DEFAULT_DISTANCE_BUFFER = 4.0F;
+ 
+     int getContainerSize();
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index e88de0bc81870552d552ecf0872802ab7e7c7000..4f885e11a351c5120ec2d87a5177488972bf9163 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -331,7 +331,7 @@ public abstract class Entity
+     private static final EntityDataAccessor<Boolean> DATA_NO_GRAVITY = SynchedEntityData.defineId(Entity.class, EntityDataSerializers.BOOLEAN);
+     protected static final EntityDataAccessor<Pose> DATA_POSE = SynchedEntityData.defineId(Entity.class, EntityDataSerializers.POSE);
+     public static final EntityDataAccessor<Integer> DATA_TICKS_FROZEN = SynchedEntityData.defineId(Entity.class, EntityDataSerializers.INT);
+-    private EntityInLevelCallback levelCallback = EntityInLevelCallback.NULL;
++    public EntityInLevelCallback levelCallback = EntityInLevelCallback.NULL; // Leaves - private -> public
+     private final VecDeltaCodec packetPositionCodec = new VecDeltaCodec();
+     public boolean needsSync;
+     public boolean syncPosition;
+@@ -5455,6 +5455,19 @@ public abstract class Entity
+             this.setBoundingBox(this.makeBoundingBox());
+         }
+         // Paper end - Block invalid positions and bounding box
++        // Leaves start - Lithium Sleeping Block Entity
++        if (!org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) return;
++        if (this instanceof ItemEntity) {
++            long sectionKey = ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkSectionKey(this);
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionItemEntityMovementTracker tracker = net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionItemEntityMovementTracker.itemEntityMovementTrackerMap.get(new net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.ChunkSectionIdentifier(sectionKey, level.getMinecraftWorld().uuid));
++            if (tracker != null) tracker.notifyAllListeners(level.getGameTime());
++        }
++        else if (this instanceof net.minecraft.world.entity.vehicle.ContainerEntity) {
++            long sectionKey = ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkSectionKey(this);
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker tracker = net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker.containerEntityMovementTrackerMap.get(new net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.ChunkSectionIdentifier(sectionKey, level.getMinecraftWorld().uuid));
++            if (tracker != null) tracker.notifyAllListeners(level.getGameTime());
++        }
++        // Leaves end - Lithium Sleeping Block Entity
+     }
+ 
+     public void checkDespawn() {
+diff --git a/net/minecraft/world/entity/item/ItemEntity.java b/net/minecraft/world/entity/item/ItemEntity.java
+index 61e65c045cffe974e20973b7b1fa056a2457d660..1e1648cfba97bc6bdc4f3502881236437d4da9c8 100644
+--- a/net/minecraft/world/entity/item/ItemEntity.java
++++ b/net/minecraft/world/entity/item/ItemEntity.java
+@@ -37,7 +37,7 @@ import net.minecraft.world.level.storage.ValueOutput;
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class ItemEntity extends Entity implements TraceableEntity {
++public class ItemEntity extends Entity implements TraceableEntity, net.caffeinemc.mods.lithium.common.util.change_tracking.ChangePublisher<ItemEntity>, net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.CountChangeSubscriber<ItemStack> { // Leaves - Lithium Sleeping Block Entity
+     private static final EntityDataAccessor<ItemStack> DATA_ITEM = SynchedEntityData.defineId(ItemEntity.class, EntityDataSerializers.ITEM_STACK);
+     private static final float FLOAT_HEIGHT = 0.1F;
+     public static final float EYE_HEIGHT = 0.2125F;
+@@ -537,6 +537,25 @@ public class ItemEntity extends Entity implements TraceableEntity {
+     }
+ 
+     public void setItem(final ItemStack itemStack) {
++        // Leaves start - Lithium Sleeping Block Entity
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.subscriber != null) {
++            ItemStack oldStack = this.getItem();
++            if (oldStack != itemStack) {
++                if (!oldStack.isEmpty()) {
++                    oldStack.lithium$unsubscribe(this);
++                }
++
++                if (!itemStack.isEmpty()) {
++                    itemStack.lithium$subscribe(this, this.subscriberData);
++                    this.subscriber.lithium$notify((ItemEntity) (Object) this, this.subscriberData);
++                } else {
++                    this.subscriber.lithium$forceUnsubscribe((ItemEntity) (Object) this, this.subscriberData);
++                    this.subscriber = null;
++                    this.subscriberData = 0;
++                }
++            }
++        }
++        // Leaves end - Lithium Sleeping Block Entity
+         this.getEntityData().set(DATA_ITEM, itemStack);
+         this.despawnRate = this.level().paperConfig().entities.spawning.altItemDespawnRate.enabled ? this.level().paperConfig().entities.spawning.altItemDespawnRate.items.getOrDefault(itemStack.getItem(), this.level().spigotConfig.itemDespawnRate) : this.level().spigotConfig.itemDespawnRate; // Paper - Alternative item-despawn-rate
+         // Purpur start - Item entity immunities
+@@ -615,4 +634,76 @@ public class ItemEntity extends Entity implements TraceableEntity {
+     public MoveSimulationType getMoveSimulationType() {
+         return MoveSimulationType.SERVER_AND_CLIENT;
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemEntity> subscriber;
++    //Stores the data of the subscriber, unless the subscriber is a Multi which stores the data in a list, in which case this variable stores 0
++    private int subscriberData;
++
++    private void startTrackingChanges() {
++        ItemStack stack = this.getItem();
++        if (!stack.isEmpty()) {
++            stack.lithium$subscribe(this, 0);
++        }
++    }
++
++    @Override
++    public void lithium$subscribe(final net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemEntity> subscriber, final int subscriberData) {
++        if (this.subscriber == null) {
++            this.startTrackingChanges();
++        }
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.combine(this.subscriber, this.subscriberData, subscriber, subscriberData);
++        if (this.subscriber instanceof net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.Multi<?>) {
++            this.subscriberData = 0;
++        } else {
++            this.subscriberData = subscriberData;
++        }
++    }
++
++    @Override
++    public int lithium$unsubscribe(final net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber<ItemEntity> subscriber) {
++        int retval = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.dataOf(this.subscriber, subscriber, this.subscriberData);
++        this.subscriberData = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.dataWithout(this.subscriber, subscriber, this.subscriberData);
++        this.subscriber = net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.without(this.subscriber, subscriber);
++
++        if (this.subscriber == null) {
++            ItemStack stack = this.getItem();
++            if (!stack.isEmpty()) {
++                stack.lithium$unsubscribe(this);
++            }
++        }
++        return retval;
++    }
++
++    @Override
++    public void lithium$notify(final ItemStack publisher, final int subscriberData) {
++        if (publisher != this.getItem()) {
++            throw new IllegalStateException("Received notification from an unexpected publisher");
++        }
++
++        if (this.subscriber != null) {
++            this.subscriber.lithium$notify(this, this.subscriberData);
++        }
++    }
++
++    @Override
++    public void lithium$forceUnsubscribe(final ItemStack publisher, final int subscriberData) {
++        if (this.subscriber != null) {
++            this.subscriber.lithium$forceUnsubscribe(this, this.subscriberData);
++            this.subscriber = null;
++            this.subscriberData = 0;
++        }
++    }
++
++    @Override
++    public void lithium$notifyCount(final ItemStack publisher, final int subscriberData, final int newCount) {
++        if (publisher != this.getItem()) {
++            throw new IllegalStateException("Received notification from an unexpected publisher");
++        }
++
++        if (this.subscriber instanceof net.caffeinemc.mods.lithium.common.util.change_tracking.ChangeSubscriber.CountChangeSubscriber<ItemEntity> countChangeSubscriber) {
++            countChangeSubscriber.lithium$notifyCount(this, this.subscriberData, newCount);
++        }
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/entity/vehicle/minecart/AbstractMinecartContainer.java b/net/minecraft/world/entity/vehicle/minecart/AbstractMinecartContainer.java
+index d3651110e15e8e1ad530df4bb4c05dbc73a79a63..4e3d6b000ea80915e43093891da533dd69392f31 100644
+--- a/net/minecraft/world/entity/vehicle/minecart/AbstractMinecartContainer.java
++++ b/net/minecraft/world/entity/vehicle/minecart/AbstractMinecartContainer.java
+@@ -23,7 +23,7 @@ import net.minecraft.world.level.storage.loot.LootTable;
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public abstract class AbstractMinecartContainer extends AbstractMinecart implements ContainerEntity {
++public abstract class AbstractMinecartContainer extends AbstractMinecart implements ContainerEntity, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity
+     private NonNullList<ItemStack> itemStacks = NonNullList.withSize(this.getContainerSize(), ItemStack.EMPTY); // CraftBukkit - SPIGOT-3513
+     private @Nullable ResourceKey<LootTable> lootTable;
+     private long lootTableSeed;
+@@ -217,4 +217,15 @@ public abstract class AbstractMinecartContainer extends AbstractMinecart impleme
+         return this.getBukkitEntity().getLocation();
+     }
+     // CraftBukkit end
++    // Leaves start - Lithium Sleeping Block Entity
++    @Override
++    public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
++        return itemStacks;
++    }
++
++    @Override
++    public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
++        itemStacks = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index 3694e6f7d2d13bfe0ec31cec83d8b30887ff7324..0f85273753ece31ec559efaef8f6b5ab0916421d 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -919,6 +919,7 @@ public abstract class AbstractContainerMenu {
+ 
+         float totalPercent = 0.0F;
+ 
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && container instanceof net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) return net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory).getSignalStrength(container); // Leaves - Lithium Sleeping Block Entity
+         for (int i = 0; i < container.getContainerSize(); i++) {
+             ItemStack itemStack = container.getItem(i);
+             if (!itemStack.isEmpty()) {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index da3c7f75838b3160eef9c774d130810d0f68786f..37a4c1a2c9e2265a697c9450a761a9686f807024 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -2316,4 +2316,19 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         return getWorld().getEnvironment() == org.bukkit.World.Environment.THE_END;
+     }
+     // Purpur end - Add allow water in end world option
++
++    // Leaves start - Lithium Sleeping Block Entity
++    public BlockEntity lithium$getLoadedExistingBlockEntity(final BlockPos pos) {
++        if (!this.isOutsideBuildHeight(pos)) {
++            if (this.isClientSide || Thread.currentThread() == this.thread || ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor((net.minecraft.server.level.ServerLevel) this)) { // Leaf - SparklyPaper - parallel world ticking compatibility
++                ChunkAccess chunk = this.getChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()), ChunkStatus.FULL, false);
++                if (chunk != null) {
++                    return chunk.getBlockEntity(pos);
++                }
++            }
++        }
++        return null;
++    }
++
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/ComposterBlock.java b/net/minecraft/world/level/block/ComposterBlock.java
+index a918e1968ca8f40b6af1908a29b588ddaeffe13c..888878b11484523047a2974a6f2df91bb0c798d6 100644
+--- a/net/minecraft/world/level/block/ComposterBlock.java
++++ b/net/minecraft/world/level/block/ComposterBlock.java
+@@ -314,7 +314,7 @@ public class ComposterBlock extends Block implements WorldlyContainerHolder {
+         }
+     }
+ 
+-    public static class EmptyContainer extends SimpleContainer implements WorldlyContainer {
++    public static class EmptyContainer extends SimpleContainer implements WorldlyContainer, net.caffeinemc.mods.lithium.common.hopper.BlockStateOnlyInventory { // Leaves - Lithium Sleeping Block Entity
+         public EmptyContainer(LevelAccessor levelAccessor, BlockPos blockPos) { // CraftBukkit
+             super(0);
+             this.bukkitOwner = new org.bukkit.craftbukkit.inventory.CraftBlockInventoryHolder(levelAccessor, blockPos, this); // CraftBukkit
+@@ -336,7 +336,7 @@ public class ComposterBlock extends Block implements WorldlyContainerHolder {
+         }
+     }
+ 
+-    public static class InputContainer extends SimpleContainer implements WorldlyContainer {
++    public static class InputContainer extends SimpleContainer implements WorldlyContainer, net.caffeinemc.mods.lithium.common.hopper.BlockStateOnlyInventory { // Leaves - Lithium Sleeping Block Entity
+         private final BlockState state;
+         private final LevelAccessor level;
+         private final BlockPos pos;
+@@ -383,12 +383,13 @@ public class ComposterBlock extends Block implements WorldlyContainerHolder {
+                 }
+                 // Paper end - call compost events
+                 this.level.levelEvent(LevelEvent.COMPOSTER_FILL, this.pos, newState != this.state ? 1 : 0);
++                if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.changed = false; // Leaves - Lithium Sleeping Block Entity
+                 this.removeItemNoUpdate(0);
+             }
+         }
+     }
+ 
+-    public static class OutputContainer extends SimpleContainer implements WorldlyContainer {
++    public static class OutputContainer extends SimpleContainer implements WorldlyContainer, net.caffeinemc.mods.lithium.common.hopper.BlockStateOnlyInventory { // Leaves - Lithium Sleeping Block Entity
+         private final BlockState state;
+         private final LevelAccessor level;
+         private final BlockPos pos;
+diff --git a/net/minecraft/world/level/block/DiodeBlock.java b/net/minecraft/world/level/block/DiodeBlock.java
+index ed8539eb5ff73596335f34e0f9e1d49caac54999..508d41d72819cadde28d7070b55f51c424ca03d3 100644
+--- a/net/minecraft/world/level/block/DiodeBlock.java
++++ b/net/minecraft/world/level/block/DiodeBlock.java
+@@ -175,6 +175,7 @@ public abstract class DiodeBlock extends HorizontalDirectionalBlock {
+     @Override
+     protected void onPlace(final BlockState state, final Level level, final BlockPos pos, final BlockState oldState, final boolean movedByPiston) {
+         this.updateNeighborsInFront(level, pos, state);
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this instanceof ComparatorBlock && !oldState.is(Blocks.COMPARATOR)) net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracking.notifyNearbyBlockEntitiesAboutNewComparator(level, pos); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/level/block/HopperBlock.java b/net/minecraft/world/level/block/HopperBlock.java
+index c2d18458ce81c2d1523b3cf932e3c133c75b6f3f..40df5fa44c3370078b9af4ca1224ba327cf9817d 100644
+--- a/net/minecraft/world/level/block/HopperBlock.java
++++ b/net/minecraft/world/level/block/HopperBlock.java
+@@ -37,7 +37,7 @@ import net.minecraft.world.phys.shapes.Shapes;
+ import net.minecraft.world.phys.shapes.VoxelShape;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class HopperBlock extends BaseEntityBlock {
++public class HopperBlock extends BaseEntityBlock implements net.caffeinemc.mods.lithium.common.block.entity.ShapeUpdateHandlingBlockBehaviour { // Leaves - Lithium Sleeping Block Entity
+     public static final EnumProperty<Direction> FACING = BlockStateProperties.FACING_HOPPER;
+     public static final BooleanProperty ENABLED = BlockStateProperties.ENABLED;
+     private final Function<BlockState, VoxelShape> shapes;
+@@ -93,6 +93,17 @@ public class HopperBlock extends BaseEntityBlock {
+     protected void onPlace(final BlockState state, final Level level, final BlockPos pos, final BlockState oldState, final boolean movedByPiston) {
+         if (!oldState.is(state.getBlock())) {
+             this.checkPoweredState(level, pos, state);
++            // Leaves start - Lithium Sleeping Block Entity
++            //invalidate caches of nearby hoppers when placing an update suppressed hopper
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && level.getBlockState(pos) != state) {
++                for (Direction direction : UPDATE_SHAPE_ORDER) {
++                    BlockEntity hopper = level.lithium$getLoadedExistingBlockEntity(pos.relative(direction));
++                    if (hopper instanceof net.caffeinemc.mods.lithium.common.hopper.UpdateReceiver updateReceiver) {
++                        updateReceiver.lithium$invalidateCacheOnNeighborUpdate(direction == Direction.DOWN);
++                    }
++                }
++            }
++            // Leaves end - Lithium Sleeping Block Entity
+         }
+     }
+ 
+@@ -111,6 +122,7 @@ public class HopperBlock extends BaseEntityBlock {
+     protected void neighborChanged(
+         final BlockState state, final Level level, final BlockPos pos, final Block block, final @Nullable Orientation orientation, final boolean movedByPiston
+     ) {
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && level.lithium$getLoadedExistingBlockEntity(pos) instanceof net.caffeinemc.mods.lithium.common.hopper.UpdateReceiver updateReceiver) updateReceiver.lithium$invalidateCacheOnUndirectedNeighborUpdate(); // Leaves - Lithium Sleeping Block Entity /* invalidate cache when the block is replaced */
+         this.checkPoweredState(level, pos, state);
+     }
+ 
+@@ -170,4 +182,25 @@ public class HopperBlock extends BaseEntityBlock {
+     protected boolean isPathfindable(final BlockState state, final PathComputationType type) {
+         return false;
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    @Override
++    public void lithium$handleShapeUpdate(final net.minecraft.world.level.LevelReader levelReader, final BlockState myBlockState, final BlockPos myPos, final BlockPos posFrom, final BlockState newState) {
++        //invalidate cache when composters change state
++        if (newState.getBlock() instanceof net.minecraft.world.WorldlyContainerHolder) {
++            this.updateHopper(levelReader, myBlockState, myPos, posFrom);
++        }
++    }
++
++    private void updateHopper(final net.minecraft.world.level.LevelReader world, final BlockState myBlockState, final BlockPos myPos, final BlockPos posFrom) {
++        Direction facing = myBlockState.getValue(HopperBlock.FACING);
++        boolean above = posFrom.getY() == myPos.getY() + 1;
++        if (above || posFrom.getX() == myPos.getX() + facing.getStepX() && posFrom.getY() == myPos.getY() + facing.getStepY() && posFrom.getZ() == myPos.getZ() + facing.getStepZ()) {
++            BlockEntity hopper = ((net.minecraft.world.level.Level) world).lithium$getLoadedExistingBlockEntity(myPos);
++            if (hopper instanceof net.caffeinemc.mods.lithium.common.hopper.UpdateReceiver updateReceiver) {
++                updateReceiver.lithium$invalidateCacheOnNeighborUpdate(above);
++            }
++        }
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity.java b/net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity.java
+index b4387e90aa6860b6f128f9fb3f2780dfb9a85a9f..7bf07bf8f27fc329c363a137507c10e1657d1b4a 100644
+--- a/net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity.java
+@@ -44,7 +44,7 @@ import net.minecraft.world.level.storage.loot.providers.number.ints.ResolvableIn
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public abstract class AbstractFurnaceBlockEntity extends BaseContainerBlockEntity implements WorldlyContainer, StackedContentsCompatible, RecipeCraftingHolder {
++public abstract class AbstractFurnaceBlockEntity extends BaseContainerBlockEntity implements WorldlyContainer, StackedContentsCompatible, RecipeCraftingHolder, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SetChangedHandlingBlockEntity, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity
+     protected static final int SLOT_INPUT = 0;
+     protected static final int SLOT_FUEL = 1;
+     protected static final int SLOT_RESULT = 2;
+@@ -168,6 +168,7 @@ public abstract class AbstractFurnaceBlockEntity extends BaseContainerBlockEntit
+         this.recipesUsed.clear();
+         this.recipesUsed.putAll(input.read("RecipesUsed", RECIPES_USED_CODEC).orElse(Map.of()));
+         this.cookSpeedMultiplier = input.getDoubleOr("Paper.CookSpeedMultiplier", 1); // Paper - cook speed multiplier API
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.isSleeping() && this.level != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -299,8 +300,8 @@ public abstract class AbstractFurnaceBlockEntity extends BaseContainerBlockEntit
+         if (changed) {
+             setChanged(level, pos, state);
+         }
+-
+         if (usedLavaFromUnderneath) entity.items.set(1, ItemStack.EMPTY); // Purpur - Furnace uses lava from underneath
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.checkSleep(state); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     private static void consumeFuel(final ServerLevel level, final BlockPos pos, final NonNullList<ItemStack> items, final ItemStack fuel) {
+@@ -551,4 +552,57 @@ public abstract class AbstractFurnaceBlockEntity extends BaseContainerBlockEntit
+             this.getRecipesToAwardAndPopExperience(serverLevel, Vec3.atCenterOf(pos));
+         }
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++        this.lithium$setSleepingTicker(null);
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    private boolean isLit() {
++        return this.litTimeRemaining > 0;
++    }
++
++    private void checkSleep(final BlockState state) {
++        if (!this.isLit() && this.cookingTimer == 0 && (state.is(net.minecraft.world.level.block.Blocks.FURNACE) || state.is(net.minecraft.world.level.block.Blocks.BLAST_FURNACE) || state.is(net.minecraft.world.level.block.Blocks.SMOKER)) && this.level != null) {
++            this.lithium$startSleeping();
++        }
++    }
++
++    @Override
++    public void lithium$handleSetChanged() {
++        if (this.isSleeping() && this.level != null && !this.level.isClientSide()) {
++            this.wakeUpNow();
++        }
++    }
++
++    @Override
++    public NonNullList<ItemStack> getInventoryLithium() {
++        return items;
++    }
++
++    @Override
++    public void setInventoryLithium(final NonNullList<ItemStack> inventory) {
++        items = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/BarrelBlockEntity.java b/net/minecraft/world/level/block/entity/BarrelBlockEntity.java
+index f61f68ea04c3b3ef55c0f33c605c5e661f7d0860..77c5a15a8ab956bbd75640797c7b5c60d54790c3 100644
+--- a/net/minecraft/world/level/block/entity/BarrelBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BarrelBlockEntity.java
+@@ -22,7 +22,7 @@ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.storage.ValueInput;
+ import net.minecraft.world.level.storage.ValueOutput;
+ 
+-public class BarrelBlockEntity extends RandomizableContainerBlockEntity {
++public class BarrelBlockEntity extends RandomizableContainerBlockEntity implements net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity
+     // CraftBukkit start - add fields and methods
+     public java.util.List<org.bukkit.entity.HumanEntity> transaction = new java.util.ArrayList<>();
+     private int maxStack = MAX_STACK;
+@@ -146,6 +146,7 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity {
+     @Override
+     protected void setItems(final NonNullList<ItemStack> items) {
+         this.items = items;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$emitStackListReplaced(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -206,4 +207,18 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity {
+         double z = this.worldPosition.getZ() + 0.5 + direction.getZ() / 2.0;
+         this.level.playSound(null, x, y, z, event, SoundSource.BLOCKS, 0.5F, this.level.getRandom().nextFloat() * 0.1F + 0.9F);
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++
++
++    @Override
++    public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
++        return items;
++    }
++
++    @Override
++    public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
++        items = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java b/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
+index 3e7873e159cd4e81690626fa0f41bde2c656996e..a3a7cf06add3cabf4b3532be11dad2e5b0ab560a 100644
+--- a/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
+@@ -32,7 +32,7 @@ import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public abstract class BaseContainerBlockEntity extends BlockEntity implements Container, MenuProvider, Nameable {
++public abstract class BaseContainerBlockEntity extends BlockEntity implements Container, MenuProvider, Nameable, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeEmitter {
+     public LockCode lockKey = LockCode.NO_LOCK;
+     public @Nullable Component name;
+ 
+@@ -45,6 +45,7 @@ public abstract class BaseContainerBlockEntity extends BlockEntity implements Co
+         super.loadAdditional(input);
+         this.lockKey = LockCode.fromTag(input);
+         this.name = parseCustomNameSafe(input, "CustomName");
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker inventoryChangeTracker) inventoryChangeTracker.lithium$emitStackListReplaced(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -207,4 +208,89 @@ public abstract class BaseContainerBlockEntity extends BlockEntity implements Co
+         return org.bukkit.craftbukkit.util.CraftLocation.toBukkit(this.worldPosition, this.level);
+     }
+     // CraftBukkit end
++
++    // Leaves start - Lithium Sleeping Block Entity
++    it.unimi.dsi.fastutil.objects.ReferenceArraySet<net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener> inventoryChangeListeners = null;
++    it.unimi.dsi.fastutil.objects.ReferenceArraySet<net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener> inventoryHandlingTypeListeners = null;
++
++    @Override
++    public void lithium$emitContentModified() {
++        it.unimi.dsi.fastutil.objects.ReferenceArraySet<net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener> inventoryChangeListeners = this.inventoryChangeListeners;
++        if (inventoryChangeListeners != null) {
++            for (net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener inventoryChangeListener : inventoryChangeListeners) {
++                inventoryChangeListener.lithium$handleInventoryContentModified(this);
++            }
++            inventoryChangeListeners.clear();
++        }
++    }
++
++    @Override
++    public void lithium$emitStackListReplaced() {
++        this.invalidateChangeListening();
++    }
++
++    @Override
++    public void lithium$emitRemoved() {
++        this.invalidateChangeListening();
++    }
++
++    private void invalidateChangeListening() {
++        it.unimi.dsi.fastutil.objects.ReferenceArraySet<net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener> listeners = this.inventoryHandlingTypeListeners;
++        this.inventoryHandlingTypeListeners = null;
++        if (listeners != null && !listeners.isEmpty()) {
++            for (net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener listener : listeners) {
++                listener.lithium$handleInventoryRemoved(this);
++            }
++            listeners.clear();
++        }
++        if (this.inventoryHandlingTypeListeners == null) {
++            this.inventoryHandlingTypeListeners = listeners;
++        }
++
++        if (this instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener listener) {
++            listener.lithium$handleInventoryRemoved(this);
++        }
++
++        if (this.inventoryChangeListeners != null) {
++            this.inventoryChangeListeners.clear();
++        }
++
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList lithiumStackList = this instanceof net.caffeinemc.mods.lithium.api.inventory.LithiumInventory ? net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackListOrNull((net.caffeinemc.mods.lithium.api.inventory.LithiumInventory) this) : null;
++        if (lithiumStackList != null && this instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker inventoryChangeTracker) {
++            lithiumStackList.removeInventoryModificationCallback(inventoryChangeTracker);
++        }
++    }
++
++    @Override
++    public void lithium$emitFirstComparatorAdded() {
++        it.unimi.dsi.fastutil.objects.ReferenceArraySet<net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener> inventoryChangeListeners = this.inventoryChangeListeners;
++        if (inventoryChangeListeners != null && !inventoryChangeListeners.isEmpty()) {
++            inventoryChangeListeners.removeIf(inventoryChangeListener -> inventoryChangeListener.lithium$handleComparatorAdded(this));
++        }
++    }
++
++    @Override
++    public void lithium$forwardContentChangeOnce(final net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener inventoryChangeListener, final net.caffeinemc.mods.lithium.common.hopper.LithiumStackList stackList) {
++        if (this.inventoryChangeListeners == null) {
++            this.inventoryChangeListeners = new it.unimi.dsi.fastutil.objects.ReferenceArraySet<>(1);
++        }
++        stackList.setNextInventoryModificationCallback((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) this);
++        this.inventoryChangeListeners.add(inventoryChangeListener);
++
++    }
++
++    @Override
++    public void lithium$forwardMajorInventoryChanges(final net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener inventoryChangeListener) {
++        if (this.inventoryHandlingTypeListeners == null) {
++            this.inventoryHandlingTypeListeners = new it.unimi.dsi.fastutil.objects.ReferenceArraySet<>(1);
++        }
++        this.inventoryHandlingTypeListeners.add(inventoryChangeListener);
++    }
++
++    @Override
++    public void lithium$stopForwardingMajorInventoryChanges(final net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener inventoryChangeListener) {
++        if (this.inventoryHandlingTypeListeners != null) {
++            this.inventoryHandlingTypeListeners.remove(inventoryChangeListener);
++        }
++    }
+ }
+diff --git a/net/minecraft/world/level/block/entity/BlockEntity.java b/net/minecraft/world/level/block/entity/BlockEntity.java
+index b9edf56a248c2392b82476e3340ab0e95022fbbc..d482298b58ab555c141b483660a38dd4f61832c2 100644
+--- a/net/minecraft/world/level/block/entity/BlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BlockEntity.java
+@@ -38,7 +38,7 @@ import net.minecraft.world.level.storage.ValueOutput;
+ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ 
+-public abstract class BlockEntity implements DebugValueSource, TypedInstance<BlockEntityType<?>> {
++public abstract class BlockEntity implements DebugValueSource, TypedInstance<BlockEntityType<?>>, net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracker, net.caffeinemc.mods.lithium.common.block.entity.SetBlockStateHandlingBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SetChangedHandlingBlockEntity { // Leaves - Lithium Sleeping Block Entity
+     static boolean ignoreBlockEntityUpdates; // Paper - Perf: Optimize Hoppers
+     // CraftBukkit start - data containers
+     private static final org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry DATA_TYPE_REGISTRY = new org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry();
+@@ -59,6 +59,7 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+         this.validateBlockState(blockState);
+         this.blockState = blockState;
+         this.persistentDataContainer = new org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer(DATA_TYPE_REGISTRY); // Paper - always init
++        this.hasComparators = UNKNOWN; // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     private void validateBlockState(final BlockState blockState) {
+@@ -221,6 +222,7 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+         if (this.level != null) {
+             if (ignoreBlockEntityUpdates) return; // Paper - Perf: Optimize Hoppers
+             setChanged(this.level, this.worldPosition, this.blockState);
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) lithium$handleSetChanged(); // Leaves - Lithium Sleeping Block Entity
+         }
+     }
+ 
+@@ -252,7 +254,9 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+     }
+ 
+     public void setRemoved() {
++        this.hasComparators = UNKNOWN; // Leaves - Lithium Sleeping Block Entity
+         this.remove = true;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.level != null && !this.level.isClientSide() && this instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker inventoryChangeTracker) inventoryChangeTracker.lithium$emitRemoved(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public void clearRemoved() {
+@@ -297,6 +301,7 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+     public void setBlockState(final BlockState blockState) {
+         this.validateBlockState(blockState);
+         this.blockState = blockState;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$handleSetBlockState(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     protected void applyImplicitComponents(final DataComponentGetter components) {
+@@ -411,4 +416,32 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+         return this.persistentLore;
+     }
+     // Purpur end - Persistent BlockEntity Lore and DisplayName
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private static final byte UNKNOWN = (byte) -1;
++    private static final byte COMPARATOR_PRESENT = (byte) 1;
++    private static final byte COMPARATOR_ABSENT = (byte) 0;
++
++    byte hasComparators;
++
++    @Override
++    public void lithium$onComparatorAdded(final net.minecraft.core.Direction direction, final int offset) {
++        byte hasComparators = this.hasComparators;
++        if (direction.getAxis() != net.minecraft.core.Direction.Axis.Y && hasComparators != COMPARATOR_PRESENT && offset >= 1 && offset <= 2) {
++            this.hasComparators = COMPARATOR_PRESENT;
++
++            if (this instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker inventoryChangeTracker) {
++                inventoryChangeTracker.lithium$emitFirstComparatorAdded();
++            }
++        }
++    }
++
++    @Override
++    public boolean lithium$hasAnyComparatorNearby() {
++        if (this.hasComparators == UNKNOWN) {
++            this.hasComparators = net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracking.findNearbyComparators(this.level, this.worldPosition) ? COMPARATOR_PRESENT : COMPARATOR_ABSENT;
++        }
++        return this.hasComparators == COMPARATOR_PRESENT;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/BrewingStandBlockEntity.java b/net/minecraft/world/level/block/entity/BrewingStandBlockEntity.java
+index bc59b6e738f28666f561118399c0a028ba6c95e6..5dbd3bed341e28c0f7b2087c06d9abc54bf93529 100644
+--- a/net/minecraft/world/level/block/entity/BrewingStandBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BrewingStandBlockEntity.java
+@@ -36,7 +36,7 @@ import net.minecraft.world.level.storage.ValueInput;
+ import net.minecraft.world.level.storage.ValueOutput;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements WorldlyContainer {
++public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements WorldlyContainer, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SetChangedHandlingBlockEntity, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity-
+     private static final int INGREDIENT_SLOT = 3;
+     private static final int FUEL_SLOT = 4;
+     private static final int[] SLOTS_FOR_UP = new int[]{3};
+@@ -164,6 +164,7 @@ public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements
+     }
+ 
+     public static void serverTick(final ServerLevel level, final BlockPos pos, final BlockState selfState, final BrewingStandBlockEntity entity) {
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.checkSleep(selfState); // Leaves - Lithium Sleeping Block Entity
+         NonNullList<ItemStack> items = entity.getItems();
+         ItemStack fuel = items.get(4);
+         BrewingFuel brewingFuel = fuel.get(DataComponents.BREWING_FUEL);
+@@ -195,6 +196,7 @@ public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements
+             } // Paper - call BrewingStandFuelEvent
+ 
+             items.set(4, newFuel);
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+             setChanged(level, pos, selfState);
+         }
+ 
+@@ -209,7 +211,7 @@ public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements
+             } else if (!brewable || !ingredient.is(entity.ingredient)) {
+                 entity.brewTime = 0;
+             }
+-
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+             setChanged(level, pos, selfState);
+         } else if (brewable && entity.fuel > 0) {
+             float speedMutliplier = entity.speedMultiplier > 0.0F ? entity.speedMultiplier : 1.0F;
+@@ -225,6 +227,7 @@ public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements
+             entity.totalBrewTime = event.getRecipeBrewTime();
+             // Paper end - call BrewingStartEvent
+             entity.ingredient = ingredient.getItem();
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+             setChanged(level, pos, selfState);
+         }
+ 
+@@ -346,6 +349,7 @@ public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements
+         this.fuel = input.getIntOr("Fuel", 0);
+         this.totalFuel = input.getIntOr("total_fuel", 20);
+         this.speedMultiplier = input.getFloatOr("speed_multiplier", 1.0F);
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.isSleeping() && this.level != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -398,4 +402,53 @@ public class BrewingStandBlockEntity extends BaseContainerBlockEntity implements
+     protected AbstractContainerMenu createMenu(final int containerId, final Inventory inventory) {
+         return new BrewingStandMenu(containerId, inventory, this, this.dataAccess);
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++        this.lithium$setSleepingTicker(null);
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    private void checkSleep(final BlockState state) {
++        if (this.brewTime == 0 && state.is(net.minecraft.world.level.block.Blocks.BREWING_STAND) && this.level != null) {
++            this.lithium$startSleeping();
++        }
++    }
++
++    @Override
++    public void lithium$handleSetChanged() {
++        if (this.isSleeping() && this.level != null) {
++            this.wakeUpNow();
++        }
++    }
++
++    @Override
++    public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
++        return items;
++    }
++
++    @Override
++    public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
++        items = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/CampfireBlockEntity.java b/net/minecraft/world/level/block/entity/CampfireBlockEntity.java
+index 3bd910ae83694a6d19f53dcc4b74598ec0b62b17..ee2dbf92a5b9f2cfd95db8a4e39f125850fd6df2 100644
+--- a/net/minecraft/world/level/block/entity/CampfireBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/CampfireBlockEntity.java
+@@ -39,7 +39,7 @@ import net.minecraft.world.level.storage.ValueOutput;
+ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ 
+-public class CampfireBlockEntity extends BlockEntity implements Clearable {
++public class CampfireBlockEntity extends BlockEntity implements Clearable, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity { // Leaves - Lithium Sleeping Block Entity
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private static final int BURN_COOL_SPEED = 2;
+     private static final int NUM_SLOTS = 4;
+@@ -111,7 +111,7 @@ public class CampfireBlockEntity extends BlockEntity implements Clearable {
+ 
+         if (changed) {
+             setChanged(level, pos, state);
+-        }
++        } else if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.lithium$startSleeping(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public static void cooldownTick(final Level level, final BlockPos pos, final BlockState state, final CampfireBlockEntity entity) {
+@@ -126,7 +126,7 @@ public class CampfireBlockEntity extends BlockEntity implements Clearable {
+ 
+         if (changed) {
+             setChanged(level, pos, state);
+-        }
++        } else if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.lithium$startSleeping(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public static void particleTick(final Level level, final BlockPos pos, final BlockState state, final CampfireBlockEntity entity) {
+@@ -183,6 +183,7 @@ public class CampfireBlockEntity extends BlockEntity implements Clearable {
+             System.arraycopy(cookingState, 0, this.stopCooking, 0, Math.min(this.stopCooking.length, bytes.capacity()));
+         });
+         // Paper end - Add more Campfire API
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -234,6 +235,7 @@ public class CampfireBlockEntity extends BlockEntity implements Clearable {
+                 this.cookingTime[slot] = event.getTotalCookTime(); // recipe.get().value().cookingTime() -> event.getTotalCookTime()
+                 // CraftBukkit end
+                 this.cookingProgress[slot] = 0;
++                if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+                 this.items.set(slot, placeItem.consumeAndReturn(1, sourceEntity));
+                 serverLevel.gameEvent(GameEvent.BLOCK_CHANGE, this.getBlockPos(), GameEvent.Context.of(sourceEntity, this.getBlockState()));
+                 this.markUpdated();
+@@ -277,4 +279,30 @@ public class CampfireBlockEntity extends BlockEntity implements Clearable {
+     public void removeComponentsFromTag(final ValueOutput output) {
+         output.discard("Items");
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++        this.lithium$setSleepingTicker(null);
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/ChestBlockEntity.java b/net/minecraft/world/level/block/entity/ChestBlockEntity.java
+index a9273aebb5c8efe78e88158f11e1ee2af0dff3f1..04914fd35161bd8992d86e7c14673501309c7a67 100644
+--- a/net/minecraft/world/level/block/entity/ChestBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/ChestBlockEntity.java
+@@ -25,7 +25,7 @@ import net.minecraft.world.level.block.state.properties.ChestType;
+ import net.minecraft.world.level.storage.ValueInput;
+ import net.minecraft.world.level.storage.ValueOutput;
+ 
+-public class ChestBlockEntity extends RandomizableContainerBlockEntity implements LidBlockEntity {
++public class ChestBlockEntity extends RandomizableContainerBlockEntity implements LidBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeEmitter, net.caffeinemc.mods.lithium.common.block.entity.SetBlockStateHandlingBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity
+     private static final int EVENT_SET_OPEN_COUNT = 1;
+     public static final Component DEFAULT_NAME = Component.translatable("container.chest");
+     private NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
+@@ -140,6 +140,7 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+ 
+     public static void lidAnimateTick(final Level level, final BlockPos pos, final BlockState state, final ChestBlockEntity entity) {
+         entity.chestLidController.tickLid();
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.checkSleep(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public static void playSound(final Level level, final BlockPos worldPosition, final BlockState blockState, final SoundEvent event) {
+@@ -161,6 +162,7 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+     @Override
+     public boolean triggerEvent(final int b0, final int b1) {
+         if (b0 == EVENT_SET_OPEN_COUNT) {
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.sleepingTicker != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+             this.chestLidController.shouldBeOpen(b1 > 0);
+             return true;
+         } else {
+@@ -198,6 +200,7 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+     @Override
+     protected void setItems(final NonNullList<ItemStack> items) {
+         this.items = items;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$emitStackListReplaced(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -233,4 +236,52 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+         Block block = blockState.getBlock();
+         level.blockEvent(pos, block, EVENT_SET_OPEN_COUNT, current);
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    private void checkSleep() {
++        //If the animation is finished, it will stay unchanged until the next triggerEvent, which may change shouldBeOpen
++        if (this.getOpenNess(0.0F) == this.getOpenNess(1.0F)) {
++            this.lithium$startSleeping();
++        }
++    }
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return this.tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return this.sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    @Override
++    public void lithium$handleSetBlockState() {
++        //Handle switching double / single chest state
++        this.lithium$emitRemoved();
++    }
++
++    @Override
++    public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
++        return items;
++    }
++
++    @Override
++    public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
++        items = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/ChiseledBookShelfBlockEntity.java b/net/minecraft/world/level/block/entity/ChiseledBookShelfBlockEntity.java
+index 8967c271678a8ee8d4f79fb40eeaf646af192010..bb0cf6926bacca18d3006a89c6d8df3b6747e374 100644
+--- a/net/minecraft/world/level/block/entity/ChiseledBookShelfBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/ChiseledBookShelfBlockEntity.java
+@@ -21,7 +21,7 @@ import net.minecraft.world.level.storage.ValueInput;
+ import net.minecraft.world.level.storage.ValueOutput;
+ import org.slf4j.Logger;
+ 
+-public class ChiseledBookShelfBlockEntity extends BlockEntity implements ListBackedContainer {
++public class ChiseledBookShelfBlockEntity extends BlockEntity implements ListBackedContainer, net.caffeinemc.mods.lithium.api.inventory.LithiumTransferConditionInventory { // Leaves - Lithium Sleeping Block Entity
+     public static final int MAX_BOOKS_IN_STORAGE = 6;
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private static final int DEFAULT_LAST_INTERACTED_SLOT = -1;
+@@ -170,4 +170,6 @@ public class ChiseledBookShelfBlockEntity extends BlockEntity implements ListBac
+     public void removeComponentsFromTag(final ValueOutput output) {
+         output.discard("Items");
+     }
++
++    @Override public boolean lithium$itemInsertionTestRequiresStackSize1() {return true;} // Leaves - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/CrafterBlockEntity.java b/net/minecraft/world/level/block/entity/CrafterBlockEntity.java
+index 6ad1e1113f78a4e3fe03a08e9f6c18241aa6f124..aa7ceafb2a733b90dd7a7dab9ea687fb40e10cad 100644
+--- a/net/minecraft/world/level/block/entity/CrafterBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/CrafterBlockEntity.java
+@@ -22,7 +22,7 @@ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.storage.ValueInput;
+ import net.minecraft.world.level.storage.ValueOutput;
+ 
+-public class CrafterBlockEntity extends RandomizableContainerBlockEntity implements CraftingContainer {
++public class CrafterBlockEntity extends RandomizableContainerBlockEntity implements CraftingContainer, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SetChangedHandlingBlockEntity {
+     public static final int CONTAINER_WIDTH = 3;
+     public static final int CONTAINER_HEIGHT = 3;
+     public static final int CONTAINER_SIZE = 9;
+@@ -170,6 +170,7 @@ public class CrafterBlockEntity extends RandomizableContainerBlockEntity impleme
+             }
+         });
+         this.containerData.set(9, input.getIntOr("triggered", 0));
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.isSleeping() && this.level != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -279,10 +280,12 @@ public class CrafterBlockEntity extends RandomizableContainerBlockEntity impleme
+                 level.setBlockAndUpdate(blockPos, blockState.setValue(CrafterBlock.CRAFTING, false));
+             }
+         }
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && craftingTicksRemaining < 0) entity.checkSleep(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public void setCraftingTicksRemaining(final int maxCraftingTicks) {
+         this.craftingTicksRemaining = maxCraftingTicks;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.isSleeping() && this.level != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public int getRedstoneSignal() {
+@@ -301,4 +304,43 @@ public class CrafterBlockEntity extends RandomizableContainerBlockEntity impleme
+     private boolean slotCanBeDisabled(final int slotId) {
+         return slotId > -1 && slotId < 9 && this.items.get(slotId).isEmpty();
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return this.tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++        this.lithium$setSleepingTicker(null);
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return this.sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    private void checkSleep() {
++        if (this.craftingTicksRemaining == 0) {
++            this.lithium$startSleeping();
++        }
++    }
++
++    @Override
++    public void lithium$handleSetChanged() {
++        if (this.isSleeping() && this.level != null && !this.level.isClientSide()) {
++            this.wakeUpNow();
++        }
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/DispenserBlockEntity.java b/net/minecraft/world/level/block/entity/DispenserBlockEntity.java
+index 736f5fd76f4a86ab16740904b5c0823413d65cd2..19c5419cf9f567c7ae24e3df5c89eaeae0b487a9 100644
+--- a/net/minecraft/world/level/block/entity/DispenserBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/DispenserBlockEntity.java
+@@ -13,7 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.storage.ValueInput;
+ import net.minecraft.world.level.storage.ValueOutput;
+ 
+-public class DispenserBlockEntity extends RandomizableContainerBlockEntity {
++public class DispenserBlockEntity extends RandomizableContainerBlockEntity implements net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity
+     public static final int CONTAINER_SIZE = 9;
+     private static final Component DEFAULT_NAME = Component.translatable("container.dispenser");
+     private NonNullList<ItemStack> items = NonNullList.withSize(9, ItemStack.EMPTY);
+@@ -135,10 +135,23 @@ public class DispenserBlockEntity extends RandomizableContainerBlockEntity {
+     @Override
+     protected void setItems(final NonNullList<ItemStack> items) {
+         this.items = items;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$emitStackListReplaced(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+     protected AbstractContainerMenu createMenu(final int containerId, final Inventory inventory) {
+         return new DispenserMenu(containerId, inventory, this);
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    @Override
++    public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
++        return items;
++    }
++
++    @Override
++    public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
++        items = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/EnderChestBlockEntity.java b/net/minecraft/world/level/block/entity/EnderChestBlockEntity.java
+index 6109d8da984b398bb1eb6cd6ab9a55f0511a615c..7106c539f3d454488de008804fd0cf7cc09a2149 100644
+--- a/net/minecraft/world/level/block/entity/EnderChestBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/EnderChestBlockEntity.java
+@@ -11,7 +11,7 @@ import net.minecraft.world.level.block.Blocks;
+ import net.minecraft.world.level.block.ChestBlock;
+ import net.minecraft.world.level.block.state.BlockState;
+ 
+-public class EnderChestBlockEntity extends BlockEntity implements LidBlockEntity {
++public class EnderChestBlockEntity extends BlockEntity implements LidBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity { // Leaves - Lithium Sleeping Block Entity
+     private final ChestLidController chestLidController = new ChestLidController();
+     public final ContainerOpenersCounter openersCounter = new ContainerOpenersCounter() {
+         // Paper start - delay open/close callbacks
+@@ -66,11 +66,13 @@ public class EnderChestBlockEntity extends BlockEntity implements LidBlockEntity
+ 
+     public static void lidAnimateTick(final Level level, final BlockPos pos, final BlockState state, final EnderChestBlockEntity entity) {
+         entity.chestLidController.tickLid();
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.checkSleep(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+     public boolean triggerEvent(final int b0, final int b1) {
+         if (b0 == ChestBlock.EVENT_SET_OPEN_COUNT) {
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.sleepingTicker != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+             this.chestLidController.shouldBeOpen(b1 > 0);
+             return true;
+         } else {
+@@ -107,4 +109,36 @@ public class EnderChestBlockEntity extends BlockEntity implements LidBlockEntity
+     public float getOpenNess(final float a) {
+         return this.chestLidController.getOpenness(a);
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return this.tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return this.sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    private void checkSleep() {
++        //If the animation is finished, it will stay unchanged until the next triggerEvent, which may change shouldBeOpen
++        if (this.getOpenNess(0.0F) == this.getOpenNess(1.0F)) {
++            this.lithium$startSleeping();
++        }
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+index 86f005e755f58f9f6a674a5065444fa08ae9ec08..240d55b5cf66f74ddcc2639db20a31e1ed3849c6 100644
+--- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+@@ -28,7 +28,7 @@ import net.minecraft.world.level.storage.ValueOutput;
+ import net.minecraft.world.phys.AABB;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class HopperBlockEntity extends RandomizableContainerBlockEntity implements Hopper {
++public class HopperBlockEntity extends RandomizableContainerBlockEntity implements Hopper, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity, net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementListener, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeListener, net.caffeinemc.mods.lithium.common.hopper.UpdateReceiver, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker { // Leaves - Lithium Sleeping Block Entity
+     public static final int MOVE_ITEM_SPEED = 8;
+     public static final int HOPPER_CONTAINER_SIZE = 5;
+     private static final int[][] CACHED_SLOTS = new int[54][];
+@@ -119,6 +119,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     @Override
+     public void setBlockState(final BlockState blockState) {
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.level != null && !this.level.isClientSide() && blockState.getValue(HopperBlock.FACING) != this.getBlockState().getValue(HopperBlock.FACING)) this.invalidateCachedData(); // Leaves - Lithium Sleeping Block Entity
+         super.setBlockState(blockState);
+         this.facing = blockState.getValue(HopperBlock.FACING);
+     }
+@@ -135,6 +136,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+             entity.setCooldown(0);
+             // Spigot start
+             boolean result = tryMoveItems(level, pos, state, entity, () -> suckInItems(level, entity));
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) entity.checkSleepingConditions(); // Leaves - Lithium Sleeping Block Entity
+             if (!result && entity.level.spigotConfig.hopperCheck > 1) {
+                 entity.setCooldown(entity.level.spigotConfig.hopperCheck);
+             }
+@@ -204,6 +206,14 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+             }
+         }
+ 
++        // Leaves start - Lithium Sleeping Block Entity
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled
++            && !entity.isOnCooldown()
++            && !entity.isSleeping()
++            && !state.getValue(HopperBlock.ENABLED)) {
++            entity.lithium$startSleeping();
++        }
++        // Leaves end - Lithium Sleeping Block Entity
+         return false;
+     }
+ 
+@@ -375,6 +385,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     private static void applyCooldown(final Hopper hopper) {
+         if (hopper instanceof HopperBlockEntity blockEntity && blockEntity.getLevel() != null) {
+             blockEntity.setCooldown(blockEntity.getLevel().spigotConfig.hopperTransfer);
++            blockEntity.skipNextSleepCheckAfterCooldown = true; // Leaves - Lithium Sleeping Block Entity
+         }
+     }
+ 
+@@ -418,12 +429,20 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     // Paper end - Perf: Optimize Hoppers
+ 
+     private static boolean ejectItems(final Level level, final BlockPos blockPos, final HopperBlockEntity self) {
+-        Container container = getAttachedContainer(level, blockPos, self);
++        Container container = org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled ? self.getInsertInventory(level) : getAttachedContainer(level, blockPos, self); // Leaves - Lithium Sleeping Block Entity
+         if (container == null) {
+             return false;
+         }
+ 
+         Direction direction = self.facing.getOpposite();
++        // Leaves start - Lithium Sleeping Block Entity
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) {
++            Boolean res = lithiumInsert(level, blockPos, self, container);
++            if (res != null) {
++                return res;
++            }
++        }
++        // Leaves end - Lithium Sleeping Block Entity
+         if (isFullContainer(container, direction)) {
+             return false;
+         }
+@@ -478,10 +497,18 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     public static boolean suckInItems(final Level level, final Hopper hopper) {
+         BlockPos blockPos = BlockPos.containing(hopper.getLevelX(), hopper.getLevelY() + 1.0, hopper.getLevelZ());
+         BlockState blockState = level.getBlockState(blockPos);
+-        Container container = getSourceContainer(level, hopper, blockPos, blockState);
++        Container container = org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled ? getExtractInventory(level, hopper, blockPos, blockState) : getSourceContainer(level, hopper, blockPos, blockState); // Leaves - Lithium Sleeping Block Entity
+         if (container != null) {
+             Direction direction = Direction.DOWN;
+             skipPullModeEventFire = skipHopperEvents; // Paper - Perf: Optimize Hoppers
++            // Leaves start - Lithium Sleeping Block Entity
++            if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) {
++                Boolean res = lithiumExtract(level, hopper, container);
++                if (res != null) {
++                    return res;
++                }
++            }
++            // Leaves end - Lithium Sleeping Block Entity
+ 
+             for (int slot : getSlots(container, direction)) {
+                 if (tryTakeInItemFromSlot(hopper, container, slot, direction, level)) { // Spigot
+@@ -495,7 +522,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+                 && blockState.isCollisionShapeFullBlock(level, blockPos)
+                 && !blockState.is(BlockTags.DOES_NOT_BLOCK_HOPPERS);
+             if (!isBlocked) {
+-                for (ItemEntity entity : getItemsAtAndAbove(level, hopper)) {
++                for (ItemEntity entity : org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled ? lithiumGetInputItemEntities(level, hopper) : getItemsAtAndAbove(level, hopper)) { // Leaves - Lithium Sleeping Block Entity
+                     if (addItem(hopper, entity)) {
+                         return true;
+                     }
+@@ -617,7 +644,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     // CraftBukkit start
+     private static @Nullable Container runHopperInventorySearchEvent(
+-        Container container,
++        @Nullable Container container,
+         org.bukkit.craftbukkit.block.CraftBlock hopper,
+         org.bukkit.craftbukkit.block.CraftBlock searchLocation,
+         org.bukkit.event.inventory.HopperInventorySearchEvent.ContainerType containerType
+@@ -743,6 +770,19 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     }
+ 
+     public void setCooldown(final int time) {
++        // Leaves start - Lithium Sleeping Block Entity
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) {
++            if (time == 7) {
++                if (this.tickedGameTime == Long.MAX_VALUE) {
++                    this.sleepOnlyCurrentTick();
++                } else {
++                    this.wakeUpNow();
++                }
++            } else if (time > 0 && this.sleepingTicker != null) {
++                this.wakeUpNow();
++            }
++        }
++        // Leaves end - Lithium Sleeping Block Entity
+         this.cooldownTime = time;
+     }
+ 
+@@ -762,6 +802,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     @Override
+     protected void setItems(final NonNullList<ItemStack> items) {
+         this.items = items;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$emitStackListReplaced(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public static void entityInside(final Level level, final BlockPos pos, final BlockState blockState, final Entity entity, final HopperBlockEntity hopper) {
+@@ -776,4 +817,756 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     protected AbstractContainerMenu createMenu(final int containerId, final Inventory inventory) {
+         return new HopperMenu(containerId, inventory, this);
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    @org.jetbrains.annotations.Nullable private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    @org.jetbrains.annotations.Nullable private TickingBlockEntity sleepingTicker = null;
++    private long myModCountAtLastInsert, myModCountAtLastExtract, myModCountAtLastItemCollect;
++    private boolean skipNextSleepCheckAfterCooldown = false;
++
++    private net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory insertionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.UNKNOWN;
++    private net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory extractionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.UNKNOWN;
++
++    //The currently used block inventories
++    @Nullable
++    private Container insertBlockInventory, extractBlockInventory;
++
++    //The currently used inventories (optimized type, if not present, skip optimizations)
++    private net.caffeinemc.mods.lithium.api.inventory.@Nullable LithiumInventory insertInventory, extractInventory;
++    //Null iff corresp. LithiumInventory field is null
++    private net.caffeinemc.mods.lithium.common.hopper.@Nullable LithiumStackList insertStackList, extractStackList;
++    //Mod count used to avoid transfer attempts that are known to fail (no change since last attempt)
++    private long insertStackListModCount, extractStackListModCount;
++
++    @Nullable
++    private List<net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionItemEntityMovementTracker> collectItemEntityTracker;
++    private boolean collectItemEntityTrackerWasEmpty;
++    @Nullable
++    private AABB collectItemEntityBox;
++    private long collectItemEntityAttemptTime;
++
++    @Nullable
++    private List<net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker> extractInventoryEntityTracker;
++    @Nullable
++    private AABB extractInventoryEntityBox;
++    private long extractInventoryEntityFailedSearchTime;
++
++    @Nullable
++    private List<net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker> insertInventoryEntityTracker;
++    @Nullable
++    private AABB insertInventoryEntityBox;
++    private long insertInventoryEntityFailedSearchTime;
++
++    private boolean shouldCheckSleep;
++
++    private void checkSleepingConditions() {
++        if (this.cooldownTime > 0 || this.getLevel() == null || skipNextSleepCheckAfterCooldown) {
++            return;
++        }
++        if (isSleeping()) {
++            return;
++        }
++        if (!this.shouldCheckSleep) {
++            this.shouldCheckSleep = true;
++            return;
++        }
++        boolean listenToExtractTracker = false;
++        boolean listenToInsertTracker = false;
++        boolean listenToExtractEntities = false;
++        boolean listenToItemEntities = false;
++        boolean listenToInsertEntities = false;
++
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList thisStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(this);
++
++        if (this.extractionMode != net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE && thisStackList.getFullSlots() != thisStackList.size()) {
++            if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY) {
++                Container blockInventory = this.extractBlockInventory;
++                if (this.extractStackList != null &&
++                    blockInventory instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) {
++                    if (!this.extractStackList.maybeSendsComparatorUpdatesOnFailedExtract() || (blockInventory instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracker comparatorTracker && !comparatorTracker.lithium$hasAnyComparatorNearby())) {
++                        listenToExtractTracker = true;
++                    } else {
++                        return;
++                    }
++                } else {
++                    return;
++                }
++            } else if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY) {
++                BlockState hopperState = this.getBlockState();
++                listenToExtractEntities = true;
++
++                BlockPos blockPos = this.getBlockPos().above();
++                BlockState blockState = this.getLevel().getBlockState(blockPos);
++                if (!blockState.isCollisionShapeFullBlock(this.getLevel(), blockPos) || blockState.is(BlockTags.DOES_NOT_BLOCK_HOPPERS)) {
++                    listenToItemEntities = true;
++                }
++            } else {
++                return;
++            }
++        }
++        if (this.insertionMode != net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE && 0 < thisStackList.getOccupiedSlots()) {
++            if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY) {
++                Container blockInventory = this.insertBlockInventory;
++                if (this.insertStackList != null && blockInventory instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) {
++                    listenToInsertTracker = true;
++                } else {
++                    return;
++                }
++            } else if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY) {
++                BlockState hopperState = this.getBlockState();
++                listenToInsertEntities = true;
++            } else {
++                return;
++            }
++        }
++
++        if (listenToExtractTracker) {
++            ((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) this.extractBlockInventory).listenForContentChangesOnce(this.extractStackList, this);
++        }
++        if (listenToInsertTracker) {
++            ((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) this.insertBlockInventory).listenForContentChangesOnce(this.insertStackList, this);
++        }
++        if (listenToInsertEntities) {
++            if (this.insertInventoryEntityTracker == null || this.insertInventoryEntityTracker.isEmpty()) {
++                return;
++            }
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.listenToEntityMovementOnce(this, insertInventoryEntityTracker);
++        }
++        if (listenToExtractEntities) {
++            if (this.extractInventoryEntityTracker == null || this.extractInventoryEntityTracker.isEmpty()) {
++                return;
++            }
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.listenToEntityMovementOnce(this, extractInventoryEntityTracker);
++        }
++        if (listenToItemEntities) {
++            if (this.collectItemEntityTracker == null || this.collectItemEntityTracker.isEmpty()) {
++                return;
++            }
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.listenToEntityMovementOnce(this, collectItemEntityTracker);
++        }
++
++        this.listenForContentChangesOnce(thisStackList, this);
++        lithium$startSleeping();
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final @Nullable TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    @Override
++    public @Nullable TickingBlockEntity lithium$getSleepingTicker() {
++        return sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++        this.lithium$setSleepingTicker(null);
++    }
++
++    @Override
++    public @org.jetbrains.annotations.Nullable net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return tickWrapper;
++    }
++
++    @Override
++    public boolean lithium$startSleeping() {
++        if (this.isSleeping()) {
++            return false;
++        }
++
++        net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = this.lithium$getTickWrapper();
++        if (tickWrapper != null) {
++            this.lithium$setSleepingTicker(tickWrapper.ticker);
++            tickWrapper.rebind(net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity.SLEEPING_BLOCK_ENTITY_TICKER);
++
++            // Set the last tick time to max value, so other hoppers transferring into this hopper will set it to 7gt
++            // cooldown. Then when waking up, we make sure to not tick this hopper in the same gametick.
++            // This makes the observable hopper cooldown not be different from vanilla.
++            this.tickedGameTime = Long.MAX_VALUE;
++            return true;
++        }
++        return false;
++    }
++
++    @Override
++    public void handleEntityMovement() {
++        this.wakeUpNow();
++    }
++
++    @Override
++    public NonNullList<ItemStack> getInventoryLithium() {
++        return items;
++    }
++
++    @Override
++    public void setInventoryLithium(final NonNullList<ItemStack> inventory) {
++        this.items = inventory;
++    }
++
++    @Override
++    public void lithium$handleInventoryContentModified(final Container inventory) {
++        wakeUpNow();
++    }
++
++    @Override
++    public void lithium$handleInventoryRemoved(final Container inventory) {
++        wakeUpNow();
++        if (inventory == this.insertBlockInventory) {
++            this.invalidateBlockInsertionData();
++        }
++        if (inventory == this.extractBlockInventory) {
++            this.invalidateBlockExtractionData();
++        }
++        if (inventory == this) {
++            this.invalidateCachedData();
++        }
++    }
++
++    @Override
++    public boolean lithium$handleComparatorAdded(final Container inventory) {
++        if (inventory == this.extractBlockInventory) {
++            wakeUpNow();
++            return true;
++        }
++        return false;
++    }
++
++    @Override
++    public void lithium$invalidateCacheOnNeighborUpdate(final boolean fromAbove) {
++        //Clear the block inventory cache (composter inventories and no inventory present) on block update / observer update
++        if (fromAbove) {
++            if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY || this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE) {
++                this.invalidateBlockExtractionData();
++            }
++        } else {
++            if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY || this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE) {
++                this.invalidateBlockInsertionData();
++            }
++        }
++    }
++
++    @Override
++    public void lithium$invalidateCacheOnUndirectedNeighborUpdate() {
++        if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY || this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE) {
++            this.invalidateBlockExtractionData();
++        }
++        if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY || this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE) {
++            this.invalidateBlockInsertionData();
++        }
++    }
++
++    @Override
++    public void lithium$invalidateCacheOnNeighborUpdate(final Direction fromDirection) {
++        boolean fromAbove = fromDirection == Direction.UP;
++        if (fromAbove || this.getBlockState().getValue(HopperBlock.FACING) == fromDirection) {
++            this.lithium$invalidateCacheOnNeighborUpdate(fromAbove);
++        }
++    }
++
++    private void invalidateBlockInsertionData() {
++        this.insertionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.UNKNOWN;
++        this.insertBlockInventory = null;
++        this.insertInventory = null;
++        this.insertStackList = null;
++        this.insertStackListModCount = 0;
++
++        wakeUpNow();
++    }
++
++    private void invalidateCachedData() {
++        this.shouldCheckSleep = false;
++        this.invalidateInsertionData();
++        this.invalidateExtractionData();
++    }
++
++    private void invalidateInsertionData() {
++        if (this.level instanceof net.minecraft.server.level.ServerLevel) {
++            if (this.insertInventoryEntityTracker != null) {
++                net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.unregister(this.insertInventoryEntityTracker);
++                this.insertInventoryEntityTracker = null;
++                this.insertInventoryEntityBox = null;
++                this.insertInventoryEntityFailedSearchTime = 0L;
++            }
++        }
++
++        if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY) {
++            assert this.insertBlockInventory != null;
++            ((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) this.insertBlockInventory).stopListenForMajorInventoryChanges(this);
++        }
++        this.invalidateBlockInsertionData();
++    }
++
++    private void invalidateExtractionData() {
++        if (this.level instanceof net.minecraft.server.level.ServerLevel) {
++            if (this.extractInventoryEntityTracker != null) {
++                net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.unregister(this.extractInventoryEntityTracker);
++                this.extractInventoryEntityTracker = null;
++                this.extractInventoryEntityBox = null;
++                this.extractInventoryEntityFailedSearchTime = 0L;
++            }
++            if (this.collectItemEntityTracker != null) {
++                net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.unregister(this.collectItemEntityTracker);
++                this.collectItemEntityTracker = null;
++                this.collectItemEntityBox = null;
++                this.collectItemEntityTrackerWasEmpty = false;
++            }
++        }
++        if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY) {
++            assert this.extractBlockInventory != null;
++            ((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) this.extractBlockInventory).stopListenForMajorInventoryChanges(this);
++        }
++        this.invalidateBlockExtractionData();
++    }
++
++    private void invalidateBlockExtractionData() {
++        this.extractionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.UNKNOWN;
++        this.extractBlockInventory = null;
++        this.extractInventory = null;
++        this.extractStackList = null;
++        this.extractStackListModCount = 0;
++
++        this.wakeUpNow();
++    }
++
++    private static @Nullable Container getExtractInventory(final Level world, final Hopper hopper, final BlockPos extractBlockPos, final BlockState extractBlockState) {
++        if (!(hopper instanceof HopperBlockEntity hopperBlockEntity)) {
++            return getSourceContainer(world, hopper, extractBlockPos, extractBlockState); //Hopper Minecarts do not cache Inventories
++        }
++
++        Container blockInventory = hopperBlockEntity.lithium$getExtractBlockInventory(world, extractBlockPos, extractBlockState);
++        if (blockInventory == null) {
++            blockInventory = hopperBlockEntity.lithium$getExtractEntityInventory(world);
++        }
++        return org.bukkit.event.inventory.HopperInventorySearchEvent.getHandlerList().getRegisteredListeners().length == 0 ? blockInventory : runHopperInventorySearchEvent(
++            blockInventory,
++            org.bukkit.craftbukkit.block.CraftBlock.at(world, hopperBlockEntity.getBlockPos()),
++            org.bukkit.craftbukkit.block.CraftBlock.at(world, extractBlockPos),
++            org.bukkit.event.inventory.HopperInventorySearchEvent.ContainerType.SOURCE
++        );
++    }
++
++    public @Nullable Container lithium$getExtractBlockInventory(final Level world, final BlockPos extractBlockPos, final BlockState extractBlockState) {
++        Container blockInventory = this.extractBlockInventory;
++        if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY) {
++            return null;
++        } else if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE) {
++            return blockInventory;
++        } else if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY) {
++            return blockInventory;
++        } else if (this.extractionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_ENTITY) {
++            BlockEntity blockEntity = (BlockEntity) java.util.Objects.requireNonNull(blockInventory);
++            //Movable Block Entity compatibility - position comparison
++            BlockPos pos = blockEntity.getBlockPos();
++            if (!(blockEntity).isRemoved() && pos.equals(extractBlockPos)) {
++                net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory;
++                if ((optimizedInventory = this.extractInventory) != null) {
++                    net.caffeinemc.mods.lithium.common.hopper.LithiumStackList insertInventoryStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory);
++                    //This check is necessary as sometimes the stacklist is silently replaced (e.g. command making furnace read inventory from nbt)
++                    if (insertInventoryStackList == this.extractStackList) {
++                        return optimizedInventory;
++                    } else {
++                        this.invalidateBlockExtractionData();
++                    }
++                } else {
++                    return blockInventory;
++                }
++            }
++        }
++
++        //No Cached Inventory: Get like vanilla and cache
++        blockInventory = getBlockContainer(world, extractBlockPos, extractBlockState);
++        blockInventory = net.caffeinemc.mods.lithium.common.hopper.HopperHelper.replaceDoubleInventory(blockInventory);
++        this.cacheExtractBlockInventory(blockInventory);
++        return blockInventory;
++    }
++
++    public @Nullable Container lithium$getInsertBlockInventory(final Level world) {
++        Container blockInventory = this.insertBlockInventory;
++        if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY) {
++            return null;
++        } else if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE) {
++            return blockInventory;
++        } else if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY) {
++            return blockInventory;
++        } else if (this.insertionMode == net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_ENTITY) {
++            BlockEntity blockEntity = (BlockEntity) java.util.Objects.requireNonNull(blockInventory);
++            //Movable Block Entity compatibility - position comparison
++            BlockPos pos = blockEntity.getBlockPos();
++            Direction direction = this.facing;
++            BlockPos transferPos = this.getBlockPos().relative(direction);
++            if (!(blockEntity).isRemoved() &&
++                pos.equals(transferPos)) {
++                net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory;
++                if ((optimizedInventory = this.insertInventory) != null) {
++                    net.caffeinemc.mods.lithium.common.hopper.LithiumStackList insertInventoryStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory);
++                    //This check is necessary as sometimes the stacklist is silently replaced (e.g. command making furnace read inventory from nbt)
++                    if (insertInventoryStackList == this.insertStackList) {
++                        return optimizedInventory;
++                    } else {
++                        this.invalidateBlockInsertionData();
++                    }
++                } else {
++                    return blockInventory;
++                }
++            }
++        }
++
++        //No Cached Inventory: Get like vanilla and cache
++        Direction direction = this.facing;
++        BlockPos insertBlockPos = this.getBlockPos().relative(direction);
++        BlockState blockState = world.getBlockState(insertBlockPos);
++        blockInventory = getBlockContainer(world, insertBlockPos, blockState);
++        blockInventory = net.caffeinemc.mods.lithium.common.hopper.HopperHelper.replaceDoubleInventory(blockInventory);
++        this.cacheInsertBlockInventory(blockInventory);
++        return blockInventory;
++    }
++
++    public @Nullable Container getInsertInventory(final Level world) {
++        Container blockInventory = getInsertInventory0(world);
++        return org.bukkit.event.inventory.HopperInventorySearchEvent.getHandlerList().getRegisteredListeners().length == 0 ? blockInventory : runHopperInventorySearchEvent(
++            blockInventory,
++            org.bukkit.craftbukkit.block.CraftBlock.at(world, this.getBlockPos()),
++            org.bukkit.craftbukkit.block.CraftBlock.at(world, this.getBlockPos().relative(this.facing)),
++            org.bukkit.event.inventory.HopperInventorySearchEvent.ContainerType.DESTINATION
++        );
++    }
++
++    public @Nullable Container getInsertInventory0(final Level world) {
++        Container blockInventory = this.lithium$getInsertBlockInventory(world);
++        if (blockInventory != null) {
++            return blockInventory;
++        }
++
++        if (this.insertInventoryEntityTracker == null) {
++            this.initInsertInventoryTracker(world);
++        }
++        if (net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.isUnchangedSince(this.insertInventoryEntityFailedSearchTime, this.insertInventoryEntityTracker)) {
++            this.insertInventoryEntityFailedSearchTime = this.tickedGameTime;
++            return null;
++        }
++        this.insertInventoryEntityFailedSearchTime = Long.MIN_VALUE;
++        this.shouldCheckSleep = false;
++
++        List<Container> inventoryEntities = net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker.getEntities(world, this.insertInventoryEntityBox);
++        if (inventoryEntities.isEmpty()) {
++            this.insertInventoryEntityFailedSearchTime = this.tickedGameTime;
++            //Remember failed entity search timestamp. This allows shortcutting if no entity movement happens.
++            return null;
++        }
++        Container inventory = inventoryEntities.get(world.random.nextInt(inventoryEntities.size()));
++        if (inventory instanceof net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) {
++            net.caffeinemc.mods.lithium.common.hopper.LithiumStackList insertInventoryStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory);
++            if (inventory != this.insertInventory || this.insertStackList != insertInventoryStackList) {
++                this.cacheInsertLithiumInventory(optimizedInventory);
++            }
++        }
++
++        return inventory;
++    }
++
++    private void initCollectItemEntityTracker() {
++        assert this.level instanceof net.minecraft.server.level.ServerLevel;
++        AABB inputBox = this.getSuckAabb().move(this.worldPosition.getX(), this.worldPosition.getY(), this.worldPosition.getZ());
++        this.collectItemEntityBox = inputBox;
++        this.collectItemEntityTracker =
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionItemEntityMovementTracker.registerAt(
++                (net.minecraft.server.level.ServerLevel) this.level,
++                inputBox
++            );
++        this.collectItemEntityAttemptTime = Long.MIN_VALUE;
++    }
++
++    private void initExtractInventoryTracker(final Level world) {
++        assert world instanceof net.minecraft.server.level.ServerLevel;
++        BlockPos pos = this.worldPosition.relative(Direction.UP);
++        this.extractInventoryEntityBox = new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1);
++        this.extractInventoryEntityTracker =
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker.registerAt(
++                (net.minecraft.server.level.ServerLevel) this.level,
++                this.extractInventoryEntityBox
++            );
++        this.extractInventoryEntityFailedSearchTime = Long.MIN_VALUE;
++    }
++
++    private void initInsertInventoryTracker(final Level world) {
++        assert world instanceof net.minecraft.server.level.ServerLevel;
++        Direction direction = this.facing;
++        BlockPos pos = this.worldPosition.relative(direction);
++        this.insertInventoryEntityBox = new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1);
++        this.insertInventoryEntityTracker =
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker.registerAt(
++                (net.minecraft.server.level.ServerLevel) this.level,
++                this.insertInventoryEntityBox
++            );
++        this.insertInventoryEntityFailedSearchTime = Long.MIN_VALUE;
++    }
++
++    private @Nullable Container lithium$getExtractEntityInventory(final Level world) {
++        if (this.extractInventoryEntityTracker == null) {
++            this.initExtractInventoryTracker(world);
++        }
++        if (net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.isUnchangedSince(this.extractInventoryEntityFailedSearchTime, this.extractInventoryEntityTracker)) {
++            this.extractInventoryEntityFailedSearchTime = this.tickedGameTime;
++            return null;
++        }
++        this.extractInventoryEntityFailedSearchTime = Long.MIN_VALUE;
++        this.shouldCheckSleep = false;
++
++        List<Container> inventoryEntities = net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionInventoryEntityTracker.getEntities(world, this.extractInventoryEntityBox);
++        if (inventoryEntities.isEmpty()) {
++            this.extractInventoryEntityFailedSearchTime = this.tickedGameTime;
++            //only set unchanged when no entity present. this allows shortcutting this case
++            //shortcutting the entity present case requires checking its change counter
++            return null;
++        }
++        Container inventory = inventoryEntities.get(world.random.nextInt(inventoryEntities.size()));
++        if (inventory instanceof net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) {
++            net.caffeinemc.mods.lithium.common.hopper.LithiumStackList extractInventoryStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory);
++            if (inventory != this.extractInventory || this.extractStackList != extractInventoryStackList) {
++                //not caching the inventory (NO_BLOCK_INVENTORY prevents it)
++                //make change counting on the entity inventory possible, without caching it as block inventory
++                this.cacheExtractLithiumInventory(optimizedInventory);
++            }
++        }
++        return inventory;
++    }
++
++    /**
++     * Makes this hopper remember the given inventory.
++     *
++     * @param insertInventory Block inventory / Blockentity inventory to be remembered
++     */
++    private void cacheInsertBlockInventory(final @Nullable Container insertInventory) {
++        assert !(insertInventory instanceof Entity);
++        if (insertInventory instanceof net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) {
++            this.cacheInsertLithiumInventory(optimizedInventory);
++        } else {
++            this.insertInventory = null;
++            this.insertStackList = null;
++            this.insertStackListModCount = 0;
++        }
++
++        if (insertInventory instanceof BlockEntity || insertInventory instanceof net.minecraft.world.CompoundContainer) {
++            this.insertBlockInventory = insertInventory;
++            if (insertInventory instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) {
++                this.insertionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY;
++                ((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) insertInventory).listenForMajorInventoryChanges(this);
++            } else {
++                this.insertionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_ENTITY;
++            }
++        } else {
++            if (insertInventory == null) {
++                this.insertBlockInventory = null;
++                this.insertionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY;
++            } else {
++                this.insertBlockInventory = insertInventory;
++                this.insertionMode = insertInventory instanceof net.caffeinemc.mods.lithium.common.hopper.BlockStateOnlyInventory ? net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE : net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.UNKNOWN;
++            }
++        }
++    }
++
++    private void cacheInsertLithiumInventory(final net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) {
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList insertInventoryStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory);
++        this.insertInventory = optimizedInventory;
++        this.insertStackList = insertInventoryStackList;
++        this.insertStackListModCount = insertInventoryStackList.getModCount() - 1;
++    }
++
++    private void cacheExtractLithiumInventory(final net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) {
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList extractInventoryStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(optimizedInventory);
++        this.extractInventory = optimizedInventory;
++        this.extractStackList = extractInventoryStackList;
++        this.extractStackListModCount = extractInventoryStackList.getModCount() - 1;
++    }
++
++    /**
++     * Makes this hopper remember the given inventory.
++     *
++     * @param extractInventory Block inventory / Blockentity inventory to be remembered
++     */
++    private void cacheExtractBlockInventory(final @Nullable Container extractInventory) {
++        assert !(extractInventory instanceof Entity);
++        if (extractInventory instanceof net.caffeinemc.mods.lithium.api.inventory.LithiumInventory optimizedInventory) {
++            this.cacheExtractLithiumInventory(optimizedInventory);
++        } else {
++            this.extractInventory = null;
++            this.extractStackList = null;
++            this.extractStackListModCount = 0;
++        }
++
++        if (extractInventory instanceof BlockEntity || extractInventory instanceof net.minecraft.world.CompoundContainer) {
++            this.extractBlockInventory = extractInventory;
++            if (extractInventory instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) {
++                this.extractionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.REMOVAL_TRACKING_BLOCK_ENTITY;
++                ((net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker) extractInventory).listenForMajorInventoryChanges(this);
++            } else {
++                this.extractionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_ENTITY;
++            }
++        } else {
++            if (extractInventory == null) {
++                this.extractBlockInventory = null;
++                this.extractionMode = net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.NO_BLOCK_INVENTORY;
++            } else {
++                this.extractBlockInventory = extractInventory;
++                this.extractionMode = extractInventory instanceof net.caffeinemc.mods.lithium.common.hopper.BlockStateOnlyInventory ? net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.BLOCK_STATE : net.caffeinemc.mods.lithium.common.hopper.HopperCachingState.BlockInventory.UNKNOWN;
++            }
++        }
++    }
++
++    private static List<ItemEntity> lithiumGetInputItemEntities(final Level world, final Hopper hopper) {
++        if (!(hopper instanceof HopperBlockEntity hopperBlockEntity)) {
++            return getItemsAtAndAbove(world, hopper); //optimizations not implemented for hopper minecarts
++        }
++
++        if (hopperBlockEntity.collectItemEntityTracker == null) {
++            hopperBlockEntity.initCollectItemEntityTracker();
++        }
++
++        long modCount = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(hopperBlockEntity).getModCount();
++
++        if ((hopperBlockEntity.collectItemEntityTrackerWasEmpty || hopperBlockEntity.myModCountAtLastItemCollect == modCount) &&
++            net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionEntityMovementTracker.isUnchangedSince(hopperBlockEntity.collectItemEntityAttemptTime, hopperBlockEntity.collectItemEntityTracker)) {
++            hopperBlockEntity.collectItemEntityAttemptTime = hopperBlockEntity.tickedGameTime;
++            return java.util.Collections.emptyList();
++        }
++
++        hopperBlockEntity.myModCountAtLastItemCollect = modCount;
++        hopperBlockEntity.shouldCheckSleep = false;
++
++        List<ItemEntity> itemEntities = net.caffeinemc.mods.lithium.common.tracking.entity.ChunkSectionItemEntityMovementTracker.getEntities(world, hopperBlockEntity.collectItemEntityBox);
++        hopperBlockEntity.collectItemEntityAttemptTime = hopperBlockEntity.tickedGameTime;
++        hopperBlockEntity.collectItemEntityTrackerWasEmpty = itemEntities.isEmpty();
++        //set unchanged so that if this extract fails and there is no other change to hoppers or items, extracting
++        // items can be skipped.
++        return itemEntities;
++    }
++
++    private static @Nullable Boolean lithiumInsert(final Level world, final BlockPos pos, final HopperBlockEntity hopperBlockEntity, final @Nullable Container insertInventory) {
++        if (insertInventory == null || hopperBlockEntity instanceof net.minecraft.world.WorldlyContainer) {
++            //call the vanilla code to allow other mods inject features
++            //e.g. carpet mod allows hoppers to insert items into wool blocks
++            return null;
++        }
++
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList hopperStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(hopperBlockEntity);
++        if (hopperBlockEntity.insertInventory == insertInventory && hopperStackList.getModCount() == hopperBlockEntity.myModCountAtLastInsert) {
++            if (hopperBlockEntity.insertStackList != null && hopperBlockEntity.insertStackList.getModCount() == hopperBlockEntity.insertStackListModCount) {
++//                ComparatorUpdatePattern.NO_UPDATE.apply(hopperBlockEntity, hopperStackList); //commented because it's a noop, Hoppers do not send useless comparator updates
++                return false;
++            }
++        }
++
++        boolean insertInventoryWasEmptyHopperNotDisabled = insertInventory instanceof HopperBlockEntity hopperInv &&
++            !hopperInv.isOnCustomCooldown() && hopperBlockEntity.insertStackList != null &&
++            hopperBlockEntity.insertStackList.getOccupiedSlots() == 0;
++
++        boolean insertInventoryHandlesModdedCooldown =
++            insertInventory.canReceiveTransferCooldown() &&
++                hopperBlockEntity.insertStackList != null ?
++                hopperBlockEntity.insertStackList.getOccupiedSlots() == 0 :
++                insertInventory.isEmpty();
++
++        skipPushModeEventFire = skipHopperEvents;
++        //noinspection ConstantConditions
++        if (!(hopperBlockEntity.insertInventory == insertInventory && hopperBlockEntity.insertStackList.getFullSlots() == hopperBlockEntity.insertStackList.size())) {
++            Direction fromDirection = hopperBlockEntity.facing.getOpposite();
++            int size = hopperStackList.size();
++            for (int i = 0; i < size; ++i) {
++                ItemStack transferStack = hopperStackList.get(i);
++                if (!transferStack.isEmpty()) {
++                    if (!skipPushModeEventFire && canTakeItemFromContainer(insertInventory, hopperBlockEntity, transferStack, i, Direction.DOWN)) {
++                        transferStack = callPushMoveEvent(insertInventory, transferStack, hopperBlockEntity);
++                        if (transferStack == null) { // cancelled
++                            break;
++                        }
++                    }
++                    boolean transferSuccess = net.caffeinemc.mods.lithium.common.hopper.HopperHelper.tryMoveSingleItem(insertInventory, transferStack, fromDirection);
++                    if (transferSuccess) {
++                        if (insertInventoryWasEmptyHopperNotDisabled) {
++                            HopperBlockEntity receivingHopper = (HopperBlockEntity) insertInventory;
++                            int k = 8;
++                            if (receivingHopper.tickedGameTime >= hopperBlockEntity.tickedGameTime) {
++                                k = 7;
++                            }
++                            receivingHopper.setCooldown(k);
++                        }
++                        if (insertInventoryHandlesModdedCooldown) {
++                            insertInventory.setTransferCooldown(hopperBlockEntity.tickedGameTime);
++                        }
++                        insertInventory.setChanged();
++                        return true;
++                    }
++                }
++            }
++        }
++        hopperBlockEntity.myModCountAtLastInsert = hopperStackList.getModCount();
++        if (hopperBlockEntity.insertStackList != null) {
++            hopperBlockEntity.insertStackListModCount = hopperBlockEntity.insertStackList.getModCount();
++        }
++        return false;
++    }
++
++    private static @Nullable Boolean lithiumExtract(final Level world, final Hopper to, final Container from) {
++        if (!(to instanceof HopperBlockEntity hopperBlockEntity)) {
++            return null; //optimizations not implemented for hopper minecarts
++        }
++
++        if (from != hopperBlockEntity.extractInventory || hopperBlockEntity.extractStackList == null) {
++            return null; //from inventory is not an optimized inventory, vanilla fallback
++        }
++
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList hopperStackList = net.caffeinemc.mods.lithium.common.hopper.InventoryHelper.getLithiumStackList(hopperBlockEntity);
++        net.caffeinemc.mods.lithium.common.hopper.LithiumStackList fromStackList = hopperBlockEntity.extractStackList;
++
++        if (hopperStackList.getModCount() == hopperBlockEntity.myModCountAtLastExtract) {
++            if (fromStackList.getModCount() == hopperBlockEntity.extractStackListModCount) {
++                if (!(from instanceof net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracker comparatorTracker) || comparatorTracker.lithium$hasAnyComparatorNearby()) {
++                    //noinspection CollectionAddedToSelf
++                    fromStackList.runComparatorUpdatePatternOnFailedExtract(fromStackList, from);
++                }
++                return false;
++            }
++        }
++
++        int[] availableSlots = from instanceof WorldlyContainer ? ((WorldlyContainer) from).getSlotsForFace(Direction.DOWN) : null;
++        int fromSize = availableSlots != null ? availableSlots.length : from.getContainerSize();
++        for (int i = 0; i < fromSize; i++) {
++            int fromSlot = availableSlots != null ? availableSlots[i] : i;
++            ItemStack itemStack = fromStackList.get(fromSlot);
++            if (!itemStack.isEmpty() && canTakeItemFromContainer(to, from, itemStack, fromSlot, Direction.DOWN)) {
++                if (!skipPullModeEventFire) {
++                    itemStack = callPullMoveEvent(to, from, itemStack);
++                    if (itemStack == null) { // cancelled
++                        return true;
++                    }
++                }
++                //calling removeStack is necessary due to its side effects (markDirty in LootableContainerBlockEntity)
++                ItemStack takenItem = from.removeItem(fromSlot, 1);
++                assert !takenItem.isEmpty();
++                boolean transferSuccess = net.caffeinemc.mods.lithium.common.hopper.HopperHelper.tryMoveSingleItem(to, takenItem, null);
++                if (transferSuccess) {
++                    to.setChanged();
++                    from.setChanged();
++                    return true;
++                }
++                //put the item back similar to vanilla
++                ItemStack restoredStack = fromStackList.get(fromSlot);
++                if (restoredStack.isEmpty()) {
++                    restoredStack = takenItem;
++                } else {
++                    restoredStack.grow(1);
++                }
++                //calling setStack is necessary due to its side effects (markDirty in LootableContainerBlockEntity)
++                from.setItem(fromSlot, restoredStack);
++            }
++        }
++        hopperBlockEntity.myModCountAtLastExtract = hopperStackList.getModCount();
++        if (fromStackList != null) {
++            hopperBlockEntity.extractStackListModCount = fromStackList.getModCount();
++        }
++        return false;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java b/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java
+index e427e7291e897cbee0221801f85a9d3eeab1bac3..73016e8ca69fb8d880fa181850f77366efc19768 100644
+--- a/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java
+@@ -32,7 +32,7 @@ import net.minecraft.world.phys.AABB;
+ import net.minecraft.world.phys.Vec3;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity implements WorldlyContainer {
++public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity implements WorldlyContainer, net.caffeinemc.mods.lithium.common.block.entity.inventory_change_tracking.InventoryChangeTracker, net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity, net.caffeinemc.mods.lithium.api.inventory.LithiumInventory { // Leaves - Lithium Sleeping Block Entity
+     public static final int COLUMNS = 9;
+     public static final int ROWS = 3;
+     public static final int CONTAINER_SIZE = 27;
+@@ -134,6 +134,7 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+                     doNeighborUpdates(level, pos, blockState);
+                 }
+         }
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.animationStatus == ShulkerBoxBlockEntity.AnimationStatus.CLOSED && this.progressOld == 0.0f && this.progress == 0.0f) this.lithium$startSleeping(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     public ShulkerBoxBlockEntity.AnimationStatus getAnimationStatus() {
+@@ -174,6 +175,7 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+ 
+     @Override
+     public boolean triggerEvent(final int b0, final int b1) {
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && this.sleepingTicker != null) this.wakeUpNow(); // Leaves - Lithium Sleeping Block Entity
+         if (b0 == EVENT_SET_OPEN_COUNT) {
+             this.openCount = b1;
+             if (b1 == 0) {
+@@ -269,6 +271,7 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+     @Override
+     protected void setItems(final NonNullList<ItemStack> items) {
+         this.itemStacks = items;
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$emitStackListReplaced(); // Leaves - Lithium Sleeping Block Entity
+     }
+ 
+     @Override
+@@ -309,4 +312,39 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+         OPENED,
+         CLOSING;
+     }
++
++    // Leaves start - Lithium Sleeping Block Entity
++    private net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper = null;
++    private TickingBlockEntity sleepingTicker = null;
++
++    @Override
++    public net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper lithium$getTickWrapper() {
++        return tickWrapper;
++    }
++
++    @Override
++    public void lithium$setTickWrapper(final net.minecraft.world.level.chunk.LevelChunk.RebindableTickingBlockEntityWrapper tickWrapper) {
++        this.tickWrapper = tickWrapper;
++    }
++
++    @Override
++    public TickingBlockEntity lithium$getSleepingTicker() {
++        return sleepingTicker;
++    }
++
++    @Override
++    public void lithium$setSleepingTicker(final TickingBlockEntity sleepingTicker) {
++        this.sleepingTicker = sleepingTicker;
++    }
++
++    @Override
++    public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
++        return itemStacks;
++    }
++
++    @Override
++    public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
++        itemStacks = inventory;
++    }
++    // Leaves end - Lithium Sleeping Block Entity
+ }
+diff --git a/net/minecraft/world/level/block/state/BlockBehaviour.java b/net/minecraft/world/level/block/state/BlockBehaviour.java
+index 5588204ccd22b727507e26fae26fa8d42e2e7fdc..c29abb441a965127979f1a928a9d91bfdab2a5de 100644
+--- a/net/minecraft/world/level/block/state/BlockBehaviour.java
++++ b/net/minecraft/world/level/block/state/BlockBehaviour.java
+@@ -82,7 +82,7 @@ import net.minecraft.world.phys.shapes.Shapes;
+ import net.minecraft.world.phys.shapes.VoxelShape;
+ import org.jspecify.annotations.Nullable;
+ 
+-public abstract class BlockBehaviour implements FeatureElement {
++public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.mods.lithium.common.block.entity.ShapeUpdateHandlingBlockBehaviour { // Leaves - Lithium Sleeping Block Entity
+     protected static final Direction[] UPDATE_SHAPE_ORDER = new Direction[]{
+         Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH, Direction.DOWN, Direction.UP
+     };
+@@ -147,6 +147,7 @@ public abstract class BlockBehaviour implements FeatureElement {
+         final BlockState neighbourState,
+         final RandomSource random
+     ) {
++        if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled) this.lithium$handleShapeUpdate(level, state, pos, neighbourPos, neighbourState); // Leaves - Lithium Sleeping Block Entity /* Triggers when a shape update (= update that observers can detect) is sent */
+         return state;
+     }
+ 
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index da7ea6618f051b79f22e7be93228f74aa2a0f47c..60711b49fd710c3a9c172af6fe5f6b214b1a94d7 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -986,10 +986,12 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+             this.tickersInLevel.compute(blockEntity.getBlockPos(), (blockPos, existingTicker) -> {
+                 TickingBlockEntity actualTicker = this.createTicker(blockEntity, ticker);
+                 if (existingTicker != null) {
++                    if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && blockEntity instanceof net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity sleepingBlockEntity) sleepingBlockEntity.lithium$setTickWrapper(existingTicker); // Leaves - Lithium Sleeping Block Entity
+                     existingTicker.rebind(actualTicker);
+                     return (LevelChunk.RebindableTickingBlockEntityWrapper)existingTicker;
+                 } else if (this.isInLevel()) {
+                     LevelChunk.RebindableTickingBlockEntityWrapper result = new LevelChunk.RebindableTickingBlockEntityWrapper(actualTicker);
++                    if (org.dreeam.leaf.config.modules.opt.SleepingBlockEntity.enabled && blockEntity instanceof net.caffeinemc.mods.lithium.common.block.entity.SleepingBlockEntity sleepingBlockEntity) sleepingBlockEntity.lithium$setTickWrapper(result); // Leaves - Lithium Sleeping Block Entity
+                     this.level.addBlockEntityTicker(result);
+                     return result;
+                 } else {
+@@ -1088,8 +1090,8 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+         void run(LevelChunk levelChunk);
+     }
+ 
+-    private static class RebindableTickingBlockEntityWrapper implements TickingBlockEntity {
+-        private TickingBlockEntity ticker;
++    public static class RebindableTickingBlockEntityWrapper implements TickingBlockEntity { // Leaves - Lithium Sleeping Block Entity - private -> public
++        public TickingBlockEntity ticker; // Leaves - private -> public
+         private BlockPos cachedPos; // Leaf - Cache tile entity position
+         private @Nullable BlockEntity blockEntityReference = null; // Leaf - Improve BlockEntity ticking isRemoved check
+ 
+@@ -1103,7 +1105,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+             // Leaf end - Improve BlockEntity ticking isRemoved check
+         }
+ 
+-        private void rebind(final TickingBlockEntity ticker) {
++        public void rebind(final TickingBlockEntity ticker) { // Leaves - private -> public
+             this.ticker = ticker;
+             this.cachedPos = this.ticker.getPos(); // Leaf - Cache tile entity position
+             // Leaf start - Improve BlockEntity ticking isRemoved check

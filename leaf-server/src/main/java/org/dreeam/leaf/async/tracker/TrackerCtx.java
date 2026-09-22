@@ -166,6 +166,7 @@ public final class TrackerCtx {
 
         if (!resync.isEmpty()) {
             for (ChunkMap.TrackedEntity tracker : resync) {
+                tracker.serverEntity.leaf$prepareTracking(true);
                 tracker.serverEntity.leaf$sendChanges(this, tracker, true);
             }
         }
