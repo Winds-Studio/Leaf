@@ -13,6 +13,7 @@ public class SparklyPaperParallelWorldTicking extends ConfigModule {
     }
 
     @Experimental
+    @Deprecated(forRemoval = true)
     public static boolean enabled = false;
     public static int threads = 8;
     public static boolean logContainerCreationStacktraces = false;
