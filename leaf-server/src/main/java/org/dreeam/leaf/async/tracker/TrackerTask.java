@@ -2,28 +2,25 @@ package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
-import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
 import net.minecraft.server.level.ChunkMap;
-import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import org.dreeam.leaf.util.EntitySlice;
+import org.dreeam.leaf.util.TrackerSlice;
 
 import java.util.concurrent.Callable;
 
-public record TrackerTask(ServerLevel world, EntitySlice entities) implements Callable<TrackerCtx> {
+public record TrackerTask(ServerLevel world, TrackerSlice trackers) implements Callable<TrackerCtx> {
 
     @Override
     public TrackerCtx call() throws Exception {
         final TrackerCtx ctx = new TrackerCtx(this.world);
-        final Entity[] raw = entities.array();
-        for (int i = entities.start(); i < entities.end(); i++) {
-            final Entity entity = raw[i];
-            final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
-            // removed in world if null
-            if (tracker == null) {
+        final ChunkMap.TrackedEntity[] raw = trackers.array();
+        for (int i = trackers.start(); i < trackers.end(); i++) {
+            final ChunkMap.TrackedEntity tracker = raw[i];
+            if (tracker == null || tracker.serverEntity.entity.moonrise$getTrackedEntity() != tracker) {
                 continue;
             }
+            final Entity entity = tracker.serverEntity.entity;
             if (tracker.getClass() != ChunkMap.TrackedEntity.class) {
                 ctx.citizensEntity(tracker);
                 continue;

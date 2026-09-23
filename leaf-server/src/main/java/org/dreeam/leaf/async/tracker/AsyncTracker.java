@@ -1,11 +1,14 @@
 package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
+import ca.spottedleaf.moonrise.common.misc.NearbyPlayers;
+import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerPlayerConnection;
@@ -13,10 +16,11 @@ import net.minecraft.world.entity.Entity;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.dreeam.leaf.async.FixedThreadExecutor;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
-import org.dreeam.leaf.util.EntitySlice;
+import org.dreeam.leaf.util.TrackerSlice;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Objects;
 import java.util.concurrent.*;
 
 @NullMarked
@@ -56,32 +60,33 @@ public final class AsyncTracker {
             return;
         }
         Entity[] raw = trackerEntities.getRawDataUnchecked();
-        java.util.Objects.checkFromIndexSize(0, len, raw.length);
+        Objects.checkFromIndexSize(0, len, raw.length);
 
-        Entity[] clone = new Entity[len];
-        System.arraycopy(raw, 0, clone, 0, len);
-        for (Entity entity : clone) {
+        ChunkMap.TrackedEntity[] trackers = new ChunkMap.TrackedEntity[len];
+        for (int i = 0; i < len; i++) {
+            Entity entity = raw[i];
             ChunkMap.TrackedEntity tracker = entity.moonrise$getTrackedEntity();
+            trackers[i] = tracker;
             if (tracker == null || tracker.getClass() != ChunkMap.TrackedEntity.class) {
                 continue;
             }
-            ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData chunkData = entity.moonrise$getChunkData();
-            ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk = chunkData == null ? null : chunkData.nearbyPlayers;
+            ChunkData chunkData = entity.moonrise$getChunkData();
+            NearbyPlayers.TrackedChunk chunk = chunkData == null ? null : chunkData.nearbyPlayers;
             boolean sendChanges = chunk != null && !chunk.playersTracking.isEmpty() && tracker.moonrise$hasPlayers();
             if (!sendChanges) {
-                net.minecraft.server.level.FullChunkStatus status = entity.moonrise$getChunkStatus();
-                sendChanges = status != null && status.isOrAfter(net.minecraft.server.level.FullChunkStatus.ENTITY_TICKING);
+                FullChunkStatus status = entity.moonrise$getChunkStatus();
+                sendChanges = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
             }
             tracker.serverEntity.leaf$prepareTick(sendChanges || entity.needsSync);
         }
-        EntitySlice slice = new EntitySlice(clone);
-        EntitySlice[] slices = clone.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
+        TrackerSlice slice = new TrackerSlice(trackers);
+        TrackerSlice[] slices = len <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
             futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i]));
         }
-        TRACKER_EXECUTOR.unpack();
+        TRACKER_EXECUTOR.unpark();
         this.fut = futures;
     }
 

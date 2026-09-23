@@ -166,7 +166,10 @@ public final class TrackerCtx {
 
         if (!resync.isEmpty()) {
             for (ChunkMap.TrackedEntity tracker : resync) {
-                tracker.serverEntity.leaf$prepareTracking(true);
+                if (tracker.serverEntity.entity.moonrise$getTrackedEntity() != tracker) {
+                    continue;
+                }
+                tracker.serverEntity.leaf$captureTracking(true);
                 tracker.serverEntity.leaf$sendChanges(this, tracker, true);
             }
         }
@@ -199,6 +202,9 @@ public final class TrackerCtx {
     }
 
     private static void handlePlugin(ChunkMap.TrackedEntity tracker) {
+        if (tracker.serverEntity.entity.moonrise$getTrackedEntity() != tracker) {
+            return;
+        }
         ChunkSystemEntity entity = tracker.serverEntity.entity;
         ChunkData chunk = entity.moonrise$getChunkData();
         tracker.moonrise$tick(chunk == null ? null : chunk.nearbyPlayers);
@@ -207,7 +213,7 @@ public final class TrackerCtx {
             FullChunkStatus status = entity.moonrise$getChunkStatus();
             flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
         }
-        if (flag) {
+        if (flag && tracker.serverEntity.entity.moonrise$getTrackedEntity() == tracker) { // recheck as plugins may invoke cross dimension teleport
             tracker.serverEntity.sendChanges();
         }
     }
