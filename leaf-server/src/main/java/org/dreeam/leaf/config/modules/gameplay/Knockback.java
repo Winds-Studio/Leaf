@@ -14,6 +14,7 @@ public class Knockback extends ConfigModule {
     public static boolean canPlayerKnockbackZombie = true;
     public static boolean oldBlastProtectionKnockbackBehavior = false;
     public static boolean useLegacyTrackerTicking = false;
+    private static boolean legacyTrackerTickingInitialized;
 
     @Override
     public void onLoaded() {
@@ -33,6 +34,13 @@ public class Knockback extends ConfigModule {
                 "使玩家可以击退僵尸."
             ));
         oldBlastProtectionKnockbackBehavior = globalConfig.getBoolean(basePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
-        useLegacyTrackerTicking =  globalConfig.getBoolean(basePath() + ".use-legacy-tracker-ticking", useLegacyTrackerTicking);
+
+        if (legacyTrackerTickingInitialized) {
+            globalConfig.getConfigSection(basePath());
+            return;
+        }
+        legacyTrackerTickingInitialized = true;
+
+        useLegacyTrackerTicking = globalConfig.getBoolean(basePath() + ".use-legacy-tracker-ticking", useLegacyTrackerTicking);
     }
 }

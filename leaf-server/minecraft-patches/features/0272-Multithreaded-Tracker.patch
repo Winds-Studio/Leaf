@@ -173,7 +173,7 @@ index 5ebee007fc2f6b36c902553b8dd811439e4b1d3e..ec439c2390625ec0457b8a0fcb4a4ba5
      }
      // CraftBukkit end
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 63fb24619ff6f0399c7da9110a2e94fb6b72d390..2f6dba6d3ea5e69c9c10c207683f63e61e06cee0 100644
+index 63fb24619ff6f0399c7da9110a2e94fb6b72d390..bd91d9ae11595dcfcbca22cd5a62c9fc6e40e077 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
 @@ -1096,6 +1096,12 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
@@ -182,7 +182,7 @@ index 63fb24619ff6f0399c7da9110a2e94fb6b72d390..2f6dba6d3ea5e69c9c10c207683f63e6
      protected void tick() {
 +        // Leaf start - Multithreaded tracker
 +        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
-+            this.level.leaf$asyncTracker.tick(this.level, this.trackerEntities);
++            this.level.leaf$asyncTracker.tick(this.level);
 +            return;
 +        }
 +        // Leaf end - Multithreaded tracker
@@ -525,10 +525,10 @@ index 63fb24619ff6f0399c7da9110a2e94fb6b72d390..2f6dba6d3ea5e69c9c10c207683f63e6
      }
  }
 diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
-index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71237fa2f4 100644
+index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..75c069a18fcf1aabaa97d70a4aae1e757bcdf5fd 100644
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
-@@ -60,7 +60,7 @@ public class ServerEntity {
+@@ -60,11 +60,12 @@ public class ServerEntity {
      public static final int FORCED_POS_UPDATE_PERIOD = 60;
      private static final int FORCED_TELEPORT_PERIOD = 400;
      private final ServerLevel level;
@@ -537,7 +537,12 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
      private final UpdateInterval updateInterval;
      private final boolean trackDelta;
      private final ServerEntity.Synchronizer synchronizer;
-@@ -75,7 +75,7 @@ public class ServerEntity {
+     private final InterpolationTracker interpolationTracker;
++    public final org.dreeam.leaf.async.tracker.@Nullable TrackerInput leaf$trackingInput; // Leaf - Multithreaded tracker
+     private final VecDeltaCodec positionCodec = new VecDeltaCodec();
+     private byte lastSentYRot;
+     private byte lastSentXRot;
+@@ -75,7 +76,7 @@ public class ServerEntity {
      private List<Entity> lastPassengers = com.google.common.collect.ImmutableList.of(); // Paper - optimize passenger checks
      private boolean wasRiding;
      private boolean wasOnGround;
@@ -546,7 +551,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
      private final Set<net.minecraft.server.network.ServerPlayerConnection> trackedPlayers; // Paper
  
      public ServerEntity(
-@@ -88,11 +88,14 @@ public class ServerEntity {
+@@ -88,11 +89,15 @@ public class ServerEntity {
      ) {
          this.trackedPlayers = trackedPlayers; // Paper
          this.level = level;
@@ -558,12 +563,13 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
 -        this.interpolationTracker = entity.getInterpolation().interpolationTracker();
 +        // Leaf start - Multithreaded tracker
 +        InterpolationTracker interpolationTracker = entity.getInterpolation().interpolationTracker();
-+        this.interpolationTracker = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled ? interpolationTracker.leaf$createAsyncTracker() : interpolationTracker;
++        this.interpolationTracker = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled ? interpolationTracker.leaf$createTrackingState() : interpolationTracker;
++        this.leaf$trackingInput = org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled ? new org.dreeam.leaf.async.tracker.TrackerInput(level.leaf$asyncTracker, entity, interpolationTracker) : null;
 +        // Leaf end - Multithreaded tracker
          this.positionCodec.setBase(entity.trackingPosition());
          this.lastSentMovement = entity.getDeltaMovement();
          this.lastSentYRot = Mth.packDegrees(entity.getYRot());
-@@ -103,20 +106,21 @@ public class ServerEntity {
+@@ -103,20 +108,21 @@ public class ServerEntity {
      }
  
      // Paper start - fix desync when a player is added to the tracker
@@ -589,7 +595,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
          if (!passengers.equals(this.lastPassengers)) {
              this.synchronizer.sendToTrackingPlayers(new ClientboundSetPassengersPacket(this.entity));
              // Paper start - Allow riding players
-@@ -124,27 +128,27 @@ public class ServerEntity {
+@@ -124,32 +130,41 @@ public class ServerEntity {
                  player.connection.send(new ClientboundSetPassengersPacket(this.entity));
              }
              // Paper end - Allow riding players
@@ -623,7 +629,23 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
          }
  
          Vec3 currentPosition = this.entity.trackingPosition();
-@@ -157,27 +161,27 @@ public class ServerEntity {
+-        this.interpolationTracker.updateTracking(currentPosition);
+-        if (this.entity.syncPosition) {
++        // Leaf start - Multithreaded tracker
++        boolean syncPosition;
++        if (this.leaf$trackingInput != null) {
++            this.leaf$trackingInput.collectCurrent();
++            syncPosition = this.interpolationTracker.leaf$updateTracking(currentPosition, this.leaf$trackingInput.takePredictedMovement(), this.leaf$trackingInput.takeSyncPosition());
++        } else {
++            this.interpolationTracker.updateTracking(currentPosition);
++            syncPosition = this.entity.syncPosition;
++        }
++        if (syncPosition) {
++            // Leaf end - Multithreaded tracker
+             this.tickCount = this.updateInterval.nextInterval(this.tickCount);
+             this.entity.syncPosition = false;
+         }
+@@ -157,27 +172,27 @@ public class ServerEntity {
          if (this.forceStateResync || this.entity.needsSync || this.updateInterval.test(this.tickCount) || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker
              byte yRotn = Mth.packDegrees(this.entity.getYRot());
              byte xRotn = Mth.packDegrees(this.entity.getXRot());
@@ -656,7 +678,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
                  } else {
                      // Paper start - reduce allocation of Vec3 here
                      Vec3 base = this.positionCodec.base;
-@@ -187,7 +191,7 @@ public class ServerEntity {
+@@ -187,7 +202,7 @@ public class ServerEntity {
                      boolean positionChanged = (dx * dx + dy * dy + dz * dz) >= 7.62939453125E-6D;
                      // Paper end - reduce allocation of Vec3 here
                      boolean shouldSendPosition = positionChanged || this.tickCount % 60 == 0;
@@ -665,7 +687,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
                  }
  
                  if (org.dreeam.leaf.config.modules.opt.ReduceUselessPackets.reduceUselessEntityMovePackets && isUselessMoveEntityPacket(packet, shouldSendRotation)) packet = null; // Leaf - Dont send useless entity packets
-@@ -197,25 +201,25 @@ public class ServerEntity {
+@@ -197,25 +212,25 @@ public class ServerEntity {
                      if (movement != this.lastSentMovement) { // SparklyPaper start - skip distanceToSqr call in ServerEntity#sendChanges if the delta movement hasn't changed
                      double diff = movement.distanceToSqr(this.lastSentMovement);
                      if (diff > 1.0E-7 || diff > 0.0 && movement.lengthSqr() == 0.0) {
@@ -695,7 +717,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
                      this.synchronizer.sendToTrackingPlayers(packet);
                      this.sendDirtyEntityData();
                      if (packet.hasPosition()) {
-@@ -230,16 +234,16 @@ public class ServerEntity {
+@@ -230,16 +245,16 @@ public class ServerEntity {
                      this.sendDirtyEntityData();
                  }
  
@@ -715,7 +737,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
              this.forceStateResync = false; // Paper - fix desync when a player is added to the tracker
          }
  
-@@ -248,21 +252,21 @@ public class ServerEntity {
+@@ -248,21 +263,21 @@ public class ServerEntity {
              // CraftBukkit start - Create PlayerVelocity event
              boolean cancelled = false;
  
@@ -742,7 +764,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
              // CraftBukkit end
              this.entity.syncVelocity = false;
              this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityMotionPacket(this.entity));
-@@ -270,9 +274,9 @@ public class ServerEntity {
+@@ -270,9 +285,9 @@ public class ServerEntity {
      }
  
      private @Nullable MovementPacket<ClientGamePacketListener> createMovePacket(
@@ -754,7 +776,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
              this.wasOnGround = this.entity.onGround();
              this.teleportDelay = 0;
              return ClientboundEntityPositionSyncPacket.of(this.entity, position);
-@@ -328,14 +332,14 @@ public class ServerEntity {
+@@ -328,14 +343,14 @@ public class ServerEntity {
      private void handleMinecartPosRot(final NewMinecartBehavior newMinecartBehavior, final byte yRotn, final byte xRotn, final boolean shouldSendRotation) {
          this.sendDirtyEntityData();
          if (newMinecartBehavior.lerpSteps.isEmpty()) {
@@ -771,7 +793,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
                          new ClientboundMoveMinecartPacket(
                              this.entity.getId(),
                              List.of(
-@@ -444,6 +448,7 @@ public class ServerEntity {
+@@ -444,6 +459,7 @@ public class ServerEntity {
          return Mth.unpackDegrees(this.lastSentYHeadRot);
      }
  
@@ -779,7 +801,7 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
      private void sendDirtyEntityData() {
          SynchedEntityData entityData = this.entity.getEntityData();
          List<SynchedEntityData.DataValue<?>> packedValues = entityData.packDirty();
-@@ -451,10 +456,12 @@ public class ServerEntity {
+@@ -451,10 +467,12 @@ public class ServerEntity {
              this.trackedDataValues = entityData.getNonDefaultValues();
              this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityDataPacket(this.entity.getId(), packedValues));
          }
@@ -792,44 +814,17 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
                  // CraftBukkit start - Send scaled max health
                  if (this.entity instanceof ServerPlayer serverPlayer) {
                      serverPlayer.getBukkitEntity().injectScaledMaxHealth(attributes, false);
-@@ -467,6 +474,194 @@ public class ServerEntity {
+@@ -467,6 +485,169 @@ public class ServerEntity {
          }
      }
  
 +    // Leaf start - Multithreaded tracker
-+    public boolean leaf$shouldSendChanges;
-+    private boolean leaf$trackingCaptured;
-+    private boolean leaf$sendUpdate;
-+    private Vec3 leaf$trackingPosition;
-+    private boolean leaf$passenger;
-+    private @Nullable NewMinecartBehavior leaf$minecartBehavior;
-+
-+    public void leaf$prepareTick(final boolean shouldSendChanges) {
-+        this.leaf$shouldSendChanges = shouldSendChanges;
-+        this.leaf$trackingCaptured = false;
-+        this.leaf$sendUpdate = false;
-+        if (shouldSendChanges && !this.forceStateResync) {
-+            this.leaf$captureTracking(false);
-+        }
++    public void leaf$onTrackingStart(final ChunkMap.TrackedEntity tracker) {
++        this.level.leaf$asyncTracker.addTracker(tracker);
 +    }
 +
-+    public void leaf$captureTracking(final boolean force) {
-+        if (!this.leaf$trackingCaptured) {
-+            this.leaf$trackingPosition = this.entity.trackingPosition();
-+            this.interpolationTracker.leaf$captureTrackingInput();
-+            if (this.entity.syncPosition) {
-+                this.tickCount = this.updateInterval.nextInterval(this.tickCount);
-+                this.entity.syncPosition = false;
-+            }
-+            this.leaf$trackingCaptured = true;
-+        }
-+        if (!this.leaf$sendUpdate) {
-+            this.leaf$sendUpdate = force || this.entity.needsSync || this.updateInterval.test(this.tickCount) || this.entity.getEntityData().isDirty();
-+            if (this.leaf$sendUpdate) {
-+                this.leaf$passenger = this.entity.isPassenger();
-+                this.leaf$minecartBehavior = this.entity instanceof AbstractMinecart minecart && minecart.getBehavior() instanceof NewMinecartBehavior behavior ? behavior : null;
-+            }
-+        }
++    public void leaf$onTrackingEnd(final ChunkMap.TrackedEntity tracker) {
++        this.level.leaf$asyncTracker.removeTracker(tracker);
 +    }
 +
 +    public void leaf$sendChanges(final org.dreeam.leaf.async.tracker.TrackerCtx ctx, final ChunkMap.TrackedEntity tracker, final boolean force) {
@@ -864,13 +859,15 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
 +            ctx.sendDirtyEntityData(tracker);
 +        }
 +
-+        Vec3 currentPosition = this.leaf$trackingPosition;
-+        this.interpolationTracker.leaf$updateTracking(currentPosition);
-+        if (this.leaf$sendUpdate) { // Paper - fix desync when a player is added to the tracker
++        Vec3 currentPosition = this.leaf$trackingInput.position();
++        if (this.interpolationTracker.leaf$updateTracking(currentPosition, this.leaf$trackingInput.takePredictedMovement(), this.leaf$trackingInput.takeSyncPosition())) {
++            this.tickCount = this.updateInterval.nextInterval(this.tickCount);
++        }
++        if (force || this.entity.needsSync || this.updateInterval.test(this.tickCount) || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker
 +            byte yRotn = Mth.packDegrees(this.entity.getYRot());
 +            byte xRotn = Mth.packDegrees(this.entity.getXRot());
 +            boolean shouldSendRotation = Math.abs(yRotn - this.lastSentYRot) >= 1 || Math.abs(xRotn - this.lastSentXRot) >= 1;
-+            if (this.leaf$passenger) {
++            if (this.entity.isPassenger()) {
 +                if (shouldSendRotation) {
 +                    ctx.sendToTrackingPlayers(tracker, new ClientboundMoveEntityPacket.Rot(this.entity.getId(), yRotn, xRotn, this.entity.onGround()));
 +                    this.lastSentYRot = yRotn;
@@ -881,8 +878,8 @@ index 4f2344b6e4fe6aebdbb7ca2ad65365515d8e2424..a898b70cb3fef6bd19f61ee717d31a71
 +                this.positionCodec.setBase(currentPosition);
 +                ctx.sendDirtyEntityData(tracker);
 +                this.wasRiding = true;
-+            } else if (this.leaf$minecartBehavior != null) {
-+                this.leaf$HandleMinecartPosRot(ctx, tracker, this.leaf$minecartBehavior, yRotn, xRotn, shouldSendRotation);
++            } else if (this.entity instanceof AbstractMinecart minecart && minecart.getBehavior() instanceof NewMinecartBehavior newMinecartBehavior) {
++                this.leaf$HandleMinecartPosRot(ctx, tracker, newMinecartBehavior, yRotn, xRotn, shouldSendRotation);
 +            } else {
 +                this.teleportDelay++;
 +                PositionPath position = this.interpolationTracker.getPositionPath(currentPosition);
@@ -1008,10 +1005,38 @@ index 5beb82565f7eb2a0e99eb2be1e844bfbd2219c33..081918bec2e4a2c7dbf084a00b25e514
  
      @Override
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index af3ac9e5bd57c3af252a931e9e965f7a01cc79ac..c4af92bc884736ddc011bd0ce24024674831f1b4 100644
+index af3ac9e5bd57c3af252a931e9e965f7a01cc79ac..7000c6d8266ba38d6f3041ed604736f67323a413 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -905,6 +905,11 @@ public abstract class Entity
+@@ -542,6 +542,7 @@ public abstract class Entity
+     // Paper end - optimise collisions
+     // Paper start - optimise entity tracker
+     private net.minecraft.server.level.ChunkMap.TrackedEntity trackedEntity;
++    private org.dreeam.leaf.async.tracker.@Nullable TrackerInput leaf$trackingInput; // Leaf - Multithreaded tracker
+ 
+     @Override
+     public final net.minecraft.server.level.ChunkMap.TrackedEntity moonrise$getTrackedEntity() {
+@@ -550,7 +551,19 @@ public abstract class Entity
+ 
+     @Override
+     public final void moonrise$setTrackedEntity(final net.minecraft.server.level.ChunkMap.TrackedEntity trackedEntity) {
++        net.minecraft.server.level.ChunkMap.TrackedEntity previous = this.trackedEntity; // Leaf - Multithreaded tracker
+         this.trackedEntity = trackedEntity;
++        // Leaf start - Multithreaded tracker
++        if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) {
++            if (previous != null) {
++                previous.serverEntity.leaf$onTrackingEnd(previous);
++            }
++            this.leaf$trackingInput = trackedEntity == null ? null : trackedEntity.serverEntity.leaf$trackingInput;
++            if (trackedEntity != null) {
++                trackedEntity.serverEntity.leaf$onTrackingStart(trackedEntity);
++            }
++        }
++        // Leaf end - Multithreaded tracker
+     }
+ 
+     private static void collectIndirectPassengers(final List<Entity> into, final List<Entity> from) {
+@@ -905,6 +918,11 @@ public abstract class Entity
          }
      }
  
@@ -1023,24 +1048,68 @@ index af3ac9e5bd57c3af252a931e9e965f7a01cc79ac..c4af92bc884736ddc011bd0ce2402467
      public void updateDataBeforeSync() {
      }
  
+@@ -1355,7 +1373,13 @@ public abstract class Entity
+ 
+     public void recordMovement(final MoverType moverType, final Vec3 movement) {
+         if (moverType.isServerAndClientSimulated() || this.getMoveSimulationType() == MoveSimulationType.SERVER_AND_CLIENT) {
+-            this.interpolationHandler.applyPredictedMovement(movement);
++            // Leaf start - Multithreaded tracker
++            if (this.leaf$trackingInput != null) {
++                this.leaf$trackingInput.addMovement(movement);
++            } else {
++                this.interpolationHandler.applyPredictedMovement(movement);
++            }
++            // Leaf end - Multithreaded tracker
+         }
+     }
+ 
+@@ -1399,7 +1423,13 @@ public abstract class Entity
+         if (bounced) {
+             effectState.getBlock().bounceOn(this.level, effectState, this.getBlockPosBelowThatAffectsMyMovement(), this, this.fallDistance);
+             this.gameEvent(GameEvent.BOUNCE);
+-            this.syncPosition = true;
++            // Leaf start - Multithreaded tracker
++            if (this.leaf$trackingInput != null) {
++                this.leaf$trackingInput.markSyncPosition();
++            } else {
++                this.syncPosition = true;
++            }
++            // Leaf end - Multithreaded tracker
+         }
+ 
+         this.setDeltaMovement(movementAfterBounce);
+@@ -5365,6 +5395,11 @@ public abstract class Entity
+             this.setBoundingBox(this.makeBoundingBox());
+         }
+         // Paper end - Block invalid positions and bounding box
++        // Leaf start - Multithreaded tracker
++        if (this.leaf$trackingInput != null) {
++            this.leaf$trackingInput.setPosition(this.trackingPosition());
++        }
++        // Leaf end - Multithreaded tracker
+     }
+ 
+     public void checkDespawn() {
 diff --git a/net/minecraft/world/entity/InterpolationTracker.java b/net/minecraft/world/entity/InterpolationTracker.java
-index f318aee9ec9a6cf1b1a8292f82d095a200f88683..056c1317746fd935fdb4fa1025978574f31f584d 100644
+index f318aee9ec9a6cf1b1a8292f82d095a200f88683..0a7bbcf02dd0ceb38ba18da6373e0f7700d549c9 100644
 --- a/net/minecraft/world/entity/InterpolationTracker.java
 +++ b/net/minecraft/world/entity/InterpolationTracker.java
-@@ -11,6 +11,19 @@ public interface InterpolationTracker {
+@@ -11,6 +11,21 @@ public interface InterpolationTracker {
  
      void clear();
  
 +    // Leaf start - Multithreaded tracker
-+    default InterpolationTracker leaf$createAsyncTracker() {
++    default InterpolationTracker leaf$createTrackingState() {
 +        return this;
 +    }
 +
-+    default void leaf$captureTrackingInput() {
++    default Vec3 leaf$takePredictedMovement() {
++        return Vec3.ZERO;
 +    }
 +
-+    default void leaf$updateTracking(final Vec3 trackingPos) {
++    default boolean leaf$updateTracking(final Vec3 trackingPos, final Vec3 predictedDelta, final boolean syncPosition) {
 +        this.updateTracking(trackingPos);
++        return syncPosition;
 +    }
 +    // Leaf end - Multithreaded tracker
 +
@@ -1079,10 +1148,10 @@ index 16752f51e89592c5658b5d5ec078c5239f43743d..0b0e3a542f882aa5803a07271522b706
          // Paper start
          this.setItemSlot(slot, itemStack, false);
 diff --git a/net/minecraft/world/entity/SteppedInterpolationTracker.java b/net/minecraft/world/entity/SteppedInterpolationTracker.java
-index cd1ce498f661024cd38f7fc9286a757b69398c38..8fee59ff6a862ccab6df923fb0f98ea06d81e298 100644
+index cd1ce498f661024cd38f7fc9286a757b69398c38..2664a2aa1f6be05b809bbc8f558978e3770ef403 100644
 --- a/net/minecraft/world/entity/SteppedInterpolationTracker.java
 +++ b/net/minecraft/world/entity/SteppedInterpolationTracker.java
-@@ -31,19 +31,29 @@ public class SteppedInterpolationTracker extends InterpolationHandler.NoOpInterp
+@@ -31,19 +31,30 @@ public class SteppedInterpolationTracker extends InterpolationHandler.NoOpInterp
          }
      }
  
@@ -1091,8 +1160,7 @@ index cd1ce498f661024cd38f7fc9286a757b69398c38..8fee59ff6a862ccab6df923fb0f98ea0
      public void updateTracking(final Vec3 trackingPos) {
 -        if (this.predictedDelta.lengthSqr() > 1.0E-5F) {
 -            this.trackedSteps.replaceAll(step -> step.addDelta(this.predictedDelta));
-+        Vec3 predictedDelta = this.predictedDelta;
-+        this.predictedDelta = Vec3.ZERO;
++        Vec3 predictedDelta = this.leaf$takePredictedMovement();
 +        boolean syncPosition = this.entity.syncPosition;
 +        if (syncPosition) {
 +            this.entity.syncPosition = false;
@@ -1100,7 +1168,8 @@ index cd1ce498f661024cd38f7fc9286a757b69398c38..8fee59ff6a862ccab6df923fb0f98ea0
 +        this.leaf$updateTracking(trackingPos, predictedDelta, syncPosition);
 +    }
 +
-+    protected final void leaf$updateTracking(final Vec3 trackingPos, final Vec3 predictedDelta, final boolean syncPosition) {
++    @Override
++    public final boolean leaf$updateTracking(final Vec3 trackingPos, final Vec3 predictedDelta, final boolean syncPosition) {
 +        if (predictedDelta.lengthSqr() > 1.0E-5F) {
 +            this.trackedSteps.replaceAll(step -> step.addDelta(predictedDelta));
          }
@@ -1112,50 +1181,28 @@ index cd1ce498f661024cd38f7fc9286a757b69398c38..8fee59ff6a862ccab6df923fb0f98ea0
 +        if (syncPosition) {
              this.addStep(trackingPos);
          }
++        return false;
      }
 +    // Leaf end - Multithreaded tracker
  
      @Override
      public PositionPath getPositionPath(final Vec3 currentPosition) {
-@@ -56,4 +66,41 @@ public class SteppedInterpolationTracker extends InterpolationHandler.NoOpInterp
+@@ -56,4 +67,18 @@ public class SteppedInterpolationTracker extends InterpolationHandler.NoOpInterp
          this.trackedSteps.clear();
          this.ticksSinceLastStep = 0;
      }
 +
 +    // Leaf start - Multithreaded tracker
 +    @Override
-+    public InterpolationTracker leaf$createAsyncTracker() {
-+        return new AsyncInterpolationTracker(this);
++    public Vec3 leaf$takePredictedMovement() {
++        Vec3 predictedDelta = this.predictedDelta;
++        this.predictedDelta = Vec3.ZERO;
++        return predictedDelta;
 +    }
 +
-+    private static final class AsyncInterpolationTracker extends SteppedInterpolationTracker {
-+        private final SteppedInterpolationTracker source;
-+        private Vec3 capturedDelta = Vec3.ZERO;
-+        private boolean capturedSyncPosition;
-+
-+        private AsyncInterpolationTracker(final SteppedInterpolationTracker source) {
-+            super(source.entity);
-+            this.source = source;
-+        }
-+
-+        @Override
-+        public void leaf$captureTrackingInput() {
-+            this.capturedDelta = this.source.predictedDelta;
-+            this.source.predictedDelta = Vec3.ZERO;
-+            this.capturedSyncPosition = this.source.entity.syncPosition;
-+            this.source.entity.syncPosition = false;
-+        }
-+
-+        @Override
-+        public void leaf$updateTracking(final Vec3 trackingPos) {
-+            this.leaf$updateTracking(trackingPos, this.capturedDelta, this.capturedSyncPosition);
-+        }
-+
-+        @Override
-+        public void updateTracking(final Vec3 trackingPos) {
-+            this.leaf$captureTrackingInput();
-+            this.leaf$updateTracking(trackingPos);
-+        }
++    @Override
++    public InterpolationTracker leaf$createTrackingState() {
++        return new SteppedInterpolationTracker(this.entity);
 +    }
 +    // Leaf end - Multithreaded tracker
  }

@@ -169,7 +169,7 @@ public final class TrackerCtx {
                 if (tracker.serverEntity.entity.moonrise$getTrackedEntity() != tracker) {
                     continue;
                 }
-                tracker.serverEntity.leaf$captureTracking(true);
+                tracker.serverEntity.leaf$trackingInput.collectCurrent();
                 tracker.serverEntity.leaf$sendChanges(this, tracker, true);
             }
         }
