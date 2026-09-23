@@ -33,7 +33,7 @@ public final class AsyncTracker {
 
     private Future<TrackerCtx> @Nullable [] fut;
     private final TrackerCtx local;
-    private final ReferenceList<ChunkMap.TrackedEntity> trackers = new ReferenceList<>(new ChunkMap.TrackedEntity[0]);
+    private final ReferenceList<ChunkMap.TrackedEntity> trackers = new ReferenceList<>(new ChunkMap.TrackedEntity[0]); // TODO: Whether this should be kept, for avoiding a for loop
     private long writeBatch;
 
     public AsyncTracker(ServerLevel world) {
