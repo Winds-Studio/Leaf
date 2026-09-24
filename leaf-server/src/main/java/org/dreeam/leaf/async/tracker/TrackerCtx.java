@@ -3,6 +3,7 @@ package org.dreeam.leaf.async.tracker;
 import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
 import io.papermc.paper.event.player.PlayerTrackEntityEvent;
+import it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectFunction;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -32,6 +33,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
+import net.minecraft.world.phys.Vec3;
 import org.dreeam.leaf.util.LeafConstants;
 import org.dreeam.leaf.util.map.AttributeInstanceArrayMap;
 import org.jspecify.annotations.NullMarked;
@@ -49,16 +51,20 @@ public final class TrackerCtx {
     private final ObjectArrayList<ItemFrame> itemFrames = new ObjectArrayList<>();
     private final ObjectArrayList<StopSeen> stopSeen = new ObjectArrayList<>();
     private final ObjectArrayList<StartSeen> startSeen = new ObjectArrayList<>();
-    private final ObjectArrayList<ChunkMap.TrackedEntity> resync = new ObjectArrayList<>();
+    private final ObjectArrayList<Inactive> resync = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> updateData = new ObjectArrayList<>();
+    private final ObjectArrayList<Inactive> inactive = new ObjectArrayList<>();
 
     private record StopSeen(ChunkMap.TrackedEntity tracker, ObjectArrayList<ServerPlayerConnection> q) {
     }
 
     private record StartSeen(ChunkMap.TrackedEntity tracker,
                              ObjectArrayList<ServerPlayerConnection> q) {
+    }
+
+    private record Inactive(ChunkMap.TrackedEntity tracker, TrackerInput input) {
     }
 
     public TrackerCtx(ServerLevel world) {
@@ -83,8 +89,12 @@ public final class TrackerCtx {
     }
 
 
-    public void forceResync(ChunkMap.TrackedEntity entity) {
-        resync.add(entity);
+    public void forceResync(ChunkMap.TrackedEntity entity, TrackerInput input) {
+        resync.add(new Inactive(entity, input));
+    }
+
+    public void inactive(ChunkMap.TrackedEntity entity, TrackerInput input) {
+        inactive.add(new Inactive(entity, input));
     }
 
     public void wantUpdateData(ChunkMap.TrackedEntity entity) {
@@ -95,7 +105,7 @@ public final class TrackerCtx {
         itemFrames.add(itemFrame);
     }
 
-    public void citizensEntity(ChunkMap.TrackedEntity entity) {
+    public void pluginEntity(ChunkMap.TrackedEntity entity) {
         pluginEntity.add(entity);
     }
 
@@ -135,17 +145,6 @@ public final class TrackerCtx {
         return other.packets;
     }
 
-    void reset() {
-        itemFrames.clear();
-        stopSeen.clear();
-        startSeen.clear();
-        pluginEntity.clear();
-        resync.clear();
-        syncAttributes.clear();
-        updateData.clear();
-        packets.clear();
-    }
-
     void handle(Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>>[] other) {
         if (!pluginEntity.isEmpty()) {
             for (ChunkMap.TrackedEntity tracker : pluginEntity) {
@@ -165,12 +164,11 @@ public final class TrackerCtx {
         }
 
         if (!resync.isEmpty()) {
-            for (ChunkMap.TrackedEntity tracker : resync) {
-                if (tracker.serverEntity.entity.moonrise$getTrackedEntity() != tracker) {
+            for (Inactive i : resync) {
+                if (i.tracker.serverEntity.entity.moonrise$getTrackedEntity() != i.tracker) {
                     continue;
                 }
-                tracker.serverEntity.leaf$trackingInput.collectCurrent();
-                tracker.serverEntity.leaf$sendChanges(this, tracker, true);
+                i.tracker.serverEntity.leaf$sendChanges(this, i.tracker, i.input, true);
             }
         }
 

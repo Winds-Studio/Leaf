@@ -2,6 +2,7 @@ package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
+import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
@@ -9,7 +10,7 @@ import org.dreeam.leaf.util.TrackerSlice;
 
 import java.util.concurrent.Callable;
 
-public record TrackerTask(ServerLevel world, TrackerSlice trackers, long batch) implements Callable<TrackerCtx> {
+public record TrackerTask(ServerLevel world, TrackerSlice trackers, Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> inputs) implements Callable<TrackerCtx> {
 
     @Override
     public TrackerCtx call() throws Exception {
@@ -17,13 +18,12 @@ public record TrackerTask(ServerLevel world, TrackerSlice trackers, long batch) 
         final ChunkMap.TrackedEntity[] raw = trackers.array();
         for (int i = trackers.start(); i < trackers.end(); i++) {
             final ChunkMap.TrackedEntity tracker = raw[i];
-            if (tracker.serverEntity.entity.moonrise$getTrackedEntity() != tracker) {
+            final Entity entity = tracker.serverEntity.entity;
+            if (entity.moonrise$getTrackedEntity() != tracker) {
                 continue;
             }
-            final Entity entity = tracker.serverEntity.entity;
-            tracker.serverEntity.leaf$trackingInput.collect(this.batch);
             if (tracker.getClass() != ChunkMap.TrackedEntity.class) {
-                ctx.citizensEntity(tracker);
+                ctx.pluginEntity(tracker);
                 continue;
             }
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
@@ -32,8 +32,11 @@ public record TrackerTask(ServerLevel world, TrackerSlice trackers, long batch) 
                 net.minecraft.server.level.FullChunkStatus status = entity.moonrise$getChunkStatus();
                 sendChanges = status != null && status.isOrAfter(net.minecraft.server.level.FullChunkStatus.ENTITY_TICKING);
             }
+            TrackerInput input = inputs.get(tracker);
             if (sendChanges || entity.needsSync) {
-                tracker.serverEntity.leaf$sendChanges(ctx, tracker, false);
+                tracker.serverEntity.leaf$sendChanges(ctx, tracker, input, false);
+            } else {
+                ctx.inactive(tracker, input);
             }
         }
         return ctx;
