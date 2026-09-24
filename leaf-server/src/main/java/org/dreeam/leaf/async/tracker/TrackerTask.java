@@ -35,8 +35,6 @@ public record TrackerTask(ServerLevel world, TrackerSlice trackers, Reference2Re
             TrackerInput input = inputs.get(tracker);
             if (sendChanges || entity.needsSync) {
                 tracker.serverEntity.leaf$sendChanges(ctx, tracker, input, false);
-            } else {
-                ctx.inactive(tracker, input);
             }
         }
         return ctx;

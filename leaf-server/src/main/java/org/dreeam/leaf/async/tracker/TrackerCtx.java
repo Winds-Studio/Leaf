@@ -55,7 +55,6 @@ public final class TrackerCtx {
     private final ObjectArrayList<ChunkMap.TrackedEntity> pluginEntity = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> syncAttributes = new ObjectArrayList<>();
     private final ObjectArrayList<ChunkMap.TrackedEntity> updateData = new ObjectArrayList<>();
-    private final ObjectArrayList<Inactive> inactive = new ObjectArrayList<>();
 
     private record StopSeen(ChunkMap.TrackedEntity tracker, ObjectArrayList<ServerPlayerConnection> q) {
     }
@@ -91,10 +90,6 @@ public final class TrackerCtx {
 
     public void forceResync(ChunkMap.TrackedEntity entity, TrackerInput input) {
         resync.add(new Inactive(entity, input));
-    }
-
-    public void inactive(ChunkMap.TrackedEntity entity, TrackerInput input) {
-        inactive.add(new Inactive(entity, input));
     }
 
     public void wantUpdateData(ChunkMap.TrackedEntity entity) {
