@@ -3,6 +3,7 @@ From: hayanesuru <hayanesuru@outlook.jp>
 Date: Fri, 15 Aug 2025 15:02:27 +0900
 Subject: [PATCH] optimize goal selector
 
+Co-authored-by: MrlingXD <90316914+wling-art@users.noreply.github.com>
 
 diff --git a/net/minecraft/world/entity/ai/goal/Goal.java b/net/minecraft/world/entity/ai/goal/Goal.java
 index 60e0d618c603caef5e3516c9fdfc63ff45a7cdff..d098f5a370862e40c85ace58d74986a68f46f1d5 100644
@@ -22,10 +23,10 @@ index 60e0d618c603caef5e3516c9fdfc63ff45a7cdff..d098f5a370862e40c85ace58d74986a6
      }
  }
 diff --git a/net/minecraft/world/entity/ai/goal/GoalSelector.java b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-index 0439543fbb25ddb974550fe9dbdaa479e330937d..7bb75f4ff6307190952eb97743497421db9f9d4b 100644
+index 0439543fbb25ddb974550fe9dbdaa479e330937d..ab3b62d61cecab10816917ca629f40378a18ea5e 100644
 --- a/net/minecraft/world/entity/ai/goal/GoalSelector.java
 +++ b/net/minecraft/world/entity/ai/goal/GoalSelector.java
-@@ -22,17 +22,24 @@ public class GoalSelector {
+@@ -22,21 +22,32 @@ public class GoalSelector {
          }
      };
      private final Map<Goal.Flag, WrappedGoal> lockedFlags = new EnumMap<>(Goal.Flag.class);
@@ -43,16 +44,26 @@ index 0439543fbb25ddb974550fe9dbdaa479e330937d..7bb75f4ff6307190952eb97743497421
  
      public void removeAllGoals(final Predicate<Goal> predicate) {
 -        for (WrappedGoal availableGoal : this.availableGoals) {
+-            if (predicate.test(availableGoal.getGoal()) && availableGoal.isRunning()) {
+-                availableGoal.stop();
 +        // Leaf start - optimize goal selector
 +        org.dreeam.leaf.util.map.BinaryGoalSet availableGoals = this.leaf$availableGoals;
-+        WrappedGoal[] elements = availableGoals.elements();
-+        for (int i = 0, size = availableGoals.size(); i < size; i++) {
-+            final WrappedGoal availableGoal = elements[i];
-+            // Leaf end - optimize goal selector
-             if (predicate.test(availableGoal.getGoal()) && availableGoal.isRunning()) {
-                 availableGoal.stop();
++        final int d = availableGoals.beginIteration();
++        try {
++            for (; availableGoals.cursor(d) < availableGoals.size(); availableGoals.advance(d)) {
++                final WrappedGoal availableGoal = availableGoals.elements()[availableGoals.cursor(d)];
++                if (predicate.test(availableGoal.getGoal()) && availableGoal.isRunning()) {
++                    availableGoal.stop();
++                }
              }
-@@ -48,7 +55,12 @@ public class GoalSelector {
++        } finally {
++            availableGoals.endIteration();
+         }
++        // Leaf end - optimize goal selector
+ 
+         this.availableGoals.removeIf(goal -> predicate.test(goal.getGoal()));
+     }
+@@ -48,7 +59,12 @@ public class GoalSelector {
      }
  
      public boolean hasTasks() {
@@ -66,15 +77,13 @@ index 0439543fbb25ddb974550fe9dbdaa479e330937d..7bb75f4ff6307190952eb97743497421
              if (task.isRunning()) {
                  return true;
              }
-@@ -82,36 +94,83 @@ public class GoalSelector {
+@@ -82,36 +98,91 @@ public class GoalSelector {
      }
  
      public void tick() {
 +        // Leaf start - optimize goal selector
 +        final org.dreeam.leaf.util.map.BinaryGoalSet availableGoals = this.leaf$availableGoals;
-+        final WrappedGoal[] elements = availableGoals.elements();
 +        final long disabled = this.goalTypes.getBackingSet();
-+        final int elemSize = availableGoals.size();
 +        final Map<Goal.Flag, WrappedGoal> lockedFlags = this.lockedFlags;
 +        final int[] lockedPriorities = this.lockedPriorities;
 +        long mask = 0L;
@@ -85,15 +94,20 @@ index 0439543fbb25ddb974550fe9dbdaa479e330937d..7bb75f4ff6307190952eb97743497421
  
 -        for (WrappedGoal goal : this.availableGoals) {
 -            if (goal.isRunning() && (goalContainsAnyFlags(goal, this.goalTypes) || !goal.canContinueToUse())) { // Paper - Perf: optimize goal types by removing streams
+-                goal.stop();
 +        // Leaf start - optimize goal selector
-+        for (int i = 0; i < elemSize; i++) {
-+            final WrappedGoal goal = elements[i];
-+            if (goal.isRunning() && ((disabled & goal.goal.getFlags().getBackingSet()) != 0 || !goal.canContinueToUse())) {
-                 goal.stop();
-             }
-         }
- 
--        this.lockedFlags.entrySet().removeIf(entry -> !entry.getValue().isRunning());
++        final int cleanup = availableGoals.beginIteration();
++        try {
++            for (; availableGoals.cursor(cleanup) < availableGoals.size(); availableGoals.advance(cleanup)) {
++                final WrappedGoal goal = availableGoals.elements()[availableGoals.cursor(cleanup)];
++                if (goal.isRunning() && ((disabled & goal.goal.getFlags().getBackingSet()) != 0 || !goal.canContinueToUse())) {
++                    goal.stop();
++                }
++            }
++        } finally {
++            availableGoals.endIteration();
++        }
++
 +        for (int i = 0; i < GOAL_FLAG_VALUES.length; i++) {
 +            final Goal.Flag flag = GOAL_FLAG_VALUES[i];
 +            final WrappedGoal locked = lockedFlags.get(flag);
@@ -107,10 +121,11 @@ index 0439543fbb25ddb974550fe9dbdaa479e330937d..7bb75f4ff6307190952eb97743497421
 +                    ? locked.getPriority()
 +                    : Integer.MIN_VALUE;
 +                mask |= (1L << i);
-+            }
-+        }
+             }
+         }
 +        // Leaf end - optimize goal selector
-+
+ 
+-        this.lockedFlags.entrySet().removeIf(entry -> !entry.getValue().isRunning());
          profiler.pop();
          profiler.push("goalUpdate");
  
@@ -127,59 +142,74 @@ index 0439543fbb25ddb974550fe9dbdaa479e330937d..7bb75f4ff6307190952eb97743497421
 -                    currentGoal.stop();
 -                    this.lockedFlags.put(flag, goal);
 +        // Leaf start - optimize goal selector
-+        for (int i = 0; i < elemSize; i++) {
-+            final WrappedGoal goal = elements[i];
-+            if (goal.isRunning()) {
-+                continue;
-+            }
-+            final long f = goal.goal.getFlags().getBackingSet();
-+            final int p = goal.getPriority();
-+            if ((disabled & f) != 0L
-+                || (f & mask) != 0L
-+                && ((f & 1L) != 0L && p >= lockedPriorities[0]
-+                || (f & 2L) != 0L && p >= lockedPriorities[1]
-+                || (f & 4L) != 0L && p >= lockedPriorities[2]
-+                || (f & 8L) != 0L && p >= lockedPriorities[3]
-+                || (f & 16L) != 0L && p >= lockedPriorities[4])) {
-+                continue;
-+            } else if (!goal.canUse()) {
-+                continue;
-+            }
-+            for (long iter = f; iter != 0L; iter &= iter - 1) {
-+                final int j = Long.numberOfTrailingZeros(iter);
-+                final Goal.Flag flag = GOAL_FLAG_VALUES[j];
-+                final WrappedGoal locked = lockedFlags.get(flag);
-+                if (locked != null) {
-+                    locked.stop();
++        final int update = availableGoals.beginIteration();
++        try {
++            for (; availableGoals.cursor(update) < availableGoals.size(); availableGoals.advance(update)) {
++                final WrappedGoal goal = availableGoals.elements()[availableGoals.cursor(update)];
++                if (goal.isRunning()) {
++                    continue;
++                }
++                final long f = goal.goal.getFlags().getBackingSet();
++                final int p = goal.getPriority();
++                if ((disabled & f) != 0L
++                    || (f & mask) != 0L
++                    && ((f & 1L) != 0L && p >= lockedPriorities[0]
++                    || (f & 2L) != 0L && p >= lockedPriorities[1]
++                    || (f & 4L) != 0L && p >= lockedPriorities[2]
++                    || (f & 8L) != 0L && p >= lockedPriorities[3]
++                    || (f & 16L) != 0L && p >= lockedPriorities[4])) {
++                    continue;
++                } else if (!goal.canUse()) {
++                    continue;
++                }
++                for (long iter = f; iter != 0L; iter &= iter - 1) {
++                    final int j = Long.numberOfTrailingZeros(iter);
++                    final Goal.Flag flag = GOAL_FLAG_VALUES[j];
++                    final WrappedGoal locked = lockedFlags.get(flag);
++                    if (locked != null) {
++                        locked.stop();
++                    }
++
++                    lockedFlags.put(flag, goal);
++                    lockedPriorities[j] = goal.isInterruptable()
++                        ? goal.getPriority()
++                        : Integer.MIN_VALUE;
++                    mask |= (1L << j);
                  }
- 
--                goal.start();
-+                lockedFlags.put(flag, goal);
-+                lockedPriorities[j] = goal.isInterruptable()
-+                    ? goal.getPriority()
-+                    : Integer.MIN_VALUE;
-+                mask |= (1L << j);
+-
+                 goal.start();
              }
-+            goal.start();
++        } finally {
++            availableGoals.endIteration();
          }
 +        // Leaf end - optimize goal selector
  
          profiler.pop();
          this.tickRunningGoals(true);
-@@ -121,7 +180,12 @@ public class GoalSelector {
+@@ -121,11 +192,20 @@ public class GoalSelector {
          ProfilerFiller profiler = Profiler.get();
          profiler.push("goalTick");
  
 -        for (WrappedGoal goal : this.availableGoals) {
+-            if (goal.isRunning() && (forceTickAllRunningGoals || goal.requiresUpdateEveryTick())) {
+-                goal.tick();
 +        // Leaf start - optimize goal selector
 +        org.dreeam.leaf.util.map.BinaryGoalSet availableGoals = this.leaf$availableGoals;
-+        WrappedGoal[] elements = availableGoals.elements();
-+        for (int i = 0, size = availableGoals.size(); i < size; i++) {
-+            final WrappedGoal goal = elements[i];
-+            // Leaf end - optimize goal selector
-             if (goal.isRunning() && (forceTickAllRunningGoals || goal.requiresUpdateEveryTick())) {
-                 goal.tick();
++        final int d = availableGoals.beginIteration();
++        try {
++            for (; availableGoals.cursor(d) < availableGoals.size(); availableGoals.advance(d)) {
++                final WrappedGoal goal = availableGoals.elements()[availableGoals.cursor(d)];
++                if (goal.isRunning() && (forceTickAllRunningGoals || goal.requiresUpdateEveryTick())) {
++                    goal.tick();
++                }
              }
++        } finally {
++            availableGoals.endIteration();
+         }
++        // Leaf end - optimize goal selector
+ 
+         profiler.pop();
+     }
 diff --git a/net/minecraft/world/entity/ai/goal/WrappedGoal.java b/net/minecraft/world/entity/ai/goal/WrappedGoal.java
 index 0203405b8abefa82cf9cafd9bc0ab2a3ee866240..42c9a729fb2f305501e2775d24decb180636bb14 100644
 --- a/net/minecraft/world/entity/ai/goal/WrappedGoal.java

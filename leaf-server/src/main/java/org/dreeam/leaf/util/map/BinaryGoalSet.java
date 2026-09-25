@@ -11,6 +11,8 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
     private @Nullable WrappedGoal[] a;
     private int size;
     private static final int DEFAULT_CAPACITY = 4;
+    private int[] cursors = new int[2];
+    private int depth;
 
     public BinaryGoalSet() {
         this.a = EMPTY_ARRAY;
@@ -25,6 +27,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
     public void clear() {
         Arrays.fill(a, 0, size, null);
         size = 0;
+        Arrays.fill(cursors, 0, depth, -1);
     }
 
     @Override
@@ -66,6 +69,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
         }
         a[left] = goal;
         size++;
+        shiftCursors(left, 1);
         return true;
     }
 
@@ -107,6 +111,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
 
         size--;
         a[size] = null;
+        shiftCursors(gap, -1);
         return true;
     }
 
@@ -125,6 +130,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
             }
             size--;
             a[size] = null;
+            shiftCursors(i, -1);
             removed = true;
         }
         return removed;
@@ -193,6 +199,7 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
                 System.arraycopy(a, last + 1, a, last, size - last - 1);
                 size--;
                 a[size] = null;
+                shiftCursors(last, -1);
                 cursor = last;
                 last = -1;
             }
@@ -211,5 +218,33 @@ public final class BinaryGoalSet extends AbstractSet<WrappedGoal> {
 
     public @Nullable WrappedGoal[] elements() {
         return a;
+    }
+
+    public int beginIteration() {
+        if (depth == cursors.length) {
+            cursors = Arrays.copyOf(cursors, depth << 1);
+        }
+        cursors[depth] = 0;
+        return depth++;
+    }
+
+    public void endIteration() {
+        depth--;
+    }
+
+    public int cursor(final int d) {
+        return cursors[d];
+    }
+
+    public void advance(final int d) {
+        cursors[d]++;
+    }
+
+    private void shiftCursors(final int index, final int delta) {
+        for (int k = 0; k < depth; k++) {
+            if (index <= cursors[k]) {
+                cursors[k] += delta;
+            }
+        }
     }
 }
