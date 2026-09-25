@@ -28,7 +28,10 @@ public record TrackerTask(ServerLevel world, TrackerSlice trackers, Reference2Re
             }
 
             TrackerInput input = inputs.get(tracker);
-            input.apply(cap.get(tracker));
+            TrackerInput patch = cap.get(tracker);
+            if (patch != null) {
+                input.apply(patch);
+            }
 
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
             boolean sendChanges = tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);

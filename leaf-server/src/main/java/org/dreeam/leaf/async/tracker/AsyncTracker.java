@@ -56,14 +56,16 @@ public final class AsyncTracker {
     }
 
     public @Nullable TrackerInput get(final ChunkMap.@Nullable TrackedEntity tracker) {
-        if (tracker == null) return null;
+        if (tracker == null) {
+            return null;
+        }
         TrackerInput i = capture.computeIfAbsent(tracker, _ -> new TrackerInput(Vec3.ZERO, Vec3.ZERO, false));
         i.trackingPosition = tracker.serverEntity.entity.trackingPosition();
         return i;
     }
 
     public void tick(final ServerLevel world) {
-        var cap = capture.clone();
+        Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> cap = capture.clone();
         capture.clear();
         handlePlayer(world);
         int len = trackers.size();
