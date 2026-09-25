@@ -17,7 +17,9 @@
 
 package net.caffeinemc.mods.lithium.common.util.tuples;
 
+import ca.spottedleaf.moonrise.common.util.WorldUtil;
 import net.minecraft.core.SectionPos;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 
@@ -25,13 +27,21 @@ import net.minecraft.world.phys.AABB;
 //upper bounds are EXCLUSIVE
 public record WorldSectionBox(Level world, int chunkX1, int chunkY1, int chunkZ1, int chunkX2, int chunkY2,
                               int chunkZ2) {
+    // Leaves start - Lithium Sleeping Block Entity
     public static WorldSectionBox entityAccessBox(Level world, AABB box) {
         int minX = SectionPos.posToSectionCoord(box.minX - 2.0D);
-        int minY = SectionPos.posToSectionCoord(box.minY - 4.0D);
+        int minSection = WorldUtil.getMinSection(world);
+        int maxSection = WorldUtil.getMaxSection(world);
+        int minY = Mth.clamp(SectionPos.posToSectionCoord(box.minY - 4.0D), minSection, maxSection);
         int minZ = SectionPos.posToSectionCoord(box.minZ - 2.0D);
         int maxX = SectionPos.posToSectionCoord(box.maxX + 2.0D) + 1;
-        int maxY = SectionPos.posToSectionCoord(box.maxY) + 1;
+        int maxY = Mth.clamp(SectionPos.posToSectionCoord(box.maxY), minSection, maxSection) + 1;
         int maxZ = SectionPos.posToSectionCoord(box.maxZ + 2.0D) + 1;
         return new WorldSectionBox(world, minX, minY, minZ, maxX, maxY, maxZ);
+    }
+    // Leaves end - Lithium Sleeping Block Entity
+
+    public int numSections() {
+        return (this.chunkX2 - this.chunkX1) * (this.chunkY2 - this.chunkY1) * (this.chunkZ2 - this.chunkZ1);
     }
 }
