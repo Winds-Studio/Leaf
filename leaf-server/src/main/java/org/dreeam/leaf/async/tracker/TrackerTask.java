@@ -10,7 +10,7 @@ import org.dreeam.leaf.util.TrackerSlice;
 
 import java.util.concurrent.Callable;
 
-public record TrackerTask(ServerLevel world, TrackerSlice trackers, Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> inputs) implements Callable<TrackerCtx> {
+public record TrackerTask(ServerLevel world, TrackerSlice trackers, Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> inputs, Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> cap) implements Callable<TrackerCtx> {
 
     @Override
     public TrackerCtx call() throws Exception {
@@ -26,13 +26,16 @@ public record TrackerTask(ServerLevel world, TrackerSlice trackers, Reference2Re
                 ctx.pluginEntity(tracker);
                 continue;
             }
+
+            TrackerInput input = inputs.get(tracker);
+            input.apply(cap.get(tracker));
+
             ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
             boolean sendChanges = tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
             if (!sendChanges) {
                 net.minecraft.server.level.FullChunkStatus status = entity.moonrise$getChunkStatus();
                 sendChanges = status != null && status.isOrAfter(net.minecraft.server.level.FullChunkStatus.ENTITY_TICKING);
             }
-            TrackerInput input = inputs.get(tracker);
             if (sendChanges || entity.needsSync) {
                 tracker.serverEntity.leaf$sendChanges(ctx, tracker, input, false);
             }

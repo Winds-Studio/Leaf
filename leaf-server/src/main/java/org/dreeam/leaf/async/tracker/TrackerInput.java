@@ -18,4 +18,14 @@ public final class TrackerInput {
     public void applyPredictedMovement(final Vec3 delta) {
         this.predictedDelta = this.predictedDelta.add(delta);
     }
+
+    void apply(final TrackerInput v) {
+        trackingPosition = v.trackingPosition;
+        if (v.predictedDelta != Vec3.ZERO) {
+            predictedDelta = predictedDelta.add(v.predictedDelta);
+        }
+        if (v.syncPosition) {
+            syncPosition = true;
+        }
+    }
 }

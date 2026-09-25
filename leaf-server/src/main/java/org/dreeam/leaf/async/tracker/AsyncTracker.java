@@ -63,7 +63,8 @@ public final class AsyncTracker {
     }
 
     public void tick(final ServerLevel world) {
-        handleInput();
+        var cap = capture.clone();
+        capture.clear();
         handlePlayer(world);
         int len = trackers.size();
         if (len == 0) {
@@ -79,28 +80,10 @@ public final class AsyncTracker {
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = exec.submitOrRun(new TrackerTask(world, slices[i], trackers));
+            futures[i] = exec.submitOrRun(new TrackerTask(world, slices[i], trackers, cap));
         }
         exec.unpark();
         this.fut = futures;
-    }
-
-    private void handleInput() {
-        for (final var entry : capture.reference2ReferenceEntrySet()) {
-            ChunkMap.TrackedEntity k = entry.getKey();
-            TrackerInput v = entry.getValue();
-            TrackerInput input = trackers.get(k);
-            if (input != null) {
-                input.trackingPosition = v.trackingPosition;
-                if (v.predictedDelta != Vec3.ZERO) {
-                    input.predictedDelta = input.predictedDelta.add(v.predictedDelta);
-                }
-                if (v.syncPosition) {
-                    input.syncPosition = true;
-                }
-            }
-        }
-        capture.clear();
     }
 
     private static void handlePlayer(final ServerLevel world) {
@@ -126,6 +109,7 @@ public final class AsyncTracker {
                 continue;
             }
             ChunkMap.TrackedEntity trackedEntity = player.moonrise$getTrackedEntity();
+            //noinspection ConstantValue
             if (trackedEntity == null) {
                 continue;
             }
