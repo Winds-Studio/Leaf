@@ -10,86 +10,101 @@ import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerPlayerConnection;
-import net.minecraft.world.entity.SteppedInterpolationTracker;
 import net.minecraft.world.phys.Vec3;
 import org.bukkit.event.player.PlayerVelocityEvent;
-import org.dreeam.leaf.async.FixedThreadExecutor;
+import org.dreeam.leaf.async.ThreadPool;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
 import org.dreeam.leaf.util.TrackerSlice;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Objects;
 import java.util.concurrent.*;
 
 @NullMarked
 public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
-    public static final boolean ENABLED = MultithreadedTracker.enabled;
-    public static final int QUEUE = 1024;
-    public static final int MIN_CHUNK = 16;
-    public static final int THREADS = MultithreadedTracker.threads;
-    public static final @Nullable FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
-        THREADS,
-        QUEUE,
-        THREAD_NAME
-    ) : null;
+    private static final int QUEUE = 1024;
+
+    public static @Nullable ThreadPool TRACKER_EXECUTOR;
 
     private Future<TrackerCtx> @Nullable [] fut;
 
-    private final ReferenceList<ChunkMap.TrackedEntity> trackers = new ReferenceList<>(new ChunkMap.TrackedEntity[0]); // TODO: Whether this should be kept, for avoiding a for loop
-    private Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> input = new Reference2ReferenceOpenHashMap<>();
-    private Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> capture = new Reference2ReferenceOpenHashMap<>();
-
-    public AsyncTracker() {
-    }
+    private final ReferenceList<ChunkMap.TrackedEntity> trackersRef = new ReferenceList<>(new ChunkMap.TrackedEntity[0]); // TODO: Whether this should be kept, for avoiding a for loop
+    private final Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> trackers = new Reference2ReferenceOpenHashMap<>();
+    private final Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> capture = new Reference2ReferenceOpenHashMap<>();
 
     public static void init() {
-        if (TRACKER_EXECUTOR == null || !ENABLED) {
+        if (TRACKER_EXECUTOR != null) {
             throw new IllegalStateException();
         }
+        TRACKER_EXECUTOR = new ThreadPool(
+            MultithreadedTracker.threads,
+            QUEUE,
+            THREAD_NAME
+        );
     }
 
     public void addTracker(final ChunkMap.TrackedEntity tracker) {
-        this.trackers.add(tracker);
+        trackers.put(tracker, new TrackerInput(tracker.serverEntity.entity.trackingPosition(), Vec3.ZERO, false));
+        trackersRef.add(tracker);
     }
 
     public void removeTracker(final ChunkMap.TrackedEntity tracker) {
-        this.trackers.remove(tracker);
-        this.input.remove(tracker);
+        trackers.remove(tracker);
+        trackersRef.remove(tracker);
     }
 
-    public void tick(ServerLevel world) {
-        this.capture = this.input.clone();
-        this.input = new Reference2ReferenceOpenHashMap<>(); // todo
+    public @Nullable TrackerInput get(final ChunkMap.@Nullable TrackedEntity tracker) {
+        if (tracker == null) return null;
+        TrackerInput i = capture.computeIfAbsent(tracker, _ -> new TrackerInput(Vec3.ZERO, Vec3.ZERO, false));
+        i.trackingPosition = tracker.serverEntity.entity.trackingPosition();
+        return i;
+    }
 
+    public void tick(final ServerLevel world) {
+        handleInput();
         handlePlayer(world);
-        int len = this.trackers.size();
+        int len = trackers.size();
         if (len == 0) {
             return;
         }
-        ChunkMap.TrackedEntity[] trackers = new ChunkMap.TrackedEntity[len];
-        System.arraycopy(this.trackers.getRawDataUnchecked(), 0, trackers, 0, len);
-        // todo
-        for (final ChunkMap.TrackedEntity tracker : trackers) {
-            TrackerInput input1 = new TrackerInput();
-            input1.position = tracker.serverEntity.entity.trackingPosition();
-            input1.predictedDelta = tracker.serverEntity.interpolationTracker instanceof final SteppedInterpolationTracker t ? t.leaf$predictedDelta() : Vec3.ZERO;
-            input1.syncPosition = tracker.serverEntity.entity.syncPosition;
-            capture.put(tracker, input1);
-        }
-        TrackerSlice slice = new TrackerSlice(trackers);
-        TrackerSlice[] slices = len <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
+        ChunkMap.TrackedEntity[] raw = new ChunkMap.TrackedEntity[len];
+        System.arraycopy(trackersRef.getRawDataUnchecked(), 0, raw, 0, len);
+        TrackerSlice slice = new TrackerSlice(raw);
+
+        ThreadPool exec = Objects.requireNonNull(TRACKER_EXECUTOR);
+        int min = MultithreadedTracker.minEntitiesPerTask;
+        TrackerSlice[] slices = len <= exec.threadCount() * min ? slice.chunks(min) : slice.splitEvenly(exec.threadCount());
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i], capture));
+            futures[i] = exec.submitOrRun(new TrackerTask(world, slices[i], trackers));
         }
-        TRACKER_EXECUTOR.unpark();
+        exec.unpark();
         this.fut = futures;
     }
 
-    private static void handlePlayer(ServerLevel world) {
-        for (ServerPlayer player : world.players()) {
+    private void handleInput() {
+        for (final var entry : capture.reference2ReferenceEntrySet()) {
+            ChunkMap.TrackedEntity k = entry.getKey();
+            TrackerInput v = entry.getValue();
+            TrackerInput input = trackers.get(k);
+            if (input != null) {
+                input.trackingPosition = v.trackingPosition;
+                if (v.predictedDelta != Vec3.ZERO) {
+                    input.predictedDelta = input.predictedDelta.add(v.predictedDelta);
+                }
+                if (v.syncPosition) {
+                    input.syncPosition = true;
+                }
+            }
+        }
+        capture.clear();
+    }
+
+    private static void handlePlayer(final ServerLevel world) {
+        for (final ServerPlayer player : world.players()) {
             player.updateDataBeforeSync();
 
             if (!player.syncVelocity) {
@@ -123,7 +138,7 @@ public final class AsyncTracker {
         if (task == null) {
             return;
         }
-        for (Future<TrackerCtx> fut : task) {
+        for (final Future<TrackerCtx> fut : task) {
             if (!fut.isDone()) {
                 return;
             }
@@ -141,7 +156,7 @@ public final class AsyncTracker {
         handle(task);
     }
 
-    private static void handle(Future<TrackerCtx>[] futures) {
+    private static void handle(final Future<TrackerCtx>[] futures) {
         try {
             TrackerCtx ctx = futures[0].get();
             @SuppressWarnings("unchecked")
@@ -150,9 +165,9 @@ public final class AsyncTracker {
                 packets[i - 1] = ctx.join(futures[i].get());
             }
             ctx.handle(packets);
-        } catch (InterruptedException e) {
+        } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (ExecutionException e) {
+        } catch (final ExecutionException e) {
             throw new RuntimeException(e);
         }
     }

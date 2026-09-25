@@ -7,12 +7,12 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.locks.LockSupport;
 
-public final class FixedThreadExecutor {
+public final class ThreadPool {
     private final Thread[] threads;
-    public final MpmcQueue<Runnable> channel;
+    private final MpmcQueue<Runnable> channel;
     private volatile boolean shutdown = false;
 
-    public FixedThreadExecutor(int numThreads, int queue, String prefix) {
+    public ThreadPool(final int numThreads, final int queue, final String prefix) {
         if (numThreads <= 0) {
             throw new IllegalArgumentException();
         }
@@ -28,7 +28,7 @@ public final class FixedThreadExecutor {
         }
     }
 
-    public <T> FutureTask<T> submitOrRun(Callable<T> task) {
+    public <T> FutureTask<T> submitOrRun(final Callable<T> task) {
         if (shutdown) {
             throw new IllegalStateException();
         }
@@ -49,12 +49,12 @@ public final class FixedThreadExecutor {
 
     public void shutdown() {
         shutdown = true;
-        for (Thread thread : threads) {
+        for (final Thread thread : threads) {
             LockSupport.unpark(thread);
         }
     }
 
-    public void join(long timeoutMillis) throws InterruptedException {
+    public void join(final long timeoutMillis) throws InterruptedException {
         final long startTime = System.currentTimeMillis();
 
         for (final Thread worker : threads) {
@@ -69,7 +69,11 @@ public final class FixedThreadExecutor {
         }
     }
 
-    private record Worker(FixedThreadExecutor executor) implements Runnable {
+    public int threadCount() {
+        return this.threads.length;
+    }
+
+    private record Worker(ThreadPool executor) implements Runnable {
         @Override
         public void run() {
             MpmcQueue<Runnable> channel = executor.channel;
