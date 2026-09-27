@@ -177,12 +177,20 @@ at the `paperCommit` revision in `gradle.properties`, if available. Do not assum
 a different or latest Paper version is equivalent; mark attribution uncertain
 when the necessary baseline evidence is unavailable.
 
-For each reported defect or risk, briefly state:
+For each reported defect or risk, put a separate, bold attribution field directly
+below its title, before the explanation: `**Attribution: <label>** — <evidence>`.
+Use a self-explanatory label in the report's language corresponding to:
 
-- the trigger and impact;
-- the Paper baseline behavior and supporting source or patch references;
-- whether Leaf introduces, worsens, merely exposes, or inherits the issue;
-- the evidence for that attribution, or what is missing if it is uncertain.
+- `Leaf-introduced` / `Leaf-worsened`: introduced or worsened by Leaf.
+- `Leaf-exposed`: a pre-existing defect made reachable by Leaf.
+- `Upstream`: inherited from Paper or vanilla.
+- `Unsupported usage`: caused by usage outside the supported contract.
+- `Unknown`: attribution is not established; identify the missing evidence.
+
+The attribution line must give a brief reason, not just a label. Do not bury it
+in the explanation.
+Then explain the trigger, impact, Paper baseline behavior, and supporting source
+or patch references. Attribution does not replace the full analysis.
 
 Leaf exposing a pre-existing issue does not establish that the original usage
 or behavior was valid. Support any claim of unsupported usage with the relevant
