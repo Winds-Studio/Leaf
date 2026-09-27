@@ -233,7 +233,19 @@ When reviewing or changing applied source, prioritize:
 6. API compatibility;
 7. clarity of the resulting source diff.
 
-Separate confirmed defects from possible risks and optional optimizations.
+Use Leaf patch diffs to establish the corresponding Paper implementation, then
+compare it with the current applied source to determine whether the issue is
+introduced by Leaf, or just worsened, or merely exposed the issue.
+
+Leaf changes explicitly exposing the issue doesn't mean the original invalid
+usage/behavior is correct; it needs to give a full review and provide clear
+issue attribution instead of just mentioning in the sentence.
+
+Issues inherited from Paper or caused by unsupported usage may be reported,
+but must receive lower priority for Leaf action and must not be presented as
+Leaf regressions.
+
+If attribution is uncertain, say so explicitly and identify the missing evidence.
 
 ## Completion report
 
