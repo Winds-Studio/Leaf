@@ -123,6 +123,10 @@ public final class AsyncPath extends Path {
         this.target = bestPath.getTarget();
         this.distToTarget = bestPath.getDistToTarget();
         this.canReach = bestPath.canReach();
+        Path.DebugData debugData = bestPath.debugData();
+        if (debugData != null) {
+            this.setDebug(debugData.openSet(), debugData.closedSet(), debugData.targetNodes());
+        }
         this.pathFn = null;
         this.ready = true;
         for (Consumer<Path> consumer : this.postProcessing) {
@@ -151,6 +155,11 @@ public final class AsyncPath extends Path {
     public boolean canReach() {
         this.process();
         return this.canReach;
+    }
+
+    @Override
+    public Path.@Nullable DebugData debugData() {
+        return this.isProcessed() ? super.debugData() : null;
     }
 
     /*

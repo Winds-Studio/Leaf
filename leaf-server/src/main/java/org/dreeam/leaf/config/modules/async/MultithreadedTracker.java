@@ -15,7 +15,8 @@ public class MultithreadedTracker extends ConfigModule {
     @Experimental
     public static boolean enabled = false;
     public static int threads = 0;
-    private static boolean asyncMultithreadedTrackerInitialized;
+    public static int minEntitiesPerTask = 64;
+    private static boolean asyncTrackerInitialized;
 
     @Override
     public void onLoaded() {
@@ -27,17 +28,16 @@ public class MultithreadedTracker extends ConfigModule {
                 异步实体跟踪,
                 在实体数量多且密集的情况下效果明显.""");
 
-        if (asyncMultithreadedTrackerInitialized) {
+        if (asyncTrackerInitialized) {
             globalConfig.getConfigSection(basePath());
             return;
         }
-        asyncMultithreadedTrackerInitialized = true;
+        asyncTrackerInitialized = true;
 
         enabled = globalConfig.getBoolean(basePath() + ".enabled", false);
         threads = globalConfig.getInt(basePath() + ".threads", 0);
-
         if (threads <= 0) {
-            threads = Math.min(Runtime.getRuntime().availableProcessors(), 4);
+            threads = Math.min(Runtime.getRuntime().availableProcessors() / 2, 4);
         }
         threads = Math.max(threads, 1);
 

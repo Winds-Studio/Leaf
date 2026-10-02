@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hayanesuru <hayanesuru@outlook.jp>
+Date: Tue, 3 Jun 2025 15:16:32 +0900
+Subject: [PATCH] optimise ChunkGenerator#getMobsAt
+
+inline fillStartsForStructure
+
+diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
+index e355f7c04aefed172776edfccc584f112808e3d7..5caccbc0b98c3fffb80d5bc28e2f2c57edf1e795 100644
+--- a/net/minecraft/world/level/StructureManager.java
++++ b/net/minecraft/world/level/StructureManager.java
+@@ -76,8 +76,9 @@ public class StructureManager {
+ 
+     public void fillStartsForStructure(final Structure structure, final LongSet referencesForStructure, final Consumer<StructureStart> consumer) {
+         for (long key : referencesForStructure) {
+-            ChunkPos chunkPos = ChunkPos.unpack(key);
+-            StructureStart start = this.getStartForStructure(structure, this.level.getChunk(chunkPos.x(), chunkPos.z(), ChunkStatus.STRUCTURE_STARTS));
++            StructureStart start = this.getStartForStructure(
++                structure, this.level.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key), ChunkStatus.STRUCTURE_STARTS)
++            );
+             if (start != null && start.isValid()) {
+                 consumer.accept(start);
+             }
+@@ -85,7 +86,7 @@ public class StructureManager {
+     }
+ 
+     public @Nullable StructureStart getStartForStructure(final Structure structure, final StructureAccess chunk) {
+-        return chunk.getStartForStructure(structure);
++        return chunk.getStartForStructure(structure); // Leaf - optimise ChunkGenerator#getMobsAt - diff on change
+     }
+ 
+     public void setStartForStructure(final Structure structure, final StructureStart start, final StructureAccess chunk) {
+diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
+index 237332436e567a09d086eaff876f05f486581abc..54652ee6b4d19e79d176395988fcc5ae9aecc6e9 100644
+--- a/net/minecraft/world/level/chunk/ChunkGenerator.java
++++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
+@@ -541,22 +541,25 @@ public abstract class ChunkGenerator {
+     ) {
+         Map<Structure, LongSet> structures = structureManager.getAllStructuresAt(pos);
+ 
++        if (!structures.isEmpty()) // Leaf - optimise ChunkGenerator#getMobsAt
+         for (Entry<Structure, LongSet> entry : structures.entrySet()) {
+             Structure structure = entry.getKey();
+             StructureSpawnOverride override = structure.spawnOverrides().get(mobCategory);
+             if (override != null) {
+-                MutableBoolean inOverrideBox = new MutableBoolean(false);
+-                Predicate<StructureStart> check = override.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
+-                    ? start -> structureManager.structureHasPieceAt(pos, start)
+-                    : start -> start.getBoundingBox().isInside(pos);
+-                structureManager.fillStartsForStructure(structure, entry.getValue(), start -> {
+-                    if (inOverrideBox.isFalse() && check.test(start)) {
+-                        inOverrideBox.setTrue();
++                // Leaf start - optimise ChunkGenerator#getMobsAt
++                for (long key : entry.getValue()) {
++                    StructureStart start = structureManager.getStartForStructure(
++                        structure, structureManager.level.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key), ChunkStatus.STRUCTURE_STARTS)
++                    );
++                    if (start != null && start.isValid()) {
++                        if (override.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
++                            ? structureManager.structureHasPieceAt(pos, start)
++                            : start.getBoundingBox().isInside(pos)) {
++                            return override.spawns();
++                        }
+                     }
+-                });
+-                if (inOverrideBox.isTrue()) {
+-                    return override.spawns();
+                 }
++                // Leaf end - optimise ChunkGenerator#getMobsAt
+             }
+         }
+ 

@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Taiyou06 <kaandindar21@gmail.com>
+Date: Mon, 24 Feb 2025 21:33:24 +0100
+Subject: [PATCH] Rewrite ClientboundLightUpdatePacketData
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On writing operations:
+At 256 sections with 0.75 fill ratio: 18x faster (333.489 μs → 18.606 μs)
+At 256 sections with 0.5 fill ratio: 13.5x faster (147.804 μs → 10.962 μs)
+
+diff --git a/net/minecraft/network/protocol/game/ClientboundLightUpdatePacketData.java b/net/minecraft/network/protocol/game/ClientboundLightUpdatePacketData.java
+index 53ccc1f38cba87c4eb05f37e122c3def5fd4a660..4b09b2c0822cb9293560aeaf5ed1de7d2eb283e6 100644
+--- a/net/minecraft/network/protocol/game/ClientboundLightUpdatePacketData.java
++++ b/net/minecraft/network/protocol/game/ClientboundLightUpdatePacketData.java
+@@ -17,6 +17,14 @@ public record ClientboundLightUpdatePacketData(
+     BitSet skyYMask, BitSet blockYMask, BitSet emptySkyYMask, BitSet emptyBlockYMask, List<byte[]> skyUpdates, List<byte[]> blockUpdates
+ ) {
+     private static final StreamCodec<ByteBuf, byte[]> DATA_LAYER_STREAM_CODEC = ByteBufCodecs.byteArray(2048);
++    // Leaf start - Rewrite ClientboundLightUpdatePacketData
++    private static final byte[][] EMPTY_ARRAY = new byte[0][];
++    private static final ThreadLocal<byte[][]> SKY_BUFFER = ThreadLocal.withInitial(() -> new byte[256][]);
++    private static final ThreadLocal<byte[][]> BLOCK_BUFFER = ThreadLocal.withInitial(() -> new byte[256][]);
++    private static final StreamCodec<ByteBuf, List<byte[]>> DATA_LAYERS_STREAM_CODEC = StreamCodec.of(
++        ClientboundLightUpdatePacketData::writeUpdates, DATA_LAYER_STREAM_CODEC.apply(ByteBufCodecs.list())
++    );
++    // Leaf end - Rewrite ClientboundLightUpdatePacketData
+     public static final StreamCodec<ByteBuf, ClientboundLightUpdatePacketData> STREAM_CODEC = StreamCodec.composite(
+         ByteBufCodecs.BIT_SET,
+         ClientboundLightUpdatePacketData::skyYMask,
+@@ -26,9 +34,9 @@ public record ClientboundLightUpdatePacketData(
+         ClientboundLightUpdatePacketData::emptySkyYMask,
+         ByteBufCodecs.BIT_SET,
+         ClientboundLightUpdatePacketData::emptyBlockYMask,
+-        DATA_LAYER_STREAM_CODEC.apply(ByteBufCodecs.list()),
++        DATA_LAYERS_STREAM_CODEC, // Leaf - Rewrite ClientboundLightUpdatePacketData
+         ClientboundLightUpdatePacketData::skyUpdates,
+-        DATA_LAYER_STREAM_CODEC.apply(ByteBufCodecs.list()),
++        DATA_LAYERS_STREAM_CODEC, // Leaf - Rewrite ClientboundLightUpdatePacketData
+         ClientboundLightUpdatePacketData::blockUpdates,
+         ClientboundLightUpdatePacketData::new
+     );
+@@ -39,19 +47,74 @@ public record ClientboundLightUpdatePacketData(
+         final @Nullable BitSet skyChangedLightSectionFilter,
+         final @Nullable BitSet blockChangedLightSectionFilter
+     ) {
+-        this(new BitSet(), new BitSet(), new BitSet(), new BitSet(), new ArrayList<>(), new ArrayList<>());
++        // Leaf start - Rewrite ClientboundLightUpdatePacketData
++        int sectionCount = lightEngine.getLightSectionCount();
++        int longWords = (sectionCount + 63) >>> 6;
++        int bitSetSize = longWords << 6;
++        BitSet skyYMask = new BitSet(bitSetSize);
++        BitSet blockYMask = new BitSet(bitSetSize);
++        BitSet emptySkyYMask = new BitSet(bitSetSize);
++        BitSet emptyBlockYMask = new BitSet(bitSetSize);
++        byte[][] skyBuffer = SKY_BUFFER.get();
++        byte[][] blockBuffer = BLOCK_BUFFER.get();
++        int skyCount = 0;
++        int blockCount = 0;
++        int minLightSection = lightEngine.getMinLightSection();
++        net.minecraft.world.level.lighting.LayerLightEventListener skyLayerListener = lightEngine.getLayerListener(LightLayer.SKY);
++        net.minecraft.world.level.lighting.LayerLightEventListener blockLayerListener = lightEngine.getLayerListener(LightLayer.BLOCK);
+ 
+-        for (int sectionIndex = 0; sectionIndex < lightEngine.getLightSectionCount(); sectionIndex++) {
++        for (int sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
++            SectionPos sectionPos = SectionPos.of(chunkPos.x(), minLightSection + sectionIndex, chunkPos.z());
+             if (skyChangedLightSectionFilter == null || skyChangedLightSectionFilter.get(sectionIndex)) {
+-                this.prepareSectionData(chunkPos, lightEngine, LightLayer.SKY, sectionIndex, this.skyYMask, this.emptySkyYMask, this.skyUpdates);
++                DataLayer skyData = skyLayerListener.getDataLayerData(sectionPos);
++                if (skyData != null) {
++                    if (skyData.isEmpty()) {
++                        emptySkyYMask.set(sectionIndex);
++                    } else {
++                        skyYMask.set(sectionIndex);
++                        skyBuffer[skyCount++] = skyData.getData();
++                    }
++                }
+             }
+ 
+             if (blockChangedLightSectionFilter == null || blockChangedLightSectionFilter.get(sectionIndex)) {
+-                this.prepareSectionData(chunkPos, lightEngine, LightLayer.BLOCK, sectionIndex, this.blockYMask, this.emptyBlockYMask, this.blockUpdates);
++                DataLayer blockData = blockLayerListener.getDataLayerData(sectionPos);
++                if (blockData != null) {
++                    if (blockData.isEmpty()) {
++                        emptyBlockYMask.set(sectionIndex);
++                    } else {
++                        blockYMask.set(sectionIndex);
++                        blockBuffer[blockCount++] = blockData.getData();
++                    }
++                }
+             }
+         }
++
++        byte[][] skyUpdates = skyCount == 0 ? EMPTY_ARRAY : new byte[skyCount][];
++        for (int i = 0; i < skyCount; i++) {
++            skyUpdates[i] = skyBuffer[i].clone();
++        }
++        byte[][] blockUpdates = blockCount == 0 ? EMPTY_ARRAY : new byte[blockCount][];
++        for (int i = 0; i < blockCount; i++) {
++            blockUpdates[i] = blockBuffer[i].clone();
++        }
++        this(
++            skyYMask, blockYMask, emptySkyYMask, emptyBlockYMask,
++            skyCount == 0 ? List.of() : java.util.Arrays.asList(skyUpdates),
++            blockCount == 0 ? List.of() : java.util.Arrays.asList(blockUpdates)
++        );
++        // Leaf end - Rewrite ClientboundLightUpdatePacketData
+     }
+ 
++    // Leaf start - Rewrite ClientboundLightUpdatePacketData
++    private static void writeUpdates(final ByteBuf output, final List<byte[]> updates) {
++        int count = updates.size();
++        ByteBufCodecs.writeCount(output, count, Integer.MAX_VALUE);
++        for (int i = 0; i < count; i++) {
++            DATA_LAYER_STREAM_CODEC.encode(output, updates.get(i));
++        }
++    }
++    // Leaf end - Rewrite ClientboundLightUpdatePacketData
+     private void prepareSectionData(
+         final ChunkPos pos,
+         final LevelLightEngine lightEngine,
+@@ -66,7 +129,7 @@ public record ClientboundLightUpdatePacketData(
+             if (data.isEmpty()) {
+                 emptyMask.set(sectionIndex);
+             } else {
+-                mask.set(sectionIndex);
++                mask.set(sectionIndex); // Leaf - Rewrite ClientboundLightUpdatePacketData - diff on change
+                 updates.add(data.copy().getData());
+             }
+         }

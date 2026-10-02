@@ -17,7 +17,7 @@ function getCommits() {
 set -e
 PS1="$"
 
-paperHash=$(git diff gradle.properties | awk '/^-paperCommit =/{print $NF}')
+paperHash=$(git diff gradle.properties | awk -F= '/^-paperCommit=/{print $2}')
 purpurHash=""
 leavesHash=""
 
@@ -52,8 +52,8 @@ logsuffix=""
 
 # Paper updates
 if [ -n "$paperHash" ]; then
-    newHash=$(git diff gradle.properties | awk '/^+paperCommit =/{print $NF}')
-    paper=$(getCommits "PaperMC/Paper" "$paperHash" $(echo $newHash | grep . -q && echo $newHash || echo "ver/26.2")) # TODO: Update this on every version update
+    newHash=$(git diff gradle.properties | awk -F= '/^\+paperCommit=/{print $2}')
+    paper=$(getCommits "PaperMC/Paper" "$paperHash" $(echo $newHash | grep . -q && echo $newHash || echo "main")) # TODO: Update this on every version update
 
     # Updates found
     if [ -n "$paper" ]; then
@@ -64,7 +64,7 @@ fi
 
 # Purpur updates
 if [ -n "$purpurHash" ]; then
-    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/26.2") # TODO: Update this on every version update
+    purpur=$(getCommits "PurpurMC/Purpur" "$purpurHash" "ver/26.3") # TODO: Update this on every version update
 
     # Updates found
     if [ -n "$purpur" ]; then

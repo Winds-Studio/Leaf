@@ -14,9 +14,9 @@ import org.jspecify.annotations.Nullable;
 import java.util.NoSuchElementException;
 
 @NullMarked
-public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<Fluid>, EntityFluidInteraction.Tracker> {
-    private EntityFluidInteraction.@Nullable Tracker water = null;
-    private EntityFluidInteraction.@Nullable Tracker lava = null;
+public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator> {
+    private EntityFluidInteraction.@Nullable CurrentAccumulator water = null;
+    private EntityFluidInteraction.@Nullable CurrentAccumulator lava = null;
 
     @Override
     public int size() {
@@ -24,23 +24,23 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
     }
 
     @Override
-    public ObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> reference2ObjectEntrySet() {
+    public ObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator>> reference2ObjectEntrySet() {
         return new EntrySet();
     }
 
     @Override
-    public EntityFluidInteraction.@Nullable Tracker get(Object k) {
+    public EntityFluidInteraction.@Nullable CurrentAccumulator get(Object k) {
         return k == FluidTags.WATER ? water : k == FluidTags.LAVA ? lava : null;
     }
 
     @Override
-    public EntityFluidInteraction.@Nullable Tracker put(TagKey<Fluid> k, EntityFluidInteraction.Tracker v) {
+    public EntityFluidInteraction.@Nullable CurrentAccumulator put(TagKey<Fluid> k, EntityFluidInteraction.CurrentAccumulator v) {
         if (k == FluidTags.WATER) {
-            EntityFluidInteraction.Tracker prev = this.water;
+            EntityFluidInteraction.CurrentAccumulator prev = this.water;
             this.water = v;
             return prev;
         } else if (k == FluidTags.LAVA) {
-            EntityFluidInteraction.Tracker prev = this.lava;
+            EntityFluidInteraction.CurrentAccumulator prev = this.lava;
             this.lava = v;
             return prev;
         }
@@ -54,8 +54,8 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
     }
 
     public void init() {
-        this.water = new EntityFluidInteraction.Tracker();
-        this.lava = new EntityFluidInteraction.Tracker();
+        this.water = new EntityFluidInteraction.CurrentAccumulator();
+        this.lava = new EntityFluidInteraction.CurrentAccumulator();
     }
 
     public void reset() {
@@ -67,9 +67,9 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
         }
     }
 
-    private final class EntrySet extends AbstractObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> {
+    private final class EntrySet extends AbstractObjectSet<Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator>> {
         @Override
-        public ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> iterator() {
+        public ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator>> iterator() {
             return new EntryIterator();
         }
 
@@ -109,10 +109,10 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
         }
     }
 
-    private final class EntryIterator implements ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker>> {
+    private final class EntryIterator implements ObjectIterator<Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator>> {
         private int index = 0;
         @Nullable
-        private Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> entry = null;
+        private Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator> entry = null;
 
         @Override
         public boolean hasNext() {
@@ -124,7 +124,7 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
         }
 
         @Override
-        public Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> next() {
+        public Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator> next() {
             if (index == 0 && water != null) {
                 index = 1;
                 return entry = new TrackerEntry(FluidTags.WATER);
@@ -151,7 +151,7 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
         }
     }
 
-    private final class TrackerEntry implements Entry<TagKey<Fluid>, EntityFluidInteraction.Tracker> {
+    private final class TrackerEntry implements Entry<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator> {
         private final TagKey<Fluid> key;
 
         public TrackerEntry(TagKey<Fluid> key) {
@@ -164,13 +164,13 @@ public final class TrackerByFluidMap extends AbstractReference2ObjectMap<TagKey<
         }
 
         @Override
-        public EntityFluidInteraction.Tracker getValue() {
+        public EntityFluidInteraction.CurrentAccumulator getValue() {
             return key == FluidTags.WATER ? water : lava;
         }
 
         @Override
-        public EntityFluidInteraction.Tracker setValue(EntityFluidInteraction.Tracker value) {
-            EntityFluidInteraction.Tracker prev;
+        public EntityFluidInteraction.CurrentAccumulator setValue(EntityFluidInteraction.CurrentAccumulator value) {
+            EntityFluidInteraction.CurrentAccumulator prev;
             if (key == FluidTags.WATER) {
                 prev = water;
                 water = value;
