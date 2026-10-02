@@ -4,7 +4,7 @@ import net.minecraft.world.entity.Entity;
 
 public final class FastBitRadixSort {
 
-    private static final int SMALL_ARRAY_THRESHOLD = 6;
+    private static final int SMALL_ARRAY_THRESHOLD = 11;
     private static final long[] LONGS = new long[0];
     private long[] bitsBuffer = LONGS;
 
@@ -19,11 +19,29 @@ public final class FastBitRadixSort {
         double tx = target.x();
         double ty = target.y();
         double tz = target.z();
-        for (int i = 0; i < size; i++) {
-            this.bitsBuffer[i] = Double.doubleToRawLongBits(((Entity) entities[i]).distanceToSqr(tx, ty, tz));
+        if (size - 1 <= SMALL_ARRAY_THRESHOLD) {
+            for (int i = 0; i < size; i++) {
+                this.bitsBuffer[i] = Double.doubleToRawLongBits(((Entity) entities[i]).distanceToSqr(tx, ty, tz));
+            }
+            insertionSort(entities, this.bitsBuffer, 0, size - 1);
+            return;
         }
 
-        fastRadixSort(entities, this.bitsBuffer, 0, size - 1, 62);
+        long orBits = 0L;
+        long andBits = -1L;
+        for (int i = 0; i < size; i++) {
+            long key = Double.doubleToRawLongBits(((Entity) entities[i]).distanceToSqr(tx, ty, tz));
+            this.bitsBuffer[i] = key;
+            orBits |= key;
+            andBits &= key;
+        }
+
+        fastRadixSort(entities, this.bitsBuffer, 0, size - 1, highestDifferingBit(orBits, andBits));
+    }
+
+    private static int highestDifferingBit(long orBits, long andBits) {
+        long differingBits = (orBits ^ andBits) & Long.MAX_VALUE;
+        return 63 - Long.numberOfLeadingZeros(differingBits);
     }
 
     private static void fastRadixSort(
@@ -45,24 +63,36 @@ public final class FastBitRadixSort {
         int i = low;
         int j = high;
         final long mask = 1L << bit;
+        long leftOrBits = 0L;
+        long leftAndBits = -1L;
+        long rightOrBits = 0L;
+        long rightAndBits = -1L;
 
         while (i <= j) {
             while (i <= j && (bits[i] & mask) == 0) {
+                leftOrBits |= bits[i];
+                leftAndBits &= bits[i];
                 i++;
             }
             while (i <= j && (bits[j] & mask) != 0) {
+                rightOrBits |= bits[j];
+                rightAndBits &= bits[j];
                 j--;
             }
             if (i < j) {
+                leftOrBits |= bits[j];
+                leftAndBits &= bits[j];
+                rightOrBits |= bits[i];
+                rightAndBits &= bits[i];
                 swap(ents, bits, i++, j--);
             }
         }
 
         if (low < j) {
-            fastRadixSort(ents, bits, low, j, bit - 1);
+            fastRadixSort(ents, bits, low, j, highestDifferingBit(leftOrBits, leftAndBits));
         }
         if (i < high) {
-            fastRadixSort(ents, bits, i, high, bit - 1);
+            fastRadixSort(ents, bits, i, high, highestDifferingBit(rightOrBits, rightAndBits));
         }
     }
 
