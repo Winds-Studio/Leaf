@@ -83,7 +83,7 @@ java {
 <dependency>
     <groupId>cn.dreeam.leaf</groupId>
     <artifactId>leaf-api</artifactId>
-    <version>26.2.local-SNAPSHOT</version>
+    <version>26.3.local-SNAPSHOT</version>
     <scope>provided</scope>
 </dependency>
 ```
