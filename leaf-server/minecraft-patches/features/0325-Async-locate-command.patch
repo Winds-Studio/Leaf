@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NONPLAYT <nonplay@bxteam.org>
+Date: Wed, 29 Jan 2025 00:54:19 +0300
+Subject: [PATCH] Async locate command
+
+Offloads /locate structure and biome search computations to async worker thread.
+
+diff --git a/net/minecraft/server/commands/LocateCommand.java b/net/minecraft/server/commands/LocateCommand.java
+index d018ec1c7876ddc883223d548fbe6a513e14bcfe..366b6640b045271e0e0365b2f617f91959ec67ba 100644
+--- a/net/minecraft/server/commands/LocateCommand.java
++++ b/net/minecraft/server/commands/LocateCommand.java
+@@ -93,6 +93,31 @@ public class LocateCommand {
+     }
+ 
+     private static int locateStructure(final CommandSourceStack source, final ResourceOrTagKeyArgument.Result<Structure> resourceOrTag) throws CommandSyntaxException {
++        // Leaf start - Async locate command
++        if (org.dreeam.leaf.config.modules.async.AsyncLocate.enabled) {
++            io.papermc.paper.util.MCUtil.scheduleAsyncTask(() -> {
++                Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
++                HolderSet<Structure> target;
++                try {
++                    target = getHolders(resourceOrTag, registry)
++                        .orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(resourceOrTag.asPrintable()));
++                } catch (CommandSyntaxException e) {
++                    source.sendFailure(Component.literal(e.getMessage()));
++                    return;
++                }
++                BlockPos sourcePos = BlockPos.containing(source.getPosition());
++                ServerLevel serverLevel = source.getLevel();
++                Stopwatch stopwatch = Stopwatch.createStarted(Util.TICKER);
++                Pair<BlockPos, Holder<Structure>> nearest = serverLevel.getChunkSource().getGenerator().findNearestMapStructure(serverLevel, target, sourcePos, 100, false);
++                stopwatch.stop();
++                if (nearest == null) {
++                    source.sendFailure(Component.literal(ERROR_STRUCTURE_NOT_FOUND.create(resourceOrTag.asPrintable()).getMessage()));
++                } else {
++                    showLocateResult(source, resourceOrTag, sourcePos, nearest, "commands.locate.structure.success", false, stopwatch.elapsed());
++                }
++            });
++            return 0;
++        }
+         Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+         HolderSet<Structure> target = (HolderSet<Structure>)getHolders(resourceOrTag, registry)
+             .orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(resourceOrTag.asPrintable()));
+@@ -108,9 +133,25 @@ public class LocateCommand {
+         } else {
+             return showLocateResult(source, resourceOrTag, sourcePos, nearest, "commands.locate.structure.success", false, stopwatch.elapsed());
+         }
++        // Leaf end - Async locate command
+     }
+ 
+     private static int locateBiome(final CommandSourceStack source, final ResourceOrTagArgument.Result<Biome> elementOrTag) throws CommandSyntaxException {
++        // Leaf start - Async locate command
++        if (org.dreeam.leaf.config.modules.async.AsyncLocate.enabled) {
++            io.papermc.paper.util.MCUtil.scheduleAsyncTask(() -> {
++                BlockPos sourcePos = BlockPos.containing(source.getPosition());
++                Stopwatch stopwatch = Stopwatch.createStarted(Util.TICKER);
++                Pair<BlockPos, Holder<Biome>> nearest = source.getLevel().findClosestBiome3d(elementOrTag, sourcePos, 6400, 32, 64);
++                stopwatch.stop();
++                if (nearest == null) {
++                    source.sendFailure(Component.literal(ERROR_BIOME_NOT_FOUND.create(elementOrTag.asPrintable()).getMessage()));
++                } else {
++                    showLocateResult(source, elementOrTag, sourcePos, nearest, "commands.locate.biome.success", true, stopwatch.elapsed());
++                }
++            });
++            return 0;
++        }
+         BlockPos sourcePos = BlockPos.containing(source.getPosition());
+         Stopwatch stopwatch = Stopwatch.createStarted(Util.TICKER);
+         Pair<BlockPos, Holder<Biome>> nearest = source.getLevel().findClosestBiome3d(elementOrTag, sourcePos, 6400, 32, 64);
+@@ -120,6 +161,7 @@ public class LocateCommand {
+         } else {
+             return showLocateResult(source, elementOrTag, sourcePos, nearest, "commands.locate.biome.success", true, stopwatch.elapsed());
+         }
++        // Leaf end - Async locate command
+     }
+ 
+     private static int locatePoi(final CommandSourceStack source, final ResourceOrTagArgument.Result<PoiType> resourceOrTag) throws CommandSyntaxException {
+diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
+index 10ab99c2b8a1df751df0dccf0273a17f433cbf3b..2786567b2a773d8e95e2c9a7106483d5bc5e6778 100644
+--- a/net/minecraft/world/level/chunk/ChunkGenerator.java
++++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
+@@ -176,7 +176,12 @@ public abstract class ChunkGenerator {
+         final List<org.bukkit.generator.structure.Structure> apiStructures = wantedStructures.stream().map(org.bukkit.craftbukkit.generator.structure.CraftStructure::minecraftHolderToBukkit).toList();
+         if (!apiStructures.isEmpty()) {
+             final io.papermc.paper.event.world.StructuresLocateEvent event = new io.papermc.paper.event.world.StructuresLocateEvent(bukkitWorld, origin, apiStructures, maxSearchRadius, createReference);
+-            if (!event.callEvent()) {
++            // Leaf start - Async locate command
++            final Boolean callEventResult = ca.spottedleaf.moonrise.common.util.TickThread.isTickThread()
++                ? Boolean.valueOf(event.callEvent())
++                : io.papermc.paper.util.MCUtil.ensureMain((java.util.function.Supplier<Boolean>) event::callEvent);
++            if (callEventResult == null || !callEventResult) {
++            // Leaf end - Async locate command
+                 return null;
+             }
+             if (event.getResult() != null) {

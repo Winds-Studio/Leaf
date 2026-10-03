@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NONPLAYT <nonplay@bxteam.org>
+Date: Mon, 11 Aug 2025 02:42:19 +0300
+Subject: [PATCH] Moonrise: Direct Set Lookups for Ticking Chunks
+
+Maintains primitive long sets for block ticking and entity ticking chunk positions,
+allowing O(1) direct set lookups instead of full hash table and holder status lookups.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
+index 887ec6eb8b583cb09bec4622ce2438ca700182df..fb3d07cc87a695444c492f8fb7aa5ead4a6641a5 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
+@@ -1192,6 +1192,11 @@ public final class ChunkHolderManager {
+         this.chunkHoldersNoSync.remove(position);
+         this.chunkHolders.remove(position);
+         // Leaf end - thread unsafe chunk map
++        // Leaf start - Moonrise: Direct Set Lookups for Ticking Chunks
++        final long cachedPos = holder.getCachedLongPos();
++        this.blockTickingChunkHolders.remove(cachedPos);
++        this.entityTickingChunkHolders.remove(cachedPos);
++        // Leaf end - Moonrise: Direct Set Lookups for Ticking Chunks
+     }
+ 
+     // note: never call while inside the chunk system, this will absolutely break everything
+@@ -1356,6 +1361,27 @@ public final class ChunkHolderManager {
+         }
+     }
+ 
++    // Leaf start - Moonrise: Direct Set Lookups for Ticking Chunks
++    public final it.unimi.dsi.fastutil.longs.LongSet blockTickingChunkHolders = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
++    public final it.unimi.dsi.fastutil.longs.LongSet entityTickingChunkHolders = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
++
++    public void markBlockTicking(@org.jetbrains.annotations.NotNull NewChunkHolder newChunkHolder) {
++        this.blockTickingChunkHolders.add(newChunkHolder.getCachedLongPos());
++    }
++
++    public void markNonBlockTickingIfPossible(@org.jetbrains.annotations.NotNull NewChunkHolder newChunkHolder) {
++        this.blockTickingChunkHolders.remove(newChunkHolder.getCachedLongPos());
++    }
++
++    public void markEntityTicking(@org.jetbrains.annotations.NotNull NewChunkHolder newChunkHolder) {
++        this.entityTickingChunkHolders.add(newChunkHolder.getCachedLongPos());
++    }
++
++    public void markNonEntityTickingIfPossible(@org.jetbrains.annotations.NotNull NewChunkHolder newChunkHolder) {
++        this.entityTickingChunkHolders.remove(newChunkHolder.getCachedLongPos());
++    }
++    // Leaf end - Moonrise: Direct Set Lookups for Ticking Chunks
++
+     public enum TicketOperationType {
+         ADD, REMOVE, ADD_IF_REMOVED, ADD_AND_REMOVE
+     }
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java
+index d651e131f5a6cf5e566af50b15694b0cc0c0c6b0..e1957112fef986c87ceff4f99ac1b7f1486846cd 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder.java
+@@ -646,12 +646,20 @@ public final class NewChunkHolder {
+     }
+ 
+     public final ChunkHolder vanillaChunkHolder;
++    // Leaf start - Moonrise: Direct Set Lookups for Ticking Chunks
++    private final long cachedLongPos;
++
++    public long getCachedLongPos() {
++        return cachedLongPos;
++    }
++    // Leaf end - Moonrise: Direct Set Lookups for Ticking Chunks
+ 
+     public NewChunkHolder(final ServerLevel world, final int chunkX, final int chunkZ, final ChunkTaskScheduler scheduler) {
+         this.world = world;
+         this.chunkX = chunkX;
+         this.chunkZ = chunkZ;
+         this.scheduler = scheduler;
++        this.cachedLongPos = ((long)chunkZ << 32) | (chunkX & 0xFFFFFFFFL); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         this.vanillaChunkHolder = new ChunkHolder(
+                 new ChunkPos(chunkX, chunkZ), ChunkHolderManager.MAX_TICKET_LEVEL, world,
+                 world.getLightEngine(), null, world.getChunkSource().chunkMap
+@@ -1192,6 +1200,19 @@ public final class NewChunkHolder {
+ 
+     private void updateCurrentState(final FullChunkStatus to) {
+         this.currentFullChunkStatus = to;
++        // Leaf start - Moonrise: Direct Set Lookups for Ticking Chunks
++        if (to.isOrAfter(FullChunkStatus.BLOCK_TICKING)) {
++            this.world.moonrise$getChunkTaskScheduler().chunkHolderManager.markBlockTicking(this);
++        } else {
++            this.world.moonrise$getChunkTaskScheduler().chunkHolderManager.markNonBlockTickingIfPossible(this);
++        }
++
++        if (to.isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
++            this.world.moonrise$getChunkTaskScheduler().chunkHolderManager.markEntityTicking(this);
++        } else {
++            this.world.moonrise$getChunkTaskScheduler().chunkHolderManager.markNonEntityTickingIfPossible(this);
++        }
++        // Leaf end - Moonrise: Direct Set Lookups for Ticking Chunks
+     }
+ 
+     // only to be called on the main thread, no locks need to be held
+diff --git a/net/minecraft/server/level/DistanceManager.java b/net/minecraft/server/level/DistanceManager.java
+index 022dd571623224fd87c4aa4a50ebdba4393cf275..70ef68c06d7e5a36937a00e77f4504d0ae8f6039 100644
+--- a/net/minecraft/server/level/DistanceManager.java
++++ b/net/minecraft/server/level/DistanceManager.java
+@@ -126,15 +126,13 @@ public abstract class DistanceManager implements ca.spottedleaf.moonrise.patches
+ 
+     public boolean inEntityTickingRange(final long key) {
+         // Paper start - rewrite chunk system
+-        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder chunkHolder = this.moonrise$getChunkHolderManager().getChunkHolder(key);
+-        return chunkHolder != null && chunkHolder.isEntityTickingReady();
++        return this.moonrise$getChunkHolderManager().entityTickingChunkHolders.contains(key); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         // Paper end - rewrite chunk system
+     }
+ 
+     public boolean inBlockTickingRange(final long key) {
+         // Paper start - rewrite chunk system
+-        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder chunkHolder = this.moonrise$getChunkHolderManager().getChunkHolder(key);
+-        return chunkHolder != null && chunkHolder.isTickingReady();
++        return this.moonrise$getChunkHolderManager().blockTickingChunkHolders.contains(key); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         // Paper end - rewrite chunk system
+     }
+ 
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index 1624e8792d6002b675e8bcfe5ccd5f0993f0d8d2..849f5361d9c64d7a46e4d883ae9ab7494a0b2eff 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -481,8 +481,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+     public boolean isPositionTicking(final long chunkKey) {
+         // Paper start - rewrite chunk system
+-        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder newChunkHolder = ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel)this.level).moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolder(chunkKey);
+-        return newChunkHolder != null && newChunkHolder.isTickingReady();
++        return ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel)this.level).moonrise$getChunkTaskScheduler().chunkHolderManager.blockTickingChunkHolders.contains(chunkKey); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         // Paper end - rewrite chunk system
+     }
+ 
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 8e3966bc36a76fde80e18a07d0a055ae8ffb5731..96a5f5f786b44dbd2e5e50a3021751cedbca4960 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1177,8 +1177,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     @Override
+     public boolean shouldTickBlocksAt(final long chunkPos) {
+         // Paper start - rewrite chunk system
+-        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder holder = this.moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolder(chunkPos);
+-        return holder != null && holder.isTickingReady();
++        return this.moonrise$getChunkTaskScheduler().chunkHolderManager.blockTickingChunkHolders.contains(chunkPos); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         // Paper end - rewrite chunk system
+     }
+ 
+@@ -3302,16 +3301,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     public boolean isPositionTickingWithEntitiesLoaded(final long key) {
+         // Paper start - rewrite chunk system
+-        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder chunkHolder = this.moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolder(key);
+-        // isTicking implies the chunk is loaded, and the chunk is loaded now implies the entities are loaded
+-        return chunkHolder != null && chunkHolder.isTickingReady();
++        return this.moonrise$getChunkTaskScheduler().chunkHolderManager.blockTickingChunkHolders.contains(key); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         // Paper end - rewrite chunk system
+     }
+ 
+     public boolean isPositionEntityTicking(final BlockPos pos) {
+         // Paper start - rewrite chunk system
+-        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder chunkHolder = this.moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolder(ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkKey(pos));
+-        return chunkHolder != null && chunkHolder.isEntityTickingReady();
++        return this.moonrise$getChunkTaskScheduler().chunkHolderManager.entityTickingChunkHolders.contains(ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkKey(pos)); // Leaf - Moonrise: Direct Set Lookups for Ticking Chunks
+         // Paper end - rewrite chunk system
+     }
+ 

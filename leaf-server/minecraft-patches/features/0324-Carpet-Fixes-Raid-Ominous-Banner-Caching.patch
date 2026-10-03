@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NONPLAYT <nonplay@bxteam.org>
+Date: Wed, 10 Dec 2025 22:47:51 +0300
+Subject: [PATCH] Carpet-Fixes: Raid Ominous Banner Caching
+
+Caches the ominous banner ItemStack on ServerLevel to avoid repeated registry lookups.
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 96a5f5f786b44dbd2e5e50a3021751cedbca4960..d4fa8c4d627538a2534238f686c9236bef03f8f1 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -247,6 +247,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
+     public final org.dreeam.leaf.async.tracker.AsyncTracker leaf$asyncTracker = new org.dreeam.leaf.async.tracker.AsyncTracker(); // Leaf - Multithreaded tracker
+     private @Nullable WorldBorder worldBorder; // Leaf - Cache world border
++    public net.minecraft.world.item.ItemStack ominousBanner; // Leaf - Carpet-Fixes: Raid Ominous Banner Caching
+ 
+     @Override
+     public @Nullable LevelChunk getChunkIfLoaded(int x, int z) {
+@@ -808,6 +809,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         this.chunkDataController = new ca.spottedleaf.moonrise.patches.chunk_system.io.datacontroller.ChunkDataController((ServerLevel)(Object)this, this.chunkTaskScheduler);
+         // Paper end - rewrite chunk system
+         this.getCraftServer().addWorld(this.getWorld()); // CraftBukkit
++        this.ominousBanner = java.util.Objects.requireNonNullElse(this.registryAccess(), net.minecraft.core.RegistryAccess.EMPTY).lookup(net.minecraft.core.registries.Registries.BANNER_PATTERN).map(net.minecraft.world.entity.raid.Raid::getOminousBannerInstance).orElse(null); // Leaf - Carpet-Fixes: Raid Ominous Banner Caching
+         // Leaf start - SparklyPaper - parallel world ticking
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
+             this.tickExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(new org.dreeam.leaf.async.world.SparklyPaperServerLevelTickExecutorThreadFactory(getWorld().getName()));
+diff --git a/net/minecraft/world/entity/raid/Raider.java b/net/minecraft/world/entity/raid/Raider.java
+index 3c68ca6a9f2ccb8eb67f1dbb009222324dff7c8d..e7746c48594e4b92f66319390252388259146758 100644
+--- a/net/minecraft/world/entity/raid/Raider.java
++++ b/net/minecraft/world/entity/raid/Raider.java
+@@ -45,9 +45,25 @@ import org.jspecify.annotations.Nullable;
+ 
+ public abstract class Raider extends PatrollingMonster {
+     protected static final EntityDataAccessor<Boolean> IS_CELEBRATING = SynchedEntityData.defineId(Raider.class, EntityDataSerializers.BOOLEAN);
+-    private static final Predicate<ItemEntity> ALLOWED_ITEMS = e -> !e.hasPickUpDelay()
+-        && e.isAlive()
+-        && ItemStack.matches(e.getItem(), Raid.getOminousBannerInstance(e.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN)));
++    // Leaf start - Carpet-Fixes: Raid Ominous Banner Caching
++    static final Predicate<ItemEntity> ALLOWED_ITEMS = (itemEntity) -> {
++        ItemStack ominousBanner = ((ServerLevel) itemEntity.level()).ominousBanner;
++        if (ominousBanner == null) {
++            ominousBanner = Raid.getOminousBannerInstance(itemEntity.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN));
++        }
++
++        return !itemEntity.hasPickUpDelay() && itemEntity.isAlive() &&
++            ItemStack.matches(itemEntity.getItem(), ominousBanner);
++    };
++
++    private ItemStack getOminousBanner(net.minecraft.core.HolderGetter<net.minecraft.world.level.block.entity.BannerPattern> bannerPatternLookup) {
++        ItemStack ominousBanner = ((ServerLevel) this.level()).ominousBanner;
++        if (ominousBanner == null) {
++            ominousBanner = Raid.getOminousBannerInstance(bannerPatternLookup);
++        }
++        return ominousBanner;
++    }
++    // Leaf end - Carpet-Fixes: Raid Ominous Banner Caching
+     private static final int DEFAULT_WAVE = 0;
+     private static final boolean DEFAULT_CAN_JOIN_RAID = false;
+     protected @Nullable Raid raid;
+@@ -150,7 +166,7 @@ public abstract class Raider extends PatrollingMonster {
+     public boolean isCaptain() {
+         ItemStack banner = this.getItemBySlot(EquipmentSlot.HEAD);
+         boolean hasCaptainBanner = !banner.isEmpty()
+-            && ItemStack.matches(banner, Raid.getOminousBannerInstance(this.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN)));
++            && ItemStack.matches(banner, getOminousBanner(this.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN))); // Leaf - Carpet-Fixes: Raid Ominous Banner Caching
+         boolean patrolLeader = this.isPatrolLeader();
+         return hasCaptainBanner && patrolLeader;
+     }
+@@ -213,7 +229,7 @@ public abstract class Raider extends PatrollingMonster {
+         boolean hasRaidLeader = this.hasActiveRaid() && this.getCurrentRaid().getLeader(this.getWave()) != null;
+         if (this.hasActiveRaid()
+             && !hasRaidLeader
+-            && ItemStack.matches(itemStack, Raid.getOminousBannerInstance(this.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN)))) {
++            && ItemStack.matches(itemStack, getOminousBanner(this.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN)))) { // Leaf - Carpet-Fixes: Raid Ominous Banner Caching
+             // Paper start - EntityPickupItemEvent fixes
+             if (org.bukkit.craftbukkit.event.CraftEventFactory.callEntityPickupItemEvent(this, entity, 0).isCancelled()) {
+                 return;
+@@ -410,7 +426,7 @@ public abstract class Raider extends PatrollingMonster {
+             }
+ 
+             if (ItemStack.matches(
+-                this.mob.getItemBySlot(EquipmentSlot.HEAD), Raid.getOminousBannerInstance(this.mob.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN))
++                this.mob.getItemBySlot(EquipmentSlot.HEAD), getOminousBanner(this.mob.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN)) // Leaf - Carpet-Fixes: Raid Ominous Banner Caching
+             )) {
+                 return true;
+             }
