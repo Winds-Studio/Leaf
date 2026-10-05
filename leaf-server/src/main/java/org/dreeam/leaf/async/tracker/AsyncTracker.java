@@ -10,6 +10,7 @@ import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerPlayerConnection;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.dreeam.leaf.async.ThreadPool;
@@ -30,8 +31,6 @@ public final class AsyncTracker {
 
     private Future<TrackerCtx> @Nullable [] fut;
 
-    private final ReferenceList<ChunkMap.TrackedEntity> trackersRef = new ReferenceList<>(new ChunkMap.TrackedEntity[0]); // TODO: Whether this should be kept, for avoiding a for loop
-    private final Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> trackers = new Reference2ReferenceOpenHashMap<>();
     private final Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> capture = new Reference2ReferenceOpenHashMap<>();
 
     public static void init() {
@@ -45,16 +44,6 @@ public final class AsyncTracker {
         );
     }
 
-    public void addTracker(final ChunkMap.TrackedEntity tracker) {
-        trackers.put(tracker, new TrackerInput(tracker.serverEntity.entity.trackingPosition(), Vec3.ZERO, false));
-        trackersRef.add(tracker);
-    }
-
-    public void removeTracker(final ChunkMap.TrackedEntity tracker) {
-        trackers.remove(tracker);
-        trackersRef.remove(tracker);
-    }
-
     public @Nullable TrackerInput get(final ChunkMap.@Nullable TrackedEntity tracker) {
         if (tracker == null) {
             return null;
@@ -64,16 +53,16 @@ public final class AsyncTracker {
         return i;
     }
 
-    public void tick(final ServerLevel world) {
+    public void tick(final ServerLevel world, final ReferenceList<Entity> entities) {
         Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> cap = capture.clone();
         capture.clear();
         handlePlayer(world);
-        int len = trackers.size();
+        int len = entities.size();
         if (len == 0) {
             return;
         }
-        ChunkMap.TrackedEntity[] raw = new ChunkMap.TrackedEntity[len];
-        System.arraycopy(trackersRef.getRawDataUnchecked(), 0, raw, 0, len);
+        Entity[] raw = new Entity[len];
+        System.arraycopy(entities.getRawDataUnchecked(), 0, raw, 0, len);
         TrackerSlice slice = new TrackerSlice(raw);
 
         ThreadPool exec = Objects.requireNonNull(TRACKER_EXECUTOR);
@@ -82,7 +71,7 @@ public final class AsyncTracker {
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = exec.submitOrRun(new TrackerTask(world, slices[i], trackers, cap));
+            futures[i] = exec.submitOrRun(new TrackerTask(world, slices[i], cap));
         }
         exec.unpark();
         this.fut = futures;
