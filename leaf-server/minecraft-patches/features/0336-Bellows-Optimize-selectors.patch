@@ -1,0 +1,579 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Onako2 <79749977+Onako2@users.noreply.github.com>
+Date: Fri, 11 Sep 2026 01:02:08 +0200
+Subject: [PATCH] Bellows: Optimize selectors
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+index 2a9032f8fe5424d3795093dfa8bd79ef4534b835..4de09d41f870a57653843457da837c0fd4cb1494 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+@@ -52,6 +52,10 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+     protected final ConcurrentHashMap<UUID, Entity> entityByUUID = new ConcurrentHashMap<>();
+     protected final EntityList accessibleEntities = new EntityList();
+     public final it.unimi.dsi.fastutil.objects.ReferenceArrayList<Entity> weakEntityList = new it.unimi.dsi.fastutil.objects.ReferenceArrayList<>(); // Leaf - Rewrite entity despawn time
++    // Leaf start - Bellows - Optimize selectors
++    private static final int REASONABLE_SEARCH_SIZE = 100;
++    private final java.util.Map<String, java.util.Set<net.minecraft.world.level.entity.EntityAccess>> entityMap = new java.util.HashMap<>();
++    // Leaf end - Bellows - Optimize selectors
+ 
+     public EntityLookup(final Level world, final LevelCallback<Entity> worldCallback) {
+         this.world = world;
+@@ -486,6 +490,16 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+         this.entityStatusChange(entity, slices, Visibility.HIDDEN, getEntityStatus(entity), false, !fromDisk, false);
+ 
++        // Leaf start - Bellows - Optimize selectors
++        if (entityById.containsKey(entity.getId())) {
++            String id = entity.getEncodeId();
++            this.addEntityToTagMap(id, entity);
++            if (!entity.entityTags().isEmpty()) {
++                entity.entityTags().forEach(tag -> addEntityToTagMap(tag, entity));
++            }
++        }
++        // Leaf end - Bellows - Optimize selectors
++
+         return true;
+     }
+ 
+@@ -549,7 +563,109 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+         if (slices != null && slices.isEmpty()) {
+             this.onEmptySlices(sectionX, sectionZ);
+         }
++
++        // Leaf start - Bellows - Optimize selectors
++        if (!entityById.containsKey(entity.getId())) {
++            String id = entity.getEncodeId();
++            this.removeEntityFromTagMap(id, entity);
++            if (!entity.entityTags().isEmpty()) {
++                entity.entityTags().forEach(tag -> removeEntityFromTagMap(tag, entity));
++            }
++        }
++        // Leaf end - Bellows - Optimize selectors
++    }
++
++    // Leaf start - Bellows - Optimize selectors
++    public void addEntityToTagMap(String tag, net.minecraft.world.level.entity.EntityAccess entity) {
++        java.util.Set<net.minecraft.world.level.entity.EntityAccess> set = entityMap.computeIfAbsent(tag, _ -> new java.util.HashSet<>());
++        set.add(entity);
++    }
++
++    public void removeEntityFromTagMap(String tag, net.minecraft.world.level.entity.EntityAccess entity) {
++        java.util.Set<net.minecraft.world.level.entity.EntityAccess> set = entityMap.get(tag);
++        if (set != null) {
++            set.removeAll(java.util.Collections.singleton(entity));
++        }
++    }
++
++    public <U extends Entity> void getTaggedEntities(EntityTypeTest<@org.jetbrains.annotations.NotNull Entity, @org.jetbrains.annotations.NotNull U> filter, AbortableIterationConsumer<@org.jetbrains.annotations.NotNull U> action, net.smithed.bellows.utils.SelectorContainer container) {
++        java.util.Set<net.minecraft.world.level.entity.EntityAccess> set = null;
++        List<java.util.Set<net.minecraft.world.level.entity.EntityAccess>> list = null;
++        int size = Integer.MAX_VALUE;
++
++        for (String tag : container.selectorTags) {
++            java.util.Set<net.minecraft.world.level.entity.EntityAccess> result = this.entityMap.get(tag);
++            if (result == null) {
++                size = 0;
++            } else if (result.size() < size) {
++                set = result;
++                size = result.size();
++            }
++
++            if (size < REASONABLE_SEARCH_SIZE) {
++                break;
++            }
++        }
++
++        if (size == 0) {
++            return;
++        }
++
++        if (size >= REASONABLE_SEARCH_SIZE) {
++            if (!container.isNotType && !container.type.isBlank()) {
++                if (container.isTypeTag) {
++                    list = new java.util.LinkedList<>();
++                    int mergeSize = 0;
++                    for (String type : container.entityTypes) {
++                        java.util.Set<net.minecraft.world.level.entity.EntityAccess> result = this.entityMap.get(type);
++                        if (result != null) {
++                            mergeSize += result.size();
++                            list.add(result);
++                        }
++                    }
++                    if (mergeSize < size) {
++                        size = mergeSize;
++                        set = null;
++                    }
++                } else {
++                    java.util.Set<net.minecraft.world.level.entity.EntityAccess> result = this.entityMap.get(container.type);
++                    if (result == null) {
++                        size = 0;
++                    } else if (result.size() < size) {
++                        set = result;
++                        size = result.size();
++                    }
++                }
++            }
++        }
++
++        if (size == 0) {
++            return;
++        }
++
++        if (set != null) {
++            getEntities(set, filter, action);
++        } else if (list != null) {
++            list.forEach(iset -> getEntities(iset, filter, action));
++        } else {
++            this.get(filter, action);
++        }
++    }
++
++    private <U extends Entity> void getEntities(java.util.Collection<net.minecraft.world.level.entity.EntityAccess> collection, EntityTypeTest<@org.jetbrains.annotations.NotNull Entity, @org.jetbrains.annotations.NotNull U> filter, AbortableIterationConsumer<@org.jetbrains.annotations.NotNull U> consumer) {
++        for (net.minecraft.world.level.entity.EntityAccess entityAccess : collection) {
++            Entity entity = (net.minecraft.world.entity.Entity) entityAccess;
++            U maybeEntity = filter.tryCast(entity);
++            if (maybeEntity != null && consumer.accept(maybeEntity).shouldAbort()) {
++                return;
++            }
++        }
++    }
++
++    public EntityLookup getVisibleEntities() {
++        return this;
+     }
++    // Leaf end - Bellows - Optimize selectors
+ 
+     protected ChunkEntitySlices moveEntity(final Entity entity) {
+         // ensure we own the entity
+diff --git a/net/minecraft/commands/arguments/selector/EntitySelector.java b/net/minecraft/commands/arguments/selector/EntitySelector.java
+index 2b17e033224a34fe7e60e6c2d20b2689e7274593..fb2f5044a3778d09cb708c93dcb13dea96fde401 100644
+--- a/net/minecraft/commands/arguments/selector/EntitySelector.java
++++ b/net/minecraft/commands/arguments/selector/EntitySelector.java
+@@ -67,6 +67,7 @@ public class EntitySelector {
+     private final @Nullable UUID entityUUID;
+     private final EntityTypeTest<Entity, ?> type;
+     private final boolean usesSelector;
++    private net.smithed.bellows.utils.SelectorContainer container; // Leaf - Bellows - Cache selector
+ 
+     public EntitySelector(
+         final int maxResults,
+@@ -238,6 +239,16 @@ public class EntitySelector {
+     private void addEntities(final List<Entity> result, final ServerLevel level, final @Nullable AABB absoluteAABB, final Predicate<Entity> predicate) {
+         int limit = this.getResultLimit();
+         if (result.size() < limit) {
++            // Leaf start - Bellows - Optimize selectors
++            if (org.dreeam.leaf.config.modules.opt.OptimizeSelector.entitySelectorOptimizations) {
++                if(absoluteAABB == null || !container.selectorTags.isEmpty()) {
++                    level.getEntities(this.type, predicate, result, limit, container);
++                } else {
++                    level.getEntities(this.type, absoluteAABB, predicate, result, limit);
++                }
++                return;
++            }
++            // Leaf end - Bellows - Optimize selectors
+             if (absoluteAABB != null) {
+                 level.getEntities(this.type, absoluteAABB, predicate, result, limit);
+             } else {
+@@ -246,6 +257,12 @@ public class EntitySelector {
+         }
+     }
+ 
++    // Leaf start - Bellows - Optimize selectors
++    public void setContainer(net.smithed.bellows.utils.SelectorContainer container) {
++        this.container = container;
++    }
++    // Leaf end - Bellows - Optimize selectors
++
+     private int getResultLimit() {
+         return this.order == ORDER_ARBITRARY ? this.maxResults : Integer.MAX_VALUE;
+     }
+diff --git a/net/minecraft/commands/arguments/selector/EntitySelectorParser.java b/net/minecraft/commands/arguments/selector/EntitySelectorParser.java
+index d15219cfc49d462f0b6498c67bbc5e092dc52d42..8e8d09f0f48e071e1016054d96ad1cdbe110c280 100644
+--- a/net/minecraft/commands/arguments/selector/EntitySelectorParser.java
++++ b/net/minecraft/commands/arguments/selector/EntitySelectorParser.java
+@@ -106,6 +106,7 @@ public class EntitySelectorParser {
+     private final SetOnceOptionState scoresOption = new SetOnceOptionState();
+     private final SetOnceOptionState advancementsOption = new SetOnceOptionState();
+     private boolean usesSelectors;
++    private final net.smithed.bellows.utils.SelectorContainer container = new net.smithed.bellows.utils.SelectorContainer(); // Leaf - Bellows - Optimize selectors
+ 
+     public EntitySelectorParser(final StringReader reader, final boolean allowSelectors) {
+         this.reader = reader;
+@@ -484,9 +485,19 @@ public class EntitySelectorParser {
+         }
+ 
+         this.finalizePredicates();
+-        return this.getSelector();
++        // Leaf start - Bellows - Optimize selectors
++        EntitySelector selector = this.getSelector();
++        selector.setContainer(this.container);
++        // Leaf end - Bellows - Optimize selectors
++        return selector;
+     }
+ 
++    // Leaf start - Bellows - Optimize selectors
++    public net.smithed.bellows.utils.SelectorContainer getSelectorContainer() {
++        return this.container;
++    }
++    // Leaf end - Bellows - Optimize selectors
++
+     private static void fillSelectorSuggestions(final SuggestionsBuilder builder) {
+         builder.suggest("@p", Component.translatable("argument.entity.selector.nearestPlayer"));
+         builder.suggest("@a", Component.translatable("argument.entity.selector.allPlayers"));
+diff --git a/net/minecraft/commands/arguments/selector/options/EntitySelectorOptions.java b/net/minecraft/commands/arguments/selector/options/EntitySelectorOptions.java
+index f4ca9a19d2f223311accd96e9215cba263d3d405..57b34e46fc0e53986f8059d498052752283d2979 100644
+--- a/net/minecraft/commands/arguments/selector/options/EntitySelectorOptions.java
++++ b/net/minecraft/commands/arguments/selector/options/EntitySelectorOptions.java
+@@ -293,6 +293,13 @@ public class EntitySelectorOptions {
+ 
+                         TagKey<EntityType<?>> key = TagKey.create(Registries.ENTITY_TYPE, id);
+                         parser.addPredicate(e -> e.is(key) != inverted);
++                        // Leaf start - Bellows - Optimize selectors
++                        if (org.dreeam.leaf.config.modules.opt.OptimizeSelector.entitySelectorOptimizations) {
++                            parser.getSelectorContainer().type = key.location().toString();
++                            parser.getSelectorContainer().isTypeTag = true;
++                            parser.getSelectorContainer().isNotType = inverted;
++                        }
++                        // Leaf end - Bellows - Optimize selectors
+                         state.markParsedTag(id);
+                     } else {
+                         if (!state.canParseElement(inverted)) {
+@@ -312,6 +319,13 @@ public class EntitySelectorOptions {
+                             parser.limitToType(type);
+                         }
+ 
++                        // Leaf start - Bellows - Optimize selectors
++                        if (org.dreeam.leaf.config.modules.opt.OptimizeSelector.entitySelectorOptimizations) {
++                            parser.getSelectorContainer().type = id.toString();
++                            parser.getSelectorContainer().isTypeTag = false;
++                            parser.getSelectorContainer().isNotType = inverted;
++                        }
++                        // Leaf end - Bellows - Optimize selectors
+                         state.markParsedElement(inverted);
+                     }
+                 },
+@@ -321,6 +335,15 @@ public class EntitySelectorOptions {
+             register("tag", parser -> {
+                 boolean inverted = parser.shouldInvertValue();
+                 String tag = parser.getReader().readUnquotedString();
++                // Leaf start - Bellows - Optimize selectors
++                if (org.dreeam.leaf.config.modules.opt.OptimizeSelector.entitySelectorOptimizations) {
++                    if (inverted) {
++                        parser.getSelectorContainer().notSelectorTags.add(tag);
++                    } else {
++                        parser.getSelectorContainer().selectorTags.add(tag);
++                    }
++                }
++                // Leaf end - Bellows - Optimize selectors
+                 parser.addPredicate(e -> "".equals(tag) ? e.entityTags().isEmpty() != inverted : e.entityTags().contains(tag) != inverted);
+             }, ALWAYS_AVAILABLE, Component.translatable("argument.entity.options.tag.description"));
+             register("nbt", parser -> {
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 3083f7da4bd04db8724f8e457559bef4469d7675..e5e159e68bd9b2907f22237f1190fd7e0f961be7 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -296,6 +296,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     private final PacketProcessor packetProcessor;
+     // Paper - per-level scheduledEvents
+     private final ServerClockManager clockManager;
++    private final Map<String, Set<String>> entityTypes = new java.util.HashMap<>(); // Leaf - Bellows - Optimize selectors
+ 
+     public static <S extends MinecraftServer> S spin(final Function<Thread, S> factory) {
+         ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry.init(); // Paper - rewrite data converter system
+@@ -630,6 +631,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         // CraftBukkit end
+         this.paperConfigurations = services.paper().configurations(); // Paper - add paper configuration files
+         this.galeConfigurations = services.galeConfigurations(); // Gale - Gale configuration
++        this.constructEntityTypes(); // Leaf - Bellows - Optimize selectors
+     }
+ 
+     protected abstract boolean initServer() throws IOException;
+@@ -2506,9 +2508,31 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             this.managedBlock(result::isDone);
+         }
+ 
++        // Leaf start - Bellows - Optimize selectors
++        if (result.isDone()) {
++            this.constructEntityTypes();
++        } else {
++            result.thenAcceptAsync(resourceManagerHolder -> this.constructEntityTypes());
++        }
++        // Leaf end - Bellows - Optimize selectors
+         return result;
+     }
+ 
++    // Leaf start - Bellows - Optimize selectors
++    private void constructEntityTypes() {
++        this.entityTypes.clear();
++        net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.listTags().forEach(tag -> {
++            final Set<String> entries = new java.util.HashSet<>();
++            tag.forEach(item -> entries.add(item.getRegisteredName()));
++            this.entityTypes.put(tag.key().location().toString(), entries);
++        });
++    }
++
++    public Set<String> getEntityTagEntries(String tag) {
++        return this.entityTypes.get(tag);
++    }
++    // Leaf end - Bellows - Optimize selectors
++
+     public static WorldDataConfiguration configurePackRepository(
+         final PackRepository packRepository, final WorldDataConfiguration initialDataConfig, final boolean initMode, final boolean safeMode
+     ) {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 11cb0f12ba1ef598e6ab075fec340cd4bda1aaa6..40c00f10262a7d5e151e038207ae4dd69c246109 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1975,6 +1975,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     public boolean tryAddFreshEntityWithPassengers(final Entity entity, final org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason reason) {
+         // CraftBukkit end
+         if (entity.getSelfAndPassengers().map(Entity::getUUID).anyMatch(this.moonrise$getEntityLookup()::hasEntity)) { // Paper - rewrite chunk system
++            // Leaf start - Bellows - Optimize selectors
++            for (String tag: entity.entityTags()) {
++                getEntityIndex().removeEntityFromTagMap(tag, entity);
++            }
++            // Leaf end - Bellows - Optimize selectors
+             return false;
+         }
+ 
+@@ -1982,6 +1987,16 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         return true;
+     }
+ 
++    // Leaf start - Bellows - Optimize selectors
++    public net.minecraft.world.level.entity.@org.jspecify.annotations.Nullable EntityLookup<?> getEntityIndex() {
++        if (this.getEntities() instanceof net.minecraft.world.level.entity.LevelEntityGetterAdapter lookup) {
++            return lookup.getVisibleEntities();
++        } else {
++            return null;
++        }
++    }
++    // Leaf end - Bellows - Optimize selectors
++
+     public void unload(final LevelChunk levelChunk) {
+         // Spigot start
+         for (net.minecraft.world.level.block.entity.BlockEntity blockEntity : levelChunk.getBlockEntities().values()) {
+@@ -2969,6 +2984,33 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         return this.moonrise$getEntityLookup(); // Paper - rewrite chunk system
+     }
+ 
++    // Leaf start - Bellows - Optimize selectors
++    public <T extends Entity> void getEntities(EntityTypeTest<Entity, T> filter, Predicate<? super T> predicate, List<? super T> result, int limit, net.smithed.bellows.utils.SelectorContainer container) {
++        net.minecraft.world.level.entity.EntityLookup<net.minecraft.world.entity.Entity> index = (net.minecraft.world.level.entity.EntityLookup<net.minecraft.world.entity.Entity>) getEntityIndex();
++        if (index != null) {
++            if (container.isTypeTag) {
++                container.entityTypes = server.getEntityTagEntries(container.type);
++                if (container.entityTypes == null) {
++                    return;
++                }
++            }
++
++            index.getTaggedEntities(filter, (entity) -> {
++                if (predicate.test(entity)) {
++                    result.add(entity);
++                    if (result.size() >= limit) {
++                        return AbortableIterationConsumer.Continuation.ABORT;
++                    }
++                }
++
++                return AbortableIterationConsumer.Continuation.CONTINUE;
++            }, container);
++        } else {
++            this.getEntities(filter, predicate, result, limit);
++        }
++    }
++    // Leaf end - Bellows - Optimize selectors
++
+     public void addLegacyChunkEntities(final Stream<Entity> loaded) {
+         // Paper start - add chunkpos param
+         this.addLegacyChunkEntities(loaded, null);
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index e7ccc58724c07ff0ea51ceec1c7d1e251d8bfc6c..87a8cc87602ab2a6224a2284b71150d0cc2fd6d2 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -418,6 +418,7 @@ public abstract class Entity
+     private int sectionZ = Integer.MIN_VALUE;
+     private boolean updatingSectionStatus;
+     private final boolean shouldSkipBaseDespawnCheck = this instanceof net.minecraft.world.entity.projectile.ThrowableProjectile; // Leaf - Rewrite entity despawn time
++    private String encodeId = null; // Leaf - Bellows - Optimize selectors
+ 
+     @Override
+     public final boolean moonrise$isHardColliding() {
+@@ -632,6 +633,7 @@ public abstract class Entity
+         this.eyeHeight = this.dimensions.eyeHeight();
+         this.despawnTime = level == null || type == EntityTypes.PLAYER ? -1 : level.paperConfig().entities.spawning.despawnTime.getOrDefault(type, io.papermc.paper.configuration.type.number.IntOr.Disabled.DISABLED).or(-1); // Paper - entity despawn time limit
+         this.updateLastTick(); // Leaf - Rewrite entity despawn time
++        this.encodeId = getEncodeId(); // Leaf - Bellows - Optimize selectors
+     }
+ 
+     public boolean isColliding(final BlockPos pos, final BlockState state) {
+@@ -3073,6 +3075,7 @@ public abstract class Entity
+     }
+ 
+     public final @Nullable String getEncodeId() {
++        if (encodeId != null) return encodeId; // Leaf - Bellows - Optimize selectors
+         // Paper start - Raw entity serialization API
+         return this.getEncodeId(false);
+     }
+diff --git a/net/minecraft/world/level/entity/EntityLookup.java b/net/minecraft/world/level/entity/EntityLookup.java
+index 18944af62306dc4b580e7cc0f798110490bfc6a9..1578d6b2d20ad575b55c5c1b1074537115372862 100644
+--- a/net/minecraft/world/level/entity/EntityLookup.java
++++ b/net/minecraft/world/level/entity/EntityLookup.java
+@@ -15,6 +15,10 @@ public class EntityLookup<T extends EntityAccess> {
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private final Int2ObjectMap<T> byId = new Int2ObjectLinkedOpenHashMap<>();
+     private final Map<UUID, T> byUuid = Maps.newHashMap();
++    // Leaf start - Bellows - Optimize selectors
++    private static final int REASONABLE_SEARCH_SIZE = 100;
++    private final java.util.Map<String, java.util.Set<net.minecraft.world.level.entity.EntityAccess>> entityMap = new java.util.HashMap<>();
++    // Leaf end - Bellows - Optimize selectors
+ 
+     public <U extends T> void getEntities(final EntityTypeTest<T, U> type, final AbortableIterationConsumer<U> consumer) {
+         for (T entity : this.byId.values()) {
+@@ -30,6 +34,15 @@ public class EntityLookup<T extends EntityAccess> {
+     }
+ 
+     public void add(final T entity) {
++        // Leaf start - Bellows - Optimize selectors
++        if (entity instanceof net.minecraft.world.entity.Entity entityCast) {
++            String id = entityCast.getEncodeId();
++            this.addEntityToTagMap(id, entity);
++            if (!entityCast.entityTags().isEmpty()) {
++                entityCast.entityTags().forEach(tag -> addEntityToTagMap(tag, entity));
++            }
++        }
++        // Leaf end - Bellows - Optimize selectors
+         UUID uuid = entity.getUUID();
+         if (this.byUuid.containsKey(uuid)) {
+             LOGGER.warn("Duplicate entity UUID {}: {}", uuid, entity);
+@@ -48,10 +61,114 @@ public class EntityLookup<T extends EntityAccess> {
+     }
+ 
+     public void remove(final T entity) {
++        // Leaf start - Bellows - Optimize selectors
++        if (entity instanceof net.minecraft.world.entity.Entity entityCast) {
++            String id = entityCast.getEncodeId();
++            this.removeEntityFromTagMap(id, entityCast);
++            if (!entityCast.entityTags().isEmpty()) {
++                entityCast.entityTags().forEach(tag -> removeEntityFromTagMap(tag, entity));
++            }
++        }
++        // Leaf end - Bellows - Optimize selectors
+         this.byUuid.remove(entity.getUUID());
+         this.byId.remove(entity.getId());
+     }
+ 
++    // Leaf start - Bellows - Optimize selectors
++    public void addEntityToTagMap(String tag, EntityAccess entity) {
++        java.util.Set<net.minecraft.world.level.entity.EntityAccess> set = entityMap.computeIfAbsent(tag, k -> new java.util.HashSet<>());
++        set.add(entity);
++    }
++
++    public void removeEntityFromTagMap(String tag, EntityAccess entity) {
++        java.util.Set<net.minecraft.world.level.entity.EntityAccess> set = entityMap.get(tag);
++        if(set != null) {
++            set.removeAll(java.util.Collections.singleton(entity));
++        }
++    }
++
++    public <U extends T> void getTaggedEntities(EntityTypeTest<T, U> filter, AbortableIterationConsumer<U> action, net.smithed.bellows.utils.SelectorContainer container) {
++        java.util.Set<net.minecraft.world.level.entity.EntityAccess> set = null;
++        java.util.List<java.util.Set<net.minecraft.world.level.entity.EntityAccess>> list = null;
++        int size = Integer.MAX_VALUE;
++
++        for (String tag : container.selectorTags) {
++            java.util.Set<net.minecraft.world.level.entity.EntityAccess> result = this.entityMap.get(tag);
++            if(result == null) {
++                size = 0;
++            } else if(result.size() < size) {
++                set = result;
++                size = result.size();
++            }
++
++            if(size < REASONABLE_SEARCH_SIZE) {
++                break;
++            }
++        }
++
++        if (size == 0) {
++            return;
++        }
++
++        if(size >= REASONABLE_SEARCH_SIZE) {
++            if (!container.isNotType && !container.type.isBlank()) {
++                if (container.isTypeTag) {
++                    list = new java.util.LinkedList<>();
++                    int mergeSize = 0;
++                    for (String type : container.entityTypes) {
++                        java.util.Set<net.minecraft.world.level.entity.EntityAccess> result = this.entityMap.get(type);
++                        if (result != null) {
++                            mergeSize += result.size();
++                            list.add(result);
++                        }
++                    }
++                    if (mergeSize < size) {
++                        size = mergeSize;
++                        set = null;
++                    }
++                } else {
++                    java.util.Set<net.minecraft.world.level.entity.EntityAccess> result = this.entityMap.get(container.type);
++                    if(result == null) {
++                        size = 0;
++                    } else if(result.size() < size) {
++                        set = result;
++                        size = result.size();
++                    }
++                }
++            }
++        }
++
++        if (size == 0) {
++            return;
++        }
++
++        if (set != null) {
++            getEntities(set, filter, action);
++        } else if (list != null) {
++            list.forEach(iset -> getEntities(iset, filter, action));
++        } else {
++            this.getEntities(filter, action);
++        }
++    }
++
++    /**
++     * Mostly a copy/paste from EntityLookup:getEntities, however it accepts any collection instead of the special fast map.
++     * @param collection - collection of entities
++     * @param filter - (from vanilla)
++     * @param consumer - (from vanilla)
++     * @param <U> - (from vanilla)
++     */
++    private <U extends T> void getEntities(java.util.Collection<net.minecraft.world.level.entity.EntityAccess> collection, EntityTypeTest<T, U> filter, AbortableIterationConsumer<U> consumer) {
++        for (EntityAccess entityAccess : collection) {
++            T entity = (T) entityAccess;
++            U maybeEntity = filter.tryCast(entity);
++            if (maybeEntity != null && consumer.accept(maybeEntity).shouldAbort()) {
++                return;
++            }
++        }
++    }
++    // Leaf end - Bellows - Optimize selectors
++
+     public @Nullable T getEntity(final int id) {
+         return this.byId.get(id);
+     }
+diff --git a/net/minecraft/world/level/entity/LevelEntityGetterAdapter.java b/net/minecraft/world/level/entity/LevelEntityGetterAdapter.java
+index 7474384d85acbc497b5797b023a1cba4100c588b..b5b1081b5d97ea918769b59ad88fe6ac07865684 100644
+--- a/net/minecraft/world/level/entity/LevelEntityGetterAdapter.java
++++ b/net/minecraft/world/level/entity/LevelEntityGetterAdapter.java
+@@ -44,4 +44,10 @@ public class LevelEntityGetterAdapter<T extends EntityAccess> implements LevelEn
+     public <U extends T> void get(final EntityTypeTest<T, U> type, final AABB bb, final AbortableIterationConsumer<U> consumer) {
+         this.sectionStorage.getEntities(type, bb, consumer);
+     }
++
++    // Leaf start - Bellows - Optimize selectors
++    public EntityLookup<?> getVisibleEntities() {
++        return visibleEntities;
++    }
++    // Leaf end - Bellows - Optimize selectors
+ }
