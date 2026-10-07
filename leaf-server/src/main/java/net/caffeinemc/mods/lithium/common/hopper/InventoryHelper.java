@@ -32,7 +32,7 @@ public class InventoryHelper {
     }
 
     public static LithiumStackList getLithiumStackListOrNull(LithiumInventory inventory) {
-        NonNullList<ItemStack> stackList = inventory.getInventoryLithium();
+        NonNullList<ItemStack> stackList = inventory.getInventoryLithiumWithoutLoading(); // Leaf - Defer container item decoding
         if (stackList instanceof LithiumStackList lithiumStackList) {
             return lithiumStackList;
         }
