@@ -120,6 +120,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
         this.entries[nextId] = obj;
 
         this.size++;
+        java.lang.invoke.VarHandle.releaseFence(); // Leaf - Async block reads for LevelChunkSection - publish the entry before storage refers to it
 
         return nextId;
     }

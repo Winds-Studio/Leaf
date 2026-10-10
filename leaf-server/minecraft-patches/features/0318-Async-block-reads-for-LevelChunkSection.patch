@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: duranaaron <aaronduran2107@gmail.com>
+Date: Sat, 10 Oct 2026 16:38:08 +0200
+Subject: [PATCH] Async block reads for LevelChunkSection
+
+Adds a way to read blocks from another thread without copying the
+chunk section.
+
+- LevelChunkSection#getBlockStateAsync(x, y, z): reads a block from
+  any thread. Each read is valid, but reading a whole section is not
+  one snapshot.
+- LevelChunkSection#getBlockModificationCount(): goes up when a block
+  in the section changes, so you can skip sections that did not
+  change.
+
+Also fixes a race on ARM where a reader could see a palette index
+before the palette entry itself ("Palette index out of bounds").
+Palettes now use a memory fence when they add an entry. That is rare,
+so normal block writes are not slower.
+
+diff --git a/net/minecraft/world/level/chunk/LevelChunkSection.java b/net/minecraft/world/level/chunk/LevelChunkSection.java
+index c860b463b959f04545f4aae2a1787000e0353b86..894c60a69bb50df517e714476f2637c45b81d322 100644
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -29,6 +29,18 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     private static final short CLIENT_FORCED_SPECIAL_COLLIDING_BLOCKS = (short)9999;
+     private short specialCollidingBlocks;
+     private final ca.spottedleaf.moonrise.common.list.ShortList tickingBlocks = new ca.spottedleaf.moonrise.common.list.ShortList();
++    // Leaf start - Async block reads for LevelChunkSection
++    private int blockModificationCount;
++    private static final java.lang.invoke.VarHandle BLOCK_MODIFICATION_COUNT_HANDLE;
++    static {
++        try {
++            BLOCK_MODIFICATION_COUNT_HANDLE = java.lang.invoke.MethodHandles.lookup()
++                .findVarHandle(LevelChunkSection.class, "blockModificationCount", int.class);
++        } catch (ReflectiveOperationException e) {
++            throw new ExceptionInInitializerError(e);
++        }
++    }
++    // Leaf end - Async block reads for LevelChunkSection
+ 
+     @Override
+     public final boolean moonrise$hasSpecialCollidingBlocks() {
+@@ -71,6 +83,21 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         return this.states.get(sectionX, sectionY, sectionZ);
+     }
+ 
++    // Leaf start - Async block reads for LevelChunkSection
++    /** Off-thread block read, see {@link PalettedContainer#getAsync}. */
++    public BlockState getBlockStateAsync(final int sectionX, final int sectionY, final int sectionZ) {
++        return this.states.getAsync(sectionX, sectionY, sectionZ);
++    }
++
++    /**
++     * Incremented after every {@link #setBlockState} on this section, checked or not. A thread that reads
++     * an unchanged count has seen every block write made before the count was last incremented.
++     */
++    public int getBlockModificationCount() {
++        return (int) BLOCK_MODIFICATION_COUNT_HANDLE.getAcquire(this);
++    }
++    // Leaf end - Async block reads for LevelChunkSection
++
+     public FluidState getFluidState(final int sectionX, final int sectionY, final int sectionZ) {
+         return this.states.get(sectionX, sectionY, sectionZ).getFluidState(); // Paper - Perf: Optimise LevelChunk#getFluidState; diff on change - we expect this to be effectively just get(x, y, z).getFluidState(). If this changes we need to check other patches that use BlockBehaviour#getFluidState.
+     }
+@@ -133,6 +160,7 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+         } else {
+             previous = this.states.getAndSetUnchecked(sectionX, sectionY, sectionZ, state);
+         }
++        BLOCK_MODIFICATION_COUNT_HANDLE.setRelease(this, this.blockModificationCount + 1); // Leaf - Async block reads for LevelChunkSection
+ 
+         if (!previous.isAir()) {
+             this.nonEmptyBlockCount--;
+diff --git a/net/minecraft/world/level/chunk/LinearPalette.java b/net/minecraft/world/level/chunk/LinearPalette.java
+index 58f03cf8b32b141dc7df72568ef902eed53f4a5d..ad8779460dc142a74245ad0112174c8e79ca88f8 100644
+--- a/net/minecraft/world/level/chunk/LinearPalette.java
++++ b/net/minecraft/world/level/chunk/LinearPalette.java
+@@ -55,6 +55,7 @@ public class LinearPalette<T> implements Palette<T>, ca.spottedleaf.moonrise.pat
+         if (index < this.values.length) {
+             this.values[index] = value;
+             this.size++;
++            java.lang.invoke.VarHandle.releaseFence(); // Leaf - Async block reads for LevelChunkSection - publish the entry before storage refers to it
+             return index;
+         } else {
+             return resizeHandler.onResize(this.bits + 1, value);
+diff --git a/net/minecraft/world/level/chunk/PalettedContainer.java b/net/minecraft/world/level/chunk/PalettedContainer.java
+index 95633956e8756e1ae284ea9b5767940ba858ce58..5b108b18ff88eb86096e12920c4f291e7cb61de3 100644
+--- a/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -206,8 +206,8 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+         // Paper end - Anti-Xray
+         PalettedContainer.Data<T> newData = this.createOrReuseData(oldData, bits);
+         newData.copyFrom(oldData.palette, oldData.storage);
++        this.updateData(newData); // Paper - optimise palette reads // Leaf - Async block reads for LevelChunkSection - set the flat palette before publishing
+         this.data = newData;
+-        this.updateData(this.data); // Paper - optimise palette reads
+         // Paper start - Anti-Xray
+         this.addPresetValues();
+         return lastAddedValue == null ? -1 : newData.palette.idFor(lastAddedValue, PaletteResize.noResizeExpected());
+@@ -268,6 +268,37 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+     }
+     // Leaf end - optimize PalettedContainer#get
+ 
++    // Leaf start - Async block reads for LevelChunkSection
++    /**
++     * Reads a value from any thread without locking or copying. Every call returns a value that was
++     * stored at that position at some point: storage and palette come from the same {@link Data},
++     * and a palette entry referenced by storage is never missed. Separate calls are not atomic with
++     * each other.
++     * <p>
++     * Palette slots are written once (null, then their entry) while a {@link Data} is live, so an
++     * unfenced read of the flat palette yields either the right entry or null. Null means the entry
++     * is still being published; the fenced read then pairs with the release fence palettes issue
++     * after appending an entry.
++     */
++    public T getAsync(final int x, final int y, final int z) {
++        final PalettedContainer.Data<T> data = (PalettedContainer.Data<T>) DATA_HANDLE.getAcquire(this);
++        final int index = this.strategy.getIndex(x, y, z);
++        final T[] palette = data.moonrise$getPalette();
++        if (palette != null) {
++            final int paletteIdx = data.storage.get(index);
++            if (paletteIdx < palette.length) {
++                final T value = palette[paletteIdx];
++                if (value != null) {
++                    return value;
++                }
++            }
++        }
++        final int paletteIdx = data.storage.get(index);
++        java.lang.invoke.VarHandle.acquireFence();
++        return this.readPalette(data, paletteIdx);
++    }
++    // Leaf end - Async block reads for LevelChunkSection
++
+     public T get(final int index) { // Paper - public
+         // Paper start - optimise palette reads
+         final PalettedContainer.Data<T> data = (PalettedContainer.Data<T>) DATA_HANDLE.getAcquire(this); // Leaf - optimize PalettedContainer#get
