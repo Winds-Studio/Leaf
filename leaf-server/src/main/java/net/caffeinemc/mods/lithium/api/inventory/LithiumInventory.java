@@ -53,6 +53,16 @@ public interface LithiumInventory extends Container {
      */
     NonNullList<ItemStack> getInventoryLithium();
 
+    // Leaf start - Defer container item decoding
+    /**
+     * Returns the backing list for cache invalidation without decoding deferred contents.
+     * Actual inventory access must use {@link #getInventoryLithium()}.
+     */
+    default NonNullList<ItemStack> getInventoryLithiumWithoutLoading() {
+        return this.getInventoryLithium();
+    }
+    // Leaf end - Defer container item decoding
+
     /**
      * Setter for the inventory stack list of this inventory.
      * Used to replace the stack list with Lithium's custom stack list.
