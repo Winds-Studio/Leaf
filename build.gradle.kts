@@ -8,6 +8,7 @@ plugins {
 
 val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
 val leafMavenPublicUrl = "https://maven.leafmc.one/snapshots/"
+val cuteFurryUrl = "https://repo.bsdevelopment.org/releases/" // Leaf - temp
 
 subprojects {
     apply(plugin = "java-library")
@@ -22,7 +23,8 @@ subprojects {
     repositories {
         mavenCentral()
         maven(paperMavenPublicUrl)
-        maven(leafMavenPublicUrl)
+        //maven(leafMavenPublicUrl) // Leaf - temp
+        maven(cuteFurryUrl) // Leaf - temp
     }
 
     tasks.withType<JavaCompile>().configureEach {
