@@ -23,7 +23,7 @@ subprojects {
     repositories {
         mavenCentral()
         maven(paperMavenPublicUrl)
-        maven(leafMavenPublicUrl)
+        //maven(leafMavenPublicUrl) // Leaf - temp
         maven(cuteFurryUrl) // Leaf - temp
     }
 
