@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Elias=20Maximilian=20T=C3=A4nzer?= <e.taenzer25@gmail.com>
+Date: Tue, 27 Oct 2026 19:03:48 +0100
+Subject: [PATCH] Optimize structure layout
+
+License: MIT (https://opensource.org/licenses/MIT)
+StructureLayoutOptimizer - https://github.com/TelepathicGrunt/StructureLayoutOptimizer
+
+Use an octree instead of voxel shapes to track the free space of jigsaw
+structures, skip pool elements that were already attempted while consuming
+the same random values, and skip rigid placements whose target jigsaw is
+known to be blocked. Keeps vanilla seed parity.
+
+diff --git a/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java b/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java
+index a0410363384f0286eaa4d3f2774d10b740b0db44..29977e2837e3cf5705ac8e2d4bebf86ff07439c9 100644
+--- a/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java
++++ b/net/minecraft/world/level/levelgen/structure/pools/JigsawPlacement.java
+@@ -148,7 +148,16 @@ public class JigsawPlacement {
+                                 Math.min(centerY + maxDistanceFromCenter.vertical() + 1, heightAccessor.getMaxY() + 1 - dimensionPadding.top()),
+                                 centerZ + maxDistanceFromCenter.horizontal() + 1
+                             );
+-                            VoxelShape shape = Shapes.join(Shapes.create(aabb), Shapes.create(AABB.of(box)), BooleanOp.ONLY_FIRST);
++                            // Leaf start - StructureLayoutOptimizer - Optimize jigsaw placement
++                            VoxelShape shape;
++                            if (org.dreeam.leaf.config.modules.opt.OptimizeStructureLayout.enabled) {
++                                org.dreeam.leaf.world.structure.BoxOctree octree = new org.dreeam.leaf.world.structure.BoxOctree(aabb);
++                                octree.addBox(AABB.of(box));
++                                shape = new org.dreeam.leaf.world.structure.OctreeVoxelShape(octree);
++                            } else {
++                                shape = Shapes.join(Shapes.create(aabb), Shapes.create(AABB.of(box)), BooleanOp.ONLY_FIRST);
++                            }
++                            // Leaf end - StructureLayoutOptimizer - Optimize jigsaw placement
+                             addPieces(
+                                 context.randomState(),
+                                 maxDepth,
+@@ -356,7 +365,13 @@ public class JigsawPlacement {
+                             if (attachInsideSource) {
+                                 childrenFree = sourceFree;
+                                 if (sourceFree.get() == null) {
++                                    // Leaf start - StructureLayoutOptimizer - Optimize jigsaw placement
++                                    if (org.dreeam.leaf.config.modules.opt.OptimizeStructureLayout.enabled) {
++                                        sourceFree.setValue(new org.dreeam.leaf.world.structure.OctreeVoxelShape(new org.dreeam.leaf.world.structure.BoxOctree(AABB.of(sourceBB))));
++                                    } else {
+                                     sourceFree.setValue(Shapes.create(AABB.of(sourceBB)));
++                                    }
++                                    // Leaf end - StructureLayoutOptimizer - Optimize jigsaw placement
+                                 }
+                             } else {
+                                 childrenFree = contextFree;
+@@ -369,16 +384,39 @@ public class JigsawPlacement {
+ 
+                             targetPieces.addAll(fallback.value().getShuffledTemplates(this.random));
+                             int placementPriority = sourceJigsaw.placementPriority();
++                            final java.util.Set<StructurePoolElement> attemptedElements = org.dreeam.leaf.config.modules.opt.OptimizeStructureLayout.enabled ? new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>() : null; // Leaf - StructureLayoutOptimizer - Optimize jigsaw placement
+ 
+                             for (StructurePoolElement targetElement : targetPieces) {
+                                 if (targetElement == EmptyPoolElement.INSTANCE) {
+                                     break;
+                                 }
+ 
+-                                for (Rotation targetRotation : Rotation.getShuffled(this.random)) {
++                                // Leaf start - StructureLayoutOptimizer - Optimize jigsaw placement
++                                List<Rotation> targetRotations = Rotation.getShuffled(this.random);
++                                if (attemptedElements != null && !attemptedElements.add(targetElement)) {
++                                    // A successful placement leaves this loop, so every rotation of this element already failed
++                                    // for this jigsaw and nothing changed since. Only consume the random values vanilla would.
++                                    for (Rotation targetRotation : targetRotations) {
++                                        targetElement.getShuffledJigsawBlocks(this.structureTemplateManager, BlockPos.ZERO, targetRotation, this.random);
++                                    }
++                                    continue;
++                                }
++
++                                for (Rotation targetRotation : targetRotations) {
++                                // Leaf end - StructureLayoutOptimizer - Optimize jigsaw placement
+                                     List<StructureTemplate.JigsawBlockInfo> targetJigsaws = targetElement.getShuffledJigsawBlocks(
+                                         this.structureTemplateManager, BlockPos.ZERO, targetRotation, this.random
+                                     );
++                                    // Leaf start - StructureLayoutOptimizer - Optimize jigsaw placement
++                                    // With a rigid source and target, the target jigsaw lands exactly on targetJigsawPos,
++                                    // so the piece can never fit if that position is outside the free space.
++                                    if (sourceRigid
++                                        && childrenFree.get() instanceof org.dreeam.leaf.world.structure.OctreeVoxelShape octreeShape
++                                        && targetElement.getProjection() == StructureTemplatePool.Projection.RIGID
++                                        && (!octreeShape.boxOctree.boundaryContains(targetJigsawPos) || octreeShape.boxOctree.withinAnyBox(targetJigsawPos))) {
++                                        targetJigsaws = List.of();
++                                    }
++                                    // Leaf end - StructureLayoutOptimizer - Optimize jigsaw placement
+                                     BoundingBox hackBox = targetElement.getBoundingBox(this.structureTemplateManager, BlockPos.ZERO, targetRotation);
+                                     int expandTo;
+                                     if (doExpansionHack && hackBox.getYSpan() <= 16) {
+@@ -445,12 +483,20 @@ public class JigsawPlacement {
+                                                 targetBB.encapsulate(new BlockPos(targetBB.minX(), targetBB.minY() + newSize, targetBB.minZ()));
+                                             }
+ 
+-                                            if (!Shapes.joinIsNotEmpty(
+-                                                childrenFree.get(), Shapes.create(AABB.of(targetBB).deflate(0.25)), BooleanOp.ONLY_SECOND
+-                                            )) {
++                                            // Leaf start - StructureLayoutOptimizer - Optimize jigsaw placement
++                                            final VoxelShape free = childrenFree.get();
++                                            final boolean fits = free instanceof org.dreeam.leaf.world.structure.OctreeVoxelShape octreeShape
++                                                ? octreeShape.boxOctree.withinBoundsButNotIntersectingChildren(AABB.of(targetBB).deflate(0.25))
++                                                : !Shapes.joinIsNotEmpty(free, Shapes.create(AABB.of(targetBB).deflate(0.25)), BooleanOp.ONLY_SECOND);
++                                            if (fits) {
++                                                if (free instanceof org.dreeam.leaf.world.structure.OctreeVoxelShape octreeShape) {
++                                                    octreeShape.boxOctree.addBox(AABB.of(targetBB));
++                                                } else {
+                                                 childrenFree.setValue(
+                                                     Shapes.joinUnoptimized(childrenFree.get(), Shapes.create(AABB.of(targetBB)), BooleanOp.ONLY_FIRST)
+                                                 );
++                                                }
++                                            // Leaf end - StructureLayoutOptimizer - Optimize jigsaw placement
+                                                 int sourceGroundLevelDelta = sourcePiece.getGroundLevelDelta();
+                                                 int targetGroundLevelDelta;
+                                                 if (targetRigid) {
