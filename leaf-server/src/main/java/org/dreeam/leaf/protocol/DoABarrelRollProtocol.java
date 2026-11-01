@@ -124,6 +124,7 @@ public class DoABarrelRollProtocol implements Protocol {
     @Override
     public void disconnected(ServerPlayer player) {
         final var handler = player.connection;
+        scheduledKicks.remove(handler);
         syncStates.remove(handler);
         isRollingMap.removeBoolean(handler);
         rollMap.removeFloat(handler);
@@ -169,13 +170,23 @@ public class DoABarrelRollProtocol implements Protocol {
 
     @Override
     public void tickServer(MinecraftServer server) {
+        ObjectArrayList<DelayedRunnable> expired = null;
         var it = scheduledKicks.entrySet().iterator();
         while (it.hasNext()) {
-            var entry = it.next();
-            if (entry.getValue().isDone()) {
+            DelayedRunnable task = it.next().getValue();
+            if (task.tick()) {
                 it.remove();
-            } else {
-                entry.getValue().tick();
+                if (expired == null) {
+                    expired = new ObjectArrayList<>();
+                }
+                expired.add(task);
+            }
+        }
+
+        // Disconnect callbacks may remove handshake state; run them after iteration.
+        if (expired != null) {
+            for (DelayedRunnable task : expired) {
+                task.run();
             }
         }
 
@@ -235,6 +246,7 @@ public class DoABarrelRollProtocol implements Protocol {
             } else if (packet.success()) {
                 LOGGER.info("{} accepted server config.", player.getName().getString());
                 info.state = HandshakeState.ACCEPTED;
+                scheduledKicks.remove(handler);
             } else {
                 LOGGER.warn(
                     "{} failed to process server config, check client logs find what went wrong.",
@@ -284,14 +296,12 @@ public class DoABarrelRollProtocol implements Protocol {
             this.delay = delay;
         }
 
-        private void tick() {
-            if (++ticks >= delay) {
-                runnable.run();
-            }
+        private boolean tick() {
+            return ++ticks >= delay;
         }
 
-        private boolean isDone() {
-            return ticks >= delay;
+        private void run() {
+            runnable.run();
         }
     }
 
