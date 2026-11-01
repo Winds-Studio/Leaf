@@ -359,8 +359,6 @@ public class LeafConfig {
     }
 
     private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile) throws ReflectiveOperationException {
-        discoverWorldModules();
-
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
@@ -373,7 +371,6 @@ public class LeafConfig {
         ConfigFile configFile,
         LeafWorldConfig activeDefaults
     ) throws ReflectiveOperationException {
-        discoverWorldModules();
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);

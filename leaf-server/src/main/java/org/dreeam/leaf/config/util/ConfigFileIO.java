@@ -31,18 +31,22 @@ public final class ConfigFileIO {
 
     public static ConfigFile load(File file) throws Exception {
         Path path = file.toPath();
+
         if (!Files.isRegularFile(path)) {
             return ConfigFile.loadConfig(file);
         }
 
         LoaderOptions loaderOptions = new LoaderOptions();
         loaderOptions.setCodePointLimit(MAX_CODE_POINTS); // Increase YAML file size limit
+
+        // Fail-fast load, handles YAMLException by ourselves
         Yaml yaml = new Yaml(new SafeConstructor(loaderOptions));
         try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
             yaml.load(reader);
         } catch (YAMLException exception) {
             throw new IOException("Malformed YAML configuration: " + path, exception);
         }
+
         return ConfigFile.loadConfig(file);
     }
 
