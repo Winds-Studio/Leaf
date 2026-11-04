@@ -48,7 +48,7 @@
 ## 📦 构建
 构建用于分发的 Paperclip JAR：
 ```bash
-./gradlew applyAllPatches && ./gradlew createPaperclipJar
+./gradlew applyAllPatches && ./gradlew createLeafclipJar
 ```
 
 ## 📦 API

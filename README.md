@@ -47,7 +47,7 @@ Documentation about how to use/configure Leaf: [Leaf Docs](https://www.leafmc.on
 ## 📦 Building
 Building a Paperclip JAR for distribution:
 ```bash
-./gradlew applyAllPatches && ./gradlew createPaperclipJar
+./gradlew applyAllPatches && ./gradlew createLeafclipJar
 ```
 
 
