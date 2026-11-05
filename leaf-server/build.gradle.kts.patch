@@ -1,6 +1,30 @@
 --- a/paper-server/build.gradle.kts
 +++ b/paper-server/build.gradle.kts
-@@ -12,16 +_,31 @@
+@@ -1,7 +_,23 @@
+ import io.papermc.fill.model.BuildChannel
+ import io.papermc.paperweight.attribute.DevBundleOutput
+ import io.papermc.paperweight.util.*
++import java.io.IOException
++import java.net.URI
++import java.net.http.HttpClient
++import java.net.http.HttpRequest
++import java.net.http.HttpResponse
++import java.nio.file.Files
++import java.nio.file.Path
++import java.nio.file.StandardCopyOption
++import java.security.MessageDigest
++import java.time.Duration
+ import java.time.Instant
++import java.util.concurrent.Callable
++import java.util.concurrent.ExecutionException
++import java.util.concurrent.Executors
++import java.util.zip.ZipEntry
++import java.util.zip.ZipFile
++import java.util.zip.ZipOutputStream
+ 
+ plugins {
+     `java-library`
+@@ -12,16 +_,30 @@
  }
  
  val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
@@ -8,8 +32,8 @@
  
  dependencies {
      mache("io.papermc:mache:26.3+build.1")
-     paperclip("io.papermc:paperclip:3.0.4")
-+    //paperclip("cn.dreeam:quantumleaper:1.0.0-SNAPSHOT") // Leaf - project setup - Use own paperclip fork
+-    paperclip("io.papermc:paperclip:3.0.4")
++    paperclip("cn.dreeam:quantumleaper:1.0.0") // Leaf - Use leafclip
  }
  
  paperweight {
@@ -88,7 +112,7 @@
      alsoShade(log4jPlugins.output)
  
 -    implementation("com.velocitypowered:velocity-native:4.1.0") {
-+    implementation("com.velocitypowered:velocity-native:4.1.1-SNAPSHOT") { // Leaf - Bump Dependencies
++    implementation("com.velocitypowered:velocity-native:4.3.2-20261103.192818-3") { // Leaf - Bump Dependencies
          isTransitive = false
      }
 -    implementation("io.netty:netty-codec-haproxy:4.2.16.Final") // Add support for proxy protocol
@@ -107,7 +131,7 @@
      // Deps that were previously in the API but have now been moved here for backwards compat, eventually to be removed
      runtimeOnly("commons-lang:commons-lang:2.6")
      runtimeOnly("org.xerial:sqlite-jdbc:3.49.1.0")
-@@ -148,40 +_,59 @@
+@@ -148,40 +_,57 @@
      }
  
      testImplementation("io.github.classgraph:classgraph:4.8.184") // For mob goal test
@@ -131,11 +155,11 @@
  
 +    // Leaf start - Bump Dependencies
      // Spark
-     implementation("me.lucko:spark-api:0.1-20240720.200737-2")
-     implementation("me.lucko:spark-paper:1.10.191")
+-    implementation("me.lucko:spark-api:0.1-20240720.200737-2")
+-    implementation("me.lucko:spark-paper:1.10.191")
 -}
-+    //implementation("me.lucko:spark-api:0.1-dev-284ead8-SNAPSHOT")
-+    //implementation("me.lucko:spark-paper:1.10-dev-284ead8-SNAPSHOT")
++    implementation("me.lucko:spark-api:0.1-dev-284ead8-20260826.125727-1")
++    implementation("me.lucko:spark-paper:1.10-dev-284ead8-20260826.125812-1")
 +
 +    implementation("io.netty:netty-all:4.2.17.Final")
 +    // Leaf end - Bump Dependencies
@@ -199,7 +223,29 @@
  
      doFirst {
          workingDir.mkdirs()
-@@ -357,3 +_,78 @@
+@@ -341,6 +_,14 @@
+     mainClass.set(null as String?)
+ }
+ 
++// Leaf start - Use leafclip
++tasks.registerRunTask("runLeafclip") {
++    description = "Spin up a test server from the Mojang mapped Paperclip jar"
++    classpath(tasks.named<CreateLeafclipJar>("createLeafclipJar").flatMap { it.outputZip }) // Leaf - Use leafclip
++    mainClass.set(null as String?)
++}
++// Leaf end - Use leafclip
++
+ fill {
+     project("paper")
+     versionFamily(paperweight.minecraftVersion.map { it.split(".", "-").takeWhile { part -> part.toIntOrNull() != null }.take(2).joinToString(".") })
+@@ -351,9 +_,257 @@
+ 
+         downloads {
+             register("server:default") {
+-                file = tasks.createPaperclipJar.flatMap { it.outputZip }
++                file = tasks.named<CreateLeafclipJar>("createLeafclipJar").flatMap { it.outputZip } // Leaf - Use leafclip
+                 nameResolver.set { project, _, version, build -> "$project-$version-$build.jar" }
+             }
          }
      }
  }
@@ -223,45 +269,218 @@
 +}
 +// Gale end - package license into jar
 +
-+// Gale start - branding changes - package license into jar
-+// Based on io.papermc.paperweight.core.taskcontainers.PaperclipTasks
++// Leaf start - Use leafclip
++/**
++ * - Excludes libraries from Maven Central, Paper's maven, and Leaf' maven.
++ *  They will be downloaded during server launches.
++ * - Adds `LICENSE.txt`
++ */
++abstract class CreateLeafclipJar : DefaultTask() {
++    @get:InputFile
++    @get:PathSensitive(PathSensitivity.NONE)
++    abstract val inputJar: RegularFileProperty
 +
-+tasks.named("createPaperclipJar") {
-+    val name = rootProject.name
-+    val version = project.version
-+    val licenseFileName = "LICENSE.txt"
-+    val licenseFilePath = layout.projectDirectory.dir("../paper-server/$licenseFileName").asFile
++    @get:InputFile
++    @get:PathSensitive(PathSensitivity.NONE)
++    abstract val licenseFile: RegularFileProperty
 +
-+    // Based on io.papermc.paperweight.core.taskcontainers.PaperclipTasks
-+    val jarName = listOfNotNull(
-+        name,
-+        "paperclip",
-+        version
-+    ).joinToString("-") + ".jar"
++    // Same order as the loader
++    @get:Input
++    abstract val repositories: ListProperty<String>
 +
-+    // Based on io.papermc.paperweight.core.taskcontainers.PaperclipTasks
-+    val zipFile = layout.buildDirectory.file("libs/$jarName").get().path
++    @get:OutputFile
++    abstract val outputZip: RegularFileProperty
 +
-+    val rootDir = findOutputDir(zipFile)
++    @get:Internal
++    abstract val cacheDir: DirectoryProperty
 +
-+    doLast {
++    // line: the line of libraries.list; path: also where the file is in the jar
++    private class Lib(val sha256: String, val id: String, val path: String, val line: String)
 +
-+        try {
-+            unzip(zipFile, rootDir)
++    private fun sha256Hex(digest: MessageDigest) = digest.digest().joinToString("") {
++        "%02x".format(it)
++    }
 +
-+            licenseFilePath.copyTo(rootDir.resolve(licenseFileName).toFile())
++    private fun sha256(file: Path): String {
++        val digest = MessageDigest.getInstance("SHA-256")
++        Files.newInputStream(file).use { input ->
++            val buffer = ByteArray(65536)
++            while (true) {
++                val read = input.read(buffer)
++                if (read < 0) break
++                digest.update(buffer, 0, read)
++            }
++        }
++        return sha256Hex(digest)
++    }
 +
-+            ensureDeleted(zipFile)
++    /** @return the SHA-256 of the downloaded file written to [target], or null if the repository doesn't have it */
++    private fun download(client: HttpClient, url: String, target: Path): String? {
++        var failure: IOException? = null
++        for (attempt in 0..2) {
++            if (attempt > 0) Thread.sleep(1000L * attempt)
++            try {
++                val request = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build()
++                val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
++                response.body().use { body ->
++                    when (response.statusCode()) {
++                        200 -> {
++                            val digest = MessageDigest.getInstance("SHA-256")
++                            Files.newOutputStream(target).use { out ->
++                                val buffer = ByteArray(65536)
++                                while (true) {
++                                    val read = body.read(buffer)
++                                    if (read < 0) break
++                                    digest.update(buffer, 0, read)
++                                    out.write(buffer, 0, read)
++                                }
++                            }
++                            return sha256Hex(digest)
++                        }
++                        404 -> return null
++                        else -> throw IOException("HTTP ${response.statusCode()}")
++                    }
++                }
++            } catch (e: IOException) {
++                failure = e
++            }
++        }
++        throw GradleException("Failed to check $url: $failure", failure)
++    }
 +
-+            zip(rootDir, zipFile)
-+        } finally {
-+            @OptIn(kotlin.io.path.ExperimentalPathApi::class)
-+            rootDir.toFile().deleteRecursively()
++    /** @return where the file with this SHA-256 can be downloaded from, "cache" if known, or null if nowhere */
++    private fun findSource(client: HttpClient, lib: Lib, cache: Path): String? {
++        val cached = cache.resolve(lib.sha256 + ".jar")
++        if (Files.exists(cached) && sha256(cached) == lib.sha256) {
++            return "cache"
 +        }
 +
++        val temp = Files.createTempFile(cache, "download", ".tmp")
++        try {
++            for (repository in repositories.get()) {
++                val hash = download(client, repository.trimEnd('/') + "/" + lib.path, temp)
++                if (hash == lib.sha256) {
++                    Files.move(temp, cached, StandardCopyOption.REPLACE_EXISTING)
++                    return repository
++                }
++            }
++            return null
++        } finally {
++            Files.deleteIfExists(temp)
++        }
++    }
++
++    @TaskAction
++    fun create() {
++        val output = outputZip.get().asFile.toPath()
++        val temp = output.resolveSibling(output.fileName.toString() + ".tmp")
++        Files.createDirectories(output.parent)
++
++        ZipFile(inputJar.get().asFile).use { zip ->
++            val librariesList = zip.getEntry("META-INF/libraries.list")
++                ?: throw GradleException("META-INF/libraries.list not found in ${inputJar.get().asFile}")
++            val libs = zip.getInputStream(librariesList).bufferedReader().readLines().filter { it.isNotBlank() }.map {
++                val parts = it.split("\t")
++                if (parts.size != 3) throw GradleException("Malformed libraries.list line: $it")
++                Lib(parts[0], parts[1], parts[2], it)
++            }
++
++            // Only libraries bundled as complete jars; the others are from the original jar or created from patches
++            val bundled = libs.filter { zip.getEntry("META-INF/libraries/" + it.path) != null }
++            val removable = HashMap<Lib, String>() // lib -> source
++            val kept = ArrayList<Lib>() // no repository has a file with the same SHA-256
++
++            val cache = cacheDir.get().asFile.toPath()
++            Files.createDirectories(cache)
++            val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL)
++                .connectTimeout(Duration.ofSeconds(15)).build()
++            val executor = Executors.newFixedThreadPool(8)
++            try {
++                val futures =
++                    bundled.map { lib -> lib to executor.submit(Callable<String?> { findSource(client, lib, cache) }) }
++                for ((lib, future) in futures) {
++                    val source = try {
++                        future.get()
++                    } catch (e: ExecutionException) {
++                        throw e.cause ?: e
++                    }
++                    if (source != null) removable[lib] = source else kept.add(lib)
++                }
++            } finally {
++                executor.shutdownNow()
++            }
++
++            val removedNames = removable.keys.mapTo(HashSet()) { "META-INF/libraries/" + it.path }
++            // Directories that still contain a file
++            val keptDirs = HashSet<String>()
++            for (entry in zip.entries()) {
++                if (entry.isDirectory || entry.name in removedNames) continue
++                var index = entry.name.lastIndexOf('/')
++                while (index > 0) {
++                    if (!keptDirs.add(entry.name.substring(0, index + 1))) break
++                    index = entry.name.lastIndexOf('/', index - 1)
++                }
++            }
++
++            val fixedTime = zip.getEntry("META-INF/MANIFEST.MF")?.time ?: 0L
++            ZipOutputStream(Files.newOutputStream(temp).buffered()).use { out ->
++                fun add(name: String, time: Long, content: ByteArray) {
++                    out.putNextEntry(ZipEntry(name).also { it.time = time })
++                    out.write(content)
++                    out.closeEntry()
++                }
++
++                var hasLicense = false
++                for (entry in zip.entries()) {
++                    if (entry.name in removedNames) continue
++                    if (entry.isDirectory && entry.name.startsWith("META-INF/libraries/") && entry.name !in keptDirs) continue
++                    if (entry.name == "META-INF/libraries.list") {
++                        // One line for every library, also the removed ones
++                        val text = libs.joinToString("") { it.line + "\n" }
++                        add(entry.name, entry.time, text.toByteArray())
++                        continue
++                    }
++                    if (entry.name == "LICENSE.txt") hasLicense = true
++
++                    out.putNextEntry(ZipEntry(entry.name).also { it.time = entry.time })
++                    if (!entry.isDirectory) {
++                        zip.getInputStream(entry).use { it.transferTo(out) }
++                    }
++                    out.closeEntry()
++                }
++
++                if (!hasLicense) {
++                    add("LICENSE.txt", fixedTime, licenseFile.get().asFile.readBytes())
++                }
++            }
++
++            Files.move(temp, output, StandardCopyOption.REPLACE_EXISTING)
++
++            removable.entries.sortedBy { it.key.id }.forEach { logger.info("createLeafclipJar: removed ${it.key.id} <- ${it.value}") }
++            kept.sortedBy { it.id }.forEach { logger.info("createLeafclipJar: kept ${it.id}") }
++            fun mb(bytes: Long) = "%.2f MB".format(bytes / 1024.0 / 1024.0)
++            logger.lifecycle("createLeafclipJar: removed ${removable.size} libraries, kept ${kept.size}; ${mb(inputJar.get().asFile.length())} -> ${mb(Files.size(output))}")
++        }
 +    }
 +}
-+// Gale end - branding changes - package license into jar
++
++tasks.register<CreateLeafclipJar>("createLeafclipJar") {
++    group = "bundling"
++    description = "Build a runnable paperclip jar without maven downloadable libraries for Leaf"
++    inputJar.set(tasks.createPaperclipJar.flatMap { it.outputZip })
++    licenseFile.set(layout.projectDirectory.file("../paper-server/LICENSE.txt"))
++    repositories.set(
++        listOf(
++            "https://repo1.maven.org/maven2/",
++            paperMavenPublicUrl,
++            leafMavenPublicUrl
++        )
++    )
++    // Same name scheme as createPaperclipJar
++    outputZip.set(layout.buildDirectory.file("libs/${rootProject.name}-leafclip-${project.version}.jar"))
++    cacheDir.set(layout.buildDirectory.dir("leafclip/cache"))
++}
++// Leaf end - Use leafclip
 +
 +// Leaf start - Leaf JUnit test suite
 +tasks.register<Test>("runLeafTests") {
