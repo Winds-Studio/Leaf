@@ -8,11 +8,9 @@ import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -21,8 +19,6 @@ import java.util.function.Function;
 public final class AsyncPath extends Path {
 
     private boolean ready = false;
-
-    private final ArrayList<Consumer<Path>> postProcessing = new ArrayList<>();
 
     /**
      * A list of positions that this path could path towards
@@ -58,10 +54,19 @@ public final class AsyncPath extends Path {
         AsyncPathProcessor.queue(() -> {
             synchronized (finder) {
                 if (this.ret == null) {
-                    this.ret = pathFn.apply(finder);
+                    this.ret = apply(pathFn, finder);
                 }
             }
         });
+    }
+
+    private Path apply(Function<PathFinder, Path> pathFn, PathFinder finder) {
+        try {
+            return pathFn.apply(finder);
+        } catch (Throwable t) {
+            AsyncPathProcessor.LOGGER.error("Failed to process async path", t);
+            return new Path(List.of(), this.positions.isEmpty() ? BlockPos.ZERO : this.positions.iterator().next(), false);
+        }
     }
 
     @Override
@@ -75,17 +80,6 @@ public final class AsyncPath extends Path {
             return true;
         }
         return false;
-    }
-
-    /**
-     * Returns the future representing the processing state of this path
-     */
-    public void schedulePostProcessing(Consumer<Path> runnable) {
-        if (this.ready) {
-            runnable.accept(this);
-        } else {
-            this.postProcessing.add(runnable);
-        }
     }
 
     /**
@@ -106,7 +100,7 @@ public final class AsyncPath extends Path {
         if (ret == null) {
             synchronized (finder) {
                 if ((ret = this.ret) == null) {
-                    ret = (this.ret = Objects.requireNonNull(pathFn).apply(finder));
+                    ret = (this.ret = apply(Objects.requireNonNull(pathFn), finder));
                 }
             }
         }
@@ -129,10 +123,12 @@ public final class AsyncPath extends Path {
         }
         this.pathFn = null;
         this.ready = true;
-        for (Consumer<Path> consumer : this.postProcessing) {
-            consumer.accept(this);
-        }
-        this.postProcessing.clear();
+    }
+
+    @Override
+    public Path copy() {
+        this.process();
+        return super.copy();
     }
 
     /*
