@@ -2,7 +2,6 @@ package org.dreeam.leaf.async.path;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import net.minecraft.util.Util;
-import net.minecraft.world.level.pathfinder.Path;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.dreeam.leaf.config.modules.async.AsyncPathfinding;
@@ -17,7 +16,6 @@ import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 
 /**
  * used to handle the scheduling of async path processing
@@ -40,6 +38,9 @@ public final class AsyncPathProcessor {
                 getThreadFactory(),
                 getRejectedPolicy()
             );
+            if (getKeepAliveTime() > 0L) {
+                PATH_PROCESSING_EXECUTOR.allowCoreThreadTimeOut(true);
+            }
         } else {
             // Temp no-op
             //throw new IllegalStateException();
@@ -50,24 +51,8 @@ public final class AsyncPathProcessor {
         PATH_PROCESSING_EXECUTOR.execute(path);
     }
 
-    /**
-     * takes a possibly unprocessed path, and waits until it is completed
-     * the consumer will be immediately invoked if the path is already processed
-     * the consumer will always be called on the main thread
-     *
-     * @param path            a path to wait on
-     * @param afterProcessing a consumer to be called
-     */
-    public static void awaitProcessing(@Nullable Path path, Consumer<@Nullable Path> afterProcessing) {
-        if (path != null && !path.isProcessed() && path instanceof AsyncPath asyncPath) {
-            asyncPath.schedulePostProcessing(afterProcessing); // Reduce double lambda allocation
-        } else {
-            afterProcessing.accept(path);
-        }
-    }
-
     private static int getCorePoolSize() {
-        return 1;
+        return getMaxPoolSize();
     }
 
     private static int getMaxPoolSize() {
