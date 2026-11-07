@@ -232,7 +232,7 @@ public final class RandomTickSystem {
                 rand = 1 + boundedNextInt(random, speed);
                 LevelChunk chunk = raw[i];
                 ChunkPos pos = chunk.getPos();
-                world.tickPrecipitation(world.getBlockRandomPos(pos.getMinBlockX(), 0, pos.getMinBlockZ(), 15));
+                world.tickPrecipitation(world.getBlockRandomPos(pos.getMinBlockX(), 0, pos.getMinBlockZ(), 15), chunk);
             }
         }
     }
