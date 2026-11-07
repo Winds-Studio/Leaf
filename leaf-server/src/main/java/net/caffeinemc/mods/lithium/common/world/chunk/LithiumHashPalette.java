@@ -17,7 +17,6 @@ import net.minecraft.world.level.chunk.MissingPaletteEntryException;
 import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PaletteResize;
 import org.jspecify.annotations.NullMarked;
-
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Predicate;
@@ -42,6 +41,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
         super(size, true);
         this.indexBits = indexBits;
         this.entries = entries;
+        this.setValuesView(entries);
         this.table = table;
         this.size = size;
     }
@@ -62,6 +62,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
         int capacity = 1 << bits;
 
         this.entries = (T[]) new Object[capacity];
+        this.setValuesView(this.entries);
         this.table = new Reference2IntOpenHashMap<>(capacity, FAST_LOAD_FACTOR);
         this.table.defaultReturnValue(ABSENT_VALUE);
     }
@@ -126,6 +127,7 @@ public final class LithiumHashPalette<T> extends HashMapPalette<T> implements Pa
 
     private void resize(int neededCapacity) {
         this.entries = Arrays.copyOf(this.entries, HashCommon.nextPowerOfTwo(neededCapacity + 1));
+        this.setValuesView(this.entries);
     }
 
     @Override
