@@ -1,20 +1,14 @@
 package org.dreeam.leaf.config.modules.network;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class AlternativeJoin extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.NETWORK)
+public class AlternativeJoin implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.NETWORK.basePath();
-    }
-
+    @ConfigInfo(name = "async-switch-state", comments = {
+        "Async switch connection state.",
+        "异步切换连接状态."
+    })
     public static boolean enabled = false;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath() + ".async-switch-state", enabled, globalConfig.pickStringRegionBased(
-            "Async switch connection state.",
-            "异步切换连接状态."));
-    }
 }
