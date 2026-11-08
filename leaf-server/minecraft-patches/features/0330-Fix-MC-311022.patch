@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 17:42:10 -0400
+Subject: [PATCH] Fix MC-311022
+
+Related MC issue: https://mojira.dev/MC-311022
+
+First patch using ScopedValue in Leaf!
+This patch refers to the fix in 26.3 snapshot-10.
+It fixes an order-of-operation-like issue that may cause attribute effects to be left on the player after equipment is broken.
+
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 14cf550c114df95fd43a5e002715c34e92be3c2a..549bd2811ee8a0b46e1aae4409bc3b9d38ed90b1 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -4953,7 +4953,11 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+ 
+     public void onEquippedItemBroken(final Item brokenItem, final EquipmentSlot inSlot) {
+         this.level().broadcastEntityEvent(this, entityEventForEquipmentBreak(inSlot));
+-        this.stopLocationBasedEffects(this.getItemBySlot(inSlot), inSlot, this.attributes);
++        // Leaf start - Fix MC-311022
++        ItemStack brokenItemStack = ItemStack.getCurrentBrokenItemStack(brokenItem);
++        if (brokenItemStack == null) brokenItemStack = this.getItemBySlot(inSlot);
++        this.stopLocationBasedEffects(brokenItemStack, inSlot, this.attributes);
++        // Leaf end - Fix MC-311022
+     }
+ 
+     private void stopLocationBasedEffects(final ItemStack previous, final EquipmentSlot inSlot, final AttributeMap attributes) {
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index 3707037438162daec6535e7e5c5bfab6d365bd53..6f9316b98759143b7c44156e455c9da2edea59ed 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -694,6 +694,7 @@ public final class ItemStack implements DataComponentHolder, ItemInstance, net.c
+         this.setDamageValue(newDamage);
+         if (this.isBroken()) {
+             Item item = this.getItem();
++            ItemStack brokenItemStack = this.copy(); // Leaf - Fix MC-311022
+             // CraftBukkit start - Check for item breaking
+             if (this.getCount() == 1 && player instanceof final ServerPlayer serverPlayer) { // Paper - Add EntityDamageItemEvent
+                 org.bukkit.craftbukkit.event.CraftEventFactory.callPlayerItemBreakEvent(serverPlayer, this); // Paper - Add EntityDamageItemEvent
+@@ -708,10 +709,22 @@ public final class ItemStack implements DataComponentHolder, ItemInstance, net.c
+             // Purpur end - Implement elytra settings
+ 
+             this.shrink(1);
+-            onBreak.accept(item);
++            ScopedValue.where(CURRENT_BROKEN_ITEM, brokenItemStack).run(() -> onBreak.accept(item)); // Leaf - Fix MC-311022
+         }
+     }
+ 
++    // Leaf start - Fix MC-311022
++    private static final ScopedValue<ItemStack> CURRENT_BROKEN_ITEM = ScopedValue.newInstance();
++
++    public static @Nullable ItemStack getCurrentBrokenItemStack(final Item brokenItem) {
++        if (!CURRENT_BROKEN_ITEM.isBound()) {
++            return null;
++        }
++        ItemStack brokenItemStack = CURRENT_BROKEN_ITEM.get();
++        return brokenItemStack.getItem() == brokenItem ? brokenItemStack : null;
++    }
++    // Leaf end - Fix MC-311022
++
+     public void hurtWithoutBreaking(final int amount, final Player player) {
+         if (player instanceof ServerPlayer serverPlayer) {
+             int newAmount = this.processDurabilityChange(amount, serverPlayer.level(), serverPlayer);

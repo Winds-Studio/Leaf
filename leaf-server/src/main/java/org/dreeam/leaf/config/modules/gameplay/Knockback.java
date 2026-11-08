@@ -32,4 +32,7 @@ public class Knockback implements ConfigModule {
 
     @ConfigInfo(name = "old-blast-protection-explosion-knockback")
     public static boolean oldBlastProtectionKnockbackBehavior = false;
+
+    @ConfigInfo(name = "use-legacy-tracker-ticking")
+    public static boolean useLegacyTrackerTicking =  false;
 }

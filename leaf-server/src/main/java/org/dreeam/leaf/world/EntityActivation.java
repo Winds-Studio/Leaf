@@ -91,6 +91,12 @@ public final class EntityActivation {
             playerSize++;
         }
 
+        if (playerSize == 0) {
+            entities.clear();
+            chunks.clear();
+            return;
+        }
+
         final int[] indices = new int[playerSize];
         kdTree2.build(new double[][]{pxl, pzl}, indices);
         if (dab) kdTree3.build(new double[][]{pxl, pyl, pzl}, indices);
@@ -100,7 +106,7 @@ public final class EntityActivation {
         final Object[] raw = entities.elements();
         final int size = entities.size();
 
-        if (size != 0 && playerSize != 0) {
+        if (size != 0) {
             activateEntities(size,
                 raw,
                 tickMarkers,
