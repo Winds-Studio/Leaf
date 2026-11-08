@@ -1,0 +1,315 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Defer container item decoding
+
+License: GPL-3.0-only (https://www.gnu.org/licenses/gpl-3.0.html)
+
+Additional term under GNU GPLv3 section 7(b):
+
+Any copy or modified version containing a substantial portion of the
+original contributions in this patch must preserve the following
+author attribution in the patch header, source code, or another
+prominent legal notice accompanying the corresponding source:
+
+Original patch by HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+
+diff --git a/net/minecraft/world/ContainerHelper.java b/net/minecraft/world/ContainerHelper.java
+index fd703764323afa8e4e0cba7022a9fd14c3274e5d..3ffc1f22c2721c3f899e4ef4636dc5a85994e762 100644
+--- a/net/minecraft/world/ContainerHelper.java
++++ b/net/minecraft/world/ContainerHelper.java
+@@ -45,6 +45,37 @@ public class ContainerHelper {
+         }
+     }
+ 
++    // Leaf start - Defer container item decoding
++    public static @org.jspecify.annotations.Nullable PendingItems loadAllItemsDeferred(final ValueInput input, final NonNullList<ItemStack> itemStacks) {
++        if (org.dreeam.leaf.config.modules.opt.ContainerItemLazyLoading.lazyContainerItemLoading
++            && input instanceof net.minecraft.world.level.storage.TagValueInput tagInput
++            && !input.listOrEmpty(TAG_ITEMS, ItemStackWithSlot.CODEC).isEmpty()) {
++            return new PendingItems(tagInput);
++        }
++        loadAllItems(input, itemStacks);
++        return null;
++    }
++
++    public static final class PendingItems {
++        private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
++        private final net.minecraft.world.level.storage.TagValueInput input;
++
++        private PendingItems(final net.minecraft.world.level.storage.TagValueInput input) {
++            this.input = input.retainField(TAG_ITEMS);
++        }
++
++        public void load(final NonNullList<ItemStack> itemStacks, final net.minecraft.util.ProblemReporter.PathElement path) {
++            try (net.minecraft.util.ProblemReporter.ScopedCollector reporter = new net.minecraft.util.ProblemReporter.ScopedCollector(path, LOGGER)) {
++                loadAllItems(this.input.withProblemReporter(reporter), itemStacks);
++            }
++        }
++
++        public void save(final ValueOutput output) {
++            this.input.copyFieldTo(TAG_ITEMS, output);
++        }
++    }
++    // Leaf end - Defer container item decoding
++
+     public static int clearOrCountMatchingItems(
+         final Container container, final Predicate<ItemStack> predicate, final int amountToRemove, final boolean countingOnly
+     ) {
+diff --git a/net/minecraft/world/level/block/entity/BarrelBlockEntity.java b/net/minecraft/world/level/block/entity/BarrelBlockEntity.java
+index a91a5535f64e611e5fd199eba87601a1bbc34f5b..c1b0dfb71ddb87f7ac2a1f3529476b6c7695ed74 100644
+--- a/net/minecraft/world/level/block/entity/BarrelBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BarrelBlockEntity.java
+@@ -30,7 +30,7 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     @Override
+     public java.util.List<ItemStack> getContents() {
+-        return this.items;
++        return this.getItems(); // Leaf - Defer container item decoding
+     }
+ 
+     @Override
+@@ -69,6 +69,7 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity implemen
+         default -> 27;
+     }, ItemStack.EMPTY);
+     // Purpur end - Barrels and enderchests 6 rows
++    private ContainerHelper.@org.jspecify.annotations.Nullable PendingItems pendingItems; // Leaf - Defer container item decoding
+     public final ContainerOpenersCounter openersCounter = new ContainerOpenersCounter() {
+         // Paper start - delay open/close callbacks
+         @Override
+@@ -112,7 +113,13 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity implemen
+     protected void saveAdditional(final ValueOutput output) {
+         super.saveAdditional(output);
+         if (!this.trySaveLootTable(output)) {
+-            ContainerHelper.saveAllItems(output, this.items);
++            // Leaf start - Defer container item decoding
++            if (this.pendingItems != null) {
++                this.pendingItems.save(output);
++            } else {
++                ContainerHelper.saveAllItems(output, this.items);
++            }
++            // Leaf end - Defer container item decoding
+         }
+     }
+ 
+@@ -120,9 +127,7 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity implemen
+     protected void loadAdditional(final ValueInput input) {
+         super.loadAdditional(input);
+         this.items = NonNullList.withSize(this.getContainerSize(), ItemStack.EMPTY);
+-        if (!this.tryLoadLootTable(input)) {
+-            ContainerHelper.loadAllItems(input, this.items);
+-        }
++        this.pendingItems = this.tryLoadLootTable(input) ? null : ContainerHelper.loadAllItemsDeferred(input, this.items); // Leaf - Defer container item decoding
+     }
+ 
+     @Override
+@@ -141,6 +146,12 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     @Override
+     protected NonNullList<ItemStack> getItems() {
++        // Leaf start - Defer container item decoding
++        if (this.pendingItems != null) {
++            this.pendingItems.load(this.items, this.problemPath());
++            this.pendingItems = null;
++        }
++        // Leaf end - Defer container item decoding
+         return this.items;
+     }
+ 
+@@ -214,8 +225,15 @@ public class BarrelBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     @Override
+     public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
+-        return items;
++        return this.getItems(); // Leaf - Defer container item decoding
++    }
++
++    // Leaf start - Defer container item decoding
++    @Override
++    public NonNullList<ItemStack> getInventoryLithiumWithoutLoading() {
++        return this.items;
+     }
++    // Leaf end - Defer container item decoding
+ 
+     @Override
+     public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
+diff --git a/net/minecraft/world/level/block/entity/ChestBlockEntity.java b/net/minecraft/world/level/block/entity/ChestBlockEntity.java
+index 899149db8ebf95c2813fbe562d4f7fd0e829b304..bee01fe8a3b2d6a66f1830b8e87bbdc4b448bd4d 100644
+--- a/net/minecraft/world/level/block/entity/ChestBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/ChestBlockEntity.java
+@@ -29,6 +29,7 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+     private static final int EVENT_SET_OPEN_COUNT = 1;
+     public static final Component DEFAULT_NAME = Component.translatable("container.chest");
+     private NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
++    private ContainerHelper.@org.jspecify.annotations.Nullable PendingItems pendingItems; // Leaf - Defer container item decoding
+     public final ContainerOpenersCounter openersCounter = new ContainerOpenersCounter() {
+         // Paper start - delay open/close callbacks
+         @Override
+@@ -75,7 +76,7 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+ 
+     @Override
+     public java.util.List<net.minecraft.world.item.ItemStack> getContents() {
+-        return this.items;
++        return this.getItems(); // Leaf - Defer container item decoding
+     }
+ 
+     @Override
+@@ -125,16 +126,20 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+     protected void loadAdditional(final ValueInput input) {
+         super.loadAdditional(input);
+         this.items = NonNullList.withSize(this.getContainerSize(), ItemStack.EMPTY);
+-        if (!this.tryLoadLootTable(input)) {
+-            ContainerHelper.loadAllItems(input, this.items);
+-        }
++        this.pendingItems = this.tryLoadLootTable(input) ? null : ContainerHelper.loadAllItemsDeferred(input, this.items); // Leaf - Defer container item decoding
+     }
+ 
+     @Override
+     protected void saveAdditional(final ValueOutput output) {
+         super.saveAdditional(output);
+         if (!this.trySaveLootTable(output)) {
+-            ContainerHelper.saveAllItems(output, this.items);
++            // Leaf start - Defer container item decoding
++            if (this.pendingItems != null) {
++                this.pendingItems.save(output);
++            } else {
++                ContainerHelper.saveAllItems(output, this.items);
++            }
++            // Leaf end - Defer container item decoding
+         }
+     }
+ 
+@@ -194,6 +199,12 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+ 
+     @Override
+     protected NonNullList<ItemStack> getItems() {
++        // Leaf start - Defer container item decoding
++        if (this.pendingItems != null) {
++            this.pendingItems.load(this.items, this.problemPath());
++            this.pendingItems = null;
++        }
++        // Leaf end - Defer container item decoding
+         return this.items;
+     }
+ 
+@@ -277,8 +288,15 @@ public class ChestBlockEntity extends RandomizableContainerBlockEntity implement
+ 
+     @Override
+     public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
+-        return items;
++        return this.getItems(); // Leaf - Defer container item decoding
++    }
++
++    // Leaf start - Defer container item decoding
++    @Override
++    public NonNullList<ItemStack> getInventoryLithiumWithoutLoading() {
++        return this.items;
+     }
++    // Leaf end - Defer container item decoding
+ 
+     @Override
+     public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
+diff --git a/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java b/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java
+index 309a2b0e09866c1b30452260644bcf7f960b0860..6a42a06db4a559c237bd3fd6abd018f7a319b8cb 100644
+--- a/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/ShulkerBoxBlockEntity.java
+@@ -43,6 +43,7 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+     private static final int[] SLOTS = IntStream.range(0, 27).toArray();
+     private static final Component DEFAULT_NAME = Component.translatable("container.shulkerBox");
+     private NonNullList<ItemStack> itemStacks = NonNullList.withSize(27, ItemStack.EMPTY);
++    private ContainerHelper.@Nullable PendingItems pendingItems; // Leaf - Defer container item decoding
+     public int openCount;
+     private ShulkerBoxBlockEntity.AnimationStatus animationStatus = ShulkerBoxBlockEntity.AnimationStatus.CLOSED;
+     private float progress;
+@@ -56,7 +57,7 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+ 
+     @Override
+     public List<ItemStack> getContents() {
+-        return this.itemStacks;
++        return this.getItems(); // Leaf - Defer container item decoding
+     }
+ 
+     @Override
+@@ -252,19 +253,29 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+     protected void saveAdditional(final ValueOutput output) {
+         super.saveAdditional(output);
+         if (!this.trySaveLootTable(output)) {
+-            ContainerHelper.saveAllItems(output, this.itemStacks, false);
++            // Leaf start - Defer container item decoding
++            if (this.pendingItems != null) {
++                this.pendingItems.save(output);
++            } else {
++                ContainerHelper.saveAllItems(output, this.itemStacks, false);
++            }
++            // Leaf end - Defer container item decoding
+         }
+     }
+ 
+     public void loadFromTag(final ValueInput input) {
+         this.itemStacks = NonNullList.withSize(this.getContainerSize(), ItemStack.EMPTY);
+-        if (!this.tryLoadLootTable(input)) {
+-            ContainerHelper.loadAllItems(input, this.itemStacks);
+-        }
++        this.pendingItems = this.tryLoadLootTable(input) ? null : ContainerHelper.loadAllItemsDeferred(input, this.itemStacks); // Leaf - Defer container item decoding
+     }
+ 
+     @Override
+     protected NonNullList<ItemStack> getItems() {
++        // Leaf start - Defer container item decoding
++        if (this.pendingItems != null) {
++            this.pendingItems.load(this.itemStacks, this.problemPath());
++            this.pendingItems = null;
++        }
++        // Leaf end - Defer container item decoding
+         return this.itemStacks;
+     }
+ 
+@@ -340,8 +351,15 @@ public class ShulkerBoxBlockEntity extends RandomizableContainerBlockEntity impl
+ 
+     @Override
+     public net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> getInventoryLithium() {
+-        return itemStacks;
++        return this.getItems(); // Leaf - Defer container item decoding
++    }
++
++    // Leaf start - Defer container item decoding
++    @Override
++    public NonNullList<ItemStack> getInventoryLithiumWithoutLoading() {
++        return this.itemStacks;
+     }
++    // Leaf end - Defer container item decoding
+ 
+     @Override
+     public void setInventoryLithium(final net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> inventory) {
+diff --git a/net/minecraft/world/level/storage/TagValueInput.java b/net/minecraft/world/level/storage/TagValueInput.java
+index a4ed7a0bd6fd1273616058e7da7d7a1cc10d4beb..bc377d8dd25bdd2ad7a177ae2202062b60f2dbfb 100644
+--- a/net/minecraft/world/level/storage/TagValueInput.java
++++ b/net/minecraft/world/level/storage/TagValueInput.java
+@@ -37,6 +37,27 @@ public class TagValueInput implements ValueInput {
+         this.input = input;
+     }
+ 
++    // Leaf start - Defer container item decoding
++    public TagValueInput withProblemReporter(final ProblemReporter problemReporter) {
++        return new TagValueInput(problemReporter, this.context, this.input);
++    }
++
++    public TagValueInput retainField(final String name) {
++        CompoundTag retained = new CompoundTag();
++        retained.put(name, this.input.get(name));
++        return new TagValueInput(ProblemReporter.DISCARDING, this.context, retained);
++    }
++
++    public void copyFieldTo(final String name, final ValueOutput output) {
++        Tag value = this.input.get(name).copy();
++        if (output instanceof TagValueOutput tagOutput) {
++            tagOutput.buildResult().put(name, value);
++        } else {
++            output.store(name, Codec.PASSTHROUGH, new com.mojang.serialization.Dynamic<>(NbtOps.INSTANCE, value));
++        }
++    }
++    // Leaf end - Defer container item decoding
++
+     // Paper start - utility methods
+     public static ValueInput createGlobal(
+         final ProblemReporter problemReporter,
