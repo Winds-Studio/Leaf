@@ -109,6 +109,7 @@ public class LeavesProtocolManager {
                 LOGGER.warn("Failed to check isActive for {}: {}", clazz.getName(), e);
                 continue;
             }
+            if (!active) continue;
             // Leaf end - optimize leaves protocol manager
 
             for (final Method method : clazz.getDeclaredMethods()) {
@@ -141,8 +142,6 @@ public class LeavesProtocolManager {
                     continue;
                 }
                 // Leaf end - optimize leaves protocol manager - move up
-
-                if (!active) continue; // Leaf - optimize leaves protocol manager
 
                 final ProtocolHandler.PayloadReceiver payloadReceiver = method.getAnnotation(ProtocolHandler.PayloadReceiver.class);
                 if (payloadReceiver != null) {
@@ -213,6 +212,7 @@ public class LeavesProtocolManager {
             if (codec == null) {
                 throw new IllegalArgumentException("Payload " + idInfo.getKey() + " is not configured correctly");
             }
+            if (!PAYLOAD_RECEIVERS.containsKey(idInfo.getKey())) continue; // Leaf - optimize leaves protocol manager
             ID2CODEC.put(idInfo.getValue(), codec);
         }
     }
@@ -222,11 +222,27 @@ public class LeavesProtocolManager {
         if (codec == null) {
             return null;
         }
+        final int readerIndex = buf.readerIndex(); // Leaf - optimize leaves protocol manager
         try {
-            return codec.decode(ProtocolUtils.decorate(buf));
+            // Leaf start - optimize leaves protocol manager
+            LeavesCustomPayload payload = codec.decode(ProtocolUtils.decorate(buf));
+            // Ignore extra bytes instead of disconnecting
+            if (buf.isReadable() && !org.dreeam.leaf.config.modules.network.ProtocolSupport.strictMode) {
+                LOGGER.warn("Failed to decode payload {}, found {} bytes extra, ignoring", location, buf.readableBytes());
+                buf.readerIndex(readerIndex);
+                return null;
+            }
+            return payload;
         } catch (Exception e) {
-            LOGGER.error("Failed to decode payload {}", location, e);
-            throw e;
+            if (org.dreeam.leaf.config.modules.network.ProtocolSupport.strictMode) {
+                LOGGER.error("Failed to decode payload {}", location, e);
+                throw e;
+            }
+            // Ignore failed decoding instead of disconnecting
+            LOGGER.warn("Failed to decode payload {}, ignoring: {}", location, e.toString());
+            buf.readerIndex(readerIndex);
+            return null;
+            // Leaf end - optimize leaves protocol manager
         }
     }
 
