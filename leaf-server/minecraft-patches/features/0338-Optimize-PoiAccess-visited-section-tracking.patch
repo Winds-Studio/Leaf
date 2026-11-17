@@ -1,0 +1,279 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>
+Date: Tue, 9 Nov 2077 00:00:00 +0800
+Subject: [PATCH] Optimize PoiAccess visited section tracking
+
+Replace LongOpenHashSet used for tracking sections visited with bit set, avoid rehash overhead.
+Manually unroll the six neighbor checks, eliminate the 3x3x3 loop.
+
+License: GPL-3.0-only (https://www.gnu.org/licenses/gpl-3.0.html)
+
+Additional term under GNU GPLv3 section 7(b):
+
+Any copy or modified version containing a substantial portion of the
+original contributions in this patch must preserve the following
+author attribution in the patch header, source code, or another
+prominent legal notice accompanying the corresponding source:
+
+Original patch by HaHaWTH <102713261+HaHaWTH@users.noreply.github.com>, co-authored by MrlingXD <90316914+wling-art@users.noreply.github.com>
+
+Co-authored-by: MrlingXD <90316914+wling-art@users.noreply.github.com>
+
+diff --git a/io/papermc/paper/util/PoiAccess.java b/io/papermc/paper/util/PoiAccess.java
+index f39294b1f83c4022be5ced4da781103a1eee2daf..ea9dd803767e77c09a0fda15656eb58ed22b1e75 100644
+--- a/io/papermc/paper/util/PoiAccess.java
++++ b/io/papermc/paper/util/PoiAccess.java
+@@ -225,8 +225,13 @@ public final class PoiAccess {
+         final long centerKey = CoordinateUtils.getChunkSectionKey(centerX, centerY, centerZ);
+ 
+         final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+-        final LongOpenHashSet seen = new LongOpenHashSet();
+-        seen.add(centerKey);
++        // Leaf start - Optimize PoiAccess visited section tracking
++        final org.dreeam.leaf.util.map.SectionVisitSet seen = new org.dreeam.leaf.util.map.SectionVisitSet(
++            lowerX, lowerY, lowerZ,
++            upperX, upperY, upperZ
++        );
++        seen.mark(centerX, centerY, centerZ);
++        // Leaf end - Optimize PoiAccess visited section tracking
+         queue.enqueue(centerKey);
+ 
+         while (!queue.isEmpty()) {
+@@ -235,10 +240,11 @@ public final class PoiAccess {
+             final int sectionY = CoordinateUtils.getChunkSectionY(key);
+             final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
+ 
++            /* 这个 不需要了 (指bound check) // Leaf - Optimize PoiAccess visited section tracking
+             if (sectionX < lowerX || sectionX > upperX || sectionY < lowerY || sectionY > upperY || sectionZ < lowerZ || sectionZ > upperZ) {
+                 // out of bound chunk
+                 continue;
+-            }
++            }*/ // Leaf - Optimize PoiAccess visited section tracking
+ 
+             final double sectionDistanceSquared = getSmallestDistanceSquared(
+                     (sectionX << 4) + 0.5,
+@@ -253,27 +259,73 @@ public final class PoiAccess {
+                 continue;
+             }
+ 
+-            // queue all neighbours
+-            for (int dz = -1; dz <= 1; ++dz) {
+-                for (int dx = -1; dx <= 1; ++dx) {
+-                    for (int dy = -1; dy <= 1; ++dy) {
+-                        // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
+-                        // values are set. we only care about cardinal neighbours, so, we only care if one value is set
+-                        if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
+-                            continue;
+-                        }
++            // Leaf start - Optimize PoiAccess visited section tracking
++            // Z-
++            if (sectionZ > lowerZ && seen.mark(sectionX, sectionY, sectionZ - 1)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY,
++                        sectionZ - 1
++                    )
++                );
++            }
+ 
+-                        final int neighbourX = sectionX + dx;
+-                        final int neighbourY = sectionY + dy;
+-                        final int neighbourZ = sectionZ + dz;
++            // X-
++            if (sectionX > lowerX && seen.mark(sectionX - 1, sectionY, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX - 1,
++                        sectionY,
++                        sectionZ
++                    )
++                );
++            }
+ 
+-                        final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                        if (seen.add(neighbourKey)) {
+-                            queue.enqueue(neighbourKey);
+-                        }
+-                    }
+-                }
++            // Y-
++            if (sectionY > lowerY && seen.mark(sectionX, sectionY - 1, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY - 1,
++                        sectionZ
++                    )
++                );
++            }
++
++            // Y+
++            if (sectionY < upperY && seen.mark(sectionX, sectionY + 1, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY + 1,
++                        sectionZ
++                    )
++                );
++            }
++
++            // X+
++            if (sectionX < upperX && seen.mark(sectionX + 1, sectionY, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX + 1,
++                        sectionY,
++                        sectionZ
++                    )
++                );
++            }
++
++            // Z+
++            if (sectionZ < upperZ && seen.mark(sectionX, sectionY, sectionZ + 1)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY,
++                        sectionZ + 1
++                    )
++                );
+             }
++            // Leaf end - Optimize PoiAccess visited section tracking
+ 
+             final Optional<PoiSection> poiSectionOptional = load ? poiStorage.getOrLoad(key) : poiStorage.get(key);
+ 
+@@ -468,8 +520,13 @@ public final class PoiAccess {
+         final long centerKey = CoordinateUtils.getChunkSectionKey(centerX, centerY, centerZ);
+ 
+         final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+-        final LongOpenHashSet seen = new LongOpenHashSet();
+-        seen.add(centerKey);
++        // Leaf start - Optimize PoiAccess visited section tracking
++        final org.dreeam.leaf.util.map.SectionVisitSet seen = new org.dreeam.leaf.util.map.SectionVisitSet(
++            lowerX, lowerY, lowerZ,
++            upperX, upperY, upperZ
++        );
++        seen.mark(centerX, centerY, centerZ);
++        // Leaf end - Optimize PoiAccess visited section tracking
+         queue.enqueue(centerKey);
+ 
+         while (!queue.isEmpty()) {
+@@ -478,10 +535,11 @@ public final class PoiAccess {
+             final int sectionY = CoordinateUtils.getChunkSectionY(key);
+             final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
+ 
++            /* 这个 不需要了 (指bound check) // Leaf - Optimize PoiAccess visited section tracking
+             if (sectionX < lowerX || sectionX > upperX || sectionY < lowerY || sectionY > upperY || sectionZ < lowerZ || sectionZ > upperZ) {
+                 // out of bound chunk
+                 continue;
+-            }
++            }*/ // Leaf - Optimize PoiAccess visited section tracking
+ 
+             final double sectionDistanceSquared = getSmallestDistanceSquared(
+                     (sectionX << 4) + 0.5,
+@@ -497,27 +555,85 @@ public final class PoiAccess {
+                 continue;
+             }
+ 
+-            // queue all neighbours
+-            for (int dz = -1; dz <= 1; ++dz) {
+-                for (int dx = -1; dx <= 1; ++dx) {
+-                    for (int dy = -1; dy <= 1; ++dy) {
+-                        // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
+-                        // values are set. we only care about cardinal neighbours, so, we only care if one value is set
+-                        if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
+-                            continue;
+-                        }
++            // Leaf start - Optimize PoiAccess visited section tracking
++            /*
++             * unroll the loop
++             *
++             * for (dz = -1..1)
++             *   for (dx = -1..1)
++             *     for (dy = -1..1)
++             *
++             * is unrolled to
++             *
++             * Z-, X-, Y-, Y+, X+, Z+
++             */
++
++            // Z-
++            if (sectionZ > lowerZ && seen.mark(sectionX, sectionY, sectionZ - 1)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY,
++                        sectionZ - 1
++                    )
++                );
++            }
+ 
+-                        final int neighbourX = sectionX + dx;
+-                        final int neighbourY = sectionY + dy;
+-                        final int neighbourZ = sectionZ + dz;
++            // X-
++            if (sectionX > lowerX && seen.mark(sectionX - 1, sectionY, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX - 1,
++                        sectionY,
++                        sectionZ
++                    )
++                );
++            }
+ 
+-                        final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                        if (seen.add(neighbourKey)) {
+-                            queue.enqueue(neighbourKey);
+-                        }
+-                    }
+-                }
++            // Y-
++            if (sectionY > lowerY && seen.mark(sectionX, sectionY - 1, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY - 1,
++                        sectionZ
++                    )
++                );
++            }
++
++            // Y+
++            if (sectionY < upperY && seen.mark(sectionX, sectionY + 1, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY + 1,
++                        sectionZ
++                    )
++                );
++            }
++
++            // X+
++            if (sectionX < upperX && seen.mark(sectionX + 1, sectionY, sectionZ)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX + 1,
++                        sectionY,
++                        sectionZ
++                    )
++                );
++            }
++
++            // Z+
++            if (sectionZ < upperZ && seen.mark(sectionX, sectionY, sectionZ + 1)) {
++                queue.enqueue(
++                    CoordinateUtils.getChunkSectionKey(
++                        sectionX,
++                        sectionY,
++                        sectionZ + 1
++                    )
++                );
+             }
++            // Leaf end - Optimize PoiAccess visited section tracking
+ 
+             final Optional<PoiSection> poiSectionOptional = load ? poiStorage.getOrLoad(key) : poiStorage.get(key);
+ 
