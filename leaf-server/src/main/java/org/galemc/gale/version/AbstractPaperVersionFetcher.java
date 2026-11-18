@@ -266,6 +266,32 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
             .orElseThrow();
     }
 
+    // Leaf start - Fill v3 channel-aware
+    // Only counts the builds in the current channel
+    // Always fetches the latest build for the experimental channel
+    private static int getDistanceFromFillV3Channel(final BufferedReader reader, final int currBuild) {
+        final List<JsonObject> builds = StreamSupport.stream(GSON.fromJson(reader, JsonArray.class).spliterator(), false)
+            .map(JsonElement::getAsJsonObject)
+            .toList();
+        final Optional<JsonObject> current = builds.stream()
+            .filter(build -> build.get("id").getAsInt() == currBuild)
+            .findFirst();
+        if (current.isEmpty()) {
+            return DISTANCE_UNKNOWN;
+        }
+
+        final boolean stable = isStable(current.get());
+        return (int) builds.stream()
+            .filter(build -> build.get("id").getAsInt() > currBuild)
+            .filter(build -> !stable || isStable(build))
+            .count();
+    }
+
+    private static boolean isStable(final JsonObject build) {
+        return "STABLE".equals(build.get("channel").getAsString());
+    }
+    // Leaf end - Fill v3 channel-aware
+
     private static int getLatestBuildFromBibliothekApi(final BufferedReader reader) {
         final JsonArray builds = GSON.fromJson(reader, JsonObject.class).getAsJsonArray("builds");
         return StreamSupport.stream(builds.spliterator(), false)
@@ -284,6 +310,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
             if (userAgent != null) connection.setRequestProperty("User-Agent", userAgent); // Gale - branding changes - version fetcher
             connection.setRequestProperty("Accept", "application/json");
             try (final BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                if (apiType == ApiType.FILLV3_CHANNEL_AWARE) return getDistanceFromFillV3Channel(reader, currBuild); // Leaf - Fill v3 channel-aware
                 final int latestBuildId = apiType == ApiType.FILLV3 ? getLatestBuildFromFillV3(reader) : getLatestBuildFromBibliothekApi(reader); // Gale - branding changes - version fetcher
                 return Math.max(latestBuildId - currBuild, 0); // Gale - branding changes - version fetcher
             } catch (final JsonSyntaxException ex) {
@@ -339,8 +366,16 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
 
     // Gale start - branding changes - version fetcher
     public enum ApiType {
+        // Paper's fill v3
         FILLV3,
+
+        // Paper's fill v3 with channel aware
+        FILLV3_CHANNEL_AWARE, // Leaf - Fill v3 channel-aware
+
+        // Paper's bibliothek v2
         BIBLIOTHEK,
+
+        // GitHub commit based
         GITHUB
     }
     // Gale end - branding changes - version fetcher
