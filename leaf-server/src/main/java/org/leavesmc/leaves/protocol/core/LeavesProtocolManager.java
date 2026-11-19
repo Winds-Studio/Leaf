@@ -226,8 +226,9 @@ public class LeavesProtocolManager {
         try {
             // Leaf start - optimize leaves protocol manager
             LeavesCustomPayload payload = codec.decode(ProtocolUtils.decorate(buf));
-            // Ignore extra bytes instead of disconnecting
             if (buf.isReadable() && !org.dreeam.leaf.config.modules.network.ProtocolSupport.strictMode) {
+                // Extra bytes left since Leaves protocol failed to decode the entire payload
+                // Instead of disconnecting the player, only warn and reset the index to fall back to Vanilla packet decoding
                 LOGGER.warn("Failed to decode payload {}, found {} bytes extra, ignoring", location, buf.readableBytes());
                 buf.readerIndex(readerIndex);
                 return null;
