@@ -4,17 +4,17 @@ public final class KDTree2D {
 
     private static final double[] EMPTY_DOUBLES = {};
     private static final int[] EMPTY_INTS = {};
-    private static final Node[] EMPTY_NODES = {};
     private static final boolean ENABLE_FMA = LeafConstants.ENABLE_FMA;
 
     private static final int INITIAL_CAPACITY = 8;
 
-    /// indicate empty on [#search]
     /// indicate leaf node on [#nrl]
-    private static final int SENTINEL = -1;
-    private Node[] stack = EMPTY_NODES;
-    private int[] search = EMPTY_INTS;
-    /// [#SENTINEL] for leaf / right node index for internal
+    private static final int LEAF = -1;
+    private static final int MASK = 0x7FFF_FFFF;
+    private static final int BITS = 31;
+
+    private int len;
+    /// [#LEAF] for leaf / right node index for internal
     private int[] nrl = EMPTY_INTS;
     // x coordinate for leaf / split for internal
     private double[] nxl = EMPTY_DOUBLES;
@@ -23,9 +23,11 @@ public final class KDTree2D {
     // index for leaf
     private int[] nil = EMPTY_INTS;
 
+    private int[] arr = EMPTY_INTS;
+
     public void build(final double[][] coords, final int[] indices) {
         if (indices.length == 0 || coords.length != 2) {
-            ensureSearch(0, 0);
+            this.len = 0;
             return;
         }
         for (int i = 0; i < indices.length; i++) {
@@ -33,8 +35,8 @@ public final class KDTree2D {
         }
 
         int st = 0;
-        ensureConstruct(st);
-        stack[st++] = new Node(SENTINEL, false, 0, indices.length, 0);
+        Node[] stack = new Node[indices.length * 2];
+        stack[st++] = new Node(LEAF, false, 0, indices.length, 0);
         int nodeLen = 0;
         while (st != 0) {
             ensureNode(nodeLen);
@@ -42,7 +44,7 @@ public final class KDTree2D {
             final int curr = nodeLen++;
             if (n.len() <= 1) {
                 final int p = indices[n.offset()];
-                nrl[curr] = SENTINEL;
+                nrl[curr] = LEAF;
                 nxl[curr] = coords[0][p];
                 nyl[curr] = coords[1][p];
                 nil[curr] = p;
@@ -54,34 +56,14 @@ public final class KDTree2D {
                 PartialSort.nthElement(indices, coord, n.offset(), n.offset() + n.len() - 1, k);
 
                 nxl[curr] = coord[indices[k]];
-
-                ensureConstruct(st);
                 stack[st++] = new Node(curr, false, n.offset() + med + 1, n.len() - med - 1, n.depth() + 1);
                 stack[st++] = new Node(curr, true, n.offset(), med + 1, n.depth() + 1);
             }
-            if (n.parent() != SENTINEL) {
-                nrl[n.parent()] = n.left() ? SENTINEL : curr;
+            if (n.parent() != LEAF) {
+                nrl[n.parent()] = n.left() ? LEAF : curr;
             }
         }
-
-        ensureSearch(indices.length, nodeLen);
-    }
-
-    private void ensureSearch(final int length, final int nodeLen) {
-        if (search.length < nodeLen + 8) {
-            search = new int[nodeLen + 8];
-        }
-        search[0] = length == 0 ? SENTINEL : 0;
-    }
-
-    private void ensureConstruct(final int st) {
-        if (st != stack.length && st + 1 != stack.length) {
-            return;
-        }
-        final int newLen = stack.length + 2;
-        final Node[] b = new Node[Math.max(INITIAL_CAPACITY, newLen + (newLen >> 1))];
-        System.arraycopy(stack, 0, b, 0, st);
-        stack = b;
+        arr = it.unimi.dsi.fastutil.ints.IntArrays.ensureCapacity(arr, len = nodeLen, 0);
     }
 
     private void ensureNode(final int preserve) {
@@ -105,152 +87,54 @@ public final class KDTree2D {
             : dx * dx + dy * dy;
     }
 
-    public boolean isEmpty() {
-        return this.search.length == 0 || this.search[0] == SENTINEL;
+    public int len() {
+        return this.len;
     }
 
-    public double nearestSqr(final double tx, final double ty, double dist) {
-        final int[] stack = this.search;
-        final int[] nrl = this.nrl;
-        final double[] nxl = this.nxl;
-        final double[] nyl = this.nyl;
-        if (stack.length == 0 || stack[0] == SENTINEL) {
+    public boolean isEmpty() {
+        return this.len == 0;
+    }
+
+    public double nearestSqr(final double tx, final double ty, double dist, final int[] stack) {
+        if (this.isEmpty()) {
             return Double.POSITIVE_INFINITY;
         }
-        int i = 0, j = 0, curr = 0, right;
+        final int[] right = this.nrl;
+        final double[] split = this.nxl;
+        final double[] y = this.nyl;
+        int i = 0, j = 0, a = 0;
         while (true) {
-            right = nrl[j];
-            if (right == SENTINEL) {
-                final double dx = nxl[j] - tx;
-                final double dy = nyl[j] - ty;
-                dist = Math.min(dist, euclideanDistanceSquared(dx, dy));
-                break;
-            } else {
-                final int axis = curr == 1 ? 0 : 1;
-                final int mark = axis << 31;
-                final int left = j + 1;
-                final double delta = (curr == 0 ? tx : ty) - nxl[j];
-                final boolean push = delta * delta < dist;
-                if (delta < 0.0) {
-                    if (push) {
-                        stack[i++] = right | mark;
-                    }
-                    j = left;
-                } else {
-                    if (push) {
-                        stack[i++] = left | mark;
-                    }
-                    j = right;
+            // descent near
+            while (true) {
+                final int r = right[i];
+                if (r == LEAF) {
+                    dist = Math.min(dist, euclideanDistanceSquared(split[i] - tx, y[i] - ty));
+                    break;
                 }
-                curr = axis;
+                final double d = (a == 0 ? tx : ty) - split[i];
+                if (d * d < dist) {
+                    stack[j++] = i | (a << BITS);
+                }
+                i = d < 0.0 ? i + 1 : r;
+                a = a == 1 ? 0 : 1;
             }
-        }
-        while (i != 0) {
-            j = stack[--i];
-            final int k = j & 0x7FFF_FFFF;
-            right = nrl[k];
-            if (right == SENTINEL) {
-                final double dx = nxl[k] - tx;
-                final double dy = nyl[k] - ty;
-                dist = Math.min(dist, euclideanDistanceSquared(dx, dy));
-            } else {
-                final int axis = j >>> 31;
-                final int mark = (axis == 1 ? 0 : 1) << 31;
-                final int left = (k + 1) | mark;
-                final double delta = (axis == 0 ? tx : ty) - nxl[k];
-                final boolean push = delta * delta < dist;
-                if (delta < 0.0) {
-                    // near = left, far = right, left first
-                    if (push) {
-                        stack[i++] = right | mark;
-                    }
-                    stack[i++] = left;
-                } else {
-                    // near = right, far = left, right first
-                    if (push) {
-                        stack[i++] = left;
-                    }
-                    stack[i++] = right | mark;
+            // backtrack far
+            while (true) {
+                if (j == 0) {
+                    return dist;
+                }
+                j--;
+                final int s = stack[j];
+                final int n = s & MASK;
+                final int axis = s >>> BITS;
+                final double d = (axis == 0 ? tx : ty) - split[n];
+                if (d * d < dist) {
+                    i = d < 0.0 ? right[n] : n + 1;
+                    a = axis == 1 ? 0 : 1;
+                    break;
                 }
             }
         }
-        return dist;
-    }
-
-    public int nearestIdx(final double tx, final double ty, double dist) {
-        final int[] stack = this.search;
-        final int[] nrl = this.nrl;
-        final double[] nxl = this.nxl;
-        final double[] nyl = this.nyl;
-        if (stack.length == 0 || stack[0] == SENTINEL) {
-            return -1;
-        }
-        int i = 0, j = 0, curr = 0, nearest = -1, right;
-        while (true) {
-            right = nrl[j];
-            if (right == SENTINEL) {
-                final double dx = nxl[j] - tx;
-                final double dy = nyl[j] - ty;
-                final double candidate = euclideanDistanceSquared(dx, dy);
-                if (candidate < dist) {
-                    dist = candidate;
-                    nearest = nil[j];
-                }
-                break;
-            } else {
-                final int axis = curr == 1 ? 0 : 1;
-                final int mark = axis << 31;
-                final int left = j + 1;
-                final double delta = (curr == 0 ? tx : ty) - nxl[j];
-                final boolean push = delta * delta < dist;
-                if (delta < 0.0) {
-                    if (push) {
-                        stack[i++] = right | mark;
-                    }
-                    j = left;
-                } else {
-                    if (push) {
-                        stack[i++] = left | mark;
-                    }
-                    j = right;
-                }
-                curr = axis;
-            }
-        }
-        while (i != 0) {
-            j = stack[--i];
-            final int k = j & 0x7FFF_FFFF;
-            right = nrl[k];
-            if (right == SENTINEL) {
-                final double dx = nxl[k] - tx;
-                final double dy = nyl[k] - ty;
-                final double candidate = euclideanDistanceSquared(dx, dy);
-                if (candidate < dist) {
-                    dist = candidate;
-                    nearest = nil[k];
-                }
-            } else {
-                final int axis = j >>> 31;
-                final int mark = (axis == 1 ? 0 : 1) << 31;
-                final int left = (k + 1) | mark;
-                final double delta = (axis == 0 ? tx : ty) - nxl[k];
-                final boolean push = delta * delta < dist;
-                if (delta < 0.0) {
-                    // near = left, far = right, left first
-                    if (push) {
-                        stack[i++] = right | mark;
-                    }
-                    stack[i++] = left;
-                } else {
-                    // near = right, far = left, right first
-                    if (push) {
-                        stack[i++] = left;
-                    }
-                    stack[i++] = right | mark;
-                }
-            }
-        }
-        return nearest;
     }
 
     private record Node(int parent, boolean left, int offset, int len, int depth) {
