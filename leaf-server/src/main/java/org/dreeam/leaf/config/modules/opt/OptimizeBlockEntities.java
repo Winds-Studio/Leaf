@@ -1,24 +1,20 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class OptimizeBlockEntities extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class OptimizeBlockEntities implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath();
-    }
-
-    public static boolean enabled = true;
-
-    @Override
-    public void onLoaded() {
-        // Transfer old config
-        Boolean optimiseBlockEntities = globalConfig.getBoolean(basePath() + ".optimise-block-entities");
-        if (optimiseBlockEntities != null && optimiseBlockEntities) {
-            enabled =  true;
+    public static void migrate(org.dreeam.leaf.config.migration.ConfigMigrationContext migrations) {
+        if (migrations.isBefore("3.1")) {
+            migrations.migrate(
+                org.dreeam.leaf.config.migration.ConfigMigrationContext.Scope.GLOBAL, "performance.optimise-block-entities",
+                org.dreeam.leaf.config.migration.ConfigMigrationContext.Scope.GLOBAL, "performance.optimize-block-entities"
+            );
         }
-
-        enabled = globalConfig.getBoolean(basePath() + ".optimize-block-entities", enabled);
     }
+
+    @ConfigInfo(name = "optimize-block-entities")
+    public static boolean enabled = true;
 }

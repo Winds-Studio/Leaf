@@ -1,21 +1,14 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class FasterStructureGenFutureSequencing extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class FasterStructureGenFutureSequencing implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath();
-    }
-
+    @ConfigInfo(name = "faster-structure-gen-future-sequencing", comments = {
+        "May cause the inconsistent order of future compose tasks.",
+        "更快的结构生成任务分段."
+    })
     public static boolean enabled = true;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath() + ".faster-structure-gen-future-sequencing", enabled,
-            globalConfig.pickStringRegionBased(
-                "May cause the inconsistent order of future compose tasks.",
-                "更快的结构生成任务分段."));
-    }
 }

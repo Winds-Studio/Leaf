@@ -37,7 +37,7 @@ public class Globals {
     }
 
     public static void setupGlobals(ServerLevel world) {
-        if (!org.dreeam.leaf.config.modules.misc.SecureSeed.enabled) return;
+        if (!world.leafConfig().secureSeed.enabled) return;
 
         long[] seed = world.getServer().getWorldGenSettings().options().featureSeed();
         System.arraycopy(seed, 0, worldSeed, 0, WORLD_SEED_LONGS);

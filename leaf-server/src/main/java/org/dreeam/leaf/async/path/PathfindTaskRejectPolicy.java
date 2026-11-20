@@ -12,8 +12,8 @@ public enum PathfindTaskRejectPolicy {
         try {
             return PathfindTaskRejectPolicy.valueOf(policy.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            LeafConfig.LOGGER.warn("Invalid pathfind task reject policy: {}, falling back to {}.", policy, FLUSH_ALL.toString());
-            return FLUSH_ALL;
+            LeafConfig.LOGGER.warn("Invalid pathfind task reject policy: {}, falling back to {}.", policy, CALLER_RUNS.toString());
+            return CALLER_RUNS;
         }
     }
 }

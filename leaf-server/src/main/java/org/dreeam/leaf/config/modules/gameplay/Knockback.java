@@ -1,38 +1,38 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class Knockback extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.GAMEPLAY, name = "knockback")
+public class Knockback implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.GAMEPLAY.basePath() + ".knockback";
-    }
-
+    @ConfigInfo(name = "snowball-knockback-players", comments = {
+        "Make snowball can knockback players.",
+        "使雪球可以击退玩家."
+    })
     public static boolean snowballCanKnockback = false;
-    public static boolean eggCanKnockback = false;
-    public static boolean canPlayerKnockbackZombie = true;
-    public static boolean oldBlastProtectionKnockbackBehavior = false;
-    public static boolean useLegacyTrackerTicking = false;
 
-    @Override
-    public void onLoaded() {
-        snowballCanKnockback = globalConfig.getBoolean(basePath() + ".snowball-knockback-players", snowballCanKnockback,
-            globalConfig.pickStringRegionBased(
-                "Make snowball can knockback players.",
-                "使雪球可以击退玩家."
-            ));
-        eggCanKnockback = globalConfig.getBoolean(basePath() + ".egg-knockback-players", eggCanKnockback,
-            globalConfig.pickStringRegionBased(
-                "Make egg can knockback players.",
-                "使鸡蛋可以击退玩家."
-            ));
-        canPlayerKnockbackZombie = globalConfig.getBoolean(basePath() + ".can-player-knockback-zombie", canPlayerKnockbackZombie,
-            globalConfig.pickStringRegionBased(
-                "Make players can knockback zombie.",
-                "使玩家可以击退僵尸."
-            ));
-        oldBlastProtectionKnockbackBehavior = globalConfig.getBoolean(basePath() + ".old-blast-protection-explosion-knockback", oldBlastProtectionKnockbackBehavior);
-        useLegacyTrackerTicking =  globalConfig.getBoolean(basePath() + ".use-legacy-tracker-ticking", useLegacyTrackerTicking);
-    }
+    @ConfigInfo(name = "egg-knockback-players", comments = {
+        "Make egg can knockback players.",
+        "使鸡蛋可以击退玩家."
+    })
+    public static boolean eggCanKnockback = false;
+
+    @ConfigInfo(name = "can-player-knockback-zombie", comments = {
+        "Make players can knockback zombie.",
+        "使玩家可以击退僵尸."
+    })
+    public static boolean canPlayerKnockbackZombie = true;
+
+    @ConfigInfo(name = "flush-location-while-knockback-player", comments = {
+        "Synchronize player immediately when knocked back.",
+        "被击退时立即同步玩家."
+    })
+    public static @Experimental boolean flushKnockback = false;
+
+    @ConfigInfo(name = "old-blast-protection-explosion-knockback")
+    public static boolean oldBlastProtectionKnockbackBehavior = false;
+
+    @ConfigInfo(name = "use-legacy-tracker-ticking")
+    public static boolean useLegacyTrackerTicking =  false;
 }

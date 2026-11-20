@@ -1,25 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class SleepingBlockEntity extends ConfigModule {
+@HotReloadUnsupported
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class SleepingBlockEntity implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath();
-    }
-
+    @ConfigInfo(name = "sleeping-block-entity")
     public static boolean enabled = false;
-    private static boolean sleepingBlockEntityInitialized;
-
-    @Override
-    public void onLoaded() {
-        if (sleepingBlockEntityInitialized) {
-            globalConfig.getConfigSection(basePath());
-            return;
-        }
-        sleepingBlockEntityInitialized = true;
-
-        enabled = globalConfig.getBoolean(basePath() + ".sleeping-block-entity", enabled);
-    }
 }

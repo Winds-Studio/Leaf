@@ -1,20 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class OptimizeEntityActivation extends ConfigModule {
-
-    public String getBasePath() {
-        return ConfigCategory.PERF.basePath() + ".optimize-entity-activation";
-    }
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class OptimizeEntityActivation implements ConfigModule {
 
     @Experimental
+    @ConfigInfo(name = "optimize-entity-activation")
     public static boolean enabled = false;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(getBasePath(), enabled);
-    }
 }

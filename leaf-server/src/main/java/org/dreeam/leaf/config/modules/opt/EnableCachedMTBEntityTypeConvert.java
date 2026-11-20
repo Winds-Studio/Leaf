@@ -1,21 +1,14 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class EnableCachedMTBEntityTypeConvert extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class EnableCachedMTBEntityTypeConvert implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath();
-    }
-
+    @ConfigInfo(name = "enable-cached-minecraft-to-bukkit-entitytype-convert", comments = {
+        "Whether to cache expensive CraftEntityType#minecraftToBukkit call.",
+        "是否缓存Minecraft到Bukkit的实体类型转换."
+    })
     public static boolean enabled = true;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath() + ".enable-cached-minecraft-to-bukkit-entitytype-convert", enabled, globalConfig.pickStringRegionBased("""
-                Whether to cache expensive CraftEntityType#minecraftToBukkit call.""",
-            """
-                是否缓存Minecraft到Bukkit的实体类型转换."""));
-    }
 }

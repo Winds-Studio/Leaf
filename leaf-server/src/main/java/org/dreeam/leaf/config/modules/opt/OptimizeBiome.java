@@ -1,21 +1,14 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
+@ConfigClassInfo(category = ConfigCategory.PERF, name = "cache-biome")
+public class OptimizeBiome implements ConfigModule {
 
-public class OptimizeBiome extends ConfigModule {
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".cache-biome";
-    }
-
+    @ConfigInfo(name = "enabled")
     public static boolean enabled = false;
+    @ConfigInfo(name = "mob-spawning")
     public static boolean mobSpawn = false;
+    @ConfigInfo(name = "advancements")
     public static boolean advancement = false;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
-        mobSpawn = globalConfig.getBoolean(basePath() + ".mob-spawning", false);
-        advancement = globalConfig.getBoolean(basePath() + ".advancements", false);
-    }
 }

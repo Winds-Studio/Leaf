@@ -1,20 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class OptimizeMobSpawning extends ConfigModule {
-
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".optimize-mob-spawning";
-    }
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class OptimizeMobSpawning implements ConfigModule {
 
     @Experimental
+    @ConfigInfo(name = "optimize-mob-spawning")
     public static boolean enabled = false;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath(), enabled);
-    }
 }
