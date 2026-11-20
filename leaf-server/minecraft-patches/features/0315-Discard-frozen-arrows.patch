@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MGG <178586019+GG-MD@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 22:01:25 +0300
+Subject: [PATCH] Discard frozen arrows
+
+Arrows that leave the entity ticking area are frozen together with their fire and motion,
+saved with the chunk and keep flying once the chunk is loaded again, so unpickable arrows
+from skeletons, Infinity bows and creative players pile up and float in place.
+
+Optionally discard unpickable arrows, or unpickable and in-flight arrows, when their chunk
+unloads or while they stay weak loaded. Tridents and pickable arrows stuck in blocks are kept.
+Disabled by default.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index fc55f9ad34fab700eede3fc48f1cb4ffe147517a..a08574cdb34f83df1830c7ab371bbc03fbfb83c5 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -184,6 +184,12 @@ public final class ChunkEntitySlices {
+                 continue;
+             }
+             if (entity.detectDespawnTime(true)) continue; // Leaf - Rewrite entity despawn time
++            // Leaf start - Discard frozen arrows
++            if (entity.leaf$shouldDiscardOnUnload()) {
++                entity.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
++                continue;
++            }
++            // Leaf end - Discard frozen arrows
+             if (entity.shouldBeSaved()) {
+                 PlatformHooks.get().unloadEntity(entity);
+                 if (entity.isVehicle()) {
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+index 0686b1142f3f5fd1655212e95fa05006a624a2d5..d47f19631b0f3f4ff06ae249432b44ec135923b0 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+@@ -266,17 +266,14 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+             final Boolean ticketBlockBefore = this.blockTicketUpdates();
+             try {
+                 // Leaf start - Rewrite entity despawn time
+-                if (org.dreeam.leaf.config.modules.opt.DespawnTime.proactiveWeakLoading) {
+-                    boolean isWeakNow = newVisibility == Visibility.TRACKED;
+-                    boolean wasWeakBefore = oldVisibility == Visibility.TRACKED;
+-
+-                    if (entity.despawnTime >= 0) {
+-                        if (isWeakNow && !wasWeakBefore) {
+-                            this.weakEntityList.add(entity);
+-                            entity.leaf$isWeakLoaded = true;
+-                        } else if (!isWeakNow && wasWeakBefore) {
+-                            entity.leaf$isWeakLoaded = false;
+-                        }
++                boolean isWeakNow = newVisibility == Visibility.TRACKED;
++                boolean wasWeakBefore = oldVisibility == Visibility.TRACKED;
++                if (!isWeakNow && wasWeakBefore) {
++                    entity.leaf$isWeakLoaded = false;
++                } else if (isWeakNow && !wasWeakBefore && leaf$isWeakTrackingEnabled()) { // Leaf - Discard frozen arrows
++                    if ((org.dreeam.leaf.config.modules.opt.DespawnTime.proactiveWeakLoading && entity.despawnTime >= 0) || entity.leaf$shouldDiscardOnUnload()) { // Leaf - Discard frozen arrows
++                        this.weakEntityList.add(entity);
++                        entity.leaf$isWeakLoaded = true;
+                     }
+                 }
+                 // Leaf end - Rewrite entity despawn time
+@@ -520,7 +517,7 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+                 LOGGER.warn("Failed to remove entity " + entity + " from entity slices (" + sectionX + "," + sectionZ + ")");
+             }
+         }
+-        if (org.dreeam.leaf.config.modules.opt.DespawnTime.proactiveWeakLoading) entity.leaf$isWeakLoaded = false; // Leaf - Rewrite entity despawn time
++        entity.leaf$isWeakLoaded = false; // Leaf - Rewrite entity despawn time - Discard frozen arrows
+         ((ChunkSystemEntity)entity).moonrise$setSectionX(Integer.MIN_VALUE);
+         ((ChunkSystemEntity)entity).moonrise$setSectionY(Integer.MIN_VALUE);
+         ((ChunkSystemEntity)entity).moonrise$setSectionZ(Integer.MIN_VALUE);
+@@ -1051,18 +1048,34 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+     }
+ 
+     // Leaf start - Rewrite entity despawn time
++    // Leaf start - Discard frozen arrows
++    public static boolean leaf$isWeakTrackingEnabled() {
++        return org.dreeam.leaf.config.modules.opt.DespawnTime.proactiveWeakLoading
++            || org.dreeam.leaf.config.modules.fixes.DiscardFrozenArrows.mode != org.dreeam.leaf.config.modules.fixes.DiscardFrozenArrows.Mode.OFF;
++    }
++
++    public void leaf$clearWeakEntities() {
++        for (int i = 0, size = this.weakEntityList.size(); i < size; i++) {
++            this.weakEntityList.get(i).leaf$isWeakLoaded = false;
++        }
++        this.weakEntityList.clear();
++    }
++    // Leaf end - Discard frozen arrows
++
+     public void leaf$tickWeakEntities() {
+         if (this.weakEntityList.isEmpty()) return;
+ 
++        final boolean proactiveDespawn = org.dreeam.leaf.config.modules.opt.DespawnTime.proactiveWeakLoading; // Leaf - Discard frozen arrows
+         for (int i = this.weakEntityList.size() - 1; i >= 0; i--) {
+             Entity entity = this.weakEntityList.get(i);
+ 
+-            if (!entity.leaf$isWeakLoaded) {
++            if (!entity.leaf$isWeakLoaded || entity.isRemoved()) { // Leaf - Discard frozen arrows
++                entity.leaf$isWeakLoaded = false; // Leaf - Discard frozen arrows
+                 removeAtIndex(this.weakEntityList, i);
+                 continue;
+             }
+ 
+-            if (entity.isExceedingDespawnTime(true)) {
++            if ((proactiveDespawn && entity.isExceedingDespawnTime(true)) || entity.leaf$shouldDiscardOnUnload()) { // Leaf - Discard frozen arrows
+                 entity.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DESPAWN);
+                 entity.leaf$isWeakLoaded = false;
+                 removeAtIndex(this.weakEntityList, i);
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 7c73f5373d741c5703fff7f5e6eb66d6916b6d8f..0e24f25f0db4cdd31c02b85bacf24d5b51b5314e 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1170,7 +1170,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         this.debugSynchronizers.tick(this.server.debugSubscribers());
+         profiler.pop();
+         this.chunkSource.randomState().garbageCollect();
+-        if (org.dreeam.leaf.config.modules.opt.DespawnTime.proactiveWeakLoading) this.moonrise$getEntityLookup().leaf$tickWeakEntities(); // Leaf - Rewrite entity despawn time
++        // Leaf start - Rewrite entity despawn time - Discard frozen arrows
++        if (ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup.leaf$isWeakTrackingEnabled()) {
++            this.moonrise$getEntityLookup().leaf$tickWeakEntities();
++        } else if (!this.moonrise$getEntityLookup().weakEntityList.isEmpty()) {
++            this.moonrise$getEntityLookup().leaf$clearWeakEntities();
++        }
++        // Leaf end - Rewrite entity despawn time - Discard frozen arrows
+         if (org.dreeam.leaf.config.modules.async.MultithreadedTracker.enabled) { this.leaf$asyncTracker.onEntitiesTickEnd(); } // Leaf - Multithreaded tracker
+     }
+ 
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index baa66320f2b8f773add39133f835b476e9ccb8f8..50c299c38d9a5df376d26451fa43e3e99c8d511d 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -5684,6 +5684,12 @@ public abstract class Entity
+             && !this.isExceedingDespawnTime(true); // Paper - rewrite chunk system // Leaf - Rewrite entity despawn time
+     }
+ 
++    // Leaf start - Discard frozen arrows
++    public boolean leaf$shouldDiscardOnUnload() {
++        return false;
++    }
++    // Leaf end - Discard frozen arrows
++
+     @Override
+     public boolean isAlwaysTicking() {
+         return false;
+diff --git a/net/minecraft/world/entity/projectile/arrow/AbstractArrow.java b/net/minecraft/world/entity/projectile/arrow/AbstractArrow.java
+index 3b2427084996fc1dda0780911acbafd3ba492e75..41ed7874757e61838acafc0fa5b53034ac696e59 100644
+--- a/net/minecraft/world/entity/projectile/arrow/AbstractArrow.java
++++ b/net/minecraft/world/entity/projectile/arrow/AbstractArrow.java
+@@ -801,6 +801,32 @@ public abstract class AbstractArrow extends Projectile {
+         return super.isPickable() && !this.isInGround();
+     }
+ 
++    // Leaf start - Discard frozen arrows
++    @Override
++    public boolean leaf$shouldDiscardOnUnload() {
++        org.dreeam.leaf.config.modules.fixes.DiscardFrozenArrows.Mode mode = org.dreeam.leaf.config.modules.fixes.DiscardFrozenArrows.mode;
++        if (mode == org.dreeam.leaf.config.modules.fixes.DiscardFrozenArrows.Mode.OFF || this instanceof ThrownTrident) {
++            return false;
++        }
++        if (this.pickup != AbstractArrow.Pickup.ALLOWED) {
++            return true;
++        }
++        return mode == org.dreeam.leaf.config.modules.fixes.DiscardFrozenArrows.Mode.UNPICKABLE_AND_IN_FLIGHT && !this.isInGround() && !this.isNoPhysics();
++    }
++
++    @Override
++    public boolean shouldBeSaved() {
++        if (!super.shouldBeSaved()) {
++            return false;
++        }
++        if (!this.leaf$shouldDiscardOnUnload()) {
++            return true;
++        }
++        final net.minecraft.server.level.FullChunkStatus status = this.moonrise$getChunkStatus();
++        return status != null && status.isOrAfter(net.minecraft.server.level.FullChunkStatus.ENTITY_TICKING);
++    }
++    // Leaf end - Discard frozen arrows
++
+     @Override
+     public @Nullable SlotAccess getSlot(final int slot) {
+         return slot == 0 ? SlotAccess.of(this::getPickupItemStackOrigin, this::setPickupItemStack) : super.getSlot(slot);
