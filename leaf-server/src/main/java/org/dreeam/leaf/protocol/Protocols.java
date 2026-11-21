@@ -88,7 +88,12 @@ public final class Protocols {
     private static @Nullable LeafCustomPayload decode(Protocol protocol, DiscardedPayload payload) {
         for (var packet : protocol.c2s()) {
             if (packet.type().id().equals(payload.type().id())) {
-                return packet.codec().decode(new FriendlyByteBuf(Unpooled.wrappedBuffer(payload.data())));
+                try {
+                    return packet.codec().decode(new FriendlyByteBuf(Unpooled.wrappedBuffer(payload.data())));
+                } catch (IllegalArgumentException | IndexOutOfBoundsException | io.netty.handler.codec.DecoderException ignored) {
+                    // An invalid client payload must not fail the server's packet handler.
+                    return null;
+                }
             }
         }
         return null;
