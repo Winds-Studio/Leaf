@@ -63,7 +63,7 @@
 ## 待处理问题与边界
 
 - **P2-3（已决定：与 Paper 保持一致）** `ConfigFile.save()` 不是原子写：写入中途失败会留下半截 YAML，下次启动在第 4 步被判为 malformed 并终止启动。Paper 同样直接写目标文件，不改为临时文件加 `ATOMIC_MOVE`。
-- **P2-12**（见 00）global 记录 global/defaults 的迁移进度。当前 defaults 权限拒绝而 global 保存成功时，磁盘版本仍会前进。已实施（阶段 4）：保留第 13 步 defaults → global；defaults 未保存时不把 global 的磁盘版本提升，内存仍使用当前配置。override 按文件自记进度，在世界实际加载时单独处理，不影响这一步，不增加 `Main` hook 或启动扫描。
+- **P0-4**（见 00；原 P2-12 的“global 不升版”已取代）defaults 与 global 各自记录自己的迁移进度；第 13 步仍按 defaults → global 保存，但互不牵制：defaults 被拒绝时它在磁盘上保持旧版本，下次启动重新迁移，global 照常写入自己的版本；内存使用当前配置。override 按文件自记进度，在世界实际加载时单独处理，不影响这一步，不增加 `Main` hook 或启动扫描。
 - 第 14 步待改为依据保存结果处理 Gale global/defaults 归档（见 05），不再等待所有世界加载。
 - **P2-10（已决定）purge 失败改为警告。** `purgeOutdated()` 只把 `pufferfish.yml`、`leaf.yml`、`leaf_config/` 移入备份目录，不读取、不转换其内容；新配置也不依赖它们。移动失败时文件留在原处，下次启动再尝试移动，结果相同。因此任一移动的 `IOException`（含权限拒绝）都记 WARN（文件路径与原因），继续处理其余文件和启动；“已移入备份目录”的提示只在确有文件移动成功时输出。
 
@@ -73,7 +73,7 @@
 - 前四类：异常到达调用方。用缺失 global + malformed defaults 验证失败后 global 路径仍不存在，并逐字节比对原有文件未改写（P1-9 修复后）。
 - 非 `AccessDeniedException`：异常到达调用方，已完成的前序文件不回滚，报告列出全部目标状态。
 - `AccessDeniedException`：启动继续，内存配置完整，warning 列出未持久化文件，对应 Gale 源文件不归档。
-- 成功路径：`loadAfterBootstrap()` 末先保存 defaults，后保存 global；注释完整，global 的 `config-version` 为当前版本。defaults 权限拒绝时 global 不记录新进度；之后某个 override 权限拒绝不改变已保存的 global 版本。
+- 成功路径：`loadAfterBootstrap()` 末先保存 defaults，后保存 global；注释完整，global 的 `config-version` 为当前版本。defaults 权限拒绝时 defaults 文件保持旧版本、global 照常记录新版本；之后某个 override 权限拒绝不改变已保存的 global/defaults 版本。
 
 ## 可能的失败模式
 

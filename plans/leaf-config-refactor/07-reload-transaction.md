@@ -62,7 +62,7 @@ Paper `/paper reload` 在命令处理中直接调用 `PaperConfigurations.reload
 ## P0-2 override 迁移（已决定，阶段 5 已实施）
 
 - 候选阶段：先按 raw global 的版本迁移 global/defaults，再对 `server.getAllLevels()` 中已有 override 的世界按文件自身版本迁移，均在绑定前处理。版本按 00“版本号规则”处理（缺失视为当前版本、无法解析则 reload 失败）；候选失败不写盘。
-- 提交阶段：需升级的 override → defaults → global；每份 override 的内容与版本一起写。单个 override 权限拒绝不阻止其余目标保存，也不影响 global/defaults 的进度。
+- 提交阶段：需升级的 override → defaults → global；每份 override 的内容与版本一起写。单个 override 权限拒绝不阻止其余目标保存，也不影响 global/defaults 各自的进度。
 - reload 不重放 Gale 转换。若新 override 因权限拒绝只在内存中生效，reload 后使用 defaults，下次加载该世界时从保留的源文件重试。
 
 ## P1-2 首个回调失败即停止，最后保存（已决定，阶段 5 已实施）

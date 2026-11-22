@@ -178,13 +178,14 @@ public class LeafConfig {
 
             ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
             ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
-            VersionCheck globalVersion = globalVersion(globalConfigFile);
+            VersionCheck globalVersion = fileVersion(globalConfigFile);
+            VersionCheck defaultsVersion = fileVersion(worldDefaultsFile);
             // Migrations that were not saved, for example when access was denied, are run again. Gale is not
             // converted again, a Gale file whose values could not be saved is still there for the next start.
-            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored());
+            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored(), defaultsVersion.stored());
 
             loadedGlobalConfig = new LeafGlobalConfig(globalConfigFile, globalVersion);
-            loadedWorldDefaults = reloadWorldDefaults(worldDefaultsFile, worldDefaultsConfig);
+            loadedWorldDefaults = reloadWorldDefaults(worldDefaultsFile, defaultsVersion, worldDefaultsConfig);
 
             for (ConfigModule module : GLOBAL_MODULES) {
                 ConfigBinder.collectGlobalReload(module, loadedGlobalConfig, candidateValues);
@@ -214,30 +215,15 @@ public class LeafConfig {
             throw new ReloadException(ReloadStage.CALLBACK, exception, null);
         }
 
-        ConfigFileIO.SaveReport report = new ConfigFileIO.SaveReport(List.of());
-        ConfigFileIO.ConfigSaveException failure = null;
-        if (!overrideFilesToSave.isEmpty()) {
-            try {
-                report = ConfigFileIO.save(overrideFilesToSave.toArray(new ConfigFile[0]));
-            } catch (ConfigFileIO.ConfigSaveException exception) {
-                failure = exception;
-                report = exception.report();
-            }
-        }
+        // Every file records its own version, so each is saved independently of the others. All are attempted.
+        List<ConfigFile> files = new ArrayList<>(overrideFilesToSave);
+        files.add(worldDefaultsConfig.configFile);
+        files.add(globalConfig.configFile);
         try {
-            report = ConfigFileIO.SaveReport.merge(report, saveGlobalFiles(worldDefaultsConfig, globalConfig));
+            return ConfigFileIO.save(files.toArray(new ConfigFile[0]));
         } catch (ConfigFileIO.ConfigSaveException exception) {
-            if (failure == null) {
-                failure = exception;
-            } else {
-                failure.addSuppressed(exception);
-            }
-            report = ConfigFileIO.SaveReport.merge(report, exception.report());
+            throw new ReloadException(ReloadStage.SAVE, (Exception) exception.getCause(), exception.report());
         }
-        if (failure != null) {
-            throw new ReloadException(ReloadStage.SAVE, (Exception) failure.getCause(), report);
-        }
-        return report;
     }
 
     /**
@@ -288,13 +274,14 @@ public class LeafConfig {
 
             ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
             ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
-            VersionCheck globalVersion = globalVersion(globalConfigFile);
+            VersionCheck globalVersion = fileVersion(globalConfigFile);
+            VersionCheck defaultsVersion = fileVersion(worldDefaultsFile);
 
             discoverGlobalModules();
             discoverWorldModules();
 
             // Migrate the same raw config instances that will be bound and saved below.
-            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored());
+            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored(), defaultsVersion.stored());
             GaleConfigMigration.migrate(
                 CONFIG_DIRECTORY.toPath(),
                 globalConfigFile,
@@ -308,7 +295,7 @@ public class LeafConfig {
             }
             runGlobalModuleCallbacks(false);
 
-            worldDefaultsConfig = loadWorldDefaults(worldDefaultsFile);
+            worldDefaultsConfig = loadWorldDefaults(worldDefaultsFile, defaultsVersion);
             captureWorldInitialReloadValues(worldDefaultsConfig);
 
             LOGGER.info("Successfully loaded config in {}ms.", (System.nanoTime() - begin) / 1_000_000);
@@ -430,8 +417,9 @@ public class LeafConfig {
         }
     }
 
-    private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile) throws ReflectiveOperationException {
+    private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile, VersionCheck version) throws ReflectiveOperationException {
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
+        configFile.set(VERSION_PATH, version.valueToWrite());
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             ConfigBinder.bindWorldDefaults(module, module, config);
@@ -441,9 +429,11 @@ public class LeafConfig {
 
     private static LeafWorldConfig reloadWorldDefaults(
         ConfigFile configFile,
+        VersionCheck version,
         LeafWorldConfig activeDefaults
     ) throws ReflectiveOperationException {
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
+        configFile.set(VERSION_PATH, version.valueToWrite());
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             WorldConfigModule activeModule = (WorldConfigModule) moduleField.get(activeDefaults);
@@ -512,7 +502,7 @@ public class LeafConfig {
             for (ConfigModule module : GLOBAL_MODULES) {
                 ConfigBinder.captureGlobalInitialValues(module);
             }
-            ConfigFileIO.SaveReport report = saveGlobalFiles(worldDefaultsConfig, globalConfig);
+            ConfigFileIO.SaveReport report = ConfigFileIO.save(worldDefaultsConfig.configFile, globalConfig.configFile);
             GaleConfigMigration.archiveGlobalSources(report);
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to finish loading Leaf configuration", exception);
@@ -520,57 +510,13 @@ public class LeafConfig {
     }
 
     /**
-     * The version of the global configuration file, which records the migration progress of the global
-     * configuration and the world defaults. A file that does not exist yet starts at the current version.
+     * The version of a global or world defaults file. Each file records its own migration progress. A file
+     * that does not exist yet starts at the current version.
      */
-    private static VersionCheck globalVersion(ConfigFile globalConfigFile) {
-        return Files.isRegularFile(globalConfigFile.getFile().toPath())
-            ? checkVersion(globalConfigFile)
+    private static VersionCheck fileVersion(ConfigFile file) {
+        return Files.isRegularFile(file.getFile().toPath())
+            ? checkVersion(file)
             : VersionCheck.current();
-    }
-
-    /**
-     * Saves the world defaults, then the global configuration. The global file records the version of both,
-     * so when the defaults could not be saved the global file keeps the version it was loaded with: the
-     * migrations of the defaults run again at the next start. Both files are always attempted.
-     */
-    private static ConfigFileIO.SaveReport saveGlobalFiles(
-        LeafWorldConfig defaults,
-        LeafGlobalConfig global
-    ) throws ConfigFileIO.ConfigSaveException {
-        ConfigFileIO.ConfigSaveException failure = null;
-        ConfigFileIO.SaveReport defaultsReport;
-        try {
-            defaultsReport = ConfigFileIO.save(defaults.configFile);
-        } catch (ConfigFileIO.ConfigSaveException exception) {
-            failure = exception;
-            defaultsReport = exception.report();
-        }
-
-        boolean defaultsSaved = failure == null && !defaultsReport.hasAccessDenied();
-        Object versionToWrite = global.configFile.get(VERSION_PATH);
-        if (!defaultsSaved) {
-            global.configFile.set(VERSION_PATH, global.loadedVersion());
-        }
-        ConfigFileIO.SaveReport globalReport;
-        try {
-            globalReport = ConfigFileIO.save(global.configFile);
-        } catch (ConfigFileIO.ConfigSaveException exception) {
-            if (failure == null) {
-                failure = exception;
-            } else {
-                failure.addSuppressed(exception);
-            }
-            globalReport = exception.report();
-        } finally {
-            global.configFile.set(VERSION_PATH, versionToWrite);
-        }
-
-        ConfigFileIO.SaveReport report = ConfigFileIO.SaveReport.merge(defaultsReport, globalReport);
-        if (failure != null) {
-            throw new ConfigFileIO.ConfigSaveException(report, (Exception) failure.getCause());
-        }
-        return report;
     }
 
     private static void runAfterBootstrapCallbacks(boolean reload) {

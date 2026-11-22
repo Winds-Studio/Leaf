@@ -23,7 +23,7 @@ Gale mapping 逐项直接写入目标，中途异常会留下部分值；Leaf mi
 - `ConfigVersion`：按 `.` 分段的非负整数，逐段数值比较，缺段补 0（`3.10 > 3.9`，`3 == 3.0`）。
 - 当前实现：缺失或无法解析视为 `0`（无法解析时 warning），会执行所有迁移。按 00“版本号规则”修改为：缺失视为当前版本并 WARN、不迁移；无法解析则拒绝加载；更高则不迁移、不改写版本。
 - 判断入口：
-  - global/defaults：`ConfigMigrationContext(storedVersion)` 使用 raw global 中的 `config-version`；
+  - global/defaults（P0-4）：global 与 defaults 各用自己文件的 `config-version` 建一个 `ConfigMigrationContext`；一条迁移由其来源文件的版本决定，先执行来源在 global 的操作，再执行来源在 defaults 的；
   - world override：`ConfigMigrationContext(null)` 回退到 `LeafConfig.previousConfigVersion`（启动时由 `LeafGlobalConfig` 记录的旧版本）。
 
 ### 8.2 Leaf path migration（已实现操作收集与应用；绑定、写回缺口见 P1-8）
@@ -117,7 +117,7 @@ Gale mapping 逐项直接写入目标，中途异常会留下部分值；Leaf mi
 
 ### 其他迁移边界
 
-- **跨文件迁移与权限拒绝（P2-12，见 00）：** global ↔ defaults 迁移时，若目标文件权限拒绝而源文件保存成功，旧 path 已从源文件删除，值只存在于内存；下次启动版本已是当前值，值永久丢失。现有声明只有 GLOBAL → GLOBAL，暂不触发。修改（引入跨文件迁移时必须完成）：global/defaults 任一目标为 `ACCESS_DENIED` 时，global 不写入新版本号；或在目标保存成功之前不从源文件删除旧 path。逐世界 override 不参与这次保存。
+- **跨文件迁移与权限拒绝（已决定，按 Paper，不加保护）：** global ↔ defaults 迁移时，若目标文件权限拒绝而来源文件保存成功，旧 path 已从来源文件删除，值只存在于内存，下次启动不会恢复。Paper 对每个文件独立 `trySaveFileNode`（权限拒绝只警告、沿用内存配置），也没有跨文件保护，其迁移限于单个文件；Leaf 接受同样的边界。各文件独立记录版本（P0-4），不做“来源文件暂不升版”“目标保存成功前不删除旧 path”之类的补偿。现有声明只有 GLOBAL → GLOBAL，暂不触发；新增跨文件声明时在发行说明或注释中提示这一点即可。
 
 ## 测试
 

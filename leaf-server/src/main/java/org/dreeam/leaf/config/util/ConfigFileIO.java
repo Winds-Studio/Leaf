@@ -111,12 +111,6 @@ public final class ConfigFileIO {
 
     public record SaveReport(List<SaveResult> results) {
 
-        public static SaveReport merge(SaveReport first, SaveReport second) {
-            List<SaveResult> results = new ArrayList<>(first.results);
-            results.addAll(second.results);
-            return new SaveReport(List.copyOf(results));
-        }
-
         public boolean hasAccessDenied() {
             return this.results.stream().anyMatch(result -> result.status == SaveStatus.ACCESS_DENIED);
         }
@@ -132,7 +126,7 @@ public final class ConfigFileIO {
 
         private final SaveReport report;
 
-        public ConfigSaveException(SaveReport report, Exception cause) {
+        private ConfigSaveException(SaveReport report, Exception cause) {
             super("Failed to save Leaf config files: " + report.describe(), cause);
             this.report = report;
         }

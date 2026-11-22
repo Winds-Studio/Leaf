@@ -27,14 +27,30 @@ public final class LeafConfigMigration {
     private LeafConfigMigration() {
     }
 
+    /**
+     * Applies the migrations the global configuration and the world defaults still need. Each file has its own
+     * version, and a migration is decided by the version of the file it moves an option from. Operations
+     * that start in the global file run first, then the ones that start in the world defaults.
+     */
     public static void migrate(
         ConfigFile globalConfig,
         ConfigFile worldDefaultsConfig,
         Iterable<Class<?>> moduleClasses,
-        ConfigVersion storedVersion
+        ConfigVersion globalVersion,
+        ConfigVersion worldDefaultsVersion
     ) throws Exception {
-        ConfigMigrationContext context = collect(storedVersion, moduleClasses);
-        apply(context.operations(), globalConfig, worldDefaultsConfig);
+        List<ConfigMigrationContext.Operation> operations = new ArrayList<>();
+        for (ConfigMigrationContext.Operation operation : collect(globalVersion, moduleClasses).operations()) {
+            if (operation.source() == ConfigMigrationContext.Scope.GLOBAL) {
+                operations.add(operation);
+            }
+        }
+        for (ConfigMigrationContext.Operation operation : collect(worldDefaultsVersion, moduleClasses).operations()) {
+            if (operation.source() == ConfigMigrationContext.Scope.WORLD_DEFAULTS) {
+                operations.add(operation);
+            }
+        }
+        apply(operations, globalConfig, worldDefaultsConfig);
     }
 
     /**

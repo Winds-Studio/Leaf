@@ -32,7 +32,7 @@ world defaults 不能直接作为任意 level 的 active config；world-defaults
 
 ## P0-1 在世界加载时按文件版本迁移（已决定，阶段 4 已实施）
 
-- global/defaults 和 override 共用代码里的 `CURRENT_CONFIG_VERSION`，但 `leaf-global.yml` 只记录 global/defaults 的进度。每份 `leaf-world.yml` 记录自己的 `config-version`；不能用 `previousConfigVersion` 判断某个世界是否已迁移。
+- global/defaults 和 override 共用代码里的 `CURRENT_CONFIG_VERSION`，`leaf-global.yml` 记录 global 的进度，`leaf-world-defaults.yml` 记录 defaults 的进度（P0-4）。每份 `leaf-world.yml` 记录自己的 `config-version`；不能用 `previousConfigVersion` 判断某个世界是否已迁移。
   - 与 Paper 一样分两步：先由现有世界目录迁移把旧 `gale-world.yml` 搬到目标维度目录，再在 `ServerLevel` 构造时由 `initWorldConfig()` 处理配置内容。启动维度和插件之后通过 `createWorld` 加载的世界走同一路径；不遍历未加载的世界，也不移动 global/defaults 的保存时机。
   - 有 `leaf-world.yml`：raw load → 读取该文件版本 → 在绑定前按版本执行 `WORLD_DEFAULTS → WORLD_DEFAULTS` 操作 → 绑定成功后将 override 和当前版本写回同一文件。旧版本即使没有命中 rename，也要更新版本；缺版本时也写回一次补上版本（P1-11）；已有当前版本则不为迁移重写文件。保存权限拒绝时内存继续使用迁移值，下次加载按磁盘版本重试，不影响 global 或其他世界。
   - 无 `leaf-world.yml`：只有实际产生显式 override 时才建文件，首次保存就带当前 `config-version`；Gale 转换也遵守此规则（见 08）。版本是元数据，不算 override。已有文件的版本按 00“版本号规则”：缺失则 WARN、视为当前版本、不迁移，并写回版本；无法解析则本次世界加载失败，报告文件路径；更高则 WARN、不迁移、不改写。不以 global 版本兜底。

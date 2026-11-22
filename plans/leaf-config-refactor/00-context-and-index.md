@@ -39,7 +39,7 @@
 
 ## P0-1 版本号与逐世界迁移（已决定，已实施）
 
-- 只维护一套 `CURRENT_CONFIG_VERSION`。`leaf-global.yml` 的 `config-version` 记录 global/defaults 的进度；每份已有 `leaf-world.yml` 的 `config-version` 只记录该 override 的进度。
+- 只维护一套 `CURRENT_CONFIG_VERSION`，但**每个文件各自记录**自己的进度：`leaf-global.yml`、`leaf-world-defaults.yml`、每份已有 `leaf-world.yml` 都有自己的 `config-version`（P0-4，取代原“global 的版本同时记录 defaults 进度”）。
 - 版本按数字逐段比较（`3.10 > 3.9`）。override 不回退到 global 的版本。
 - **版本号规则（P1-11、P2-8，与 Paper 一致）**，global 与已有 override 相同：
   - 文件存在但缺少 `config-version`：WARN（含文件路径），视为当前版本，不执行迁移，原有内容按当前格式的合法配置读取；视为需要写回，保存时补写当前版本，此后不再警告。override 原本只在迁移时保存，缺版本是其例外：只补写版本，保留原有显式键，不混入 defaults（P1-8 的保存边界同样适用）。新建文件（文件原本不存在）直接写当前版本，不警告。
@@ -49,6 +49,14 @@
   - 依据：已发布的 Leaf（如 1.21.11 分支）global 已写入 `config-version: 3.0`，缺版本不再代表需要迁移的旧配置。
 - 仅有实际的非版本 override 值时才新建文件，不为记录版本而建文件。
 - global/defaults 仍在 ③ 保存；启动时不扫描世界。④ 在世界加载、绑定配置前按该文件的版本迁移，绑定成功后将内容和版本一起保存。插件跨重启晚加载也走同一路径。实施细节见 [06 世界配置生命周期](06-world-config-lifecycle.md) 和 [08 迁移阶段](08-migration-stages.md)。
+
+## P0-4 `leaf-world-defaults.yml` 有自己的 `config-version`（已决定，已实施）
+
+- 与 global、override 共用 `CURRENT_CONFIG_VERSION` 和同一套版本号规则（缺失 WARN 并视为当前、无法解析拒绝加载、更高只警告且保留版本）；文件不存在时按当前版本新建。
+- 动机：只靠 global 的版本记录 defaults 进度，在“只删除/重置 global”“只还原其中一个文件”“defaults 来自更新版本”等情况下进度错位；每个文件各自记录与 Paper 的 `_version` 一致，也使 defaults 能有降级警告。
+- 迁移判定：一条迁移由**其来源文件**的版本决定。来源在 global 的操作用 global 的版本判断，来源在 defaults 的用 defaults 的版本判断；执行顺序为先所有来源在 global 的操作，再所有来源在 defaults 的操作（现有声明均为 GLOBAL→GLOBAL，不受影响；以后加跨文件声明时注意这一点）。
+- 保存：defaults 与 global 互不牵制，各自写自己的版本；某个文件保存被拒绝时磁盘上仍是旧版本，下次启动重新迁移。删除原“defaults 未保存则 global 不升版”的处理（P2-12 的该部分）以及 `LeafGlobalConfig.loadedVersion`。reload 一次保存 override → defaults → global，全部尝试。
+- 跨文件迁移与权限拒绝（已决定，按 Paper）：不加任何保护。Paper 的 `trySaveFileNode` 对每个文件独立保存，只对 `AccessDeniedException` 记 WARN 并沿用内存配置，各文件按自己的 `_version` 重试，也没有跨文件事务；其迁移都在单个文件内。Leaf 同样：以后若有跨文件声明，来源文件保存成功而目标文件被拒绝时，旧路径已从来源文件删除、值只在内存，下次启动不会恢复，属已接受的 Paper 风格边界（权限问题由管理员按保存 WARN 修复）。目前没有此类声明。
 
 ## P2-2 配置降级警告（已决定，已实施）
 
@@ -65,7 +73,7 @@
 
 - **P0-2 reload 按文件版本重做未落盘的 Leaf 迁移。**
   - Paper 的设计：启动和 `reloadConfigs()` 走同一条路径——读取文件 → 按文件自身 `_version` 执行版本迁移 → `trySaveFileNode()`（权限拒绝只警告）。global、world defaults 和每个世界文件各有自己的 `_version`。保存失败时磁盘版本仍是旧值，reload 会自动重新迁移。
-  - Paper 考虑到的部分（需处理）：版本迁移未落盘时，reload 不应丢失。reload 在内存中按候选 global 的版本迁移 global/defaults，仅遍历已加载世界，按每份候选 override 自身版本迁移。全部候选成功后在提交阶段保存；单个 override 权限拒绝时其磁盘进度不变，不阻止 global 记录 global/defaults 的进度。
+  - Paper 考虑到的部分（需处理）：版本迁移未落盘时，reload 不应丢失。reload 在内存中按 global、defaults 各自的版本迁移，仅遍历已加载世界，按每份候选 override 自身版本迁移。全部候选成功后在提交阶段保存；单个 override 权限拒绝时其磁盘进度不变，不阻止 defaults 与 global 保存各自的进度。
   - 已接受的边界：reload 不重放 Gale 转换。若权限拒绝导致新 override 只存在于内存，reload 后该世界使用 defaults；下次加载世界时从保留的 Gale 源重试。
   - 见 06、07。
 - **P0-3 Gale 只补缺失的 Leaf 值。** global/defaults 在注入默认值前检查 raw Leaf 目标路径，已有值就保留；同值不警告，异值记录冲突。世界已有 Leaf override 时仍整份优先，不按键混入 Gale。见 08。
@@ -98,7 +106,7 @@
 - **P1-11 缺版本按 Paper 处理（含原 P1-14）。** 文件存在但缺少 `config-version` 时 WARN、视为当前版本、不迁移，并写回一次补上版本，避免重复警告；override 也写回。无法解析则拒绝加载。适用于 global 与 override，见上方“版本号规则”。override 由用户定义，Leaf 默认不生成（仅 Gale 转换会建立，且首次保存即带版本）；用户已有、缺少版本的 override（含本分支此前生成的无版本文件）补写当前版本并更新到文件，写回只含原有显式键与版本（P1-8 边界）。
 - **P2-8 降级时保留更高的版本号。** 文件版本高于当前支持版本时只 WARN、不迁移、不改写版本。见上方“版本号规则”。
 - **P1-12 `createDirectory()` 不再删除同名文件。** 去掉对 `FileAlreadyExistsException` 的 catch 与 `dir.delete()`，异常直接抛出：启动失败、reload 失败。与 Paper `createDirectoriesSymlinkAware()` 一致。
-- **P2-12 保留为尚不存在的迁移所做的设计。** 04 defaults 保存被拒时 global 版本不前进、08 跨文件迁移的权限拒绝处理、06 `WORLD_DEFAULTS → GLOBAL` 后 override 旧键 warning，均按原计划保留。
+- **P2-12（已修订）。** 原“04 defaults 保存被拒时 global 版本不前进、08 跨文件迁移的权限拒绝处理”已被 P0-4 取代，不再保留：各文件独立记录版本，跨文件迁移遇权限拒绝按 Paper 处理（见 P0-4，不加保护）。06 `WORLD_DEFAULTS → GLOBAL` 后 override 旧键 warning 保留（不是保存保护，只是提示）。
 - **P2-14 删除无用的回滚与重复类型。** 删除 `LeafConfigMigration.apply()` 的快照恢复（失败时调用方整体丢弃配置）；删除 Gale `applyMappings()` 的原值恢复，按 08 先收集校验再写入；只保留 `PendingValue`，删除 `ReloadValue` 与 `preparePendingValues()`，构造时复制一次。现有设计下字段不会只应用一半新值；跨文件保存可能部分成功，属已接受的 Paper 风格。见 03、07、08。
 - **P2-15 清理无用代码。** 删除 `ConfigBinder.GLOBAL_DEFAULT_VALUES`、`registerGlobalDefaults()`、`globalDefaultValue()`，启动期 `bindGlobal()` 与 world 一样以 `field.get(null)` 作为默认值：global 只在启动绑定一次，此前的 Leaf/Gale 迁移只改 raw `ConfigFile`、不读写字段，字段仍是代码默认值。删除 `discoverWorldModules()` 的 `isEmpty()` 早退。`loadAfterBootstrap()` 的 catch 不再记录日志，只包装抛出，由 `Main` 记录。`LeafConfigAccessor` 的辅助方法与 `isConfigVersionAtLeast()` 保留。见 03。
 - **P2-15 随 P0-1 删除旧版本辅助代码。** 删除 `previousConfigVersion`、`loadPreviousConfigVersion()`、单参数 `isConfigVersionBefore(String)`、`ConfigMigrationContext(null)` 的回退分支，以及 `LeafGlobalConfig` 的 `loadPreviousVersion` 参数。`isConfigVersionAtLeast()` 保留。见 06、08。
@@ -174,6 +182,7 @@
   - `config_paths.py` 对比 ver/26.2：`only in ver/26.2` 0、`scope changed` 0、`type changed` 0；`only in working tree` 39 项为 Gale 映射引入的选项；`default changed` 4 项为 00 实施前基线已核对的等价项。`git diff --check` 在主仓库与三个嵌套仓库均无问题。
   - 依赖权限的测试（只读文件/目录）在当前环境执行；以 root 运行或不执行权限检查的环境会提前返回。
   - 待所有者完成：把 Minecraft 与 paper-server 的改动并入 Leaf config changes 补丁、为 paper-api 新建补丁（收录 `getGaleConfig()` 删除）、整体 review；完整启动服务器覆盖：全新安装、从 ver/26.2 配置升级、带 Gale 配置升级、`/leaf reload`、插件晚加载世界。
+- **P0-4 已实施（defaults 自己的 `config-version`）：** `LeafConfig.fileVersion(file)`（global 与 defaults 共用，文件不存在视为当前版本）；`loadWorldDefaults`/`reloadWorldDefaults` 在绑定前把版本写入 defaults 文件（保存时只含已登记键和版本）；`LeafConfigMigration.migrate(global, defaults, modules, globalVersion, defaultsVersion)` 按来源文件版本判定；删除 `saveGlobalFiles()`（启动保存直接 `save(defaults, global)`，reload 一次 `save(overrides…, defaults, global)`）、`LeafGlobalConfig.loadedVersion`、`SaveReport.merge`。单元测试：`LeafConfigMigrationTest.everyFileIsMigratedByItsOwnVersion`、`LeafConfigInitializationTest` 的 defaults 版本用例（缺失/无法解析/更高/随 global 缺失、defaults 无法保存时各自保持版本）。e2e 新增 28–31；既有夹具里无版本的 defaults 补上版本。**注意：** 已有的无版本 defaults（旧 Leaf 分支生成的）升级后首次启动会有一次 WARN 并补写版本，属预期。
 
 ## 子计划索引
 

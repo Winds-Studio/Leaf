@@ -1,20 +1,15 @@
 package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
-import org.jspecify.annotations.Nullable;
 
 import java.util.Objects;
 
 /** The server-wide Leaf configuration. */
 public final class LeafGlobalConfig extends LeafConfigAccessor {
 
-    // The version value the file had when it was loaded, null if it had none.
-    private final @Nullable Object loadedVersion;
-
     LeafGlobalConfig(ConfigFile configFile, LeafConfig.VersionCheck version) {
         super(configFile);
 
-        this.loadedVersion = configFile.get(LeafConfig.VERSION_PATH);
         configFile.set(LeafConfig.VERSION_PATH, version.valueToWrite());
 
         configFile.addComments(LeafConfig.VERSION_PATH, Objects.requireNonNull(pickStringRegionBased("""
@@ -33,11 +28,6 @@ public final class LeafGlobalConfig extends LeafConfigAccessor {
                 QQ社区群: 619278377""")));
 
         structureConfig();
-    }
-
-    /** The {@code config-version} the file had when it was loaded, {@code null} if it had none. */
-    @Nullable Object loadedVersion() {
-        return this.loadedVersion;
     }
 
     private void structureConfig() {

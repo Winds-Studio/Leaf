@@ -42,7 +42,7 @@ git status --short
 
 - 保留：注解式配置；统一的 `CURRENT_CONFIG_VERSION`（3.1）；Gale 值进入 Leaf 文件；Leaf world override 优先于 Gale；Gale 文件归档；删除 Gale API/runtime；世界独立的 defaults merge；Paper 风格保存（权限拒绝时使用内存配置，无回滚）。
 - 已有代码：binder 缺键回退、类级 async 模块不热重载、reload 不回滚、override rename 入口、统一 backup 目录与权限拒绝保留 Gale 源的分支。异步 reload 将改为同步（见 07）。不代表动态键、迁移值写回或 Gale 重试已经通过验收（见 02、04、07、08）。
-- 已实施（阶段 4、5）：global 记录 global/defaults 的进度，每份已有 override 单独记录进度；实际加载世界时迁移，不做启动扫描。Gale 按对应阶段归档，不依赖一次性遍历。其余见 00 的 P0/P1/P2 列表。
+- 已实施（阶段 4、5）：global、defaults、每份已有 override 各自记录自己的进度（P0-4）；实际加载世界时迁移，不做启动扫描。Gale 按对应阶段归档，不依赖一次性遍历。其余见 00 的 P0/P1/P2 列表。
 - 不扩展：不修改 patch 文件、不生成 patch、不改变无关 Gale 功能、不自动补全 world override、不把 reload 移到后台线程。
 
 ## 可能的失败模式
