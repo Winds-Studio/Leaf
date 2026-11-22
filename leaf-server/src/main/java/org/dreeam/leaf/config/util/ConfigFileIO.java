@@ -3,6 +3,7 @@ package org.dreeam.leaf.config.util;
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.config.LeafConfig;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -25,7 +26,6 @@ import java.util.Objects;
  */
 public final class ConfigFileIO {
 
-    private static final Logger LOGGER = LogManager.getLogger(ConfigFileIO.class.getSimpleName());
     private static final int MAX_CODE_POINTS = 100 * 1024 * 1024;
 
     public static ConfigFile load(File file) throws Exception {
@@ -73,7 +73,7 @@ public final class ConfigFileIO {
             } catch (Exception exception) {
                 if (isAccessDenied(exception)) {
                     results.add(new SaveResult(target, SaveStatus.ACCESS_DENIED, exception));
-                    LOGGER.warn("Could not save Leaf config {}; using the in-memory configuration for this run.", target, exception);
+                    LeafConfig.LOGGER.warn("Could not save Leaf config {}; using the in-memory configuration for this run.", target, exception);
                 } else {
                     results.add(new SaveResult(target, SaveStatus.FAILED, exception));
                     if (firstFailure == null) {

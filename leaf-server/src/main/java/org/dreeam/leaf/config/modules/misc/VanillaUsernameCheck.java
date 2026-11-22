@@ -19,7 +19,7 @@ public class VanillaUsernameCheck implements ConfigModule {
             让所有字符均可作为玩家名.
             警告: 完全移除验证非常不安全, 使用风险自负!"""
     })
-    public static @Deprecated boolean removeAllCheck = false;
+    public static @Deprecated boolean rawRemoveAllCheck = false;
 
     @HotReloadUnsupported
     @ConfigInfo(name = "enforce-skull-validation", comments = {
@@ -65,31 +65,31 @@ public class VanillaUsernameCheck implements ConfigModule {
             指定允许在用户名中使用的字符.
             默认: ^[a-zA-Z0-9_.]*$"""
     })
-    private static String usernameRegexString = "^[a-zA-Z0-9_.]*$";
+    private static String rawUsernameRegexString = "^[a-zA-Z0-9_.]*$";
 
     public static @DoNotLoad Pattern usernameRegex;
 
     // remove-all-check unless it conflicts with use-username-regex; read at runtime instead of the option itself.
-    public static @DoNotLoad boolean removeAllCheckActive = false;
+    public static @DoNotLoad boolean removeAllCheck = false;
 
     public static boolean shouldSkipNonPlayerNameCheck() { // helper
-        return removeAllCheckActive || useUsernameRegex;
+        return removeAllCheck || useUsernameRegex;
     }
 
     @Override
     public void onLoaded() {
-        if (!usernameRegexString.isBlank()) {
+        if (!rawUsernameRegexString.isBlank()) {
             try {
-                usernameRegex = Pattern.compile(usernameRegexString);
+                usernameRegex = Pattern.compile(rawUsernameRegexString);
             } catch (Exception e) {
-                LeafConfig.LOGGER.error("Invalid username regex {} found, falling back to default.", usernameRegexString, e);
+                LeafConfig.LOGGER.error("Invalid username regex {} found, falling back to default.", rawUsernameRegexString, e);
             }
         }
 
-        removeAllCheckActive = removeAllCheck;
-        if (useUsernameRegex && removeAllCheck) {
+        removeAllCheck = rawRemoveAllCheck;
+        if (useUsernameRegex && rawRemoveAllCheck) {
             LeafConfig.LOGGER.warn("Found conflicting configuration, remove-all-check and use-username-regex cannot be enabled at same time, ignoring remove-all-check...");
-            removeAllCheckActive = false;
+            removeAllCheck = false;
         }
     }
 }

@@ -19,7 +19,7 @@ public class SparklyPaperParallelWorldTicking implements ConfigModule {
     public static @Experimental boolean enabled = false;
 
     @ConfigInfo(name = "threads")
-    public static int threads = 8;
+    public static int rawThreads = 8;
 
     @ConfigInfo(name = "log-container-creation-stacktraces")
     public static boolean logContainerCreationStacktraces = false;
@@ -28,22 +28,22 @@ public class SparklyPaperParallelWorldTicking implements ConfigModule {
     public static boolean disableHardThrow = false;
 
     @ConfigInfo(name = "async-unsafe-read-handling")
-    public static String asyncUnsafeReadHandling = "DISABLED";
+    public static String rawAsyncUnsafeReadHandling = "DISABLED";
 
-    public static @DoNotLoad UnsafeReadPolicy asyncUnsafeReadHandlingPolicy = UnsafeReadPolicy.DISABLED;
+    public static @DoNotLoad UnsafeReadPolicy asyncUnsafeReadHandling = UnsafeReadPolicy.DISABLED;
 
     // The thread count after normalization, 0 while parallel world ticking is disabled.
-    public static @DoNotLoad int effectiveThreads = 0;
+    public static @DoNotLoad int threads = 0;
 
     @Override
     public void onLoaded() {
         // The readers of logContainerCreationStacktraces and disableHardThrow also check enabled.
-        effectiveThreads = enabled ? (threads <= 0 ? 8 : threads) : 0;
+        threads = enabled ? (rawThreads <= 0 ? 8 : rawThreads) : 0;
 
-        asyncUnsafeReadHandlingPolicy = UnsafeReadPolicy.fromString(asyncUnsafeReadHandling);
+        asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(rawAsyncUnsafeReadHandling);
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", effectiveThreads);
+            LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", threads);
         }
     }
 }

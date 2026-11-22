@@ -21,17 +21,17 @@ public class MultithreadedTracker implements ConfigModule {
     public static @Experimental boolean enabled = false;
 
     @ConfigInfo(name = "threads")
-    public static int threads = 0;
+    public static int rawThreads = 0;
 
     // The thread count after normalization.
-    public static @DoNotLoad int effectiveThreads = 1;
+    public static @DoNotLoad int threads = 1;
 
     @Override
     public void onLoaded() {
-        effectiveThreads = Math.max(threads <= 0 ? Math.min(Runtime.getRuntime().availableProcessors(), 4) : threads, 1);
+        threads = Math.max(rawThreads <= 0 ? Math.min(Runtime.getRuntime().availableProcessors(), 4) : rawThreads, 1);
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", effectiveThreads);
+            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
             AsyncTracker.init();
         }
     }

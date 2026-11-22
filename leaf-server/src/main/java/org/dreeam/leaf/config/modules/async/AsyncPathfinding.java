@@ -12,13 +12,13 @@ public class AsyncPathfinding implements ConfigModule {
     public static boolean enabled = false;
 
     @ConfigInfo(name = "max-threads")
-    public static int maxThreads = 0;
+    public static int rawMaxThreads = 0;
 
     @ConfigInfo(name = "keepalive")
     public static int keepalive = 60;
 
     @ConfigInfo(name = "queue-size")
-    public static int queueSize = 0;
+    public static int rawQueueSize = 0;
 
     @ConfigInfo(name = "reject-policy", comments = {
         """
@@ -30,33 +30,33 @@ public class AsyncPathfinding implements ConfigModule {
             FLUSH_ALL: 所有等待中的任务都将在主线程上运行.
             CALLER_RUNS: 新提交的任务将在主线程上运行."""
     })
-    public static String rejectPolicy = "default";
+    public static String rawRejectPolicy = "default";
 
-    public static @DoNotLoad PathfindTaskRejectPolicy rejectPolicyType = PathfindTaskRejectPolicy.CALLER_RUNS;
+    public static @DoNotLoad PathfindTaskRejectPolicy rejectPolicy = PathfindTaskRejectPolicy.CALLER_RUNS;
 
     // The thread count and queue capacity after normalization, 0 threads while disabled.
-    public static @DoNotLoad int effectiveMaxThreads = 0;
-    public static @DoNotLoad int effectiveQueueSize = 0;
+    public static @DoNotLoad int maxThreads = 0;
+    public static @DoNotLoad int queueSize = 0;
 
     @Override
     public void onLoaded() {
         final int availableProcessors = Runtime.getRuntime().availableProcessors();
 
-        effectiveMaxThreads = !enabled ? 0 : maxThreads <= 0 ? Math.max(availableProcessors / 4, 1) : maxThreads;
-        effectiveQueueSize = queueSize <= 0 ? effectiveMaxThreads * 256 : queueSize;
+        maxThreads = !enabled ? 0 : rawMaxThreads <= 0 ? Math.max(availableProcessors / 4, 1) : rawMaxThreads;
+        queueSize = rawQueueSize <= 0 ? maxThreads * 256 : rawQueueSize;
 
-        String policyStr = rejectPolicy;
+        String policyStr = rawRejectPolicy;
 
         if ("default".equalsIgnoreCase(policyStr)) {
-            policyStr = availableProcessors >= 12 && effectiveQueueSize < 512
+            policyStr = availableProcessors >= 12 && queueSize < 512
                 ? PathfindTaskRejectPolicy.FLUSH_ALL.toString()
                 : PathfindTaskRejectPolicy.CALLER_RUNS.toString();
         }
 
-        rejectPolicyType = PathfindTaskRejectPolicy.fromString(policyStr);
+        rejectPolicy = PathfindTaskRejectPolicy.fromString(policyStr);
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", effectiveMaxThreads);
+            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", maxThreads);
             org.dreeam.leaf.async.path.AsyncPathProcessor.init();
         }
     }

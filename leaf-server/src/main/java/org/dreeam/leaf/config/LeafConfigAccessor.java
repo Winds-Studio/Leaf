@@ -6,7 +6,6 @@ import org.dreeam.leaf.config.util.ConfigFileIO;
 import org.dreeam.leaf.config.util.ConfigValues;
 import org.jspecify.annotations.Nullable;
 
-import java.io.File;
 import java.util.List;
 import java.util.Map;
 
@@ -23,10 +22,6 @@ abstract class LeafConfigAccessor {
         this.configFile = configFile;
     }
 
-    public void saveConfig() throws Exception {
-        ConfigFileIO.save(configFile);
-    }
-
     /**
      * Reads the value of a registered option. A missing or null value yields {@code def}; a value that is
      * present but does not fit {@code type} is rejected.
@@ -34,10 +29,6 @@ abstract class LeafConfigAccessor {
     private Object value(Class<?> type, String path, Object def) {
         Object raw = configFile.get(path);
         return raw == null ? def : ConfigValues.parse(type, configFile, path, raw);
-    }
-
-    boolean contains(String path) {
-        return configFile.contains(path);
     }
 
     public void createTitledSection(String title, String path) {

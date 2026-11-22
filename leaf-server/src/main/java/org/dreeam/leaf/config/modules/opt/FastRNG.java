@@ -7,7 +7,7 @@ import org.dreeam.leaf.config.annotations.*;
 public class FastRNG implements ConfigModule {
 
     @ConfigInfo(name = "enabled")
-    public static boolean enabled = false;
+    public static boolean rawEnabled = false;
 
     @HotReloadUnsupported
     @ConfigInfo(name = "enable-for-worldgen", comments = {"Enable faster random generator for world generation.\nWARNING: This will affect world generation!!!", "是否为世界生成启用更快的随机生成器.\n警告: 此项会影响世界生成!!!"})
@@ -20,7 +20,7 @@ public class FastRNG implements ConfigModule {
     public static boolean useLegacyForSlimeChunk = false;
 
     // The main switch after the JVM capability check; read at runtime instead of the option itself.
-    public static @DoNotLoad boolean active = false;
+    public static @DoNotLoad boolean enabled = false;
 
     // Decided once, when the module is first loaded: the world generation random source cannot be swapped
     // afterwards, since parts of it (noise, biome tables) are built only once.
@@ -33,18 +33,18 @@ public class FastRNG implements ConfigModule {
 
     @Override
     public void onLoaded() {
-        active = enabled;
-        if (active) {
+        enabled = rawEnabled;
+        if (enabled) {
             try {
                 Class.forName("org.dreeam.leaf.util.math.random.FasterRandomSource");
             } catch (Throwable ignored) {
                 LeafConfig.LOGGER.error("Faster random generator is enabled but Xoroshiro128PlusPlus is not supported by your JVM, " +
                     "falling back to legacy random source.");
-                active = false;
+                enabled = false;
             }
         }
 
-        if (active && warnForSlimeChunk) {
+        if (enabled && warnForSlimeChunk) {
             LeafConfig.LOGGER.warn("You enabled faster random generator, it will offset location of slime chunk");
             LeafConfig.LOGGER.warn("If your server has slime farms or facilities need vanilla slime chunk,");
             LeafConfig.LOGGER.warn("set performance.faster-random-generator.use-legacy-random-for-slime-chunk " +
@@ -55,7 +55,7 @@ public class FastRNG implements ConfigModule {
 
         if (!worldgenDecided) {
             worldgenDecided = true;
-            worldgen = enableForWorldgen && active;
+            worldgen = enableForWorldgen && enabled;
         }
     }
 }

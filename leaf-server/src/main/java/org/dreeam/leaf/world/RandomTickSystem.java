@@ -47,7 +47,7 @@ public final class RandomTickSystem {
 
         final BitRandomSource random = world.simpleRandom;
         if (!disableIceAndSnow) {
-            final int speed = IceAndSnowChance.effectiveChance * 2 - 1;
+            final int speed = IceAndSnowChance.iceAndSnowChance * 2 - 1;
             iceSnow(world, size, randomTickSpeed, Math.max(1, speed), random, raw);
         }
         final long weightsSum = collectTickingChunks(size, random, raw, randomTickSpeed);

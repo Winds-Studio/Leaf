@@ -8,8 +8,8 @@ import org.dreeam.leaf.config.modules.misc.RegionFormatConfig;
 
 public enum EnumRegionFormat {
     MCA("mca", "mca", info -> new RegionFile(info.info(), info.filePath(), info.folder(), info.sync())),
-    LINEAR_V2("linear_v2", "linear", info -> new LinearRegionFile(info.info(), info.filePath(), info.folder(), info.sync(), RegionFormatConfig.effectiveCompressionLevel)),
-    B_LINEAR("b_linear", "b_linear", info -> new BufferedLinearRegionFile(info.filePath(), RegionFormatConfig.effectiveCompressionLevel, RegionFormatConfig.blinearFlusher)),
+    LINEAR_V2("linear_v2", "linear", info -> new LinearRegionFile(info.info(), info.filePath(), info.folder(), info.sync(), RegionFormatConfig.compressionLevel)),
+    B_LINEAR("b_linear", "b_linear", info -> new BufferedLinearRegionFile(info.filePath(), RegionFormatConfig.compressionLevel, RegionFormatConfig.blinearFlusher)),
     UNKNOWN("unknown", "mca", info -> null);
 
     private final String name;

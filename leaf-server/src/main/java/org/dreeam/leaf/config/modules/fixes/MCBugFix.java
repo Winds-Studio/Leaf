@@ -47,13 +47,13 @@ public class MCBugFix implements ConfigModule {
         "Max allowed entries in mob's combat tracker.",
         "生物战斗跟踪器中允许的最大条目。"
     })
-    public static int mc301114maxCombatEntries = 10240;
+    public static int rawMc301114maxCombatEntries = 10240;
 
     // The limit after normalization; read at runtime instead of the option itself.
-    public static @DoNotLoad int effectiveMc301114MaxCombatEntries = 10240;
+    public static @DoNotLoad int mc301114maxCombatEntries = 10240;
 
     @Override
     public void onLoaded() {
-        effectiveMc301114MaxCombatEntries = Math.max(1, mc301114maxCombatEntries);
+        mc301114maxCombatEntries = Math.max(1, rawMc301114maxCombatEntries);
     }
 }
