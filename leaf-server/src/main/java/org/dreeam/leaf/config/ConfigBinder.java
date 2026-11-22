@@ -1,6 +1,5 @@
 package org.dreeam.leaf.config;
 
-import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import org.dreeam.leaf.config.annotations.ConfigClassInfo;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
@@ -234,7 +233,7 @@ final class ConfigBinder {
         }
     }
 
-    static void captureInitialReloadValues(Object module, boolean global) throws IllegalAccessException {
+    static void captureInitializedValues(Object module, boolean global) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
         boolean moduleUnsupported = moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
         Map<Field, Object> worldValues = global ? null : INITIAL_WORLD_RELOAD_VALUES.computeIfAbsent(module, ignored -> new HashMap<>());

@@ -1,84 +1,95 @@
-# 7. 重载改为串行、两阶段、可回滚的逻辑事务
+# 7. 重载改为同步、两阶段（候选 → 提交）、不回滚的逻辑事务
 
 ## 修改文件
 
 - `leaf-server/src/main/java/org/dreeam/leaf/config/LeafConfig.java`
-- 新增 `leaf-server/src/main/java/org/dreeam/leaf/config/LeafConfigReloadTransaction.java`
 - `leaf-server/src/main/java/org/dreeam/leaf/config/ConfigBinder.java`
 - `leaf-server/src/main/java/org/dreeam/leaf/config/util/ConfigFileIO.java`
 - `leaf-server/src/main/java/org/dreeam/leaf/command/subcommands/ReloadCommand.java`
 - 新增 `paper-server/src/test/java/org/dreeam/leaf/config/LeafConfigReloadTransactionTest.java`
 - 新增 `paper-server/src/test/java/org/dreeam/leaf/config/util/ConfigFileIOTest.java`
 
+（原计划中的 `LeafConfigReloadTransaction` 类未单独创建，逻辑位于 `LeafConfig.reloadAsync()` / `commitReload()`；前者按下方决定改为同步 `reload(sender)`。）
+
 ## 为什么修改
 
-重载的异步入口必须不与世界/异步配置状态竞争。当前候选阶段即创建带旧值的 `PendingValue`，且文件保存和字段提交没有单一事务边界。
+reload 不能与世界和异步配置状态竞争；旧实现在候选阶段就生成带旧值的 `PendingValue`，且文件保存和字段提交没有单一事务边界。
 
-## 具体修改
+## 实现状态
 
-### 7.1 线程与并发策略
+### 线程与并发（当前实现，将按下方决定删除）
 
-- `reloadAsync()` 保持返回 `CompletableFuture<Void>`，但“async”仅表示命令不阻塞调用方；整个 reload task 仍提交给 `MinecraftServer` executor。
-- 不将 YAML 解析、世界遍历、field mutation、回调或文件 commit 移到通用后台线程：
-  - 它们读取/修改 `ServerLevel`、global static config、callbacks 和世界对象；
-  - 这些对象没有异步线程安全保证。
-- 添加 `AtomicBoolean reloadQueuedOrRunning`：
-  - 命令触发时 `compareAndSet(false, true)`；
-  - 已有 reload 时立即向 sender 返回“reload already in progress”；
-  - task 完成、失败或取消后在 finally 清除。
-- 若 `MinecraftServer` executor 在 task 开始前拒绝提交，立即清除 `reloadQueuedOrRunning`、完成 future 为异常并向 sender 报告；不能依赖 task 内的 finally。
-- `LeafConfigReloadTransaction` 使用单一 `ReentrantLock` 包住候选收集、文件准备、字段提交、回调、保存/回滚全过程。
-- 因 async 模块均为类级不可热重载，reload transaction 不重建任何 async executor、线程数或 parallel world ticking 状态。
+- `reloadAsync(sender)` 返回 `CompletableFuture<Void>`，通过 `CompletableFuture.runAsync(task, server)` 交给 `MinecraftServer` executor。从服务器线程的非任务上下文调用时，`execute()` 同步执行；其他情况在下一次任务处理时执行。
+- YAML 解析、世界遍历、字段写入、回调、保存都在服务器线程执行，不移到通用后台线程。
+- `RELOAD_QUEUED_OR_RUNNING.compareAndSet(false, true)` 失败时向 sender 报告“already in progress”，返回已完成的 future，不排队。
+- 已进入任务体时由 `finally` 释放锁并清除标记；出队前原始 future 被取消会跳过任务体，标记不再释放（原 P2-6）。
+- `RELOAD_TRANSACTION_LOCK`（`ReentrantLock`）包住整个任务。由于任务总在服务器线程上且标记已禁止并发，该锁目前是冗余防护，保留无害。
+- async 模块均为类级不可热重载，reload 不重建任何 executor、线程数或 parallel world ticking 状态。
 
-### 7.2 候选收集与延迟保存
+### 候选收集：已完成
 
-- 在 transaction lock 内执行：
-  1. raw load global candidate；
-  2. raw load world-defaults candidate；
-  3. 使用子计划 03 的 fallback 规则绑定 defaults candidate；
-  4. 收集 global/defaults 的 `ReloadCandidateValue`；
-  5. 遍历所有 loaded worlds，构造独立 candidate world config 并收集候选值；
-  6. 确认所有候选解析、类型转换和模块结构访问已成功；
-  7. 仅在上述所有 Leaf 配置文件均成功加载、merge、绑定和验证后，准备最终 field set 与 global/defaults 直接保存；候选阶段不得创建或替换任何 Leaf target 文件。
-- 候选阶段绝不：
-  - set active fields；
-  - 更换 active config file references；
-  - 运行 callbacks；
-  - 保存任何 target 文件。
+1. raw load global 与 world-defaults candidate；
+2. `new LeafGlobalConfig(candidate, false)`（不覆盖内存中的旧版本记录）；
+3. `reloadWorldDefaults()`：按 03 的 fallback 规则绑定 defaults candidate；
+4. 收集 global 与 defaults 的 `ReloadValue`（P2-14 后直接收集为 `PendingValue`）；
+5. 遍历 `server.getAllLevels()`，`loadWorldConfig(dir, candidateDefaults, false)` 构造独立 candidate 并收集候选值；
+6. 上述任一步骤失败 → 不修改运行字段或 config 引用，不运行回调，不调用 `save()`。若 global/defaults 原本缺失，底层加载可能已经留下空文件；候选完全不写磁盘仍待 04 P1-9。
 
-### 7.3 最终提交与保存
+### 提交与保存（当前实现；目标顺序见 P1-2）
 
-- 在所有候选验证完成后：
-  1. 在 lock 内将 active global/defaults/world `configFile` references 切换为 candidate；
-  2. 在该时刻才将 `ReloadCandidateValue` 捕获为 applied value，记录真正的旧字段值；
-  3. 应用所有字段，包括不可热重载字段的首次快照恢复值；
-  4. 依次直接保存 global/defaults，并收集每个 target 的 `SAVED`、`ACCESS_DENIED` 或 `FAILED` 结果；只在 `AccessDeniedException` 时记录 warning 并继续使用内存配置，其他保存错误向调用方报告；
-  5. 运行允许重载模块的 callbacks。
-- 候选已通过预先验证，field set 不作为可失败阶段。不创建 rollback 副本，也不在保存失败后恢复字段、config-file reference 或已成功保存的另一个 Leaf 文件。
-- 保存报告必须在错误消息中列出已保存、权限拒绝且未保存、以及失败的文件。非 `AccessDeniedException` 时，command sender 收到 reload 持久化失败消息，控制台异常附带完整文件结果；`AccessDeniedException` 时，sender 和控制台 warning 明确列出仅在内存中生效的文件。
-- callback 在字段和文件保存后执行；callback 异常记录并报告 reload 后处理失败，但不重新运行旧 callback，也不回滚已提交字段或配置文件。
-- `PendingValue` 旧值只在 commit 阶段捕获；因为 transaction lock 和 `reloadQueuedOrRunning` 禁止第二次 reload 介入，不存在 A→B→A 的 ABA restore。
-- world override 文件从不作为 reload 的保存目标；只保存 global/defaults。
+`commitReload()`：
 
-## 与现有代码交互
+1. 把 `ReloadValue` 转为 `PendingValue`（不记录旧值；P2-14 后删除此步）；
+2. 切换 `globalConfig`、defaults 与每个世界的 `configFile` 引用（P2-19：删除对各世界的切换及 `WorldReload`，只保留 global 与 defaults）；
+3. 依次 `apply()` 所有字段（包括不可热重载字段的快照恢复值）；
+4. `ConfigFileIO.save(defaults, global)`：
+   - 权限拒绝：sender 收到黄色提示，列出仅在内存中生效的文件；
+   - 其他失败：抛 `ConfigSaveException`，sender 收到红色提示与完整文件状态，控制台记录异常；**当前实现此时不会执行回调**；
+5. 运行 `runGlobalModuleCallbacks(true)` 和 `runAfterBootstrapCallbacks(true)`（跳过类级不可热重载模块）；异常被捕获，sender 收到“post-reload processing failed”提示。
 
-- `ReloadCommand` 继续调用 `LeafConfig.reloadAsync(sender)`，但会得到“in progress”结果而不是排队第二个 reload。
-- `ConfigBinder` 只生成候选值；`LeafConfigReloadTransaction` 是唯一 active field 写入者。
-- `ConfigFileIO` 的保存 helper 采用 Paper 风格的 `trySave` 语义；调用者只在所有候选验证完成后调用它。
+- 不回滚：提交阶段不创建回滚副本，保存失败后不恢复字段、config 引用或已成功保存的文件。原标题中的“可回滚”已更正。
+- 当前 world override 文件不作为 reload 的保存目标。P0-2 修改后，已有 override 的版本落后即需保存，即使没有命中 rename；当前版本的不写回，缺少文件的不创建，不补全默认项。
+
+## 去除异步 reload，与 Paper 一致同步执行（已决定，待实施）
+
+Paper `/paper reload` 在命令处理中直接调用 `PaperConfigurations.reloadConfigs(server)`，Bukkit `CraftServer.reload()` 也顺序同步调用；二者都没有排队、future、并发标记、锁或服务器状态门槛。
+
+- `reloadAsync(sender)` 改为同步的 `reload(sender)`，在调用线程直接执行候选收集、提交、回调与保存，不返回 future。`/leaf reload`（`ReloadCommand`，唯一调用方）在服务器线程的命令处理中调用。
+- 删除 `CompletableFuture.runAsync(..., server)`、`RELOAD_QUEUED_OR_RUNNING`、`RELOAD_TRANSACTION_LOCK`、“already in progress”提示与不可达的 `RejectedExecutionException` 分支。不新增线程检查或启动、停止状态门槛。
+- 原 P2-5（停止后 `execute()` 在调用线程运行、拒绝分支不可达）与 P2-6（排队 future 被提前完成导致门闩不释放）随之消失。
+- 两阶段结构、P0-2、P1-2 的顺序和报告方式不变。
+
+## P0-2 override 迁移（已决定，待实施）
+
+- 候选阶段：先按 raw global 的版本迁移 global/defaults，再对 `server.getAllLevels()` 中已有 override 的世界按文件自身版本迁移，均在绑定前处理。版本按 00“版本号规则”处理（缺失视为当前版本、无法解析则 reload 失败）；候选失败不写盘。
+- 提交阶段：需升级的 override → defaults → global；每份 override 的内容与版本一起写。单个 override 权限拒绝不阻止其余目标保存，也不影响 global/defaults 的进度。
+- reload 不重放 Gale 转换。若新 override 因权限拒绝只在内存中生效，reload 后使用 defaults，下次加载该世界时从保留的源文件重试。
+
+## P1-2 首个回调失败即停止，最后保存（已决定，待实施）
+
+- 候选读取、迁移、校验全部成功后才统一应用字段；应拒绝的非法值在绑定阶段检查。随后依次执行两组回调，首个异常即停止，不继续其余回调，也不进入保存阶段。报告失败并记录 ERROR 和异常堆栈；不回滚已经应用的字段或回调副作用。
+- 回调全部成功后才保存。`AccessDeniedException` 沿用现有 warning 和内存配置；其他保存异常在 reload 入口报告失败，记录 ERROR 和完整异常堆栈，不发成功消息，不重试、不回滚。保留现有逐文件保存报告，不增加回调异常汇总机制。
+
+## 待处理问题
+
+### 其他边界
+
+- 手工读取的动态 key（`ThrottleNaturalMobSpawning`）仍不适用 binder 的缺失键回退；按 P1-2 调整顺序后，回调补写的默认值随最终保存写入（见 02）。
+- 异步线程可见性（风险，非本次范围）：字段由服务器线程写入，而 async pathfinding、tracker 等线程可能读取其他可重载模块的非 volatile static 字段，没有 happens-before 保证，多个相关字段可能被看到不一致的组合。现有行为与旧实现一致；`List` 字段必须整体替换引用，不得原地修改（当前 `apply()` 满足）。
 
 ## 测试
 
-- 两次连续 reload：第二次被拒绝，不创建第二个事务。
-- 任一 world candidate enum 非法：没有 global/defaults/world 字段变更，也没有文件写入。
-- `AccessDeniedException` 保存：字段和 config-file references 已更新、reload 继续、日志报告未持久化文件。
-- 非 `AccessDeniedException` 保存失败：字段和已成功保存的前序文件不回滚，错误必须列出已保存、权限拒绝和失败文件。
-- 删除 global/defaults option：写回重载前值。
-- async module 配置修改：active async 字段保持首次值，async callbacks 不运行。
-- executor 拒绝 task：reload 标记立即清除，后续 reload 不会被永久拒绝。
-- callback 异常：候选文件和字段已提交，错误被报告且不会触发旧 callback 重跑。
+- 同步执行：`reload(sender)` 返回时字段、回调与保存均已完成；连续两次调用依次完整执行。
+- 缺失 global + 后续 world candidate enum 非法：没有字段提交；原有文件内容不变、缺失文件仍不存在（P1-9 修复后）。
+- `AccessDeniedException`：字段与 config 引用已更新，reload 继续，提示列出未持久化文件。
+- 最终保存发生非权限异常：回调已经完成，字段与已保存文件不回滚；控制台有 ERROR 和堆栈，sender 不收到成功消息。
+- 删除 global/defaults option：写回 reload 前的值。
+- async module 配置修改：运行字段保持首次值，async 回调不运行；YAML 保存新值。
+- 回调异常：后续回调不执行，不保存文件、不报成功；记录异常堆栈，已提交字段不回滚。
+- global 已是当前版本、已加载世界的 override 仍旧：reload 按其自身版本迁移并保存，即使未命中 rename 也写回版本。候选失败不写入；单个 override 权限拒绝不阻止其他目标保存，未加载世界的文件不读写（修改后）。
 
 ## 可能的失败模式
 
-- 多文件保存不是事务；设计保证的是候选加载完成前不保存任何 Leaf target，且无并发 reload ABA。权限拒绝时使用内存配置，其他保存错误不回滚先前已完成的最终操作。
-- callback 可能含外部副作用；它位于配置提交之后且不参与回滚，异步/启动期模块通过不可热重载避免进入此路径。
-- 忘记在 finally 清理 `reloadQueuedOrRunning` 会永久拒绝后续 reload。
+- 多文件保存不是事务：设计只保证候选全部成功前不保存任何 Leaf 文件。
+- 回调可能有外部副作用，它们在配置提交之后运行且不参与回滚；异步或启动期模块通过不可热重载避免进入此路径。
+- 在非服务器线程调用 `reload(sender)` 会在该线程写字段和执行回调；与 Paper 相同，不支持这种调用。

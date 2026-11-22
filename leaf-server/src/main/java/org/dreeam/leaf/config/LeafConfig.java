@@ -441,7 +441,7 @@ public class LeafConfig {
         try {
             runAfterBootstrapCallbacks(false);
             for (ConfigModule module : GLOBAL_MODULES) {
-                ConfigBinder.captureInitialReloadValues(module, true);
+                ConfigBinder.captureInitializedValues(module, true);
             }
             ConfigFileIO.SaveReport report = ConfigFileIO.save(worldDefaultsConfig.configFile, globalConfig.configFile);
             GaleConfigMigration.recordLeafPersistence(report);
@@ -482,7 +482,7 @@ public class LeafConfig {
 
     private static void captureWorldInitialReloadValues(LeafWorldConfig config) throws IllegalAccessException {
         for (Field moduleField : WORLD_MODULES) {
-            ConfigBinder.captureInitialReloadValues(moduleField.get(config), false);
+            ConfigBinder.captureInitializedValues(moduleField.get(config), false);
         }
     }
 

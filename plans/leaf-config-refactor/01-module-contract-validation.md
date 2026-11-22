@@ -9,39 +9,42 @@
 
 配置模块由开发者维护，不应让生产服务器在初始加载、重载和每个世界加载时反复反射校验字段结构。此类问题应在测试阶段阻止合入。
 
-## 具体修改
+## 实现状态
 
-- 从 `ConfigBinder` 删除：
-  - `validateField(...)`；
-  - 所有调用点；
-  - 仅为该方法保留的 `Modifier` 依赖。
-- 保留运行时必需的反射访问：
-  - `field.setAccessible(true)`；
-  - 读取和写入字段；
-  - 非法 enum、unsupported config type、配置文件解析错误等用户配置错误仍在运行时失败。
-- 在测试模块实现 test-only `validateField` 等价规则：
-  - 全局 `ConfigModule` 的 `@ConfigInfo` 字段必须是 mutable static；
+- 已完成：`ConfigBinder.validateField(...)` 及其调用点已删除。
+- 仍保留在运行时的检查：
+  - `registerGlobalDefaults()`：global 字段默认值为 null 时抛错（源码 `TODO: move it to test`）；
+  - `bindWorld()`：world 字段默认值为 null 时抛错；
+  - `bind()` / `collectGlobalReload()` / `ConfigPaths`：缺失 `@ConfigClassInfo` / `@ConfigInfo` 时抛错；
+  - `readValue()`：不支持的字段类型、非法 enum 字符串。
+- **P2-13（已决定，待实施）：开发者定义错误移至测试，删除运行时检查。** 删除两处 null 默认值检查，以及 `bind()`、`collectGlobalReload()` 对 `@ConfigClassInfo` 的重复检查（取注释前先计算路径，缺失时由 `ConfigPaths` 自然抛错）。其余移至测试的项见 00 P2-13。`ConfigPaths` 的缺注解异常、`readValue()` 末尾的不支持类型分支是代码流程本身的结尾，不是额外校验，保留；非法 enum 是用户数据校验，保留。
+- 未完成：`ConfigModuleContractTest`。
+
+## 具体修改（剩余）
+
+- 在测试中实现 test-only 契约规则：
+  - global `ConfigModule` 的 `@ConfigInfo` 字段必须是 mutable static；
   - `WorldConfigModule` 的 `@ConfigInfo` 字段必须是 mutable instance field；
   - `@DoNotLoad` 不得与 `@ConfigInfo` 共存；
   - `@ConfigInfo` 字段默认值不得为 null；
   - 每个 module 有 `@ConfigClassInfo`；
   - 每个 world module 在 `LeafWorldConfig` 中恰有一个 typed field；
-  - 支持类型仅限 binder 当前支持的 primitive/包装类型、`String`、`List<String>`、enum。
-- 测试使用已有 ClassGraph 依赖扫描 `org.dreeam.leaf.config.modules`，而不是复制生产类发现逻辑。
-- 若 module 声明迁移方法，测试验证其签名为 `public static void migrate(ConfigMigrationContext)`；迁移方法只登记 path operation，不得直接加载、保存或修改配置文件。
+  - 支持类型仅限 binder 当前支持的 `boolean/int/long/double` 及包装类型、`String`、`List<String>`、enum；
+  - 同一配置文件内，所有模块解析出的 option path 不重复，且互不为父子路径（`ConfigPaths.fieldPath` 结果）。
+- 若 module 声明 `migrate` 方法，签名必须为 `public static void migrate(ConfigMigrationContext)`。签名由测试保证；按 P2-13 删除 `LeafConfigMigration.collect()` 中对 static 与 `void` 的运行时检查。“只登记 operation”是约定，由代码审查保证。
+- 测试使用 ClassGraph 扫描 `org.dreeam.leaf.config.modules`，只筛选 `ConfigModule` / `WorldConfigModule` 的 concrete 实现；扫描时不初始化类（ClassGraph 元数据 + `Class.forName(name, false, loader)`），避免模块静态初始化触碰 `MinecraftServer` / Bootstrap。
 
 ## 与现有代码交互
 
-- `LeafConfig.discoverGlobalModules()` 仍负责生产运行时发现。
+- `LeafConfig.discoverGlobalModules()` 仍负责生产运行时发现（自带的 `getClasses()` 包扫描，按 simple name 排序）。
 - `ConfigBinder` 仍负责读取值、复制列表、处理 defaults 和反射赋值。
-- 测试成为 module author 的结构性防线，不改变配置文件格式。
 
 ## 测试
 
 - `ConfigModuleContractTest` 扫描所有实际模块。
-- 为错误样例使用嵌套测试类验证 static/instance、final、null default、`DoNotLoad + ConfigInfo` 和 world-field 暴露规则均会失败。
+- 为错误样例使用嵌套测试类，验证 static/instance、final、null default、`DoNotLoad + ConfigInfo`、world-field 暴露、路径重复/重叠规则均会失败。
 
 ## 可能的失败模式
 
 - 新模块不运行测试时可在生产反射阶段失败；这是接受的开发流程风险。
-- 测试扫描过宽可能加载非配置类；扫描结果必须只筛选 `ConfigModule` / `WorldConfigModule` 的 concrete 实现。
+- 测试扫描过宽或初始化类会加载依赖 Minecraft bootstrap 的代码。
