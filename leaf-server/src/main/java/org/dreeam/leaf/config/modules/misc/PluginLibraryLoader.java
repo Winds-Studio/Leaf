@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config.modules.misc.global;
+package org.dreeam.leaf.config.modules.misc;
 
 import org.bukkit.plugin.java.JavaPluginLoader;
 import org.dreeam.leaf.config.*;

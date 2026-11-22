@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config.modules.opt.global;
+package org.dreeam.leaf.config.modules.opt;
 
 import net.minecraft.server.level.ServerPlayer;
 import org.dreeam.leaf.config.*;

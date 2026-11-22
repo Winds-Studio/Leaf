@@ -74,28 +74,28 @@ public final class GaleConfigMigration {
     static List<Mapping> registerGlobalMappings() {
         List<Mapping> globalMappings = new ArrayList<>();
 
-        globalMappings.add(new Mapping("small-optimizations.reduced-intervals.increase-time-statistics", org.dreeam.leaf.config.modules.opt.global.ReducedIntervals.class, "increaseTimeStatistics"));
-        globalMappings.add(new Mapping("small-optimizations.reduced-intervals.update-entity-line-of-sight", org.dreeam.leaf.config.modules.opt.global.ReducedIntervals.class, "updateEntityLineOfSight"));
+        globalMappings.add(new Mapping("small-optimizations.reduced-intervals.increase-time-statistics", org.dreeam.leaf.config.modules.opt.ReducedIntervals.class, "increaseTimeStatistics"));
+        globalMappings.add(new Mapping("small-optimizations.reduced-intervals.update-entity-line-of-sight", org.dreeam.leaf.config.modules.opt.ReducedIntervals.class, "updateEntityLineOfSight"));
         globalMappings.add(new Mapping("gameplay-mechanics.enable-book-writing", BookWriting.class, "enabled"));
         globalMappings.add(new Mapping("misc.verify-chat-order", ChatOrderVerification.class, "enabled"));
         globalMappings.add(new Mapping("misc.premium-account-slow-login-timeout", PremiumAccountSlowLoginTimeout.class, "ticks"));
         globalMappings.add(new Mapping("misc.keepalive.send-multiple", Keepalive.class, "sendMultiple"));
-        globalMappings.add(new Mapping("misc.last-tick-time-in-tps-command.enabled", org.dreeam.leaf.config.modules.misc.global.LastTickTimeInTpsCommand.class, "enabled"));
-        globalMappings.add(new Mapping("misc.last-tick-time-in-tps-command.add-oversleep", org.dreeam.leaf.config.modules.misc.global.LastTickTimeInTpsCommand.class, "addOversleep"));
-        globalMappings.add(new Mapping("log-to-console.invalid-statistics", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "invalidStatistics"));
-        globalMappings.add(new Mapping("log-to-console.ignored-advancements", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "ignoredAdvancements"));
-        globalMappings.add(new Mapping("log-to-console.set-block-in-far-chunk", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "setBlockInFarChunk"));
-        globalMappings.add(new Mapping("log-to-console.unrecognized-recipes", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "unrecognizedRecipes"));
-        globalMappings.add(new Mapping("log-to-console.legacy-material-initialization", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "legacyMaterialInitialization"));
-        globalMappings.add(new Mapping("log-to-console.null-id-disconnections", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "nullIdDisconnections"));
-        globalMappings.add(new Mapping("log-to-console.player-login-locations", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "playerLoginLocations"));
-        globalMappings.add(new Mapping("log-to-console.invalid-legacy-text-component", org.dreeam.leaf.config.modules.misc.global.LogToConsole.class, "invalidLegacyTextComponent"));
-        globalMappings.add(new Mapping("log-to-console.chat.empty-message-warning", org.dreeam.leaf.config.modules.misc.global.Chat.class, "emptyMessageWarning"));
-        globalMappings.add(new Mapping("log-to-console.chat.expired-message-warning", org.dreeam.leaf.config.modules.misc.global.Chat.class, "expiredMessageWarning"));
-        globalMappings.add(new Mapping("log-to-console.chat.not-secure-marker", org.dreeam.leaf.config.modules.misc.global.Chat.class, "notSecureMarker"));
-        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.downloads", org.dreeam.leaf.config.modules.misc.global.PluginLibraryLoader.class, "downloads"));
-        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.start-load-libraries-for-plugin", org.dreeam.leaf.config.modules.misc.global.PluginLibraryLoader.class, "startLoadLibrariesForPlugin"));
-        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.library-loaded", org.dreeam.leaf.config.modules.misc.global.PluginLibraryLoader.class, "libraryLoaded"));
+        globalMappings.add(new Mapping("misc.last-tick-time-in-tps-command.enabled", org.dreeam.leaf.config.modules.misc.LastTickTimeInTpsCommand.class, "enabled"));
+        globalMappings.add(new Mapping("misc.last-tick-time-in-tps-command.add-oversleep", org.dreeam.leaf.config.modules.misc.LastTickTimeInTpsCommand.class, "addOversleep"));
+        globalMappings.add(new Mapping("log-to-console.invalid-statistics", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "invalidStatistics"));
+        globalMappings.add(new Mapping("log-to-console.ignored-advancements", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "ignoredAdvancements"));
+        globalMappings.add(new Mapping("log-to-console.set-block-in-far-chunk", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "setBlockInFarChunk"));
+        globalMappings.add(new Mapping("log-to-console.unrecognized-recipes", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "unrecognizedRecipes"));
+        globalMappings.add(new Mapping("log-to-console.legacy-material-initialization", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "legacyMaterialInitialization"));
+        globalMappings.add(new Mapping("log-to-console.null-id-disconnections", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "nullIdDisconnections"));
+        globalMappings.add(new Mapping("log-to-console.player-login-locations", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "playerLoginLocations"));
+        globalMappings.add(new Mapping("log-to-console.invalid-legacy-text-component", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "invalidLegacyTextComponent"));
+        globalMappings.add(new Mapping("log-to-console.chat.empty-message-warning", org.dreeam.leaf.config.modules.misc.Chat.class, "emptyMessageWarning"));
+        globalMappings.add(new Mapping("log-to-console.chat.expired-message-warning", org.dreeam.leaf.config.modules.misc.Chat.class, "expiredMessageWarning"));
+        globalMappings.add(new Mapping("log-to-console.chat.not-secure-marker", org.dreeam.leaf.config.modules.misc.Chat.class, "notSecureMarker"));
+        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.downloads", org.dreeam.leaf.config.modules.misc.PluginLibraryLoader.class, "downloads"));
+        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.start-load-libraries-for-plugin", org.dreeam.leaf.config.modules.misc.PluginLibraryLoader.class, "startLoadLibrariesForPlugin"));
+        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.library-loaded", org.dreeam.leaf.config.modules.misc.PluginLibraryLoader.class, "libraryLoaded"));
         return globalMappings;
     }
 
