@@ -50,7 +50,7 @@ reload 不能与世界和异步配置状态竞争；旧实现在候选阶段就�
 - 不回滚：提交阶段不创建回滚副本，保存失败后不恢复字段、config 引用或已成功保存的文件。原标题中的“可回滚”已更正。
 - 当前 world override 文件不作为 reload 的保存目标。P0-2 修改后，已有 override 的版本落后即需保存，即使没有命中 rename；当前版本的不写回，缺少文件的不创建，不补全默认项。
 
-## 去除异步 reload，与 Paper 一致同步执行（已决定，待实施）
+## 去除异步 reload，与 Paper 一致同步执行（已决定，阶段 5 已实施）
 
 Paper `/paper reload` 在命令处理中直接调用 `PaperConfigurations.reloadConfigs(server)`，Bukkit `CraftServer.reload()` 也顺序同步调用；二者都没有排队、future、并发标记、锁或服务器状态门槛。
 
@@ -59,13 +59,13 @@ Paper `/paper reload` 在命令处理中直接调用 `PaperConfigurations.reload
 - 原 P2-5（停止后 `execute()` 在调用线程运行、拒绝分支不可达）与 P2-6（排队 future 被提前完成导致门闩不释放）随之消失。
 - 两阶段结构、P0-2、P1-2 的顺序和报告方式不变。
 
-## P0-2 override 迁移（已决定，待实施）
+## P0-2 override 迁移（已决定，阶段 5 已实施）
 
 - 候选阶段：先按 raw global 的版本迁移 global/defaults，再对 `server.getAllLevels()` 中已有 override 的世界按文件自身版本迁移，均在绑定前处理。版本按 00“版本号规则”处理（缺失视为当前版本、无法解析则 reload 失败）；候选失败不写盘。
 - 提交阶段：需升级的 override → defaults → global；每份 override 的内容与版本一起写。单个 override 权限拒绝不阻止其余目标保存，也不影响 global/defaults 的进度。
 - reload 不重放 Gale 转换。若新 override 因权限拒绝只在内存中生效，reload 后使用 defaults，下次加载该世界时从保留的源文件重试。
 
-## P1-2 首个回调失败即停止，最后保存（已决定，待实施）
+## P1-2 首个回调失败即停止，最后保存（已决定，阶段 5 已实施）
 
 - 候选读取、迁移、校验全部成功后才统一应用字段；应拒绝的非法值在绑定阶段检查。随后依次执行两组回调，首个异常即停止，不继续其余回调，也不进入保存阶段。报告失败并记录 ERROR 和异常堆栈；不回滚已经应用的字段或回调副作用。
 - 回调全部成功后才保存。`AccessDeniedException` 沿用现有 warning 和内存配置；其他保存异常在 reload 入口报告失败，记录 ERROR 和完整异常堆栈，不发成功消息，不重试、不回滚。保留现有逐文件保存报告，不增加回调异常汇总机制。

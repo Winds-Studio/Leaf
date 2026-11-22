@@ -47,9 +47,13 @@
 
 保留 YAML 输入及 `fromString` 转换；两个 CraftBlock 分支和世界读队列分支都改读派生枚举，分别核对 BUFFERED、STRICT 和 DISABLED。不需要改变线程检查或排队行为。
 
-### P1-13 SecureSeed 改回 global（已决定，待实施）
+### P1-13 SecureSeed 改回 global（已决定，已实施）
 
 世界作用域是先前的实验性改动，撤回：恢复 global 模块 `modules/misc/SecureSeed`（`@ConfigClassInfo` + `@ConfigInfo`），`misc.secure-seed.enabled` 留在 `leaf-global.yml`，路径与注释同 ver/26.2，无需迁移。删除 `modules/misc/world/SecureSeed`、`LeafWorldConfig.secureSeed`、`SecureSeed.isEnabled()`；`su.plo.matter.Globals.setupGlobals()` 改回读 `SecureSeed.enabled`。Minecraft/Paper 中现有的 `modules.misc.SecureSeed.enabled` 引用不需要修改。`enabled` 加 `@HotReloadUnsupported`（影响世界生成，与 P1-7 同类）。
+
+## 实现状态（阶段 0、2）
+
+P1-6、P1-10、P1-13 已在阶段 0 完成；P1-7、P1-16、P2-23 已在阶段 2 完成，细节与偏差见 00 的实施记录。以下“未完成”与“P1-7/P1-10/P1-13”小节保留为决策记录。
 
 ## 具体修改（规则）
 
@@ -67,7 +71,7 @@
   - world module 同样可用（P2-22，设计所需）：world defaults 与每个世界各自保留首次成功绑定的值，世界卸载后重新加载时重新建立（见 03 P1-3）。待在 `HotReloadUnsupported` 的 Javadoc 中补充这一点；
   - `@DoNotLoad` 字段不参与读取、保存、快照或重载。
 - 字段级不可热重载的模块在 reload 时仍会运行回调；回调中依赖该字段的派生状态必须基于恢复后的首次值计算。
-- **P1-16（已决定，待实施）回调不得改写 `@ConfigInfo` 字段。** 配置字段只保存读入值；规范化或派生结果写入 `@DoNotLoad` 字段，运行期改读派生字段。“由 A 算出 B 再写回配置字段”是旧式模块写法，会使 reload 缺键回退和首次快照记录到派生值。待调整的模块列表见 00 P1-16。
+- **P1-16（已决定，已实施）回调不得改写 `@ConfigInfo` 字段。** 配置字段只保存读入值；规范化或派生结果写入 `@DoNotLoad` 字段，运行期改读派生字段。“由 A 算出 B 再写回配置字段”是旧式模块写法，会使 reload 缺键回退和首次快照记录到派生值。待调整的模块列表见 00 P1-16。
 
 ## 与现有代码交互
 

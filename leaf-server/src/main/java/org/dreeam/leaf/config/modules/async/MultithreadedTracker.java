@@ -23,15 +23,15 @@ public class MultithreadedTracker implements ConfigModule {
     @ConfigInfo(name = "threads")
     public static int threads = 0;
 
+    // The thread count after normalization.
+    public static @DoNotLoad int effectiveThreads = 1;
+
     @Override
     public void onLoaded() {
-        if (threads <= 0) {
-            threads = Math.min(Runtime.getRuntime().availableProcessors(), 4);
-        }
-        threads = Math.max(threads, 1);
+        effectiveThreads = Math.max(threads <= 0 ? Math.min(Runtime.getRuntime().availableProcessors(), 4) : threads, 1);
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", threads);
+            LeafConfig.LOGGER.info("Using {} threads for Async Entity Tracker", effectiveThreads);
             AsyncTracker.init();
         }
     }

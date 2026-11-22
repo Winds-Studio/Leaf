@@ -24,12 +24,6 @@ public class Knockback implements ConfigModule {
     })
     public static boolean canPlayerKnockbackZombie = true;
 
-    @ConfigInfo(name = "flush-location-while-knockback-player", comments = {
-        "Synchronize player immediately when knocked back.",
-        "被击退时立即同步玩家."
-    })
-    public static @Experimental boolean flushKnockback = false;
-
     @ConfigInfo(name = "old-blast-protection-explosion-knockback")
     public static boolean oldBlastProtectionKnockbackBehavior = false;
 

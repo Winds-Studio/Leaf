@@ -33,14 +33,18 @@ public class ConnectionMessage implements ConfigModule {
     })
     public static String quitMessage = "default";
 
+    // The messages after legacy placeholders are converted; read at runtime instead of the options.
+    public static @DoNotLoad String effectiveJoinMessage = "default";
+    public static @DoNotLoad String effectiveQuitMessage = "default";
+
     @Override
     public void onLoaded() {
         // Legacy compatibility
         // TODO: config migration
-        joinMessage = joinMessage
+        effectiveJoinMessage = joinMessage
             .replace("%player_name%", "<player_name>")
             .replace("%player_displayname%", "<player_displayname>");
-        quitMessage = quitMessage
+        effectiveQuitMessage = quitMessage
             .replace("%player_name%", "<player_name>")
             .replace("%player_displayname%", "<player_displayname>");
     }

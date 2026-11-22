@@ -16,7 +16,9 @@ import org.dreeam.leaf.config.migration.ConfigBackupSession;
 import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 import org.dreeam.leaf.config.util.ConfigFileIO;
+import org.dreeam.leaf.config.util.ConfigVersion;
 import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.Command;
@@ -30,7 +32,6 @@ import java.net.JarURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -40,10 +41,8 @@ import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -57,6 +56,7 @@ public class LeafConfig {
     public static final Logger LOGGER = LogManager.getLogger(LeafConfig.class.getSimpleName());
 
     public static final String CURRENT_CONFIG_VERSION = "3.1";
+    public static final String VERSION_PATH = "config-version";
     // It will be in uppercase by default, just make sure
     private static final String REGION_COUNTRY_CODE = Locale.getDefault().getCountry().toUpperCase(Locale.ROOT);
     private static final boolean IS_CHINESE_LOCALE = REGION_COUNTRY_CODE.equals("CN");
@@ -76,86 +76,178 @@ public class LeafConfig {
     private static final List<ConfigModule> GLOBAL_MODULES = new ArrayList<>();
     private static final List<Field> WORLD_MODULES = new ArrayList<>();
 
-    private static ConfigVersion previousConfigVersion = ConfigVersion.init();
-    private static final AtomicBoolean RELOAD_QUEUED_OR_RUNNING = new AtomicBoolean();
-    private static final ReentrantLock RELOAD_TRANSACTION_LOCK = new ReentrantLock();
 
     /* Load & Reload */
 
-    // Reload config on the server thread
-    public static CompletableFuture<Void> reloadAsync(CommandSender sender) {
-        if (!RELOAD_QUEUED_OR_RUNNING.compareAndSet(false, true)) {
-            Command.broadcastCommandMessage(sender, Component.text("Leaf config reload is already in progress.", NamedTextColor.RED));
-            return CompletableFuture.completedFuture(null);
-        }
+    /**
+     * Reloads the configuration on the calling thread, which has to be the server thread, like Paper does.
+     * Nothing is queued or locked, and a reload is not undone when a step after the commit fails.
+     */
+    public static void reload(CommandSender sender) {
+        long begin = System.nanoTime();
         MinecraftServer server = MinecraftServer.getServer();
+        List<LoadedLevel> levels = new ArrayList<>();
+        for (ServerLevel level : server.getAllLevels()) {
+            levels.add(new LoadedLevel(server.storageSource.getDimensionPath(level.dimension()), level.leafConfig()));
+        }
+
         try {
-            return CompletableFuture.runAsync(() -> {
-                RELOAD_TRANSACTION_LOCK.lock();
-                try {
-                    long begin = System.nanoTime();
+            ConfigFileIO.SaveReport saveReport = reloadConfigs(levels);
 
-                    createDirectory(CONFIG_DIRECTORY);
-
-                    ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
-                    ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
-                    LeafGlobalConfig loadedGlobalConfig = new LeafGlobalConfig(globalConfigFile, false);
-                    LeafWorldConfig loadedWorldDefaults = reloadWorldDefaults(worldDefaultsFile, worldDefaultsConfig);
-
-                    List<ConfigBinder.ReloadValue> candidateValues = new ArrayList<>();
-                    for (ConfigModule module : GLOBAL_MODULES) {
-                        ConfigBinder.collectGlobalReload(module, loadedGlobalConfig, candidateValues);
-                    }
-                    collectWorldReloadValues(worldDefaultsConfig, loadedWorldDefaults, candidateValues);
-
-                    List<WorldReload> worldReloads = new ArrayList<>();
-                    for (ServerLevel level : server.getAllLevels()) {
-                        Path worldDirectory = server.storageSource.getDimensionPath(level.dimension());
-                        LeafWorldConfig loadedConfig = loadWorldConfig(worldDirectory, loadedWorldDefaults, false);
-                        LeafWorldConfig currentConfig = level.leafConfig();
-                        collectWorldReloadValues(currentConfig, loadedConfig, candidateValues);
-                        worldReloads.add(new WorldReload(currentConfig, loadedConfig.configFile));
-                    }
-
-                    ReloadCommit commit = commitReload(loadedGlobalConfig, loadedWorldDefaults, worldReloads, candidateValues);
-                    ConfigFileIO.SaveReport saveReport = commit.saveReport();
-
-                    final String success = String.format("Successfully reloaded config in %sms.", (System.nanoTime() - begin) / 1_000_000);
-                    Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));
-                    if (saveReport.hasAccessDenied()) {
-                        Command.broadcastCommandMessage(sender, Component.text(
-                            "Leaf config reload is active in memory, but could not persist: " + saveReport.describe(),
-                            NamedTextColor.YELLOW
-                        ));
-                    }
-                    if (commit.callbackFailure() != null) {
-                        Command.broadcastCommandMessage(sender, Component.text(
-                            "Leaf config was reloaded, but post-reload processing failed. See error in console.",
-                            NamedTextColor.YELLOW
-                        ));
-                    }
-                } catch (ConfigFileIO.ConfigSaveException exception) {
+            final String success = String.format("Successfully reloaded config in %sms.", (System.nanoTime() - begin) / 1_000_000);
+            Command.broadcastCommandMessage(sender, Component.text(success, NamedTextColor.GREEN));
+            if (saveReport.hasAccessDenied()) {
+                Command.broadcastCommandMessage(sender, Component.text(
+                    "Leaf config reload is active in memory, but could not persist: " + saveReport.describe(),
+                    NamedTextColor.YELLOW
+                ));
+            }
+        } catch (ReloadException exception) {
+            switch (exception.stage()) {
+                case CANDIDATE -> {
+                    Command.broadcastCommandMessage(sender, Component.text("Failed to reload config. See error in console!", NamedTextColor.RED));
+                    LOGGER.error("Failed to reload config!", exception.getCause());
+                }
+                case CALLBACK -> {
+                    Command.broadcastCommandMessage(sender, Component.text(
+                        "Leaf config was reloaded, but post-reload processing failed, so it was not saved. See error in console!",
+                        NamedTextColor.RED
+                    ));
+                    LOGGER.error("Leaf config reload post-processing failed after the configuration was applied; it was not saved.", exception.getCause());
+                }
+                case SAVE -> {
                     Command.broadcastCommandMessage(sender, Component.text(
                         "Leaf config reload is active in memory, but persistence failed: " + exception.report().describe(),
                         NamedTextColor.RED
                     ));
-                    LOGGER.error("Leaf config reload persistence failed: {}", exception.report().describe(), exception);
-                } catch (Exception e) {
-                    Command.broadcastCommandMessage(sender, Component.text("Failed to reload config. See error in console!", NamedTextColor.RED));
-                    LOGGER.error("Failed to reload config!", e);
-                } finally {
-                    RELOAD_TRANSACTION_LOCK.unlock();
-                    RELOAD_QUEUED_OR_RUNNING.set(false);
+                    LOGGER.error("Leaf config reload persistence failed: {}", exception.report().describe(), exception.getCause());
                 }
-            }, server);
-        } catch (java.util.concurrent.RejectedExecutionException exception) {
-            RELOAD_QUEUED_OR_RUNNING.set(false);
-            Command.broadcastCommandMessage(sender, Component.text("Leaf config reload could not be scheduled.", NamedTextColor.RED));
-            return CompletableFuture.failedFuture(exception);
+            }
         }
     }
 
-    private static LeafWorldConfig loadWorldConfig(Path worldDirectory, LeafWorldConfig defaults, boolean migrateOverride) throws Exception {
+    /** A loaded level: where its world configuration is stored, and the configuration it runs with. */
+    record LoadedLevel(Path worldDirectory, LeafWorldConfig config) {
+    }
+
+    /** Where a reload stopped. Before {@link #CALLBACK} nothing was changed. */
+    enum ReloadStage {
+        CANDIDATE,
+        CALLBACK,
+        SAVE
+    }
+
+    static final class ReloadException extends Exception {
+
+        private final ReloadStage stage;
+        private final ConfigFileIO.@Nullable SaveReport report;
+
+        private ReloadException(ReloadStage stage, Throwable cause, ConfigFileIO.@Nullable SaveReport report) {
+            super(cause);
+            this.stage = stage;
+            this.report = report;
+        }
+
+        ReloadStage stage() {
+            return this.stage;
+        }
+
+        ConfigFileIO.SaveReport report() {
+            return Objects.requireNonNull(this.report);
+        }
+    }
+
+    /**
+     * Reloads the global configuration, the world defaults and the world configuration of the loaded levels.
+     *
+     * <p>Everything is read, migrated and checked first without touching the running configuration or any
+     * file. Then the new values are applied, the module callbacks run until the first one fails, and only
+     * after that the files are saved: world overrides that have to be brought up to date, the world defaults
+     * and the global file. There is no rollback.</p>
+     *
+     * @return what was saved; a file that could not be written because access was denied is reported there
+     * @throws ReloadException if the reload stopped
+     */
+    static ConfigFileIO.SaveReport reloadConfigs(List<LoadedLevel> levels) throws ReloadException {
+        LeafGlobalConfig loadedGlobalConfig;
+        LeafWorldConfig loadedWorldDefaults;
+        List<ConfigBinder.PendingValue> candidateValues = new ArrayList<>();
+        List<ConfigFile> overrideFilesToSave = new ArrayList<>();
+        try {
+            createDirectory(CONFIG_DIRECTORY);
+
+            ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
+            ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
+            VersionCheck globalVersion = globalVersion(globalConfigFile);
+            // Migrations that were not saved, for example when access was denied, are run again. Gale is not
+            // converted again, a Gale file whose values could not be saved is still there for the next start.
+            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored());
+
+            loadedGlobalConfig = new LeafGlobalConfig(globalConfigFile, globalVersion);
+            loadedWorldDefaults = reloadWorldDefaults(worldDefaultsFile, worldDefaultsConfig);
+
+            for (ConfigModule module : GLOBAL_MODULES) {
+                ConfigBinder.collectGlobalReload(module, loadedGlobalConfig, candidateValues);
+            }
+            collectWorldReloadValues(worldDefaultsConfig, loadedWorldDefaults, candidateValues);
+
+            for (LoadedLevel level : levels) {
+                LoadedWorld loadedWorld = loadWorldConfig(level.worldDirectory(), loadedWorldDefaults, true);
+                collectWorldReloadValues(level.config(), loadedWorld.config(), candidateValues);
+                if (loadedWorld.needsSave()) {
+                    overrideFilesToSave.add(Objects.requireNonNull(loadedWorld.overrideFile()));
+                }
+            }
+        } catch (Exception exception) {
+            throw new ReloadException(ReloadStage.CANDIDATE, exception, null);
+        }
+
+        // Commit
+        try {
+            globalConfig = loadedGlobalConfig;
+            worldDefaultsConfig.setConfigFile(loadedWorldDefaults.configFile);
+            ConfigBinder.applyAll(candidateValues);
+
+            runGlobalModuleCallbacks(true);
+            runAfterBootstrapCallbacks(true);
+        } catch (Exception exception) {
+            throw new ReloadException(ReloadStage.CALLBACK, exception, null);
+        }
+
+        ConfigFileIO.SaveReport report = new ConfigFileIO.SaveReport(List.of());
+        ConfigFileIO.ConfigSaveException failure = null;
+        if (!overrideFilesToSave.isEmpty()) {
+            try {
+                report = ConfigFileIO.save(overrideFilesToSave.toArray(new ConfigFile[0]));
+            } catch (ConfigFileIO.ConfigSaveException exception) {
+                failure = exception;
+                report = exception.report();
+            }
+        }
+        try {
+            report = ConfigFileIO.SaveReport.merge(report, saveGlobalFiles(worldDefaultsConfig, globalConfig));
+        } catch (ConfigFileIO.ConfigSaveException exception) {
+            if (failure == null) {
+                failure = exception;
+            } else {
+                failure.addSuppressed(exception);
+            }
+            report = ConfigFileIO.SaveReport.merge(report, exception.report());
+        }
+        if (failure != null) {
+            throw new ReloadException(ReloadStage.SAVE, (Exception) failure.getCause(), report);
+        }
+        return report;
+    }
+
+    /**
+     * A world configuration, with the override file it was read from and whether that file has to be saved
+     * because it was migrated or its version had to be brought up to date.
+     */
+    private record LoadedWorld(LeafWorldConfig config, @Nullable ConfigFile overrideFile, boolean needsSave) {
+    }
+
+    private static LoadedWorld loadWorldConfig(Path worldDirectory, LeafWorldConfig defaults, boolean migrateOverride) throws Exception {
         LeafWorldConfig config = new LeafWorldConfig(
             defaults.configFile,
             LeafWorldConfig.Source.WORLD_OVERRIDE
@@ -165,18 +257,22 @@ public class LeafConfig {
         File worldConfigFile = worldDirectory.resolve(WORLD_CONFIG_FILE).toFile();
         if (!worldConfigFile.isFile()) {
             config.setConfigFile(defaults.configFile);
-            return config;
+            return new LoadedWorld(config, null, false);
         }
         ConfigFile overrideConfig = ConfigFileIO.load(worldConfigFile);
+        // An override is migrated by its own version. The global version says nothing about it.
+        VersionCheck version = checkVersion(overrideConfig);
         boolean migrated = migrateOverride && LeafConfigMigration.migrateWorldOverride(
             overrideConfig,
+            version.stored(),
             worldMigrationModuleClasses()
         );
         applyWorldOverride(config, overrideConfig, defaults);
-        if (migrated) {
-            ConfigFileIO.save(overrideConfig);
+        boolean needsSave = migrated || version.needsRewrite();
+        if (needsSave) {
+            overrideConfig.set(VERSION_PATH, version.valueToWrite());
         }
-        return config;
+        return new LoadedWorld(config, overrideConfig, needsSave);
     }
 
     // Init config
@@ -192,12 +288,13 @@ public class LeafConfig {
 
             ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
             ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
+            VersionCheck globalVersion = globalVersion(globalConfigFile);
 
             discoverGlobalModules();
             discoverWorldModules();
 
             // Migrate the same raw config instances that will be bound and saved below.
-            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses());
+            LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored());
             GaleConfigMigration.migrate(
                 CONFIG_DIRECTORY.toPath(),
                 globalConfigFile,
@@ -205,9 +302,9 @@ public class LeafConfig {
                 backupSession
             );
 
-            globalConfig = new LeafGlobalConfig(globalConfigFile, true);
+            globalConfig = new LeafGlobalConfig(globalConfigFile, globalVersion);
             for (ConfigModule module : GLOBAL_MODULES) {
-                ConfigBinder.bind(module, null, globalConfig, true);
+                ConfigBinder.bindGlobal(module, globalConfig);
             }
             runGlobalModuleCallbacks(false);
 
@@ -247,12 +344,17 @@ public class LeafConfig {
             } catch (IllegalAccessException e) {
                 throw new RuntimeException(e);
             }
+            GaleConfigMigration.archiveWorldSource(worldDirectory);
             return migratedConfig;
         }
         try {
-            LeafWorldConfig config = loadWorldConfig(worldDirectory, worldDefaultsConfig, true);
-            captureWorldInitialReloadValues(config);
-            return config;
+            LoadedWorld loaded = loadWorldConfig(worldDirectory, worldDefaultsConfig, true);
+            if (loaded.needsSave()) {
+                ConfigFileIO.save(loaded.overrideFile());
+            }
+            captureWorldInitialReloadValues(loaded.config());
+            GaleConfigMigration.archiveWorldSource(worldDirectory);
+            return loaded.config();
         } catch (Exception exception) {
             throw new RuntimeException("Could not load Leaf world config for " + worldDirectory, exception);
         }
@@ -272,7 +374,6 @@ public class LeafConfig {
             }
 
             ConfigModule module = (ConfigModule) moduleClass.getConstructor().newInstance();
-            ConfigBinder.registerGlobalDefaults(module);
             GLOBAL_MODULES.add(module);
         }
     }
@@ -320,49 +421,20 @@ public class LeafConfig {
     private static void collectWorldReloadValues(
         LeafWorldConfig config,
         LeafWorldConfig loadedConfig,
-        List<ConfigBinder.ReloadValue> pendingValues
+        List<ConfigBinder.PendingValue> pendingValues
     ) throws IllegalAccessException {
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             WorldConfigModule loadedModule = (WorldConfigModule) moduleField.get(loadedConfig);
-            ConfigBinder.collectWorldReload(module, loadedModule, pendingValues);
+            ConfigBinder.collectWorldReload(module, loadedModule, config.initialValues(), pendingValues);
         }
-    }
-
-    private static ReloadCommit commitReload(
-        LeafGlobalConfig loadedGlobalConfig,
-        LeafWorldConfig loadedWorldDefaults,
-        List<WorldReload> worldReloads,
-        List<ConfigBinder.ReloadValue> candidateValues
-    ) throws Exception {
-        List<ConfigBinder.PendingValue> pendingValues = ConfigBinder.preparePendingValues(candidateValues);
-
-        globalConfig = loadedGlobalConfig;
-        worldDefaultsConfig.setConfigFile(loadedWorldDefaults.configFile);
-        for (WorldReload worldReload : worldReloads) {
-            worldReload.config().setConfigFile(worldReload.loadedConfigFile());
-        }
-        for (ConfigBinder.PendingValue pendingValue : pendingValues) {
-            pendingValue.apply();
-        }
-
-        ConfigFileIO.SaveReport saveReport = ConfigFileIO.save(worldDefaultsConfig.configFile, globalConfig.configFile);
-        Exception callbackFailure = null;
-        try {
-            runGlobalModuleCallbacks(true);
-            runAfterBootstrapCallbacks(true);
-        } catch (Exception exception) {
-            callbackFailure = exception;
-            LOGGER.error("Leaf config reload post-processing failed after configuration was committed.", exception);
-        }
-        return new ReloadCommit(saveReport, callbackFailure);
     }
 
     private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile) throws ReflectiveOperationException {
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
-            ConfigBinder.bind(module, null, config, false);
+            ConfigBinder.bindWorldDefaults(module, module, config);
         }
         return config;
     }
@@ -375,15 +447,12 @@ public class LeafConfig {
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             WorldConfigModule activeModule = (WorldConfigModule) moduleField.get(activeDefaults);
-            ConfigBinder.bindWorldDefaultsForReload(module, activeModule, config);
+            ConfigBinder.bindWorldDefaults(module, activeModule, config);
         }
         return config;
     }
 
     private static void discoverWorldModules() {
-        if (!WORLD_MODULES.isEmpty()) {
-            return;
-        }
         Field[] fields = LeafWorldConfig.class.getDeclaredFields();
         ObjectArrays.quickSort(fields, Comparator.comparing((Field field) -> field.getType().getSimpleName())
             .thenComparing(field -> field.getType().getName()));
@@ -433,7 +502,7 @@ public class LeafConfig {
         for (Field moduleField : WORLD_MODULES) {
             WorldConfigModule module = (WorldConfigModule) moduleField.get(config);
             WorldConfigModule worldDefaultModule = (WorldConfigModule) moduleField.get(worldDefaults);
-            ConfigBinder.bind(module, worldDefaultModule, config, false);
+            ConfigBinder.bindWorldOverride(module, worldDefaultModule, config);
         }
     }
 
@@ -441,14 +510,67 @@ public class LeafConfig {
         try {
             runAfterBootstrapCallbacks(false);
             for (ConfigModule module : GLOBAL_MODULES) {
-                ConfigBinder.captureInitializedValues(module, true);
+                ConfigBinder.captureGlobalInitialValues(module);
             }
-            ConfigFileIO.SaveReport report = ConfigFileIO.save(worldDefaultsConfig.configFile, globalConfig.configFile);
-            GaleConfigMigration.recordLeafPersistence(report);
+            ConfigFileIO.SaveReport report = saveGlobalFiles(worldDefaultsConfig, globalConfig);
+            GaleConfigMigration.archiveGlobalSources(report);
         } catch (Exception exception) {
-            LOGGER.error("Failed to save config file!", exception);
             throw new IllegalStateException("Failed to finish loading Leaf configuration", exception);
         }
+    }
+
+    /**
+     * The version of the global configuration file, which records the migration progress of the global
+     * configuration and the world defaults. A file that does not exist yet starts at the current version.
+     */
+    private static VersionCheck globalVersion(ConfigFile globalConfigFile) {
+        return Files.isRegularFile(globalConfigFile.getFile().toPath())
+            ? checkVersion(globalConfigFile)
+            : VersionCheck.current();
+    }
+
+    /**
+     * Saves the world defaults, then the global configuration. The global file records the version of both,
+     * so when the defaults could not be saved the global file keeps the version it was loaded with: the
+     * migrations of the defaults run again at the next start. Both files are always attempted.
+     */
+    private static ConfigFileIO.SaveReport saveGlobalFiles(
+        LeafWorldConfig defaults,
+        LeafGlobalConfig global
+    ) throws ConfigFileIO.ConfigSaveException {
+        ConfigFileIO.ConfigSaveException failure = null;
+        ConfigFileIO.SaveReport defaultsReport;
+        try {
+            defaultsReport = ConfigFileIO.save(defaults.configFile);
+        } catch (ConfigFileIO.ConfigSaveException exception) {
+            failure = exception;
+            defaultsReport = exception.report();
+        }
+
+        boolean defaultsSaved = failure == null && !defaultsReport.hasAccessDenied();
+        Object versionToWrite = global.configFile.get(VERSION_PATH);
+        if (!defaultsSaved) {
+            global.configFile.set(VERSION_PATH, global.loadedVersion());
+        }
+        ConfigFileIO.SaveReport globalReport;
+        try {
+            globalReport = ConfigFileIO.save(global.configFile);
+        } catch (ConfigFileIO.ConfigSaveException exception) {
+            if (failure == null) {
+                failure = exception;
+            } else {
+                failure.addSuppressed(exception);
+            }
+            globalReport = exception.report();
+        } finally {
+            global.configFile.set(VERSION_PATH, versionToWrite);
+        }
+
+        ConfigFileIO.SaveReport report = ConfigFileIO.SaveReport.merge(defaultsReport, globalReport);
+        if (failure != null) {
+            throw new ConfigFileIO.ConfigSaveException(report, (Exception) failure.getCause());
+        }
+        return report;
     }
 
     private static void runAfterBootstrapCallbacks(boolean reload) {
@@ -482,7 +604,7 @@ public class LeafConfig {
 
     private static void captureWorldInitialReloadValues(LeafWorldConfig config) throws IllegalAccessException {
         for (Field moduleField : WORLD_MODULES) {
-            ConfigBinder.captureInitializedValues(moduleField.get(config), false);
+            ConfigBinder.captureWorldInitialValues(moduleField.get(config), config);
         }
     }
 
@@ -493,11 +615,9 @@ public class LeafConfig {
     /* Create config folder */
 
     protected static void createDirectory(File dir) throws IOException {
-        try {
-            Files.createDirectories(dir.toPath());
-        } catch (FileAlreadyExistsException e) { // Thrown if dir exists but is not a directory
-            if (dir.delete()) createDirectory(dir);
-        }
+        // Throws FileAlreadyExistsException if dir exists but is not a directory, like Paper does. The
+        // file is not deleted, it may belong to the administrator.
+        Files.createDirectories(dir.toPath());
     }
 
     /* Scan classes under package */
@@ -586,110 +706,76 @@ public class LeafConfig {
     }
 
     /**
-     * Records the version that was stored in the global configuration before it is updated to
-     * {@link #CURRENT_CONFIG_VERSION}. A missing version is treated as the initial configuration version
-     * so migrations can also handle configurations created before versioning was introduced.
+     * Returns whether {@code storedVersion}, a version a configuration was last written with, predates
+     * {@code version}. For example, {@code isConfigVersionBefore("3.0", "3.1")} is {@code true}.
      *
-     * @param previousVersion the value of {@code config-version}, or {@code null} when absent
+     * @param storedVersion a numeric dot-separated config version
+     * @param version       a numeric dot-separated config version, such as {@code 3.1}
+     * @throws IllegalArgumentException if a version is not a numeric dot-separated version
      */
-    public static void loadPreviousConfigVersion(String previousVersion) {
-        previousConfigVersion = parseStoredConfigVersion(previousVersion, true);
-    }
-
-    /**
-     * Returns whether the configuration being loaded predates {@code version}.
-     *
-     * <p>Use this when migrating a renamed option path, before the current config version is
-     * persisted. For example, {@code isConfigVersionBefore("3.1")} is {@code true} for a
-     * configuration last written by Leaf 3.0.</p>
-     *
-     * @param version a numeric dot-separated config version, such as {@code 3.1}
-     * @return {@code true} when the loaded configuration is older than {@code version}
-     * @throws IllegalArgumentException if {@code version} is not a numeric dot-separated version
-     */
-    public static boolean isConfigVersionBefore(String version) {
-        return previousConfigVersion.compareTo(ConfigVersion.parse(version)) < 0;
-    }
-
     public static boolean isConfigVersionBefore(String storedVersion, String version) {
-        return parseStoredConfigVersion(storedVersion, false).compareTo(ConfigVersion.parse(version)) < 0;
+        return ConfigVersion.parse(storedVersion).compareTo(ConfigVersion.parse(version)) < 0;
     }
 
     /**
-     * Returns whether the configuration being loaded is at least {@code version}.
+     * Returns whether {@code storedVersion}, a version a configuration was last written with, is not older
+     * than {@code version}.
      *
-     * @param version a numeric dot-separated config version, such as {@code 3.1}
-     * @return {@code true} when the loaded configuration is not older than {@code version}
-     * @throws IllegalArgumentException if {@code version} is not a numeric dot-separated version
+     * @throws IllegalArgumentException if a version is not a numeric dot-separated version
      */
-    public static boolean isConfigVersionAtLeast(String version) {
-        return !isConfigVersionBefore(version);
+    public static boolean isConfigVersionAtLeast(String storedVersion, String version) {
+        return !isConfigVersionBefore(storedVersion, version);
     }
 
-    private static ConfigVersion parseStoredConfigVersion(String version, boolean warnIfInvalid) {
-        if (version == null) {
-            return ConfigVersion.init();
+    /**
+     * The version of a configuration file that exists, checked against {@link #CURRENT_CONFIG_VERSION}.
+     *
+     * @param stored       the version that decides which migrations still have to run
+     * @param valueToWrite the {@code config-version} value to save: the current version, or the file's own
+     *                     version when it is newer than the supported one
+     * @param needsRewrite whether the file has to be saved to bring its version up to date
+     */
+    record VersionCheck(ConfigVersion stored, Object valueToWrite, boolean needsRewrite) {
+
+        static VersionCheck current() {
+            return new VersionCheck(ConfigVersion.parse(CURRENT_CONFIG_VERSION), CURRENT_CONFIG_VERSION, false);
+        }
+    }
+
+    /**
+     * Reads the {@code config-version} of an existing raw file.
+     *
+     * <p>A file without a version is read as the current version: it is warned about, not migrated and
+     * written back with the version. A version that cannot be parsed is rejected. A version newer than the
+     * supported one is warned about, not migrated and keeps its version when saved.</p>
+     *
+     * @throws IllegalArgumentException if the version cannot be parsed
+     */
+    static VersionCheck checkVersion(ConfigFile file) {
+        VersionCheck current = VersionCheck.current();
+        Object raw = file.get(VERSION_PATH);
+        if (raw == null) {
+            LOGGER.warn("{} has no {}; reading it as the current version {} without migrating it. The version is added when the file is saved.",
+                file.getFile(), VERSION_PATH, CURRENT_CONFIG_VERSION);
+            return new VersionCheck(current.stored(), CURRENT_CONFIG_VERSION, true);
         }
 
+        ConfigVersion stored;
         try {
-            return ConfigVersion.parse(version);
+            stored = ConfigVersion.parse(String.valueOf(raw));
         } catch (IllegalArgumentException exception) {
-            if (warnIfInvalid) {
-                LOGGER.warn("Invalid Leaf config version '{}'; treating it as an unversioned configuration.", version);
-            }
-            return ConfigVersion.init();
-        }
-    }
-
-    private record WorldReload(
-        LeafWorldConfig config,
-        ConfigFile loadedConfigFile
-    ) {
-    }
-
-    private record ReloadCommit(ConfigFileIO.SaveReport saveReport, Exception callbackFailure) {
-    }
-
-    private record ConfigVersion(List<Integer> components) implements Comparable<ConfigVersion> {
-
-        private static ConfigVersion init() {
-            return new ConfigVersion(List.of(0));
+            throw new IllegalArgumentException("Invalid " + VERSION_PATH + " '" + raw + "' in " + file.getFile(), exception);
         }
 
-        private static ConfigVersion parse(String version) {
-            if (version == null || version.isBlank()) {
-                throw new IllegalArgumentException("Config version must not be blank");
-            }
-
-            String[] parts = version.split("\\.", -1);
-            List<Integer> components = new ArrayList<>(parts.length);
-            for (String part : parts) {
-                if (part.isEmpty() || !part.chars().allMatch(Character::isDigit)) {
-                    throw new IllegalArgumentException("Invalid config version: " + version);
-                }
-                try {
-                    components.add(Integer.parseInt(part));
-                } catch (NumberFormatException exception) {
-                    throw new IllegalArgumentException("Invalid config version: " + version, exception);
-                }
-            }
-            return new ConfigVersion(List.copyOf(components));
+        int comparison = stored.compareTo(current.stored());
+        if (comparison > 0) {
+            LOGGER.warn("{} was written by a newer Leaf version (config-version {}, this server supports up to {}). It is not migrated and keeps its version, options that this version does not know are dropped when it is saved.",
+                file.getFile(), raw, CURRENT_CONFIG_VERSION);
+            return new VersionCheck(stored, raw, false);
         }
-
-        @Override
-        public int compareTo(ConfigVersion other) {
-            int componentCount = Math.max(this.components.size(), other.components.size());
-            for (int index = 0; index < componentCount; index++) {
-                int thisComponent = index < this.components.size() ? this.components.get(index) : 0;
-                int otherComponent = index < other.components.size() ? other.components.get(index) : 0;
-                int comparison = Integer.compare(thisComponent, otherComponent);
-                if (comparison != 0) {
-                    return comparison;
-                }
-            }
-            return 0;
-        }
+        return new VersionCheck(stored, CURRENT_CONFIG_VERSION, comparison < 0);
     }
+
 
     /* Register Spark profiler extra server configurations */
 
@@ -743,7 +829,17 @@ public class LeafConfig {
 
     /* Purge and backup old Leaf config & Pufferfish config */
 
-    private static void purgeOutdated(ConfigBackupSession backupSession) throws IOException {
+    private static boolean moveLegacy(ConfigBackupSession backupSession, File file, String name) {
+        try {
+            backupSession.move(file.toPath(), Path.of(name));
+            return true;
+        } catch (IOException exception) {
+            LOGGER.warn("Could not move legacy config {} to the backup directory, it is left in place.", file, exception);
+            return false;
+        }
+    }
+
+    private static void purgeOutdated(ConfigBackupSession backupSession) {
         boolean legacyFound = false;
         String pufferfishConfig = "pufferfish.yml";
         String leafConfigV1 = "leaf.yml";
@@ -753,14 +849,16 @@ public class LeafConfig {
         File leafConfigV1File = new File(leafConfigV1);
         File leafConfigV2File = new File(leafConfigV2);
 
+        // Only moves the legacy files, their content is not converted. A file that cannot be moved stays
+        // in place and is tried again at the next start, so a failure only warns.
         if (pufferfishConfigFile.isFile()) {
-            legacyFound |= backupSession.move(pufferfishConfigFile.toPath(), Path.of(pufferfishConfig));
+            legacyFound |= moveLegacy(backupSession, pufferfishConfigFile, pufferfishConfig);
         }
         if (leafConfigV1File.isFile()) {
-            legacyFound |= backupSession.move(leafConfigV1File.toPath(), Path.of(leafConfigV1));
+            legacyFound |= moveLegacy(backupSession, leafConfigV1File, leafConfigV1);
         }
         if (leafConfigV2File.isDirectory()) {
-            legacyFound |= backupSession.move(leafConfigV2File.toPath(), Path.of(leafConfigV2));
+            legacyFound |= moveLegacy(backupSession, leafConfigV2File, leafConfigV2);
         }
         if (legacyFound) {
             LOGGER.warn("Found legacy Leaf config files, moved to backup directory: {}", backupSession.directory());

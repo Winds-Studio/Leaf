@@ -71,7 +71,7 @@ public final class AsyncPathProcessor {
     }
 
     private static int getMaxPoolSize() {
-        return AsyncPathfinding.maxThreads;
+        return AsyncPathfinding.effectiveMaxThreads;
     }
 
     private static long getKeepAliveTime() {
@@ -79,7 +79,7 @@ public final class AsyncPathProcessor {
     }
 
     private static BlockingQueue<Runnable> getQueueImpl() {
-        final int queueCapacity = AsyncPathfinding.queueSize;
+        final int queueCapacity = AsyncPathfinding.effectiveQueueSize;
 
         return new LinkedBlockingQueue<>(queueCapacity);
     }

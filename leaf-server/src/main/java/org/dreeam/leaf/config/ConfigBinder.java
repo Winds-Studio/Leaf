@@ -1,228 +1,157 @@
 package org.dreeam.leaf.config;
 
+import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import org.dreeam.leaf.config.annotations.ConfigClassInfo;
 import org.dreeam.leaf.config.annotations.ConfigInfo;
 import org.dreeam.leaf.config.annotations.DoNotLoad;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
 import org.dreeam.leaf.config.util.ConfigPaths;
+import org.dreeam.leaf.config.util.ConfigValues;
 import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
  * Binds annotation-driven module fields to a global or world configuration view.
+ *
+ * <p>Every bind first reads all values of a module into {@link PendingValue}s and then writes them,
+ * so a value that is rejected never leaves a module half applied.</p>
  */
 final class ConfigBinder {
 
-    // Static fields no longer expose their code defaults after the first successful bind.
-    private static final Map<Field, Object> GLOBAL_DEFAULT_VALUES = new HashMap<>();
-    private static final Map<Field, Object> INITIAL_GLOBAL_RELOAD_VALUES = new HashMap<>();
-    private static final Map<Object, Map<Field, Object>> INITIAL_WORLD_RELOAD_VALUES = new IdentityHashMap<>();
+    // Values of global @HotReloadUnsupported options, captured once after startup has completed.
+    // World values are held by the LeafWorldConfig they belong to, see LeafWorldConfig#initialValues().
+    private static final Map<Field, Object> INITIAL_GLOBAL_VALUES = new HashMap<>();
 
-    static void registerGlobalDefaults(Object module) throws IllegalAccessException {
-        Class<?> moduleClass = module.getClass();
-        for (Field field : moduleClass.getDeclaredFields()) {
-            if (field.getAnnotation(ConfigInfo.class) == null
-                || field.isAnnotationPresent(DoNotLoad.class)) {
-                continue;
-            }
-
-            field.setAccessible(true);
-            Object defaultValue = field.get(null);
-            if (defaultValue == null) {
-                // TODO: move it to test
-                throw new IllegalStateException("Configuration field has a null default value: " + field);
-            }
-            GLOBAL_DEFAULT_VALUES.putIfAbsent(field, copyValue(defaultValue));
-        }
+    /** Binds the static fields of a global module during startup. The code defaults are the fallbacks. */
+    static void bindGlobal(Object module, LeafConfigAccessor config) throws IllegalAccessException {
+        List<PendingValue> values = new ArrayList<>();
+        collect(module, null, config, true, null, values);
+        applyAll(values);
     }
 
+    /**
+     * Reads the values a reload would apply to the static fields of a global module. Missing options keep
+     * their current value, and options that cannot be reloaded are restored to their first value.
+     */
     static void collectGlobalReload(
         Object module,
         LeafConfigAccessor config,
-        List<ReloadValue> pendingValues
+        List<PendingValue> values
     ) throws IllegalAccessException {
-        Class<?> moduleClass = module.getClass();
-        ConfigClassInfo classInfo = moduleClass.getAnnotation(ConfigClassInfo.class);
-        if (classInfo == null) {
-            throw new IllegalStateException("Configuration module " + moduleClass.getName()
-                + " is missing @ConfigClassInfo");
-        }
-
-        String basePath = ConfigPaths.modulePath(moduleClass);
-        String sectionComment = config.pickStringRegionBased(classInfo.comments());
-        if (sectionComment != null) {
-            config.addComment(basePath, sectionComment);
-        }
-
-        boolean skipModuleReload = moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
-
-        for (Field field : moduleClass.getDeclaredFields()) {
-            ConfigInfo configInfo = field.getAnnotation(ConfigInfo.class);
-            if (configInfo == null
-                || field.isAnnotationPresent(DoNotLoad.class)) {
-                continue;
-            }
-
-            field.setAccessible(true);
-
-            String path = ConfigPaths.fieldPath(moduleClass, field);
-            Object defaultValue = copyValue(field.get(null));
-
-            String comment = config.pickStringRegionBased(configInfo.comments());
-            Object loadedValue = readValue(config, path, comment, field, defaultValue, true);
-            pendingValues.add(new ReloadValue(null, field, skipModuleReload || field.isAnnotationPresent(HotReloadUnsupported.class)
-                ? initialReloadValue(null, field)
-                : loadedValue));
-        }
+        collect(module, null, config, true, INITIAL_GLOBAL_VALUES, values);
     }
 
-    static void collectWorldReload(
+    /**
+     * Binds a world defaults module, writing defaults and comments to the configuration file.
+     *
+     * @param fallbackModule supplies the value of options missing from the file: the module itself when it
+     *                       is loaded for the first time, the active module when it is a reload candidate
+     */
+    static void bindWorldDefaults(
         Object module,
-        Object loadedModule,
-        List<ReloadValue> pendingValues
-    ) throws IllegalAccessException {
-        Class<?> moduleClass = module.getClass();
-        if (loadedModule.getClass() != moduleClass) {
-            throw new IllegalArgumentException("Configuration modules must have the same type");
-        }
-        for (Field field : moduleClass.getDeclaredFields()) {
-            if (field.getAnnotation(ConfigInfo.class) == null
-                || field.isAnnotationPresent(DoNotLoad.class)
-                ) {
-                continue;
-            }
-
-            field.setAccessible(true);
-            pendingValues.add(new ReloadValue(module, field,
-                moduleClass.isAnnotationPresent(HotReloadUnsupported.class) || field.isAnnotationPresent(HotReloadUnsupported.class)
-                    ? initialReloadValue(module, field)
-                    : field.get(loadedModule)));
-        }
-    }
-
-    public static void bind(
-        Object module,
-        @Nullable Object worldDefaultModule,
-        LeafConfigAccessor config,
-        boolean global
-    ) throws IllegalAccessException {
-        Class<?> moduleClass = module.getClass();
-        ConfigClassInfo classInfo = moduleClass.getAnnotation(ConfigClassInfo.class);
-        if (classInfo == null) {
-            throw new IllegalStateException("Configuration module " + moduleClass.getName()
-                + " is missing @ConfigClassInfo");
-        }
-
-        String basePath = ConfigPaths.modulePath(moduleClass);
-        String sectionComment = config.pickStringRegionBased(classInfo.comments());
-        if (sectionComment != null && (!(config instanceof LeafWorldConfig worldConfig) || worldConfig.isWorldDefaults())) {
-            config.addComment(basePath, sectionComment);
-        }
-
-        for (Field field : moduleClass.getDeclaredFields()) {
-            boolean skipLoad = field.getAnnotation(DoNotLoad.class) != null;
-            ConfigInfo configInfo = field.getAnnotation(ConfigInfo.class);
-
-            if (skipLoad || configInfo == null) {
-                continue;
-            }
-
-            if (global) {
-                bindGlobal(moduleClass, field, configInfo, config);
-            } else {
-                bindWorld(module, worldDefaultModule, moduleClass, field, configInfo, config);
-            }
-        }
-    }
-
-    static void bindWorldDefaultsForReload(
-        Object module,
-        Object activeModule,
+        Object fallbackModule,
         LeafConfigAccessor config
     ) throws IllegalAccessException {
+        List<PendingValue> values = new ArrayList<>();
+        collect(module, fallbackModule, config, true, null, values);
+        applyAll(values);
+    }
+
+    /**
+     * Binds a world override module. Only options present in the override file are read; the others keep
+     * the value of the defaults, and the file is not completed with defaults.
+     */
+    static void bindWorldOverride(
+        Object module,
+        Object defaultsModule,
+        LeafConfigAccessor config
+    ) throws IllegalAccessException {
+        List<PendingValue> values = new ArrayList<>();
+        collect(module, defaultsModule, config, false, null, values);
+        applyAll(values);
+    }
+
+    /**
+     * Reads one module of a configuration.
+     *
+     * @param module          the module whose options are read; instance fields of a world module, or the
+     *                        static fields of a global module
+     * @param fallbackModule  supplies the value of options that are missing; {@code null} for a global
+     *                        module, whose fallback is the current value of its static field
+     * @param writeDefaults   whether the file is completed with defaults and comments; {@code false} for a
+     *                        world override, which only reads the options it defines
+     * @param restoreValues   when reloading, the first values of {@link HotReloadUnsupported} options, which
+     *                        replace what the file says; {@code null} when binding for the first time
+     */
+    private static void collect(
+        Object module,
+        @Nullable Object fallbackModule,
+        LeafConfigAccessor config,
+        boolean writeDefaults,
+        @Nullable Map<Field, Object> restoreValues,
+        List<PendingValue> values
+    ) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
-        ConfigClassInfo classInfo = moduleClass.getAnnotation(ConfigClassInfo.class);
         String basePath = ConfigPaths.modulePath(moduleClass);
-        String sectionComment = config.pickStringRegionBased(classInfo.comments());
-        if (sectionComment != null) {
-            config.addComment(basePath, sectionComment);
+        if (writeDefaults) {
+            String sectionComment = config.pickStringRegionBased(moduleClass.getAnnotation(ConfigClassInfo.class).comments());
+            if (sectionComment != null) {
+                config.addComment(basePath, sectionComment);
+            }
         }
 
+        boolean moduleUnsupported = moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
         for (Field field : moduleClass.getDeclaredFields()) {
             ConfigInfo configInfo = field.getAnnotation(ConfigInfo.class);
             if (configInfo == null || field.isAnnotationPresent(DoNotLoad.class)) {
                 continue;
             }
+
             field.setAccessible(true);
-            String path = ConfigPaths.fieldPath(moduleClass, field);
-            Object defaultValue = copyValue(field.get(activeModule));
             String comment = config.pickStringRegionBased(configInfo.comments());
-            field.set(module, readValue(config, path, comment, field, defaultValue, true));
+            Object fallback = copyValue(field.get(fallbackModule));
+            Object value = readValue(config, ConfigPaths.fieldPath(moduleClass, field), comment, field, fallback, writeDefaults);
+            if (restoreValues != null && (moduleUnsupported || field.isAnnotationPresent(HotReloadUnsupported.class))) {
+                value = restoreValues.get(field);
+            }
+            values.add(new PendingValue(Modifier.isStatic(field.getModifiers()) ? null : module, field, value));
         }
     }
 
-    private static void bindGlobal(
-        Class<?> moduleClass,
-        Field field,
-        ConfigInfo configInfo,
-        LeafConfigAccessor config
-    ) throws IllegalAccessException {
-        field.setAccessible(true);
-
-        String path = ConfigPaths.fieldPath(moduleClass, field);
-        Object defaultValue = globalDefaultValue(field);
-
-        String comment = config.pickStringRegionBased(configInfo.comments());
-        Object loadedValue = readValue(config, path, comment, field, defaultValue, true);
-        field.set(null, loadedValue);
-    }
-
-    private static void bindWorld(
+    /**
+     * Reads the values a reload would apply to an active world module from its loaded candidate. Options
+     * that cannot be reloaded are restored to the first value of the active configuration.
+     */
+    static void collectWorldReload(
         Object module,
-        @Nullable Object defaultsModule,
-        Class<?> moduleClass,
-        Field field,
-        ConfigInfo configInfo,
-        LeafConfigAccessor config
-    ) throws IllegalAccessException {
-        field.setAccessible(true);
-
-        String path = ConfigPaths.fieldPath(moduleClass, field);
-        Object defaultValue = defaultsModule == null
-            ? field.get(module) // World default
-            : copyValue(field.get(defaultsModule)); // World override copy from defaults
-        if (defaultValue == null) {
-            throw new IllegalStateException("Configuration field has a null default value: " + field);
-        }
-
-        boolean worldOverridden = defaultsModule != null;
-        if (worldOverridden && !config.contains(path)) {
-            // Use world default if no override path defined
-            field.set(module, defaultValue);
-            return;
-        }
-
-        String comment = config.pickStringRegionBased(configInfo.comments());
-        Object loadedValue = readValue(config, path, comment, field, defaultValue, !worldOverridden);
-        field.set(module, loadedValue);
-    }
-
-    static void applyWorldDefaults(
-        Object module,
-        Object defaultsModule
+        Object loadedModule,
+        @Nullable Map<Field, Object> initialValues,
+        List<PendingValue> values
     ) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
-        if (defaultsModule.getClass() != moduleClass) {
-            throw new IllegalArgumentException("Configuration modules must have the same type");
-        }
+        boolean moduleUnsupported = moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
         for (Field field : moduleClass.getDeclaredFields()) {
+            if (field.getAnnotation(ConfigInfo.class) == null || field.isAnnotationPresent(DoNotLoad.class)) {
+                continue;
+            }
+
+            field.setAccessible(true);
+            values.add(new PendingValue(module, field,
+                moduleUnsupported || field.isAnnotationPresent(HotReloadUnsupported.class)
+                    ? initialValues.get(field)
+                    : field.get(loadedModule)));
+        }
+    }
+
+    /** Copies the option values of a world defaults module to a module that inherits them. */
+    static void applyWorldDefaults(Object module, Object defaultsModule) throws IllegalAccessException {
+        for (Field field : module.getClass().getDeclaredFields()) {
             if (field.getAnnotation(DoNotLoad.class) != null
                 || field.getAnnotation(ConfigInfo.class) == null) {
                 continue;
@@ -233,116 +162,71 @@ final class ConfigBinder {
         }
     }
 
-    static void captureInitializedValues(Object module, boolean global) throws IllegalAccessException {
+    /** Captures the first values of the {@link HotReloadUnsupported} options of a global module. */
+    static void captureGlobalInitialValues(Object module) throws IllegalAccessException {
+        capture(module, INITIAL_GLOBAL_VALUES, null);
+    }
+
+    /**
+     * Captures the first values of the {@link HotReloadUnsupported} options of a world module into the
+     * configuration the module belongs to. Nothing is allocated when the module has no such option.
+     */
+    static void captureWorldInitialValues(Object module, LeafWorldConfig config) throws IllegalAccessException {
+        capture(module, null, config);
+    }
+
+    private static void capture(
+        Object module,
+        @Nullable Map<Field, Object> globalValues,
+        @Nullable LeafWorldConfig worldConfig
+    ) throws IllegalAccessException {
         Class<?> moduleClass = module.getClass();
         boolean moduleUnsupported = moduleClass.isAnnotationPresent(HotReloadUnsupported.class);
-        Map<Field, Object> worldValues = global ? null : INITIAL_WORLD_RELOAD_VALUES.computeIfAbsent(module, ignored -> new HashMap<>());
+        Map<Field, Object> values = globalValues;
         for (Field field : moduleClass.getDeclaredFields()) {
             if (field.getAnnotation(ConfigInfo.class) == null || field.isAnnotationPresent(DoNotLoad.class)
                 || (!moduleUnsupported && !field.isAnnotationPresent(HotReloadUnsupported.class))) {
                 continue;
             }
-            field.setAccessible(true);
-            if (global) {
-                INITIAL_GLOBAL_RELOAD_VALUES.putIfAbsent(field, copyValue(field.get(null)));
-            } else {
-                worldValues.putIfAbsent(field, copyValue(field.get(module)));
+            if (values == null) {
+                values = worldConfig.initialValuesForCapture();
             }
+            field.setAccessible(true);
+            values.putIfAbsent(field, copyValue(field.get(Modifier.isStatic(field.getModifiers()) ? null : module)));
         }
     }
 
-    static List<PendingValue> preparePendingValues(List<ReloadValue> values) throws IllegalAccessException {
-        List<PendingValue> pendingValues = new ArrayList<>(values.size());
-        for (ReloadValue value : values) {
-            pendingValues.add(new PendingValue(value.target, value.field, value.value));
-        }
-        return pendingValues;
-    }
-
-    private static Object initialReloadValue(@Nullable Object target, Field field) {
-        Object value = target == null ? INITIAL_GLOBAL_RELOAD_VALUES.get(field)
-            : INITIAL_WORLD_RELOAD_VALUES.getOrDefault(target, Map.of()).get(field);
-        if (value == null) {
-            throw new IllegalStateException("Initial reload value was not captured for configuration field: " + field);
-        }
-        return copyValue(value);
-    }
-
-    @SuppressWarnings({"unchecked", "rawtypes"})
+    /**
+     * Reads one option. A value that is present is checked against the field type and rejected if it does
+     * not fit; a missing or null value yields {@code fallback}.
+     */
     private static Object readValue(
         LeafConfigAccessor config,
         String path,
         @Nullable String comment,
         Field field,
-        Object defaultValue,
+        Object fallback,
         boolean writeDefault
     ) {
-        Class<?> type = field.getType();
-        if (type == boolean.class || type == Boolean.class) {
-            if (!writeDefault) {
-                return config.configFile.getBoolean(path, (Boolean) defaultValue);
-            }
-            return comment == null
-                ? config.getBoolean(path, (Boolean) defaultValue)
-                : config.getBoolean(path, (Boolean) defaultValue, comment);
+        ConfigFile file = config.configFile;
+        Object raw = file.get(path);
+        Object value = raw == null ? fallback : ConfigValues.parse(field.getType(), file, path, raw);
+        if (writeDefault) {
+            Object fileFallback = fileValue(fallback);
+            file.addDefault(path, fileFallback, comment);
+            // addDefault puts back the value that was loaded from the file, or the default. A value that
+            // was written to the in-memory file since (a migrated option) or an explicit null would be lost.
+            file.set(path, raw == null ? fileFallback : raw);
+        } else if (raw != null) {
+            // An override is read without registering defaults. Saving it (a migrated or version-less file)
+            // only writes what is registered or set, so the options it defines are set again, as they are.
+            file.set(path, raw);
         }
-        if (type == int.class || type == Integer.class) {
-            if (!writeDefault) {
-                return config.configFile.getInteger(path, (Integer) defaultValue);
-            }
-            return comment == null
-                ? config.getInt(path, (Integer) defaultValue)
-                : config.getInt(path, (Integer) defaultValue, comment);
-        }
-        if (type == long.class || type == Long.class) {
-            if (!writeDefault) {
-                return config.configFile.getLong(path, (Long) defaultValue);
-            }
-            return comment == null
-                ? config.getLong(path, (Long) defaultValue)
-                : config.getLong(path, (Long) defaultValue, comment);
-        }
-        if (type == double.class || type == Double.class) {
-            if (!writeDefault) {
-                return config.configFile.getDouble(path, (Double) defaultValue);
-            }
-            return comment == null
-                ? config.getDouble(path, (Double) defaultValue)
-                : config.getDouble(path, (Double) defaultValue, comment);
-        }
-        if (type == String.class) {
-            if (!writeDefault) {
-                return config.configFile.getString(path, (String) defaultValue);
-            }
-            return comment == null
-                ? config.getString(path, (String) defaultValue)
-                : config.getString(path, (String) defaultValue, comment);
-        }
-        if (List.class.isAssignableFrom(type)) {
-            if (!writeDefault) {
-                return config.configFile.getStringList(path);
-            }
-            return comment == null
-                ? config.getList(path, (List<String>) defaultValue)
-                : config.getList(path, (List<String>) defaultValue, comment);
-        }
-        if (type.isEnum()) {
-            String value;
-            if (!writeDefault) {
-                value = config.configFile.getString(path, ((Enum<?>) defaultValue).name());
-            } else {
-                value = comment == null
-                    ? config.getString(path, ((Enum<?>) defaultValue).name())
-                    : config.getString(path, ((Enum<?>) defaultValue).name(), comment);
-            }
-            try {
-                return Enum.valueOf((Class<? extends Enum>) type, value.toUpperCase(Locale.ROOT));
-            } catch (IllegalArgumentException exception) {
-                throw new IllegalArgumentException("Invalid value '" + value + "' for " + path
-                    + "; expected one of " + List.of(type.getEnumConstants()), exception);
-            }
-        }
-        throw new IllegalArgumentException("Unsupported @ConfigInfo field type: " + field);
+        return value;
+    }
+
+    private static Object fileValue(Object value) {
+        return value instanceof Enum<?> enumValue ? enumValue.name() : value;
     }
 
     private static Object copyValue(Object value) {
@@ -353,14 +237,13 @@ final class ConfigBinder {
         return value;
     }
 
-    private static Object globalDefaultValue(Field field) {
-        Object defaultValue = GLOBAL_DEFAULT_VALUES.get(field);
-        if (defaultValue == null) {
-            throw new IllegalStateException("Code default was not registered for configuration field: " + field);
+    static void applyAll(List<PendingValue> values) throws IllegalAccessException {
+        for (PendingValue value : values) {
+            value.apply();
         }
-        return copyValue(defaultValue);
     }
 
+    /** A value that was read successfully and is yet to be written to a module field. */
     static final class PendingValue {
 
         private final @Nullable Object target;
@@ -375,20 +258,6 @@ final class ConfigBinder {
 
         void apply() throws IllegalAccessException {
             this.field.set(this.target, copyValue(this.value));
-        }
-
-    }
-
-    static final class ReloadValue {
-
-        private final @Nullable Object target;
-        private final Field field;
-        private final Object value;
-
-        private ReloadValue(@Nullable Object target, Field field, Object value) {
-            this.target = target;
-            this.field = field;
-            this.value = copyValue(value);
         }
     }
 }

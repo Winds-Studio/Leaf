@@ -27,6 +27,6 @@ public final class ReloadCommand extends PermissionedLeafSubcommand {
     private void doLeafReload(final CommandSender sender) {
         Command.broadcastCommandMessage(sender, Component.text("Reloading Leaf config...", NamedTextColor.GREEN));
 
-        LeafConfig.reloadAsync(sender);
+        LeafConfig.reload(sender);
     }
 }

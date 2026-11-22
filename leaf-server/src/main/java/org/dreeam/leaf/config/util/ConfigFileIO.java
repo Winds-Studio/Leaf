@@ -14,12 +14,11 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * ConfigurationMaster file loading and saving utilities.
@@ -32,8 +31,11 @@ public final class ConfigFileIO {
     public static ConfigFile load(File file) throws Exception {
         Path path = file.toPath();
 
-        if (!Files.isRegularFile(path)) {
-            return ConfigFile.loadConfig(file);
+        if (Files.notExists(path, LinkOption.NOFOLLOW_LINKS)) {
+            // ConfigFile.loadConfig() would create an empty file here. A missing file is only built in
+            // memory, and is created when the configuration is saved. Anything else that is not a regular
+            // file (a directory, a dangling link) is read below and reported.
+            return new ConfigFile(file);
         }
 
         LoaderOptions loaderOptions = new LoaderOptions();
@@ -59,15 +61,11 @@ public final class ConfigFileIO {
      * is no cross-file rollback.</p>
      */
     public static SaveReport save(ConfigFile... configs) throws ConfigSaveException {
-        Set<Path> targets = new HashSet<>();
         List<SaveResult> results = new ArrayList<>(configs.length);
         Exception firstFailure = null;
         for (ConfigFile config : configs) {
             Objects.requireNonNull(config, "config");
             Path target = config.getFile().toPath().toAbsolutePath().normalize();
-            if (!targets.add(target)) {
-                throw new IllegalArgumentException("Cannot save the same config file twice: " + target);
-            }
             try {
                 Files.createDirectories(Objects.requireNonNull(target.getParent(), "Config file has no parent: " + target));
                 config.save();
@@ -112,6 +110,13 @@ public final class ConfigFileIO {
     }
 
     public record SaveReport(List<SaveResult> results) {
+
+        public static SaveReport merge(SaveReport first, SaveReport second) {
+            List<SaveResult> results = new ArrayList<>(first.results);
+            results.addAll(second.results);
+            return new SaveReport(List.copyOf(results));
+        }
+
         public boolean hasAccessDenied() {
             return this.results.stream().anyMatch(result -> result.status == SaveStatus.ACCESS_DENIED);
         }
@@ -127,7 +132,7 @@ public final class ConfigFileIO {
 
         private final SaveReport report;
 
-        private ConfigSaveException(SaveReport report, Exception cause) {
+        public ConfigSaveException(SaveReport report, Exception cause) {
             super("Failed to save Leaf config files: " + report.describe(), cause);
             this.report = report;
         }

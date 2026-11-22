@@ -21,7 +21,7 @@ public final class ConfigBackupSession {
         return new ConfigBackupSession(configDirectory.resolve("backup-" + timestamp));
     }
 
-    public boolean move(Path source, Path relativeTarget) throws IOException {
+    public void move(Path source, Path relativeTarget) throws IOException {
         Path relative = relativeTarget.normalize();
         if (relative.isAbsolute() || relative.startsWith("..")) {
             throw new IOException("Invalid configuration backup path: " + relative);
@@ -29,7 +29,6 @@ public final class ConfigBackupSession {
         Path target = this.directory().resolve(relative).normalize();
         Files.createDirectories(target.getParent());
         Files.move(source, target);
-        return true;
     }
 
     public Path directory() {

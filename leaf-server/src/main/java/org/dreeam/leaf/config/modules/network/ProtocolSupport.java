@@ -62,15 +62,12 @@ public class ProtocolSupport implements ConfigModule {
     public void onLoaded() {
         org.leavesmc.leaves.protocol.syncmatica.SyncmaticaProtocol.init(syncmaticaProtocol);
 
-        if (doABarrelRollInstalledTimeout <= 0) {
-            doABarrelRollInstalledTimeout = 40;
-        }
         if (doABarrelRollProtocol) {
             DoABarrelRollProtocol.init(
                 doABarrelRollAllowThrusting,
                 doABarrelRollForceEnabled,
                 doABarrelRollForceInstalled,
-                doABarrelRollInstalledTimeout,
+                doABarrelRollInstalledTimeout <= 0 ? 40 : doABarrelRollInstalledTimeout,
                 DoABarrelRollPackets.KineticDamage.VANILLA
             );
         } else {

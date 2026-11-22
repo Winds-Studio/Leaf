@@ -6,7 +6,7 @@
 
 - `leaf-server/src/main/java/org/galemc/gale/configuration/` 下全部配置类（`GaleConfigurations`、`GaleGlobalConfiguration`、`GaleWorldConfiguration`、`GaleRemovedConfigurations`）
 
-仍需修改：
+已修改（阶段 0）：
 
 - `leaf-server/src/minecraft/java/net/minecraft/server/Services.java`（record component、两个构造/工厂调用、accessor）
 - `leaf-server/src/minecraft/java/net/minecraft/server/MinecraftServer.java`（`galeConfigurations` 字段与赋值）
@@ -18,7 +18,7 @@
 
 ## 实现状态
 
-- 配置类已删除，但上述引用仍在，当前源码树无法编译。本子计划是恢复可编译状态的前置项，应优先完成。
+- 配置类与上述引用均已删除（阶段 0 完成），源码树可编译。
 - 当前 `MinecraftServer` 仍调用 `GaleConfigMigration.finalizeMigration(this)`；待 05 的分阶段归档就位后移除此调用，不移除 Gale 文件迁移。
 
 ## 为什么修改

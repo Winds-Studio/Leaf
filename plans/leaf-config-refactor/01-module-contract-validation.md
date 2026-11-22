@@ -17,8 +17,8 @@
   - `bindWorld()`：world 字段默认值为 null 时抛错；
   - `bind()` / `collectGlobalReload()` / `ConfigPaths`：缺失 `@ConfigClassInfo` / `@ConfigInfo` 时抛错；
   - `readValue()`：不支持的字段类型、非法 enum 字符串。
-- **P2-13（已决定，待实施）：开发者定义错误移至测试，删除运行时检查。** 删除两处 null 默认值检查，以及 `bind()`、`collectGlobalReload()` 对 `@ConfigClassInfo` 的重复检查（取注释前先计算路径，缺失时由 `ConfigPaths` 自然抛错）。其余移至测试的项见 00 P2-13。`ConfigPaths` 的缺注解异常、`readValue()` 末尾的不支持类型分支是代码流程本身的结尾，不是额外校验，保留；非法 enum 是用户数据校验，保留。
-- 未完成：`ConfigModuleContractTest`。
+- **P2-13（已决定，已实施）：开发者定义错误移至测试，删除运行时检查。** 删除两处 null 默认值检查，以及 `bind()`、`collectGlobalReload()` 对 `@ConfigClassInfo` 的重复检查（取注释前先计算路径，缺失时由 `ConfigPaths` 自然抛错）。其余移至测试的项见 00 P2-13。`ConfigPaths` 的缺注解异常、`readValue()` 末尾的不支持类型分支是代码流程本身的结尾，不是额外校验，保留；非法 enum 是用户数据校验，保留。
+- 已完成（阶段 1）：`ConfigModuleContractTest`；P2-13 的 binder 运行时检查已删除。
 
 ## 具体修改（剩余）
 

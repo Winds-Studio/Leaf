@@ -38,6 +38,9 @@ public class RegionFormatConfig implements ConfigModule {
     @ConfigInfo(name = "linear-use-virtual-thread")
     public static boolean linearUseVirtualThread = true;
 
+    // The compression level after range check; read when a region file is created instead of the option itself.
+    public static @DoNotLoad int effectiveCompressionLevel = 6;
+
     public static @DoNotLoad EnumRegionFormat regionFormat = EnumRegionFormat.MCA;
     public static @DoNotLoad BufferedLinearRegionFileFlusher blinearFlusher = null;
 
@@ -86,10 +89,11 @@ public class RegionFormatConfig implements ConfigModule {
     }
 
     private static void checkCompressionLevel() {
+        effectiveCompressionLevel = compressionLevel;
         if (compressionLevel > 22 || compressionLevel < 1) {
             LeafConfig.LOGGER.error("Linear or BufferedLinear region compression level should be between 1 and 22, but got {} in config", compressionLevel);
             LeafConfig.LOGGER.error("Falling back to compression level 1.");
-            compressionLevel = 1;
+            effectiveCompressionLevel = 1;
         }
     }
 }

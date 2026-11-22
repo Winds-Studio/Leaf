@@ -4,6 +4,8 @@
 
 ## 当前实现概况（按源码核对）
 
+> 本节描述阶段 0 之前的源码状态，保留作历史对照。实施后的状态见“实施记录”各阶段条目；与本节冲突时以实施记录为准。
+
 已实现：
 
 - `ConfigBinder.validateField()` 已删除；仅保留运行时必需检查（缺失 `@ConfigClassInfo`、null 默认值、不支持类型、非法 enum）。
@@ -35,7 +37,7 @@
 | ⑤ | `MinecraftServer` → `GaleConfigMigration.finalizeMigration()` | 启动期已加载世界全部完成后、`POSTWORLD` 插件启用前，归档 Gale 文件 |
 | ⑥ | 运行期 `createWorld` | 再次执行 ④；不会执行 ⑤ |
 
-## P0-1 版本号与逐世界迁移（已决定，待实施）
+## P0-1 版本号与逐世界迁移（已决定，已实施）
 
 - 只维护一套 `CURRENT_CONFIG_VERSION`。`leaf-global.yml` 的 `config-version` 记录 global/defaults 的进度；每份已有 `leaf-world.yml` 的 `config-version` 只记录该 override 的进度。
 - 版本按数字逐段比较（`3.10 > 3.9`）。override 不回退到 global 的版本。
@@ -48,7 +50,7 @@
 - 仅有实际的非版本 override 值时才新建文件，不为记录版本而建文件。
 - global/defaults 仍在 ③ 保存；启动时不扫描世界。④ 在世界加载、绑定配置前按该文件的版本迁移，绑定成功后将内容和版本一起保存。插件跨重启晚加载也走同一路径。实施细节见 [06 世界配置生命周期](06-world-config-lifecycle.md) 和 [08 迁移阶段](08-migration-stages.md)。
 
-## P2-2 配置降级警告（已决定，待实施）
+## P2-2 配置降级警告（已决定，已实施）
 
 读取 `leaf-global.yml` 或已有 `leaf-world.yml` 时，若文件版本高于 `CURRENT_CONFIG_VERSION`，记录 WARN，列出文件路径、文件版本和当前支持版本。同时不执行迁移，并保留文件中的原版本，不改写为当前版本（P2-8）。见 04、08。
 
@@ -59,7 +61,7 @@
 - Leaf 配置保存采用 Paper 风格：候选全部成功后才逐文件保存；`AccessDeniedException` 仅 warning 并使用内存配置；不创建 staged/rollback 文件。
 - reload 与 Paper 一致在调用线程同步执行，不排队、不回滚。
 
-## 已决定，待实施：reload 与配置迁移
+## 已决定（已实施）：reload 与配置迁移
 
 - **P0-2 reload 按文件版本重做未落盘的 Leaf 迁移。**
   - Paper 的设计：启动和 `reloadConfigs()` 走同一条路径——读取文件 → 按文件自身 `_version` 执行版本迁移 → `trySaveFileNode()`（权限拒绝只警告）。global、world defaults 和每个世界文件各有自己的 `_version`。保存失败时磁盘版本仍是旧值，reload 会自动重新迁移。
@@ -126,13 +128,52 @@
 
 ### P2：次要边界
 
-（暂无）
+**P2-31 `SentryDSN.onLoaded()` 把环境变量 `SENTRY_DSN` 写入配置字段 `sentryDsn`**
+
+**Attribution: Leaf-introduced** — ver/26.2 的旧式 `SentryDSN` 同样在回调中改写 `sentryDsn`；注解式重写沿用，与 P1-16 的规则冲突（回调不得改写 `@ConfigInfo` 字段），但不在 P1-16 的模块清单内。
+
+触发：设置了 `SENTRY_DSN` 环境变量后，首次快照（`loadAfterBootstrap()` 记录）保存的是环境变量值。因为 `dsn` 是字段级 `@HotReloadUnsupported`，reload 恢复的就是该值，运行效果一致；YAML 在绑定时已写入文件里的原值，不受影响。影响仅是规则一致性，没有观察到行为错误。可选方案：加 `@DoNotLoad` 的派生字段（例如 `effectiveDsn`），`SentryManager` 等读取点改读它；或接受为例外。按 11 的规则未修改。
+
 
 ## 实施记录
 
 按 11 的阶段记录每轮完成情况、偏差与验证结果。
 
 - **实施前基线（`config_paths.py` 对比 ver/26.2）：** ver/26.2 的选项在工作区全部存在；`scope changed` 仅 `misc.secure-seed.enabled`（见 P1-13）；`only in working tree` 为 Gale 映射引入的选项与 P2-30。`default changed` 的 4 项已核对等价：`async-pathfinding.reject-policy`（旧版将运行期算出的策略写入 YAML，新版写 `default` 并在运行期计算，已有显式值不受影响）、`async-unsafe-read-handling`（同为 `DISABLED`）、`disable-world-data-saving.worlds`（同为空列表）、`do-a-barrel-roll-installed-timeout`（旧版 YAML 默认 0，运行期 ≤0 改为 40；新版默认 40，运行效果相同）。
+- **阶段 0（恢复可编译）已完成：** 起点提交：主仓库 `eca2da40`、paper-server `4a916ceb7`、leaf-server/src/minecraft/java `47ad474b`、paper-api `7773e3ae6`。完成 09/P2-11（`Services`、`MinecraftServer`、`Level`、`ServerLevel`、`InnerClassFieldDiscoverer`、`CraftServer`、`Server.Spigot` 的 Gale 引用与 `getGaleConfig()`）、P1-6（`LocatorBarRange`、`DensityFunctionCompiler` 转换；`network.global.*`、`gameplay.global.BookWriting` 引用更新，`BookWriting` 字段已改名为 `enabled`；删除 `run-async-tasks-sync`）、P1-10（`CraftBlock`、`ServerLevel` 改读 `asyncUnsafeReadHandlingPolicy`）、P1-13（`modules/misc/SecureSeed` 恢复为 global 并加 `@HotReloadUnsupported`，删除 world 版与 `LeafWorldConfig.secureSeed`，`Globals.setupGlobals()` 改读 global）、P2-30（删除 `Knockback.flushKnockback`）。`:leaf-server:compileJava` 与 `LeafTestSuite` 通过；`config_paths.py` 结果与基线一致（`scope changed` 为空，`only in ver/26.2` 为空，`default changed` 仍是已核对的 4 项）。`finalizeMigration()` 调用保留到阶段 5。09 的“未被 08 映射的 Gale 选项”功能对照尚未逐项列出，留待阶段 4 与 08 一并核对。
+- **阶段 1（库行为确认与 binder）已完成：**
+  - 库行为（`ConfigLibraryBehaviorTest`，rc.3 实测，已固化为测试）：① `ConfigFile.loadConfig()` 对缺失文件立即建文件（P1-9 成立，阶段 3 处理）；② `addDefault(path, def)` 把值重置为“文件读入值，否则默认值”：读入后 `set()` 写入的新键（迁移）被默认值覆盖，`set()` 改写的已有键被读入值覆盖（P1-8 成立）；显式 `null` 键在 `addDefault` 后仍为 `null`；③ `set(path, null)` 对文件读入的键无效：`contains()`、`get()` 仍返回读入值（只对仅 `set()` 过的键有效）。迁移“删除旧键”因此不会让旧键读不到，只是旧键未登记、保存时被丢弃；④ 保存只输出已 `addDefault` 或 `set()` 的键与注释，文件读入但未登记的键（含 `sec.other`）被丢弃，`set()` 后注释保留（P1-11 写回、P2-17 成立）；⑤ 带 fallback 的 getter 对 `abc`、`1.5`（int）、`oops`（boolean）静默返回 fallback，`getString` 把列表变成 `"[a, b]"`（P2-7、P2-9 成立）。
+  - 实现：`ConfigBinder` 改为单一 `collect()`（P2-25）：global 启动、global reload、world defaults（启动/reload 候选）、world override 各一个薄入口，先收集 `PendingValue` 再 `applyAll()`，不再有 `ReloadValue`、`preparePendingValues()`、`GLOBAL_DEFAULT_VALUES`（P2-14、P2-15）。读取走 `util/ConfigValues.parse()`（P2-7、P2-9，`LeafConfigAccessor` 的带默认值 getter 共用），存在且非 null 的值不合法时抛出含文件、path、期望类型的 `IllegalArgumentException`。P1-8：`addDefault` 后对存在的值（迁移写入的、文件读入的）用 `set()` 写回，显式 `null` 写入默认值。P1-3：世界快照放到 `LeafWorldConfig.initialValues`（按需分配），global 仍是 binder 的静态快照。P2-22：`HotReloadUnsupported` Javadoc 已补充。P2-13：binder 中 null 默认值、重复 `@ConfigClassInfo`、模块类型相等、快照缺失检查均已删除；`loadAfterBootstrap()` 的 catch 不再记日志；`discoverWorldModules()` 早退已删。
+  - 测试：`LeafTestSuite` 的 `@SelectPackages` 加入 `org.dreeam.leaf.config`；新增 `ConfigLibraryBehaviorTest`（7）、`ConfigBinderReloadTest`（16，binder 部分）、`ConfigModuleContractTest`（9）。`LeafConfig` 的 reload 流程仍是旧结构（阶段 5 改写），仅适配新 binder 入口；世界 reload 的快照来源已改为各 `LeafWorldConfig`。
+  - 与计划的差异：`ConfigModuleContractTest` 为 null 默认值检查会初始化模块类（`Class.forName(..., true)`），当前所有模块的静态初始化可在无 bootstrap 的测试环境下运行；若以后有模块的静态初始化依赖 Minecraft，需改为只检查引用类型字段。
+- **阶段 2（模块规则）已完成：**
+  - P1-16：派生值改写入 `@DoNotLoad` 字段，运行期读取点已改：`FastRNG.active`（原 `enabled`，8 处读取）、`SparklyPaperParallelWorldTicking.effectiveThreads`（`DedicatedServer`）、`AsyncPathfinding.effectiveMaxThreads/effectiveQueueSize`（`AsyncPathProcessor`）、`MultithreadedTracker.effectiveThreads`（`AsyncTracker`）、`IceAndSnowChance.effectiveChance`（`RandomTickSystem`、`ServerLevel`）、`ConnectionMessage.effectiveJoinMessage/effectiveQuitMessage`（`PlayerList`）、`MCBugFix.effectiveMc301114MaxCombatEntries`（`CombatTracker`）、`RegionFormatConfig.effectiveCompressionLevel`（`EnumRegionFormat`）、`VanillaUsernameCheck.removeAllCheckActive`（`shouldSkipNonPlayerNameCheck()`、`ServerLoginPacketListenerImpl`）。旧搜索确认原字段已无模块外读取点。
+  - 与计划列表的差异：① 并行世界 `logContainerCreationStacktraces`、`disableHardThrow` 的读取点（`AbstractContainerMenu`、`ServerPlayer`、`TickThread`）已自行检查 `enabled`，不需要回调里的 `enabled && x` 改写，因此只删除改写、不加派生字段；② `RegionFormatConfig.ioFlushDelay` 回调中从未写回（局部变量遮蔽了字段），无需改动；③ `ProtocolSupport.doABarrelRollInstalledTimeout` 只在回调内传给 `DoABarrelRollProtocol.init()`，改为局部表达式，没有派生字段。
+  - P1-7：`FastRNG.worldgen` 只在首次 `onLoaded()` 决定一次（私有标记 `worldgenDecided`），reload 回调不再赋值；`enableForWorldgen` 仍是字段级 `@HotReloadUnsupported`。P2-23：`Level.leafConfig` 改为 `private final`，删除 `setLeafConfig()`。`ThrottleNaturalMobSpawning` 保持手工读取。
+  - 测试：`ConfigModuleCallbackTest`（12）：FastRNG 两个方向的 worldgen 决定、派生值不写 YAML、各模块配置字段保持读入值、刷怪动态键与百分比单位。`config_paths.py` 对比 HEAD：只有 `flush-location-while-knockback-player` 删除与 `misc.secure-seed.enabled` WORLD → GLOBAL（均为阶段 0 的决策）。
+  - 范围外发现（待决定）：见“待处理问题 P2-31”。
+- **阶段 3（文件 IO、启动与备份）已完成：** P1-9：`ConfigFileIO.load()` 对 `Files.notExists(path, NOFOLLOW_LINKS)` 的路径返回 `new ConfigFile(file)`（实测不建文件、不建父目录，保存后与读入的文件一致，已加入 `ConfigLibraryBehaviorTest`），目录与失效软链接走读取路径并报错，不跟随软链接创建目标。P1-12：`createDirectory()` 去掉 catch 与 `dir.delete()`。P2-10：`purgeOutdated()` 逐个 `moveLegacy()`，`IOException` 只 WARN，仅有成功移动时才提示“已移入备份目录”；方法不再声明 `IOException`。P2-4：`ConfigBackupSession.move()` 改 `void`，`GaleConfigMigration.archive()` 同步调整。P2-13：`ConfigFileIO.save()` 删除同一文件保存两次的检查。P2-3 只确认，未改动。测试：`ConfigFileIOTest`（8）、`ConfigBackupSessionTest`（6，与归档无关部分）、`LeafConfigInitializationTest`（7，与版本无关部分：首次启动不建文件、非法标量停止启动且不建文件、defaults malformed 时不创建缺失的 global、`config` 是文件时不删除、legacy 无法移动只 WARN、legacy 移入备份、无 legacy 不建备份目录）。`LeafConfigInitializationTest` 使用测试任务的工作目录下的 `config/`，每次测试前后清理，并用反射清空 `LeafConfig` 的模块注册表（`loadConfig()` 每个进程只调用一次，重复调用会重复登记模块）。未在测试中覆盖 `loadAfterBootstrap()` 的保存顺序与权限拒绝，留到阶段 4/5（需要模块的 `onRegistriesLoaded()` 与保存失败的构造方式）。
+- **阶段 4（版本与迁移）已完成：**
+  - P0-1/P1-11/P2-2/P2-8/P2-15：新增 `util/ConfigVersion`；`LeafConfig.checkVersion(ConfigFile)` 按“版本号规则”处理已有文件（缺失 WARN、视为当前、保存时补写；无法解析抛 `IllegalArgumentException` 含路径与原文本；更高 WARN、不迁移、保留原值）。global 在 `loadConfig()` 中检查（文件不存在则视为当前版本，不警告），`LeafGlobalConfig` 改为接收 `VersionCheck`；每份已有 override 在 `loadWorldConfig()` 中按自身版本迁移，`needsSave = 迁移有变更 || 版本需要更新`，`initWorldConfig()` 保存。已删除 `previousConfigVersion`、`loadPreviousConfigVersion()`、单参数 `isConfigVersionBefore()`、`ConfigMigrationContext(null)` 回退、`LeafGlobalConfig` 的 `loadPreviousVersion`。**偏差：** `isConfigVersionAtLeast()` 单参数版本依赖已删除的 `previousConfigVersion`，改为与 `isConfigVersionBefore(stored, version)` 对应的两参数版本（无调用方）。override 绑定（`writeDefaults=false`）对存在的键 `set(path, raw)`，使重写 override 只含其显式键和版本（库只保存已登记或 `set` 的键）。
+  - P1-8：`ConfigBinder`（阶段 1）加 `LeafGlobalConfig.structureConfig()` 修正：分类标题登记 `addDefault(category, null)` 会把分类重置为读入值，丢掉已迁移进分类的子树（Gale global 值首次启动即丢失；Leaf rename 在已有分类下同样丢失），现在登记后用 `set` 写回原值。端到端测试：Leaf rename、Gale global 值经 `loadConfig()`、保存、重读后保持。
+  - P2-12：04 部分已实施：`saveGlobalFiles()` 先保存 defaults，再保存 global；defaults 为 `ACCESS_DENIED` 或失败时，global 以加载时的版本值落盘（内存仍是当前版本），两个文件都会尝试，失败合并为一个 `ConfigSaveException`（`ConfigSaveException` 构造方法改为 public，新增 `SaveReport.merge`）。06 部分：override 含 `WORLD_DEFAULTS → GLOBAL` 迁移走的旧键时 WARN。08 的跨文件迁移权限拒绝处理：目前没有跨文件声明，未实施。
+  - P2-21：`CURRENT_CONFIG_VERSION` 保持 3.1，无代码改动。
+  - P1-4/P2-13/P2-14（Leaf 迁移）：`LeafConfigMigration` 删除运行时的路径非空、同路径、父子重叠、同目标多来源、`migrate` 签名检查和快照恢复；保留旧键为 null/section、目标为 section 的数据检查；新旧键均存在且值不同时 WARN（保留新值、删除旧键），同值不告警。`collect()` 改为包级可见供定义测试使用。注意：库的 `set(old, null)` 对读入的键无效（阶段 1 实测），旧键仍可读但未登记，保存时被丢弃，链式 `A → B → C` 保存重读后只剩 `C`（已测）。
+  - P0-3/P2-1/P2-18/P2-13/P2-14（Gale）：global/defaults 先收集再写入，`leafConfig.get(target) != null` 的目标不导入（异值 WARN，同值静默；null 视同缺键）；值按 Configurate 4.2.0 的标量规则转换（布尔接受 `t/yes/y/1/f/no/n/0` 和数字，整数接受整数值的浮点数，其余沿用 `ConfigValues`），非法映射值抛 `IllegalArgumentException`（含源文件、键、类型）：global/defaults 使启动失败，世界使本次加载失败并保留源，不写任何部分值。`resolveMappings()` 找不到目标字段直接抛出，不再跳过阶段。每个阶段对未映射且不是 `_version` 的键给一条 WARN。世界 override 没有可导入值（仅 `_version`、仅未映射、仅 null、空文件）不建文件；有值时写入值与当前版本，`ConfigFileIO.load()` 不再预建文件，保存失败不会留下遮蔽源文件的目标。**偏差：** 旧 Gale 字段类型取自 Leaf 目标字段类型（映射表里的类型相同），未另建旧类型表。
+  - 测试：`LeafConfigMigrationTest`（9，版本比较、实际模块的声明一致性、四种作用域移动、override 只应用 WORLD_DEFAULTS→WORLD_DEFAULTS、链式、冲突 WARN、数据校验）、`LeafConfigMigrationBindingTest`（1）、`GaleConfigMigrationTest`（11）、`LeafWorldOverrideMigrationTest`（12，经 `LeafConfig.loadConfig()`/`initWorldConfig()`：无 override 不建文件、当前版本不重写、旧版本只升版本并只含显式键、缺版本 WARN 并补写一次、无法解析失败且不改文件、更高版本保留、各世界按自己的版本、非法值失败、Gale override 的建立/无值/非法值/已有 Leaf override、Gale global 与 Leaf rename 的端到端）、`LeafConfigInitializationTest` 增加保存顺序与 defaults 权限拒绝时 global 版本不前进（共 9）。新增测试辅助 `LogCapture`。
+  - 仍未做（留给阶段 5）：reload 内存迁移与延迟保存（P0-2）、Gale 源文件的分阶段归档（P1-1）。reload 目前仍对 override 传 `migrateOverride=false`，不保存。
+- **阶段 5（世界生命周期、reload 与归档）已完成：**
+  - 同步 reload：`reloadAsync()` 改为 `reload(CommandSender)`（`ReloadCommand` 已改调），删除 future、`RELOAD_QUEUED_OR_RUNNING`、`RELOAD_TRANSACTION_LOCK`、`WorldReload`、`ReloadCommit`（P2-19，各世界不再换入 `ConfigFile`；defaults 保留 `setConfigFile()`）。核心逻辑拆为包级可测的 `reloadConfigs(List<LoadedLevel>)`，抛 `ReloadException(stage = CANDIDATE | CALLBACK | SAVE)`，`reload()` 只负责消息；这是为了在测试里不依赖 `MinecraftServer` 的接缝。
+  - P0-2：候选阶段重新读取 global（先按其版本迁移 global/defaults，不重放 Gale）、defaults 和每个已加载世界的 override（按自身版本迁移，`loadWorldConfig(..., migrate=true)`），任一步失败则不改字段、不跑回调、不写盘。提交时需升级的 override → defaults → global 依次保存；override 权限拒绝只进报告，不阻止其余目标。
+  - P1-2：提交后先 `applyAll()`，再运行回调，首个异常即停并抛 `CALLBACK`，不保存、不回滚；回调全部成功后才保存；`AccessDeniedException` 只报告，其他保存失败抛 `SAVE`（含完整报告），不报成功。
+  - P1-1：删除 `GaleConfigMigration.finalizeMigration()` 及 `MinecraftServer` 中的调用；`loadAfterBootstrap()` 保存后调用 `archiveGlobalSources(report)`（对应 Leaf 文件不是 `SAVED` 的源保留），每次 `initWorldConfig()` 成功后调用 `archiveWorldSource(worldDirectory)`（权限拒绝或保存失败的世界源保留）；两个阶段共用 `loadConfig()` 的 backup session。`recordLeafPersistence()` 已删除。世界源只在世界成功加载之后归档：非法映射值使加载失败时保留源，已有 Leaf override、无可导入值、malformed 的源按原策略归档。
+  - P1-5、P2-20 只确认，未改动。
+  - 测试：`LeafConfigReloadTransactionTest`（10：同步完成、非法候选不改任何东西且不建缺失文件、删除键回到运行值并写回、不可热重载选项保持首次值但 YAML 保存新值、首个回调失败后后续回调不跑且不保存、权限拒绝、override 按自身版本迁移且未加载世界不动、当前版本 override 不重写且无 override 不建文件、override 权限拒绝不牵连 global、无法解析的 override 版本使 reload 失败）、`GaleArchiveTest`（6：global/defaults 保存后归档、Leaf 文件未保存则保留源、晚加载世界归档到同一 backup 目录、无可导入值归档且不建 override、保存失败保留源、非法值保留源）。未测试：最终保存发生非权限异常的 `SAVE` 阶段（候选的 `ConfigFile` 在 `reloadConfigs()` 内部创建，没有注入点；`ConfigFileIO` 的非权限失败路径已由 `ConfigFileIOTest` 覆盖）。
+- **阶段 6（收尾）核对结果：**
+  - `./gradlew :leaf-server:test --tests org.bukkit.support.suite.LeafTestSuite` 通过，测试报告中 10 列出的各测试类均已执行：`ConfigModuleContractTest`（9）、`ConfigBinderReloadTest`（16）、`LeafConfigInitializationTest`（9）、`ConfigBackupSessionTest`（6）、`LeafWorldOverrideMigrationTest`（14，位于 `org.dreeam.leaf.config` 包）、`LeafConfigReloadTransactionTest`（10）、`ConfigFileIOTest`（8）、`LeafConfigMigrationTest`（9）、`GaleConfigMigrationTest`（12）；另有 `ConfigLibraryBehaviorTest`（9）、`ConfigModuleCallbackTest`（12）、`GaleArchiveTest`（6）、`LeafConfigMigrationBindingTest`（1）。
+  - `config_paths.py` 对比 ver/26.2：`only in ver/26.2` 0、`scope changed` 0、`type changed` 0；`only in working tree` 39 项为 Gale 映射引入的选项；`default changed` 4 项为 00 实施前基线已核对的等价项。`git diff --check` 在主仓库与三个嵌套仓库均无问题。
+  - 依赖权限的测试（只读文件/目录）在当前环境执行；以 root 运行或不执行权限检查的环境会提前返回。
+  - 待所有者完成：把 Minecraft 与 paper-server 的改动并入 Leaf config changes 补丁、为 paper-api 新建补丁（收录 `getGaleConfig()` 删除）、整体 review；完整启动服务器覆盖：全新安装、从 ver/26.2 配置升级、带 Gale 配置升级、`/leaf reload`、插件晚加载世界。
 
 ## 子计划索引
 

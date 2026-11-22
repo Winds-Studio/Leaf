@@ -1,17 +1,21 @@
 package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
+import org.jspecify.annotations.Nullable;
 import org.dreeam.leaf.config.modules.fixes.world.Fixes;
 import org.dreeam.leaf.config.modules.gameplay.world.EnderDragonRespawn;
 import org.dreeam.leaf.config.modules.gameplay.world.HideFlamesOnEntitiesWithFireResistance;
 import org.dreeam.leaf.config.modules.gameplay.world.RandomStrollIntoNonTickingChunks;
-import org.dreeam.leaf.config.modules.misc.world.SecureSeed;
 import org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDuration;
 import org.dreeam.leaf.config.modules.opt.world.LoadChunks;
 import org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads;
 import org.dreeam.leaf.config.modules.opt.world.OptimizedSheepOffspringColor;
 import org.dreeam.leaf.config.modules.opt.world.ReducedIntervals;
 import org.dreeam.leaf.config.modules.opt.world.SaveFireworks;
+
+import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A world-level configuration initialized from {@link LeafConfig#worldDefaultsConfig()} with an
@@ -30,6 +34,9 @@ public final class LeafWorldConfig extends LeafConfigAccessor {
     }
 
     private final Source source;
+    // The values captured for @HotReloadUnsupported options when this instance was first bound.
+    // Allocated on demand, so a configuration without such options holds nothing.
+    private @Nullable Map<Field, Object> initialValues;
 
     public SaveFireworks saveFireworks = new SaveFireworks();
     public OptimizedSheepOffspringColor optimizedSheepOffspringColor = new OptimizedSheepOffspringColor();
@@ -41,11 +48,21 @@ public final class LeafWorldConfig extends LeafConfigAccessor {
     public EntityWakeUpDuration entityWakeUpDuration = new EntityWakeUpDuration();
     public HideFlamesOnEntitiesWithFireResistance hideFlamesOnEntitiesWithFireResistance = new HideFlamesOnEntitiesWithFireResistance();
     public EnderDragonRespawn enderDragonRespawn = new EnderDragonRespawn();
-    public SecureSeed secureSeed = new SecureSeed();
 
     LeafWorldConfig(ConfigFile configFile, Source source) {
         super(configFile);
         this.source = source;
+    }
+
+    @Nullable Map<Field, Object> initialValues() {
+        return this.initialValues;
+    }
+
+    Map<Field, Object> initialValuesForCapture() {
+        if (this.initialValues == null) {
+            this.initialValues = new HashMap<>();
+        }
+        return this.initialValues;
     }
 
     public boolean isWorldDefaults() {

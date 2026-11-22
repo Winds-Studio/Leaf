@@ -49,8 +49,11 @@ public class MCBugFix implements ConfigModule {
     })
     public static int mc301114maxCombatEntries = 10240;
 
+    // The limit after normalization; read at runtime instead of the option itself.
+    public static @DoNotLoad int effectiveMc301114MaxCombatEntries = 10240;
+
     @Override
     public void onLoaded() {
-        mc301114maxCombatEntries = Math.max(1, mc301114maxCombatEntries);
+        effectiveMc301114MaxCombatEntries = Math.max(1, mc301114maxCombatEntries);
     }
 }

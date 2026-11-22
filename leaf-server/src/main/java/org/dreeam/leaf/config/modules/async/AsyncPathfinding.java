@@ -34,26 +34,21 @@ public class AsyncPathfinding implements ConfigModule {
 
     public static @DoNotLoad PathfindTaskRejectPolicy rejectPolicyType = PathfindTaskRejectPolicy.CALLER_RUNS;
 
+    // The thread count and queue capacity after normalization, 0 threads while disabled.
+    public static @DoNotLoad int effectiveMaxThreads = 0;
+    public static @DoNotLoad int effectiveQueueSize = 0;
+
     @Override
     public void onLoaded() {
         final int availableProcessors = Runtime.getRuntime().availableProcessors();
 
-        if (maxThreads <= 0) {
-            maxThreads = Math.max(availableProcessors / 4, 1);
-        }
-
-        if (!enabled) {
-            maxThreads = 0;
-        }
-
-        if (queueSize <= 0) {
-            queueSize = maxThreads * 256;
-        }
+        effectiveMaxThreads = !enabled ? 0 : maxThreads <= 0 ? Math.max(availableProcessors / 4, 1) : maxThreads;
+        effectiveQueueSize = queueSize <= 0 ? effectiveMaxThreads * 256 : queueSize;
 
         String policyStr = rejectPolicy;
 
         if ("default".equalsIgnoreCase(policyStr)) {
-            policyStr = availableProcessors >= 12 && queueSize < 512
+            policyStr = availableProcessors >= 12 && effectiveQueueSize < 512
                 ? PathfindTaskRejectPolicy.FLUSH_ALL.toString()
                 : PathfindTaskRejectPolicy.CALLER_RUNS.toString();
         }
@@ -61,7 +56,7 @@ public class AsyncPathfinding implements ConfigModule {
         rejectPolicyType = PathfindTaskRejectPolicy.fromString(policyStr);
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", maxThreads);
+            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", effectiveMaxThreads);
             org.dreeam.leaf.async.path.AsyncPathProcessor.init();
         }
     }

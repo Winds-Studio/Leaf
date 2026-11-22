@@ -32,30 +32,18 @@ public class SparklyPaperParallelWorldTicking implements ConfigModule {
 
     public static @DoNotLoad UnsafeReadPolicy asyncUnsafeReadHandlingPolicy = UnsafeReadPolicy.DISABLED;
 
-    @Deprecated
-    public static @DoNotLoad Boolean runAsyncTasksSync;
+    // The thread count after normalization, 0 while parallel world ticking is disabled.
+    public static @DoNotLoad int effectiveThreads = 0;
 
     @Override
     public void onLoaded() {
-        if (enabled) {
-            if (threads <= 0) threads = 8;
-        } else {
-            threads = 0;
-        }
-
-        logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
-        disableHardThrow = enabled && disableHardThrow;
+        // The readers of logContainerCreationStacktraces and disableHardThrow also check enabled.
+        effectiveThreads = enabled ? (threads <= 0 ? 8 : threads) : 0;
 
         asyncUnsafeReadHandlingPolicy = UnsafeReadPolicy.fromString(asyncUnsafeReadHandling);
 
-        // TODO: Transfer old config
-        runAsyncTasksSync = LeafConfig.globalConfig().getBoolean("async.parallel-world-ticking.run-async-tasks-sync");
-        if (runAsyncTasksSync != null && runAsyncTasksSync) {
-            LeafConfig.LOGGER.warn("The setting 'async.parallel-world-ticking.run-async-tasks-sync' is deprecated, removed automatically. Use 'async-unsafe-read-handling: BUFFERED' for buffered reads instead.");
-        }
-
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", threads);
+            LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", effectiveThreads);
         }
     }
 }

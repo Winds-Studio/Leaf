@@ -25,7 +25,7 @@ public final class AsyncTracker {
     public static final boolean ENABLED = MultithreadedTracker.enabled;
     public static final int QUEUE = 1024;
     public static final int MIN_CHUNK = 16;
-    public static final int THREADS = MultithreadedTracker.threads;
+    public static final int THREADS = MultithreadedTracker.effectiveThreads;
     public static final @Nullable FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
         THREADS,
         QUEUE,

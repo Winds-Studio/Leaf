@@ -52,7 +52,7 @@
 
 读取 raw global 的版本时按 00“版本号规则”处理：缺失则 WARN 并视为当前版本、不迁移；无法解析则启动失败；高于当前版本则 WARN（P2-2）、不迁移，第 8 步不把它改写为当前版本（P2-8）。
 
-## P1-9 缺失文件在候选读取时即被创建（已决定，待实施）
+## P1-9 缺失文件在候选读取时即被创建（已决定，阶段 3 已实施）
 
 **归因：Leaf 引入** — `ConfigFileIO.load()` 对非普通文件直接调用 ConfigurationMaster `v2.0.0-rc.3` 的 `ConfigFile.loadConfig(File)`；它先 `createFile()`，再 `loadContent()`。Paper 的 global 缺失路径先构造内存节点，逐世界模板则有不同的显式创建契约。
 
@@ -63,7 +63,7 @@
 ## 待处理问题与边界
 
 - **P2-3（已决定：与 Paper 保持一致）** `ConfigFile.save()` 不是原子写：写入中途失败会留下半截 YAML，下次启动在第 4 步被判为 malformed 并终止启动。Paper 同样直接写目标文件，不改为临时文件加 `ATOMIC_MOVE`。
-- **P2-12**（见 00）global 记录 global/defaults 的迁移进度。当前 defaults 权限拒绝而 global 保存成功时，磁盘版本仍会前进。待实施：保留第 13 步 defaults → global；defaults 未保存时不把 global 的磁盘版本提升，内存仍使用当前配置。override 按文件自记进度，在世界实际加载时单独处理，不影响这一步，不增加 `Main` hook 或启动扫描。
+- **P2-12**（见 00）global 记录 global/defaults 的迁移进度。当前 defaults 权限拒绝而 global 保存成功时，磁盘版本仍会前进。已实施（阶段 4）：保留第 13 步 defaults → global；defaults 未保存时不把 global 的磁盘版本提升，内存仍使用当前配置。override 按文件自记进度，在世界实际加载时单独处理，不影响这一步，不增加 `Main` hook 或启动扫描。
 - 第 14 步待改为依据保存结果处理 Gale global/defaults 归档（见 05），不再等待所有世界加载。
 - **P2-10（已决定）purge 失败改为警告。** `purgeOutdated()` 只把 `pufferfish.yml`、`leaf.yml`、`leaf_config/` 移入备份目录，不读取、不转换其内容；新配置也不依赖它们。移动失败时文件留在原处，下次启动再尝试移动，结果相同。因此任一移动的 `IOException`（含权限拒绝）都记 WARN（文件路径与原因），继续处理其余文件和启动；“已移入备份目录”的提示只在确有文件移动成功时输出。
 

@@ -19,8 +19,13 @@ public class FastRNG implements ConfigModule {
     @ConfigInfo(name = "use-legacy-random-for-slime-chunk", comments = {"Use legacy random source for slime chunk generation,\nto follow vanilla behavior.", "是否使用原版随机生成器来生成史莱姆区块."})
     public static boolean useLegacyForSlimeChunk = false;
 
-    @DoNotLoad
-    public static boolean worldgen = false;
+    // The main switch after the JVM capability check; read at runtime instead of the option itself.
+    public static @DoNotLoad boolean active = false;
+
+    // Decided once, when the module is first loaded: the world generation random source cannot be swapped
+    // afterwards, since parts of it (noise, biome tables) are built only once.
+    public static @DoNotLoad boolean worldgen = false;
+    private static boolean worldgenDecided;
 
     public static boolean worldgenEnabled() {
         return worldgen;
@@ -28,17 +33,18 @@ public class FastRNG implements ConfigModule {
 
     @Override
     public void onLoaded() {
-        if (enabled) {
+        active = enabled;
+        if (active) {
             try {
                 Class.forName("org.dreeam.leaf.util.math.random.FasterRandomSource");
             } catch (Throwable ignored) {
                 LeafConfig.LOGGER.error("Faster random generator is enabled but Xoroshiro128PlusPlus is not supported by your JVM, " +
                     "falling back to legacy random source.");
-                enabled = false;
+                active = false;
             }
         }
 
-        if (enabled && warnForSlimeChunk) {
+        if (active && warnForSlimeChunk) {
             LeafConfig.LOGGER.warn("You enabled faster random generator, it will offset location of slime chunk");
             LeafConfig.LOGGER.warn("If your server has slime farms or facilities need vanilla slime chunk,");
             LeafConfig.LOGGER.warn("set performance.faster-random-generator.use-legacy-random-for-slime-chunk " +
@@ -47,6 +53,9 @@ public class FastRNG implements ConfigModule {
                 "disable this warning.");
         }
 
-        worldgen = enableForWorldgen && enabled;
+        if (!worldgenDecided) {
+            worldgenDecided = true;
+            worldgen = enableForWorldgen && active;
+        }
     }
 }

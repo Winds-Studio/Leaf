@@ -1,4 +1,4 @@
-package org.dreeam.leaf.config.modules.misc.world;
+package org.dreeam.leaf.config.modules.misc;
 
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
@@ -10,12 +10,9 @@ import org.dreeam.leaf.config.annotations.*;
     """
         安全种子开启后, 所有矿物与结构都将使用1024位的种子进行生成, 无法被破解."""
 })
-public class SecureSeed implements WorldConfigModule {
+public class SecureSeed implements ConfigModule {
 
+    @HotReloadUnsupported
     @ConfigInfo(name = "enabled")
-    public boolean enabled = false;
-
-    public static boolean isEnabled() {
-        return LeafConfig.worldDefaultsConfig().secureSeed.enabled;
-    }
+    public static boolean enabled = false;
 }

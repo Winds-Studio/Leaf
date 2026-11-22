@@ -69,8 +69,11 @@ public class VanillaUsernameCheck implements ConfigModule {
 
     public static @DoNotLoad Pattern usernameRegex;
 
+    // remove-all-check unless it conflicts with use-username-regex; read at runtime instead of the option itself.
+    public static @DoNotLoad boolean removeAllCheckActive = false;
+
     public static boolean shouldSkipNonPlayerNameCheck() { // helper
-        return removeAllCheck || useUsernameRegex;
+        return removeAllCheckActive || useUsernameRegex;
     }
 
     @Override
@@ -83,9 +86,10 @@ public class VanillaUsernameCheck implements ConfigModule {
             }
         }
 
+        removeAllCheckActive = removeAllCheck;
         if (useUsernameRegex && removeAllCheck) {
             LeafConfig.LOGGER.warn("Found conflicting configuration, remove-all-check and use-username-regex cannot be enabled at same time, ignoring remove-all-check...");
-            removeAllCheck = false;
+            removeAllCheckActive = false;
         }
     }
 }

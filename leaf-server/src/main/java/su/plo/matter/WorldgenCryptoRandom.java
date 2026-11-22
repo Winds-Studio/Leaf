@@ -27,7 +27,7 @@ public class WorldgenCryptoRandom extends WorldgenRandom {
     private final long[] cachedInternalState = new long[16];
 
     public WorldgenCryptoRandom(int x, int z, Globals.@Nullable Salt typeSalt, long salt) {
-        super(org.dreeam.leaf.config.modules.opt.FastRNG.enabled ? new org.dreeam.leaf.util.math.random.FasterRandomSource(0L) : new LegacyRandomSource(0L));
+        super(org.dreeam.leaf.config.modules.opt.FastRNG.active ? new org.dreeam.leaf.util.math.random.FasterRandomSource(0L) : new LegacyRandomSource(0L));
         if (typeSalt != null) {
             this.setSecureSeed(x, z, typeSalt, salt);
         }

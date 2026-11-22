@@ -3,6 +3,7 @@ package org.dreeam.leaf.config;
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
 import org.dreeam.leaf.config.util.ConfigFileIO;
+import org.dreeam.leaf.config.util.ConfigValues;
 import org.jspecify.annotations.Nullable;
 
 import java.io.File;
@@ -26,6 +27,15 @@ abstract class LeafConfigAccessor {
         ConfigFileIO.save(configFile);
     }
 
+    /**
+     * Reads the value of a registered option. A missing or null value yields {@code def}; a value that is
+     * present but does not fit {@code type} is rejected.
+     */
+    private Object value(Class<?> type, String path, Object def) {
+        Object raw = configFile.get(path);
+        return raw == null ? def : ConfigValues.parse(type, configFile, path, raw);
+    }
+
     boolean contains(String path) {
         return configFile.contains(path);
     }
@@ -37,62 +47,64 @@ abstract class LeafConfigAccessor {
 
     public boolean getBoolean(String path, boolean def, String comment) {
         configFile.addDefault(path, def, comment);
-        return configFile.getBoolean(path, def);
+        return (boolean) value(boolean.class, path, def);
     }
 
     public boolean getBoolean(String path, boolean def) {
         configFile.addDefault(path, def);
-        return configFile.getBoolean(path, def);
+        return (boolean) value(boolean.class, path, def);
     }
 
     public String getString(String path, String def, String comment) {
         configFile.addDefault(path, def, comment);
-        return configFile.getString(path, def);
+        return (String) value(String.class, path, def);
     }
 
     public String getString(String path, String def) {
         configFile.addDefault(path, def);
-        return configFile.getString(path, def);
+        return (String) value(String.class, path, def);
     }
 
     public double getDouble(String path, double def, String comment) {
         configFile.addDefault(path, def, comment);
-        return configFile.getDouble(path, def);
+        return (double) value(double.class, path, def);
     }
 
     public double getDouble(String path, double def) {
         configFile.addDefault(path, def);
-        return configFile.getDouble(path, def);
+        return (double) value(double.class, path, def);
     }
 
     public int getInt(String path, int def, String comment) {
         configFile.addDefault(path, def, comment);
-        return configFile.getInteger(path, def);
+        return (int) value(int.class, path, def);
     }
 
     public int getInt(String path, int def) {
         configFile.addDefault(path, def);
-        return configFile.getInteger(path, def);
+        return (int) value(int.class, path, def);
     }
 
     public long getLong(String path, long def, String comment) {
         configFile.addDefault(path, def, comment);
-        return configFile.getLong(path, def);
+        return (long) value(long.class, path, def);
     }
 
     public long getLong(String path, long def) {
         configFile.addDefault(path, def);
-        return configFile.getLong(path, def);
+        return (long) value(long.class, path, def);
     }
 
+    @SuppressWarnings("unchecked")
     public List<String> getList(String path, List<String> def, String comment) {
         configFile.addDefault(path, def, comment);
-        return configFile.getStringList(path);
+        return (List<String>) value(List.class, path, def);
     }
 
+    @SuppressWarnings("unchecked")
     public List<String> getList(String path, List<String> def) {
         configFile.addDefault(path, def);
-        return configFile.getStringList(path);
+        return (List<String>) value(List.class, path, def);
     }
 
     public ConfigSection getConfigSection(String path, Map<String, Object> defaultKeyValue, String comment) {

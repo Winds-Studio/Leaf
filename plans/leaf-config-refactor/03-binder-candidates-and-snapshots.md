@@ -10,7 +10,11 @@
 
 reload 应先构建纯候选数据，全部验证成功后再写入运行字段；缺失的 global/defaults 键不应回退到代码默认值。
 
-## 实现状态（当前设计）
+## 实现状态
+
+阶段 1 已按下文的“待实施”条目重写 binder（P2-25、P2-14、P1-3、P2-7、P2-9、P1-8、P2-15、P2-13）；以下为重写前的设计描述，其中 `GLOBAL_DEFAULT_VALUES`、`ReloadValue`、静态 `INITIAL_WORLD_RELOAD_VALUES` 已不存在。
+
+## 重写前的设计（当前设计）
 
 ### 代码默认值
 
@@ -26,7 +30,7 @@ reload 应先构建纯候选数据，全部验证成功后再写入运行字段�
 ### 候选值模型
 
 - 不新增 `ReloadCandidateValue` 类。当前候选值为 `ConfigBinder.ReloadValue(target, field, value)`，提交时 `preparePendingValues()` 一对一转为字段相同的 `PendingValue` 再 `apply()`；构造两者与 `apply()` 时各复制一次列表。
-- P2-14（已决定，待实施）：只保留 `PendingValue`（候选阶段收集、提交阶段 `apply()` 的待应用值），删除 `ReloadValue` 与 `preparePendingValues()`。构造时复制一次列表，`apply()` 直接写入该副本，避免 defaults、世界实例和快照共享可变列表。因为 reload 不回滚（见 07），不记录旧值；“在锁内捕获旧值以避免 ABA”的原设计已不需要。
+- P2-14（已决定，已实施）：只保留 `PendingValue`（候选阶段收集、提交阶段 `apply()` 的待应用值），删除 `ReloadValue` 与 `preparePendingValues()`。构造时复制一次列表，`apply()` 直接写入该副本，避免 defaults、世界实例和快照共享可变列表。因为 reload 不回滚（见 07），不记录旧值；“在锁内捕获旧值以避免 ABA”的原设计已不需要。
 
 ### 缺失键策略
 
@@ -47,18 +51,18 @@ reload 应先构建纯候选数据，全部验证成功后再写入运行字段�
 - 原计划中的“migration lookup：binder 读取新 path 缺失时由 context 提供旧 path 值，并在全部成功后再 materialize”未采用。
 - 当前是在绑定前对 `ConfigFile` 调用 `set(new, value)` / `set(old, null)`，binder 直接读新 path；没有缺新键时读取旧键的 lookup。选择内存迁移而不采用 lookup 本身不是遗漏，但现有库的读入值和待保存值并非同一张表：`addDefault()` 可能抹掉刚迁移的值；仅延迟显式 `save()` 也不能保证读候选时不建文件。分别见 08 P1-8、04 P1-9。
 
-## P2-25 合并绑定路径（已决定，待实施）
+## P2-25 合并绑定路径（已决定，已实施）
 
 `bind()`（含 `global` 布尔分派）、`bindWorld()`、`bindWorldDefaultsForReload()`、`collectGlobalReload()` 都是“遍历字段 → 计算路径 → 取注释 → `readValue(fallback)`”，只差 fallback 来源与直接写字段还是收集。合并为一个“读取模块 → `PendingValue` 列表”的函数，参数为 fallback 来源（global：`field.get(null)`；defaults：新实例或活动实例；override：候选 defaults）与是否写默认值和注释；启动期也先收集再 `apply()`。不可热重载字段的快照替换、P2-7/P2-9 的值检查都放在这一个函数里。
 
-## P1-3 快照的归属与生命周期（已决定，待实施）
+## P1-3 快照的归属与生命周期（已决定，已实施）
 
 - **global**：保留服务器级 `INITIAL_GLOBAL_RELOAD_VALUES`，不放进 `LeafGlobalConfig`。reload 会替换 global 配置实例，但不会重新初始化服务器；新实例仍使用启动时捕获的有效值。
 - **world defaults 和各世界**：移除静态 `INITIAL_WORLD_RELOAD_VALUES`，分别由各自的 `LeafWorldConfig` 持有首次值。绑定成功后，遇到第一个需要快照的配置字段才分配存储（字段或类有 `@HotReloadUnsupported`，且字段未被 `@DoNotLoad` 排除）；无标注就不分配。快照仅在内存中，列表仍复制。
 - **普通 reload**：binder 从当前活动的 defaults 或世界实例读取快照。候选实例只提供可重载字段的新值，不记录、替换或重建活动实例的快照；候选失败时也不影响它。
 - **卸载再加载**：新世界实例先继承当前有效的 defaults，再绑定磁盘上的显式 override，绑定结果就是该实例的首次值，不复制旧世界或 defaults 的快照。配置层不从静态集合持有世界实例；旧实例不再被引用时，其快照也可回收，不需要卸载回调或弱键 map。
 
-## P2-7 已存在但不可解析的标量（已决定：拒绝，待实施）
+## P2-7 已存在但不可解析的标量（已决定：拒绝，已实施）
 
 **归因：Leaf 沿用依赖行为** — `ConfigBinder.readValue()` 使用 ConfigurationMaster rc.3 带 fallback 的 getter；01 的模块声明类型检查并不校验用户 YAML 的标量值。
 

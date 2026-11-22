@@ -2,18 +2,27 @@ package org.dreeam.leaf.config.migration;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.dreeam.leaf.config.util.ConfigVersion;
+
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
-/** Executes module-declared path migrations against raw Leaf configuration files. */
+/**
+ * Executes module-declared path migrations against raw Leaf configuration files.
+ *
+ * <p>The declarations are checked by tests, not at runtime (see {@code LeafConfigMigrationTest}): a
+ * source must not have two different targets, paths of different operations in one file must not
+ * overlap, and operations that depend on each other must be declared in the order they must run. Only
+ * what comes from the configuration files themselves is checked here.</p>
+ */
 public final class LeafConfigMigration {
+
+    private static final Logger LOGGER = LogManager.getLogger(LeafConfigMigration.class.getSimpleName());
 
     private LeafConfigMigration() {
     }
@@ -21,28 +30,41 @@ public final class LeafConfigMigration {
     public static void migrate(
         ConfigFile globalConfig,
         ConfigFile worldDefaultsConfig,
-        Iterable<Class<?>> moduleClasses
+        Iterable<Class<?>> moduleClasses,
+        ConfigVersion storedVersion
     ) throws Exception {
-        ConfigMigrationContext context = collect(globalConfig.getString("config-version", null), moduleClasses);
+        ConfigMigrationContext context = collect(storedVersion, moduleClasses);
         apply(context.operations(), globalConfig, worldDefaultsConfig);
     }
 
+    /**
+     * Applies the migrations a world override still needs, according to the version it was written with.
+     *
+     * @return whether the override was changed
+     */
     public static boolean migrateWorldOverride(
         ConfigFile worldOverrideConfig,
+        ConfigVersion storedVersion,
         Iterable<Class<?>> worldModuleClasses
     ) throws Exception {
-        ConfigMigrationContext context = collect(null, worldModuleClasses);
+        ConfigMigrationContext context = collect(storedVersion, worldModuleClasses);
         List<ConfigMigrationContext.Operation> operations = new ArrayList<>();
         for (ConfigMigrationContext.Operation operation : context.operations()) {
             if (operation.source() == ConfigMigrationContext.Scope.WORLD_DEFAULTS
                 && operation.target() == ConfigMigrationContext.Scope.WORLD_DEFAULTS) {
                 operations.add(operation);
+            } else if (operation.source() == ConfigMigrationContext.Scope.WORLD_DEFAULTS
+                && operation.target() == ConfigMigrationContext.Scope.GLOBAL
+                && worldOverrideConfig.contains(operation.oldPath())) {
+                // The option moved to the global configuration, where a world cannot override it.
+                LOGGER.warn("{} sets {}, which is no longer a per-world option and is ignored. It moved to {} in the global configuration.",
+                    worldOverrideConfig.getFile(), operation.oldPath(), operation.newPath());
             }
         }
         return apply(operations, worldOverrideConfig, worldOverrideConfig);
     }
 
-    private static ConfigMigrationContext collect(String storedVersion, Iterable<Class<?>> moduleClasses) throws Exception {
+    static ConfigMigrationContext collect(ConfigVersion storedVersion, Iterable<Class<?>> moduleClasses) throws Exception {
         ConfigMigrationContext context = new ConfigMigrationContext(storedVersion);
         for (Class<?> moduleClass : moduleClasses) {
             Method method;
@@ -50,9 +72,6 @@ public final class LeafConfigMigration {
                 method = moduleClass.getDeclaredMethod("migrate", ConfigMigrationContext.class);
             } catch (NoSuchMethodException ignored) {
                 continue;
-            }
-            if (!Modifier.isStatic(method.getModifiers()) || method.getReturnType() != void.class) {
-                throw new IllegalStateException("Invalid Leaf config migration method: " + moduleClass.getName());
             }
             method.setAccessible(true);
             try {
@@ -71,81 +90,35 @@ public final class LeafConfigMigration {
         List<ConfigMigrationContext.Operation> operations,
         ConfigFile globalConfig,
         ConfigFile worldDefaultsConfig
-    ) throws Exception {
-        Map<String, ConfigMigrationContext.Operation> targets = new HashMap<>();
-        for (ConfigMigrationContext.Operation operation : operations) {
-            validate(operation);
-            ConfigFile source = config(operation.source(), globalConfig, worldDefaultsConfig);
-            if (source.contains(operation.oldPath())) {
-                Object value = source.get(operation.oldPath());
-                if (value == null || value instanceof ConfigSection) {
-                    throw new IllegalStateException("Legacy config path must point to an option: " + operation.oldPath());
-                }
-            }
-            ConfigFile target = config(operation.target(), globalConfig, worldDefaultsConfig);
-            if (target.contains(operation.newPath()) && target.get(operation.newPath()) instanceof ConfigSection) {
-                throw new IllegalStateException("Migration target must point to an option: " + operation.newPath());
-            }
-            String targetKey = operation.target() + ":" + operation.newPath();
-            ConfigMigrationContext.Operation previous = targets.putIfAbsent(targetKey, operation);
-            if (previous != null && (previous.source() != operation.source()
-                || !previous.oldPath().equals(operation.oldPath()))) {
-                throw new IllegalArgumentException("Multiple Leaf migrations target the same option: " + targetKey);
-            }
-        }
+    ) {
         boolean changed = false;
-        Map<ConfigFile, Map<String, PreviousValue>> previousValues = new IdentityHashMap<>();
         for (ConfigMigrationContext.Operation operation : operations) {
-            snapshot(previousValues, config(operation.source(), globalConfig, worldDefaultsConfig), operation.oldPath());
-            snapshot(previousValues, config(operation.target(), globalConfig, worldDefaultsConfig), operation.newPath());
-        }
-        try {
-            for (ConfigMigrationContext.Operation operation : operations) {
-                ConfigFile source = config(operation.source(), globalConfig, worldDefaultsConfig);
-                if (!source.contains(operation.oldPath())) continue;
-                ConfigFile target = config(operation.target(), globalConfig, worldDefaultsConfig);
-                if (!target.contains(operation.newPath())) {
-                    target.set(operation.newPath(), source.get(operation.oldPath()));
-                }
-                source.set(operation.oldPath(), null);
-                changed = true;
+            ConfigFile source = config(operation.source(), globalConfig, worldDefaultsConfig);
+            if (!source.contains(operation.oldPath())) continue;
+            Object oldValue = source.get(operation.oldPath());
+            if (oldValue == null || oldValue instanceof ConfigSection) {
+                throw new IllegalStateException("Legacy config path must point to an option: " + operation.oldPath()
+                    + " in " + source.getFile());
             }
-        } catch (RuntimeException exception) {
-            restore(previousValues);
-            throw exception;
+
+            ConfigFile target = config(operation.target(), globalConfig, worldDefaultsConfig);
+            Object newValue = target.get(operation.newPath());
+            if (newValue instanceof ConfigSection) {
+                throw new IllegalStateException("Migration target must point to an option: " + operation.newPath()
+                    + " in " + target.getFile());
+            }
+            if (newValue == null) {
+                target.set(operation.newPath(), oldValue);
+            } else if (!Objects.equals(String.valueOf(newValue), String.valueOf(oldValue))) {
+                // The new option may be a choice the administrator made, so it wins. Dropping a different old
+                // value is only worth a warning, an old value that is the same as the new one is not.
+                LOGGER.warn("Both {} {} and {} {} are set; keeping the new option's value {} and dropping the old value {}.",
+                    operation.source(), operation.oldPath(), operation.target(), operation.newPath(), newValue, oldValue);
+            }
+            source.set(operation.oldPath(), null);
+            changed = true;
         }
         return changed;
-    }
-
-    private static void snapshot(Map<ConfigFile, Map<String, PreviousValue>> values, ConfigFile config, String path) {
-        values.computeIfAbsent(config, ignored -> new java.util.LinkedHashMap<>())
-            .putIfAbsent(path, new PreviousValue(config.contains(path), config.get(path)));
-    }
-
-    private static void restore(Map<ConfigFile, Map<String, PreviousValue>> values) {
-        for (Map.Entry<ConfigFile, Map<String, PreviousValue>> configValues : values.entrySet()) {
-            for (Map.Entry<String, PreviousValue> value : configValues.getValue().entrySet()) {
-                configValues.getKey().set(value.getKey(), value.getValue().present() ? value.getValue().value() : null);
-            }
-        }
-    }
-
-    private static void validate(ConfigMigrationContext.Operation operation) {
-        requirePath(operation.oldPath(), "oldPath");
-        requirePath(operation.newPath(), "newPath");
-        if (operation.source() == operation.target() && operation.oldPath().equals(operation.newPath())) {
-            throw new IllegalArgumentException("A migration must change the file or configuration path");
-        }
-        if (operation.source() == operation.target()
-            && (operation.oldPath().startsWith(operation.newPath() + ".")
-            || operation.newPath().startsWith(operation.oldPath() + "."))) {
-            throw new IllegalArgumentException("Migration paths in one configuration file must not overlap");
-        }
-    }
-
-    private static void requirePath(String path, String name) {
-        Objects.requireNonNull(path, name);
-        if (path.isBlank()) throw new IllegalArgumentException(name + " must not be blank");
     }
 
     private static ConfigFile config(
@@ -154,8 +127,5 @@ public final class LeafConfigMigration {
         ConfigFile worldDefaultsConfig
     ) {
         return scope == ConfigMigrationContext.Scope.GLOBAL ? globalConfig : worldDefaultsConfig;
-    }
-
-    private record PreviousValue(boolean present, Object value) {
     }
 }

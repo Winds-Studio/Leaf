@@ -69,15 +69,15 @@ Gale mapping 逐项直接写入目标，中途异常会留下部分值；Leaf mi
 - 其他异常（包括非权限的保存失败）：记录 error，返回 null，调用方转入普通 Leaf 加载；若目标已成为空文件，会表现为使用 defaults。残留目标会让下次先命中 `leafFile.isFile()`，即使 Gale 源还在也不再转换。当前 finalize 还可能归档未标记保留的源。
 - 各世界相互独立。
 
-## P0-1 逐世界迁移的版本来源（已决定，待实施）
+## P0-1 逐世界迁移的版本来源（已决定，阶段 4 已实施）
 
 保留 `initWorldConfig()` 入口和模块的 `isBefore(...)` 写法，将 raw `leaf-world.yml` 自己的 `config-version` 传给 `migrateWorldOverride()` 的收集阶段，不再回退到 global 的旧版本。同时删除仅为该回退存在的 `previousConfigVersion`、`loadPreviousConfigVersion()`、单参数 `isConfigVersionBefore(String)`、`ConfigMigrationContext(null)` 分支与 `LeafGlobalConfig` 的 `loadPreviousVersion` 参数（P2-15）。迁移与版本一起写回；权限拒绝只影响本文件。缺失、无法解析或更高的版本按 00“版本号规则”处理，与 global 相同。详见 06。
 
-## P2-2 配置降级警告（已决定，待实施）
+## P2-2 配置降级警告（已决定，已实施）
 
 比较解析后的版本：文件版本高于 `CURRENT_CONFIG_VERSION` 时，在更新版本或保存前记录 WARN，包含文件路径、文件版本和当前支持版本。global/defaults 检查 global 的版本；每个已有 override 在实际加载或 reload 时检查自身版本，不扫描未加载世界。版本更高时不执行迁移，且保存时保留原版本，不改写为当前版本（P2-8）。
 
-## Gale 迁移规则（已决定，待实施）
+## Gale 迁移规则（已决定，阶段 4 已实施）
 
 - **P0-3：global/defaults 的 Gale 映射只补缺失的 Leaf 值。** 当前 `applyMappings()` 不跳过已有目标，会改写本轮的输出值；后续默认值登记可能重新取回磁盘原值，不能断言每次最终保存都被 Gale 覆盖（P1-8）。修改：
   - 收集阶段，若 `leafConfig.contains(targetPath)`，跳过该映射，不写入 Gale 值；
@@ -94,7 +94,7 @@ Gale mapping 逐项直接写入目标，中途异常会留下部分值；Leaf mi
 - **P2-1：没有实际映射值就不建世界 override。** 旧目录中的 `gale-world.yml` 由现有目录迁移搬运。`initWorldConfig()` 仅在没有 `leaf-world.yml` 且至少命中一个映射时生成带当前版本的文件；不扫描 universe，不在旧目录生成或搬运 `leaf-world.yml`。
 - **P1-1：按世界归档。** 启动世界和插件晚加载的世界都在各自加载时使用同一 backup session；有值需落盘时，先确认目标保存成功再归档。无须写目标的情况见 05。
 
-## P1-4 Leaf 路径迁移：定义测试与冲突日志（已决定，待实施）
+## P1-4 Leaf 路径迁移：定义测试与冲突日志（已决定，已实施）
 
 仅适用于 `LeafConfigMigration`，不改变 Gale → Leaf 映射。按 P2-13，8.2 中针对规则定义的运行时校验（路径非空、同作用域同路径、单条规则父子重叠、不同来源同目标）一并移入定义测试并从运行时删除；仅保留数据校验：旧键为 null 或配置节、目标为配置节。Gale 映射目标字段不存在同样由 Gale 定义测试保证，`migrateStage()` 不再捕获并跳过该阶段。
 
@@ -103,7 +103,7 @@ Gale mapping 逐项直接写入目标，中途异常会留下部分值；Leaf mi
 - **旧键显式为 null 是非法输入**（如 `key: ~`）。保留现有迁移失败行为；启动时失败是预期，不把 null 当缺失，也不清理后继续。
 - **唯一新增的运行时行为是冲突 WARN**：新旧键均存在时仍保留新值、删除旧键。仅在两值不同时，于删除前记录源和目标的作用域、路径，以及丢弃的旧值和保留的新值；同值不告警。在该分支加注释说明原因：新键可能是管理员已作出的选择，因此优先保留，仅在丢弃不同旧值时提醒。
 
-## P1-8 迁移写入的非默认值可在绑定时丢失（已决定，待实施）
+## P1-8 迁移写入的非默认值可在绑定时丢失（已决定，阶段 1、4 已实施）
 
 **归因：Leaf 引入** — Leaf 用 ConfigurationMaster `v2.0.0-rc.3` 的同一 `ConfigFile` 做 raw 迁移和默认值登记；Paper 在 Configurate node 上做 transformation，不经过这条 `set → addDefault` 链。
 
