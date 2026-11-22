@@ -5,9 +5,9 @@
 - `paper-server/src/test/java/org/dreeam/leaf/config/...` 下新增的测试文件（当前目录尚不存在，全部待创建）。
 - 不需要修改 `leaf-server/build.gradle.kts`：JUnit、Mockito、ClassGraph、`@TempDir` 已存在；但 `tasks.test` 只选 `**/**TestSuite.class`。将 `org.dreeam.leaf.config` 加入 `paper-server/src/test/java/org/bukkit/support/suite/LeafTestSuite.java` 的 `@SelectPackages`，并给这些测试加 `@Tag("LeafTest")`（需要服务端测试环境时用 `@LeafTest`）。现有 suite 只选 `net.minecraft` 与 `gg.pufferfish.pufferfish`，仅创建测试类不会让它们自动进入该套件。
 
-## 授权说明
+## 运行说明
 
-仓库 `AGENTS.md` 默认禁止运行 Gradle 构建与测试。只有仓库所有者在当前任务中明确授权时，才执行下方命令；否则只编写测试代码，由所有者运行。patch 生成与无关任务在任何情况下都不执行。
+编写并运行测试、编译源码均允许，在每个阶段结束时执行（见 11）。`AGENTS.md` 的补丁限制仍然有效：不执行补丁生成、应用、重建任务，也不运行与本任务无关的任务。
 
 ## 测试清单
 
@@ -23,7 +23,7 @@
 | `LeafConfigMigrationTest` | 版本比较、四种作用域；实际迁移定义无同源多目标或跨操作父子重叠，正序链式迁移保存重读，显式 null 失败，冲突保留新值且仅异值告警；非默认迁移值经绑定、保存、重读仍保留 | 08 |
 | `GaleConfigMigrationTest` | 原始登记列表无同源多目标；null 视同缺键、可转换值按旧类型导入、非法映射值使本次加载失败并保留源；分阶段无残留、已有 Leaf 优先、global/defaults 与新 override 的绑定差异、首次失败不留目标且能重试 | 08 |
 
-## 验证命令（需授权）
+## 验证命令
 
 ```text
 ./gradlew :leaf-server:test --tests org.bukkit.support.suite.LeafTestSuite

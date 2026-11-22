@@ -114,6 +114,8 @@
 - **P2-23 `Level.leafConfig` 改为 `private final`。** 删除无调用方的 `setLeafConfig()` 与 `volatile`；reload 原地写字段、不替换实例，与 Paper `paperConfig` 一致。字段值的跨线程可见性仍按 07 的风险说明。
 - **P2-25 合并绑定路径。** `bind()`（含 `global` 布尔分派）、`bindWorld()`、`bindWorldDefaultsForReload()`、`collectGlobalReload()` 合并为一个“读取模块 → `PendingValue` 列表”的函数，参数为 fallback 来源及是否写默认值与注释；启动期也先收集再 `apply()`。见 03。
 - **P1-16 回调不得改写 `@ConfigInfo` 字段，派生值放进 `@DoNotLoad` 字段。** 把配置值 A 算出的 B 直接写回配置字段，是旧式模块的写法。它与 reload“缺键沿用当前字段值并写回”及首次快照冲突：删键后 reload 会把派生值写进 YAML（如 FastRNG `enabled: false`、并行世界 `threads: 0`），快照也记录回调后的值。一律改为配置字段只保存读入值，回调把规范化或派生结果写入 `@DoNotLoad` 字段，运行期读取方改读派生字段（`AsyncPathfinding.rejectPolicyType`、`SparklyPaperParallelWorldTicking.asyncUnsafeReadHandlingPolicy` 已是此写法）。涉及：`FastRNG.enabled`、`SparklyPaperParallelWorldTicking.threads/logContainerCreationStacktraces/disableHardThrow`、`AsyncPathfinding.maxThreads/queueSize`、`MultithreadedTracker.threads`、`IceAndSnowChance.iceAndSnowChance`、`ConnectionMessage.joinMessage/quitMessage`、`RegionFormatConfig.compressionLevel/ioFlushDelay`、`MCBugFix.mc301114maxCombatEntries`、`ProtocolSupport.doABarrelRollInstalledTimeout`、`VanillaUsernameCheck.removeAllCheck`。见 02。
+- **P2-30 删除复活的 `flush-location-while-knockback-player`。** ver/26.2 的 `65fe1ee4` 已删除 `Knockback.flushKnockback` 及该配置项（由 `use-legacy-tracker-ticking` 取代），注解式重写又将其加回，且无读取点。删除该字段，与 ver/26.2 一致。由 `tools/config_paths.py` 对比 ver/26.2 发现。
+- **MC/Paper 源码中的配置改动并入 Leaf config changes 补丁。** Minecraft 源码并入 `leaf-server/minecraft-patches/features/0333-Leaf-config-changes.patch`（applied 仓库提交 `Leaf config changes`），paper-server 并入 `leaf-server/paper-patches/features/0069-Leaf-config-changes.patch`。paper-api 新建 Leaf config changes 补丁（`leaf-api/paper-patches/features/`），收录 P2-11 等 API 侧改动。全部阶段完成后由所有者统一转换为补丁，供整体 review。见 11。
 - **不处理：** 未登记的键在保存时被静默删除（原 P2-29），属用户配置问题，不为此告警。未加引号、被 YAML 读成浮点数的版本号（原 P2-28）属非法格式，按“版本号规则”处理。
 
 ## 待处理问题（再审查结论）
@@ -125,6 +127,12 @@
 ### P2：次要边界
 
 （暂无）
+
+## 实施记录
+
+按 11 的阶段记录每轮完成情况、偏差与验证结果。
+
+- **实施前基线（`config_paths.py` 对比 ver/26.2）：** ver/26.2 的选项在工作区全部存在；`scope changed` 仅 `misc.secure-seed.enabled`（见 P1-13）；`only in working tree` 为 Gale 映射引入的选项与 P2-30。`default changed` 的 4 项已核对等价：`async-pathfinding.reject-policy`（旧版将运行期算出的策略写入 YAML，新版写 `default` 并在运行期计算，已有显式值不受影响）、`async-unsafe-read-handling`（同为 `DISABLED`）、`disable-world-data-saving.worlds`（同为空列表）、`do-a-barrel-roll-installed-timeout`（旧版 YAML 默认 0，运行期 ≤0 改为 40；新版默认 40，运行效果相同）。
 
 ## 子计划索引
 
@@ -138,3 +146,4 @@
 8. [Leaf/Gale migration stage](08-migration-stages.md)
 9. [删除 Gale runtime/API](09-remove-gale-runtime-api.md)
 10. [测试与一致性审查](10-tests-and-consistency.md)
+11. [实施阶段与流程](11-implementation-phases.md)（路径对比工具：`tools/config_paths.py`）

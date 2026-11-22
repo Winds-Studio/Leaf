@@ -77,21 +77,6 @@ affected the change or when the index appeared incomplete or stale.
 2. Make the smallest changes needed, avoiding unrelated formatting or cleanup.
 3. Review the resulting source diff for correctness.
 
-## Validation policy
-
-Stop after modifying and reviewing the applied source; the owner performs
-compilation, testing, benchmarking, and runtime validation.
-
-Do not run Gradle builds or compilation tasks, test suites, JMH benchmarks,
-patch validation or rebuild tasks, server startup tasks, modifying formatters,
-or scripts that generate or rewrite repository content.
-
-Read-only inspection is allowed: locate files, search references, read source,
-patches, configuration, and Gradle files, and inspect Git status and diffs.
-
-Do not claim that a change compiles, passes tests, improves performance, or
-works at runtime unless the user provides corresponding verification results.
-
 ## Java conventions
 
 - Use the project's Java version and follow the surrounding Minecraft, Paper,
