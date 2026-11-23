@@ -132,7 +132,7 @@ index ca046e44445c68f430ac1936b1f6312386cd5569..a518b7f52b93fecf034d7695a766b75a
                  // Paper end
                  // CraftBukkit start
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 099cf0bc7436866abff63ae00056ce972d581db4..f61415f92c7350b6ca6e98a1d212cf0aa5c84bed 100644
+index 099cf0bc7436866abff63ae00056ce972d581db4..ba3920b8d753e84b542d0bb90822f9bc99a60f08 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -336,6 +336,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
@@ -220,7 +220,7 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..f61415f92c7350b6ca6e98a1d212cf0a
      protected void tickChildren(final BooleanSupplier haveTime) {
          ProfilerFiller profiler = Profiler.get();
          this.getPlayerList().getPlayers().forEach(playerx -> playerx.connection.suspendFlushing());
-@@ -1878,6 +1910,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1878,27 +1910,48 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          this.updateEffectiveRespawnData();
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
@@ -231,7 +231,11 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..f61415f92c7350b6ca6e98a1d212cf0a
          for (ServerLevel level : this.getAllLevels()) {
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
-@@ -1887,18 +1923,33 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             level.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
+             level.updateLagCompensationTick(); // Paper - lag compensation
+-            net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = level.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
++            final boolean skipHopperEvents = level.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers // Leaf - Per world thread hopper flags
++            net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = skipHopperEvents; // Leaf - Per world thread hopper flags
              profiler.push(() -> level + " " + level.dimension().identifier());
              profiler.push("tick");
  
@@ -247,6 +251,7 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..f61415f92c7350b6ca6e98a1d212cf0a
 +                    level.tickExecutor.submit(() -> {
 +                        ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread currentThread = (ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread) Thread.currentThread();
 +                        currentThread.currentTickingServerLevel = level;
++                        currentThread.skipHopperEvents = skipHopperEvents; // Leaf - Per world thread hopper flags
 +                        try {
 +                            tickLevel(level, haveTime); // Leaf - SparklyPaper - parallel world ticking - move level ticking logic out for branch convergence
 +                        } finally {
@@ -272,7 +277,7 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..f61415f92c7350b6ca6e98a1d212cf0a
          this.isIteratingOverLevels = false; // Paper - Throw exception on world create while being ticked
  
          profiler.popPush("connection");
-@@ -1989,6 +2040,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1989,6 +2042,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          Map<ResourceKey<Level>, ServerLevel> oldLevels = this.levels;
          Map<ResourceKey<Level>, ServerLevel> newLevels = Maps.newLinkedHashMap(oldLevels);
          newLevels.remove(level.dimension());
@@ -1393,6 +1398,152 @@ index c2f8479eef826efca3ed2993973b2cfc2c51ed00..3e7873e159cd4e81690626fa0f41bde2
          return org.bukkit.craftbukkit.event.CraftEventFactory.callBlockLockCheckEvent(this, this.lockKey, this.getDisplayName(), player); // Paper - Call BlockLockCheckEvent
      }
  
+diff --git a/net/minecraft/world/level/block/entity/BlockEntity.java b/net/minecraft/world/level/block/entity/BlockEntity.java
+index ac74f77f4d8a70ac42c2e1f2b9403cefdc8c6fa5..d03e2a6a91c8cfc6ceff6f629e0158d4b0aa0771 100644
+--- a/net/minecraft/world/level/block/entity/BlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BlockEntity.java
+@@ -40,6 +40,19 @@ import org.slf4j.Logger;
+ 
+ public abstract class BlockEntity implements DebugValueSource, TypedInstance<BlockEntityType<?>> {
+     static boolean ignoreBlockEntityUpdates; // Paper - Perf: Optimize Hoppers
++    // Leaf start - Per world thread hopper flags
++    static boolean isIgnoringBlockEntityUpdates() {
++        return Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread ? thread.ignoreBlockEntityUpdates : ignoreBlockEntityUpdates;
++    }
++
++    static void setIgnoringBlockEntityUpdates(final boolean value) {
++        if (Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread) {
++            thread.ignoreBlockEntityUpdates = value;
++        } else {
++            ignoreBlockEntityUpdates = value;
++        }
++    }
++    // Leaf end - Per world thread hopper flags
+     // CraftBukkit start - data containers
+     private static final org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry DATA_TYPE_REGISTRY = new org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry();
+     public final org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer persistentDataContainer;
+@@ -211,7 +224,7 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+ 
+     public void setChanged() {
+         if (this.level != null && this.real) { // Paper - don't broadcast for fake block entities
+-            if (ignoreBlockEntityUpdates) return; // Paper - Perf: Optimize Hoppers
++            if (isIgnoringBlockEntityUpdates()) return; // Paper - Perf: Optimize Hoppers // Leaf - Per world thread hopper flags
+             setChanged(this.level, this.worldPosition, this.blockState);
+         }
+     }
+diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+index 803e36f33c706d8484739cb21af25b9289dc8808..05a4b6430dc30682194ef32d188b25ecf6e82e7f 100644
+--- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+@@ -222,8 +222,38 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     private static boolean skipPullModeEventFire;
+     private static boolean skipPushModeEventFire;
+ 
++    // Leaf start - Per world thread hopper flags
++    private static boolean skipHopperEvents() {
++        return Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread ? thread.skipHopperEvents : skipHopperEvents;
++    }
++
++    private static boolean skipPullModeEventFire() {
++        return Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread ? thread.skipPullModeEventFire : skipPullModeEventFire;
++    }
++
++    private static void skipPullModeEventFire(final boolean value) {
++        if (Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread) {
++            thread.skipPullModeEventFire = value;
++        } else {
++            skipPullModeEventFire = value;
++        }
++    }
++
++    private static boolean skipPushModeEventFire() {
++        return Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread ? thread.skipPushModeEventFire : skipPushModeEventFire;
++    }
++
++    private static void skipPushModeEventFire(final boolean value) {
++        if (Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread) {
++            thread.skipPushModeEventFire = value;
++        } else {
++            skipPushModeEventFire = value;
++        }
++    }
++    // Leaf end - Per world thread hopper flags
++
+     private static boolean hopperPush(final Level level, final Container destination, final Direction direction, final HopperBlockEntity hopper) {
+-        skipPushModeEventFire = skipHopperEvents;
++        skipPushModeEventFire(skipHopperEvents()); // Leaf - Per world thread hopper flags
+         final long disallowedSlots = callPrepareTransferEvent(level, hopper, destination, true); // Paper - Add PrepareHopperTransferEvent
+         boolean foundItem = false;
+         for (int i = 0; i < hopper.getContainerSize(); ++i) {
+@@ -240,7 +270,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+                 // We only need to fire the event once to give protection plugins a chance to cancel this event
+                 // Because nothing uses getItem, every event call should end up the same result.
+-                if (!skipPushModeEventFire) {
++                if (!skipPushModeEventFire()) { // Leaf - Per world thread hopper flags
+                     movedItem = callPushMoveEvent(destination, movedItem, hopper);
+                     if (movedItem == null) { // cancelled
+                         origItemStack.setCount(originalItemCount);
+@@ -275,7 +305,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         final int movedItemCount = Math.min(level.spigotConfig.hopperAmount, originalItemCount);
+         movedItem.setCount(movedItemCount);
+ 
+-        if (!skipPullModeEventFire) {
++        if (!skipPullModeEventFire()) { // Leaf - Per world thread hopper flags
+             movedItem = callPullMoveEvent(hopper, container, movedItem);
+             if (movedItem == null) { // cancelled
+                 origItemStack.setCount(originalItemCount);
+@@ -295,9 +325,9 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+                 origItemStack.setCount(originalItemCount - movedItemCount + remainingItemCount);
+             }
+ 
+-            ignoreBlockEntityUpdates = true;
++            setIgnoringBlockEntityUpdates(true); // Leaf - Per world thread hopper flags
+             container.setItem(i, origItemStack);
+-            ignoreBlockEntityUpdates = false;
++            setIgnoringBlockEntityUpdates(false); // Leaf - Per world thread hopper flags
+             container.setChanged();
+             return true;
+         }
+@@ -327,7 +357,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         );
+         final boolean result = event.callEvent();
+         if (!event.calledGetItem && !event.calledSetItem) {
+-            skipPushModeEventFire = true;
++            skipPushModeEventFire(true); // Leaf - Per world thread hopper flags
+         }
+         if (!result) {
+             applyCooldown(hopper);
+@@ -350,7 +380,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         final io.papermc.paper.event.inventory.PaperInventoryMoveItemEvent event = new io.papermc.paper.event.inventory.PaperInventoryMoveItemEvent(sourceInventory, org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitMirror(itemstack), destination, false);
+         final boolean result = event.callEvent();
+         if (!event.calledGetItem && !event.calledSetItem) {
+-            skipPullModeEventFire = true;
++            skipPullModeEventFire(true); // Leaf - Per world thread hopper flags
+         }
+         if (!result) {
+             applyCooldown(hopper);
+@@ -505,7 +535,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         Container container = getSourceContainer(level, hopper, blockPos, blockState);
+         if (container != null) {
+             Direction direction = Direction.DOWN;
+-            skipPullModeEventFire = skipHopperEvents; // Paper - Perf: Optimize Hoppers
++            skipPullModeEventFire(skipHopperEvents()); // Paper - Perf: Optimize Hoppers // Leaf - Per world thread hopper flags
+             final long disallowedSlots = callPrepareTransferEvent(level, container, hopper, false); // Paper - Add PrepareHopperTransferEvent
+ 
+             for (int slot : getSlots(container, direction)) {
+@@ -611,9 +641,9 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+                     itemStack = itemStack.split(container.getMaxStackSize());
+                 }
+                 // Spigot end
+-                ignoreBlockEntityUpdates = true; // Paper - Perf: Optimize Hoppers
++                setIgnoringBlockEntityUpdates(true); // Paper - Perf: Optimize Hoppers // Leaf - Per world thread hopper flags
+                 container.setItem(slot, itemStack);
+-                ignoreBlockEntityUpdates = false; // Paper - Perf: Optimize Hoppers
++                setIgnoringBlockEntityUpdates(false); // Paper - Perf: Optimize Hoppers // Leaf - Per world thread hopper flags
+                 itemStack = leftover; // Paper - Make hoppers respect inventory max stack size
+                 success = true;
+             } else if (canMergeItems(current, itemStack)) {
 diff --git a/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java b/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
 index 4dbd9c425e670e6ff31d70803ba35f8a804459a9..6dc800b91a78ca52c264450d7b6489a0f98ba0c1 100644
 --- a/net/minecraft/world/level/block/entity/SculkCatalystBlockEntity.java
