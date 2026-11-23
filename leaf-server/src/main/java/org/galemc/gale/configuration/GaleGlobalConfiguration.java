@@ -2,14 +2,22 @@
 
 package org.galemc.gale.configuration;
 
+import com.mojang.logging.LogUtils;
 import io.papermc.paper.configuration.Configuration;
 import io.papermc.paper.configuration.ConfigurationPart;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.EntityType;
+import org.slf4j.Logger;
 import org.spongepowered.configurate.objectmapping.meta.PostProcess;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
 import org.bukkit.plugin.java.JavaPluginLoader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 @SuppressWarnings({"CanBeFinal", "FieldCanBeLocal", "FieldMayBeFinal", "InnerClassMayBeStatic"})
 public class GaleGlobalConfiguration extends ConfigurationPart {
+    private static final Logger LOGGER = LogUtils.getLogger();
     static final int CURRENT_VERSION = 1;
     private static GaleGlobalConfiguration instance;
 
@@ -34,10 +42,27 @@ public class GaleGlobalConfiguration extends ConfigurationPart {
 
             public int increaseTimeStatistics = 1; // Gale - Hydrinity - increase time statistics in intervals
             public int updateEntityLineOfSight = 4; // Gale - Petal - reduce line of sight updates
+            public List<String> checkStuckInWallIgnoredEntities = new ArrayList<>(); // Gale - Pufferfish - reduce in wall checks
 
             @PostProcess
             public void postProcess() {
                 net.minecraft.server.level.ServerPlayer.increaseTimeStatisticsInterval = Math.max(1, increaseTimeStatistics); // Gale - Hydrinity - increase time statistics in intervals - store as static field for fast access
+                // Gale start - Pufferfish - reduce in wall checks
+                for (EntityType<?> entityType : BuiltInRegistries.ENTITY_TYPE) {
+                    entityType.ignoreStuckInWallOptimization = false;
+                }
+
+                for (String name : this.checkStuckInWallIgnoredEntities) {
+                    String lowerName = name.toLowerCase(Locale.ROOT);
+                    String typeId = lowerName.contains(":") ? lowerName : "minecraft:" + lowerName;
+
+                    EntityType.byString(typeId).ifPresentOrElse(
+                        entityType ->
+                            entityType.ignoreStuckInWallOptimization = true,
+                        () -> LOGGER.warn("Skip unknown entity '{}' in gale-global.small-optimizations.reduced-intervals.check-stuck-in-wall-ignored-entities", name)
+                    );
+                }
+                // Gale end - Pufferfish - reduce in wall checks
             }
 
         }
