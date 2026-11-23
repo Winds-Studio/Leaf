@@ -5,7 +5,6 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityType;
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;

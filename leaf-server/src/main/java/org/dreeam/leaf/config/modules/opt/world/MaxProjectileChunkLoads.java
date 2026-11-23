@@ -10,11 +10,11 @@ public final class MaxProjectileChunkLoads implements WorldConfigModule {
     public int perTick = 10;
 
     @ConfigInfo(name = "per-projectile.max")
-    public int perProjectileMax = 10;
+    public int max = 10;
 
     @ConfigInfo(name = "per-projectile.reset-movement-after-reach-limit")
-    public boolean perProjectileResetMovementAfterReachLimit = false;
+    public boolean resetMovementAfterReachLimit = false;
 
     @ConfigInfo(name = "per-projectile.remove-from-world-after-reach-limit")
-    public boolean perProjectileRemoveFromWorldAfterReachLimit = false;
+    public boolean removeFromWorldAfterReachLimit = false;
 }

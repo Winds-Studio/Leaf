@@ -11,6 +11,7 @@ import org.dreeam.leaf.config.modules.gameplay.BookWriting;
 import org.dreeam.leaf.config.modules.network.ChatOrderVerification;
 import org.dreeam.leaf.config.modules.network.Keepalive;
 import org.dreeam.leaf.config.modules.network.PremiumAccountSlowLoginTimeout;
+import org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDurationRatio;
 import org.dreeam.leaf.config.util.ConfigFileIO;
 import io.github.thatsmusic99.configurationmaster.api.ConfigSection;
 import org.dreeam.leaf.config.util.ConfigPaths;
@@ -32,7 +33,8 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Migrates the removed Gale configuration files into Leaf configuration modules.
+ * Migrates the removed Gale config files into Leaf config modules.
+ * Based on latest Leaf 26.2's self-maintained Gale.
  */
 public final class GaleConfigMigration {
 
@@ -90,12 +92,12 @@ public final class GaleConfigMigration {
         globalMappings.add(new Mapping("log-to-console.null-id-disconnections", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "nullIdDisconnections"));
         globalMappings.add(new Mapping("log-to-console.player-login-locations", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "playerLoginLocations"));
         globalMappings.add(new Mapping("log-to-console.invalid-legacy-text-component", org.dreeam.leaf.config.modules.misc.LogToConsole.class, "invalidLegacyTextComponent"));
-        globalMappings.add(new Mapping("log-to-console.chat.empty-message-warning", org.dreeam.leaf.config.modules.misc.Chat.class, "emptyMessageWarning"));
-        globalMappings.add(new Mapping("log-to-console.chat.expired-message-warning", org.dreeam.leaf.config.modules.misc.Chat.class, "expiredMessageWarning"));
-        globalMappings.add(new Mapping("log-to-console.chat.not-secure-marker", org.dreeam.leaf.config.modules.misc.Chat.class, "notSecureMarker"));
-        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.downloads", org.dreeam.leaf.config.modules.misc.PluginLibraryLoader.class, "downloads"));
-        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.start-load-libraries-for-plugin", org.dreeam.leaf.config.modules.misc.PluginLibraryLoader.class, "startLoadLibrariesForPlugin"));
-        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.library-loaded", org.dreeam.leaf.config.modules.misc.PluginLibraryLoader.class, "libraryLoaded"));
+        globalMappings.add(new Mapping("log-to-console.chat.empty-message-warning", org.dreeam.leaf.config.modules.misc.LogToConsole.Chat.class, "emptyMessageWarning"));
+        globalMappings.add(new Mapping("log-to-console.chat.expired-message-warning", org.dreeam.leaf.config.modules.misc.LogToConsole.Chat.class, "expiredMessageWarning"));
+        globalMappings.add(new Mapping("log-to-console.chat.not-secure-marker", org.dreeam.leaf.config.modules.misc.LogToConsole.Chat.class, "notSecureMarker"));
+        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.downloads", org.dreeam.leaf.config.modules.misc.LogToConsole.PluginLibraryLoader.class, "downloads"));
+        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.start-load-libraries-for-plugin", org.dreeam.leaf.config.modules.misc.LogToConsole.PluginLibraryLoader.class, "startLoadLibrariesForPlugin"));
+        globalMappings.add(new Mapping("log-to-console.plugin-library-loader.library-loaded", org.dreeam.leaf.config.modules.misc.LogToConsole.PluginLibraryLoader.class, "libraryLoaded"));
         return globalMappings;
     }
 
@@ -104,9 +106,9 @@ public final class GaleConfigMigration {
         worldMappings.add(new Mapping("small-optimizations.save-fireworks", org.dreeam.leaf.config.modules.opt.world.SaveFireworks.class, "enabled"));
         worldMappings.add(new Mapping("small-optimizations.use-optimized-sheep-offspring-color", org.dreeam.leaf.config.modules.opt.world.OptimizedSheepOffspringColor.class, "enabled"));
         worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-tick", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "perTick"));
-        worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-projectile.max", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "perProjectileMax"));
-        worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-projectile.reset-movement-after-reach-limit", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "perProjectileResetMovementAfterReachLimit"));
-        worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-projectile.remove-from-world-after-reach-limit", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "perProjectileRemoveFromWorldAfterReachLimit"));
+        worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-projectile.max", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "max"));
+        worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-projectile.reset-movement-after-reach-limit", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "resetMovementAfterReachLimit"));
+        worldMappings.add(new Mapping("small-optimizations.max-projectile-chunk-loads.per-projectile.remove-from-world-after-reach-limit", org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads.class, "removeFromWorldAfterReachLimit"));
         worldMappings.add(new Mapping("small-optimizations.reduced-intervals.check-stuck-in-wall", org.dreeam.leaf.config.modules.opt.world.ReducedIntervals.class, "checkStuckInWall"));
         worldMappings.add(new Mapping("small-optimizations.reduced-intervals.villager-item-repickup", org.dreeam.leaf.config.modules.opt.world.ReducedIntervals.class, "villagerItemRepickup"));
         worldMappings.add(new Mapping("small-optimizations.load-chunks.to-spawn-phantoms", org.dreeam.leaf.config.modules.opt.world.LoadChunks.class, "toSpawnPhantoms"));
@@ -115,7 +117,7 @@ public final class GaleConfigMigration {
         worldMappings.add(new Mapping("gameplay-mechanics.fixes.mc-238526", Fixes.class, "mc238526"));
         worldMappings.add(new Mapping("gameplay-mechanics.fixes.mc-121706", Fixes.class, "mc121706"));
         worldMappings.add(new Mapping("gameplay-mechanics.entities-can-random-stroll-into-non-ticking-chunks", org.dreeam.leaf.config.modules.gameplay.world.RandomStrollIntoNonTickingChunks.class, "enabled"));
-        worldMappings.add(new Mapping("gameplay-mechanics.entity-wake-up-duration-ratio-standard-deviation", org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDuration.class, "ratioStandardDeviation"));
+        worldMappings.add(new Mapping("gameplay-mechanics.entity-wake-up-duration-ratio-standard-deviation", EntityWakeUpDurationRatio.class, "ratioStandardDeviation"));
         worldMappings.add(new Mapping("gameplay-mechanics.hide-flames-on-entities-with-fire-resistance", org.dreeam.leaf.config.modules.gameplay.world.HideFlamesOnEntitiesWithFireResistance.class, "enabled"));
         worldMappings.add(new Mapping("gameplay-mechanics.try-respawn-ender-dragon-after-end-crystal-place", org.dreeam.leaf.config.modules.gameplay.world.EnderDragonRespawn.class, "tryAfterEndCrystalPlace"));
         return worldMappings;
@@ -169,9 +171,7 @@ public final class GaleConfigMigration {
     }
 
     private static void warnMigrated() {
-        LOGGER.warn(
-            "Gale configuration migration has finished. Please manually check the migrated Leaf configuration files for correctness."
-        );
+        LOGGER.warn("Gale configuration migration has finished. Please manually check the migrated Leaf configuration files for correctness.");
     }
 
     /**
@@ -217,7 +217,7 @@ public final class GaleConfigMigration {
             values.forEach(leafConfig::set);
             leafConfig.set(LeafConfig.VERSION_PATH, LeafConfig.CURRENT_CONFIG_VERSION);
             LeafWorldConfig migrated = LeafConfig.loadWorldOverride(leafConfig, defaults);
-            ConfigFileIO.SaveReport report = ConfigFileIO.save(leafConfig);
+            ConfigFileIO.SaveReport report = LeafConfig.saveConfigs(leafConfig);
             if (report.hasAccessDenied()) {
                 RETAINED_GALE_SOURCES.add(galePath.toAbsolutePath().normalize());
             }

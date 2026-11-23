@@ -8,8 +8,10 @@ public class ReduceUselessPackets implements ConfigModule {
 
     @ConfigInfo(name = "reduce-entity-move-packets")
     public static boolean reduceUselessEntityMovePackets = false;
+
     @ConfigInfo(name = "reduce-entity-motion-packets")
     public static boolean filterClientboundSetEntityMotionPacket = false;
+
     @ConfigInfo(name = "disable-useless-particles")
     public static boolean disableUselessParticles = false;
 }

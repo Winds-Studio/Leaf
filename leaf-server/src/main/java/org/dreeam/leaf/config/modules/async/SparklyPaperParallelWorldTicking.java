@@ -15,8 +15,9 @@ import org.dreeam.leaf.config.annotations.*;
 })
 public class SparklyPaperParallelWorldTicking implements ConfigModule {
 
+    @Experimental
     @ConfigInfo(name = "enabled")
-    public static @Experimental boolean enabled = false;
+    public static boolean enabled = false;
 
     @ConfigInfo(name = "threads")
     public static int rawThreads = 8;
@@ -31,13 +32,10 @@ public class SparklyPaperParallelWorldTicking implements ConfigModule {
     public static String rawAsyncUnsafeReadHandling = "DISABLED";
 
     public static @DoNotLoad UnsafeReadPolicy asyncUnsafeReadHandling = UnsafeReadPolicy.DISABLED;
-
-    // The thread count after normalization, 0 while parallel world ticking is disabled.
-    public static @DoNotLoad int threads = 0;
+    public static @DoNotLoad int threads;
 
     @Override
     public void onLoaded() {
-        // The readers of logContainerCreationStacktraces and disableHardThrow also check enabled.
         threads = enabled ? (rawThreads <= 0 ? 8 : rawThreads) : 0;
 
         asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(rawAsyncUnsafeReadHandling);

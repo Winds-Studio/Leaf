@@ -3,28 +3,24 @@ package org.dreeam.leaf.config.modules.opt;
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
 
+@HotReloadUnsupported
 @ConfigClassInfo(category = ConfigCategory.PERF, name = "entity-goal")
 public class EntityGoal implements ConfigModule {
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.nearest-attackable-target")
-    private static int configuredChanceTarget = -1;
+    private static int rawChanceTarget = -1;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.follow-parent")
-    private static int configuredChanceFollowParent = -1;
+    private static int rawChanceFollowParent = -1;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.avoid-entity")
-    private static int configuredChanceAvoidEntity = -1;
+    private static int rawChanceAvoidEntity = -1;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.temptation")
-    private static int configuredChanceTempt = -1;
+    private static int rawChanceTempt = -1;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "start-tick-chance.enderman-look-for-player")
-    private static int configuredChanceEndermanLookForPlayer = -1;
+    private static int rawChanceEndermanLookForPlayer = -1;
 
     public static @DoNotLoad int chanceTarget = -1; // only all <= 10
     public static @DoNotLoad int chanceFollowParent = -1;
@@ -34,11 +30,11 @@ public class EntityGoal implements ConfigModule {
 
     @Override
     public void onLoaded() {
-        chanceTarget = configuredChanceTarget;
-        chanceFollowParent = configuredChanceFollowParent;
-        chanceAvoidEntity = configuredChanceAvoidEntity;
-        chanceTempt = configuredChanceTempt;
-        chanceEndermanLookForPlayer = configuredChanceEndermanLookForPlayer;
+        chanceTarget = rawChanceTarget;
+        chanceFollowParent = rawChanceFollowParent;
+        chanceAvoidEntity = rawChanceAvoidEntity;
+        chanceTempt = rawChanceTempt;
+        chanceEndermanLookForPlayer = rawChanceEndermanLookForPlayer;
 
         // expect nearest_attackable_target
         if (chanceFollowParent < 1) {

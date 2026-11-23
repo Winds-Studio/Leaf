@@ -3,33 +3,54 @@ package org.dreeam.leaf.config.modules.opt;
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
 
-@ConfigClassInfo(category = ConfigCategory.PERF, name = "faster-random-generator", comments = {"Use faster random generator?\nRequires a JVM that supports Xoroshiro128PlusPlus.\nSome JREs don't support this.", "是否使用更快的随机生成器?\n需要支持 Xoroshiro128PlusPlus 的 JVM.\n一些 JRE 不支持此功能."})
+@ConfigClassInfo(category = ConfigCategory.PERF, name = "faster-random-generator", comments = {
+    """
+        Use faster random generator?
+        Requires a JVM that supports Xoroshiro128PlusPlus.
+        Some JREs don't support this.""",
+    """
+        是否使用更快的随机生成器?
+        需要支持 Xoroshiro128PlusPlus 的 JVM.
+        一些 JRE 不支持此功能."""
+})
 public class FastRNG implements ConfigModule {
 
     @ConfigInfo(name = "enabled")
     public static boolean rawEnabled = false;
 
-    @HotReloadUnsupported
-    @ConfigInfo(name = "enable-for-worldgen", comments = {"Enable faster random generator for world generation.\nWARNING: This will affect world generation!!!", "是否为世界生成启用更快的随机生成器.\n警告: 此项会影响世界生成!!!"})
-    public static boolean enableForWorldgen = false;
+    @ConfigInfo(name = "enable-for-worldgen", comments = {
+        """
+            Enable faster random generator for world generation.
+            WARNING: This will affect world generation!!!""",
+        """
+            是否为世界生成启用更快的随机生成器.
+            警告: 此项会影响世界生成!!!"""
+    })
+    public static @HotReloadUnsupported boolean enableForWorldgen = false;
 
-    @ConfigInfo(name = "warn-for-slime-chunk", comments = {"Warn if you are not using legacy random source for slime chunk generation.", "是否在没有为史莱姆区块使用原版随机生成器的情况下进行警告."})
+    @ConfigInfo(name = "warn-for-slime-chunk", comments = {
+        "Warn if you are not using legacy random source for slime chunk generation.",
+        "是否在没有为史莱姆区块使用原版随机生成器的情况下进行警告."
+    })
     public static boolean warnForSlimeChunk = true;
 
-    @ConfigInfo(name = "use-legacy-random-for-slime-chunk", comments = {"Use legacy random source for slime chunk generation,\nto follow vanilla behavior.", "是否使用原版随机生成器来生成史莱姆区块."})
+    @ConfigInfo(name = "use-legacy-random-for-slime-chunk", comments = {
+        """
+            Use legacy random source for slime chunk generation,
+            to follow vanilla behavior.""",
+        """
+            是否使用原版随机生成器来生成史莱姆区块."""
+    })
     public static boolean useLegacyForSlimeChunk = false;
 
-    // The main switch after the JVM capability check; read at runtime instead of the option itself.
     public static @DoNotLoad boolean enabled = false;
-
-    // Decided once, when the module is first loaded: the world generation random source cannot be swapped
-    // afterwards, since parts of it (noise, biome tables) are built only once.
     public static @DoNotLoad boolean worldgen = false;
-    private static boolean worldgenDecided;
+    private static @DoNotLoad boolean worldgenDecided;
 
+    // Helper function
     public static boolean worldgenEnabled() {
         return worldgen;
-    } // Helper function
+    }
 
     @Override
     public void onLoaded() {

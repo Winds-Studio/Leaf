@@ -38,9 +38,7 @@ public class RegionFormatConfig implements ConfigModule {
     @ConfigInfo(name = "linear-use-virtual-thread")
     public static boolean linearUseVirtualThread = true;
 
-    // The compression level after range check; read when a region file is created instead of the option itself.
-    public static @DoNotLoad int compressionLevel = 6;
-
+    public static @DoNotLoad int compressionLevel;
     public static @DoNotLoad EnumRegionFormat regionFormat = EnumRegionFormat.MCA;
     public static @DoNotLoad BufferedLinearRegionFileFlusher blinearFlusher = null;
 

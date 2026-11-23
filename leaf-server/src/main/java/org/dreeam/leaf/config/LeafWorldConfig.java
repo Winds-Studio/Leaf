@@ -6,7 +6,7 @@ import org.dreeam.leaf.config.modules.fixes.world.Fixes;
 import org.dreeam.leaf.config.modules.gameplay.world.EnderDragonRespawn;
 import org.dreeam.leaf.config.modules.gameplay.world.HideFlamesOnEntitiesWithFireResistance;
 import org.dreeam.leaf.config.modules.gameplay.world.RandomStrollIntoNonTickingChunks;
-import org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDuration;
+import org.dreeam.leaf.config.modules.opt.world.EntityWakeUpDurationRatio;
 import org.dreeam.leaf.config.modules.opt.world.LoadChunks;
 import org.dreeam.leaf.config.modules.opt.world.MaxProjectileChunkLoads;
 import org.dreeam.leaf.config.modules.opt.world.OptimizedSheepOffspringColor;
@@ -45,7 +45,7 @@ public final class LeafWorldConfig extends LeafConfigAccessor {
     public LoadChunks loadChunks = new LoadChunks();
     public Fixes fixes = new Fixes();
     public RandomStrollIntoNonTickingChunks randomStrollIntoNonTickingChunks = new RandomStrollIntoNonTickingChunks();
-    public EntityWakeUpDuration entityWakeUpDuration = new EntityWakeUpDuration();
+    public EntityWakeUpDurationRatio entityWakeUpDurationRatio = new EntityWakeUpDurationRatio();
     public HideFlamesOnEntitiesWithFireResistance hideFlamesOnEntitiesWithFireResistance = new HideFlamesOnEntitiesWithFireResistance();
     public EnderDragonRespawn enderDragonRespawn = new EnderDragonRespawn();
 

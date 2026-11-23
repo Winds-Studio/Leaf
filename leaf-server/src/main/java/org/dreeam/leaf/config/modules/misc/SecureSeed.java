@@ -12,7 +12,6 @@ import org.dreeam.leaf.config.annotations.*;
 })
 public class SecureSeed implements ConfigModule {
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "enabled")
-    public static boolean enabled = false;
+    public static @HotReloadUnsupported boolean enabled = false;
 }

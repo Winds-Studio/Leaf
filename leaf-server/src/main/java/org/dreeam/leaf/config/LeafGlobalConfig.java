@@ -1,13 +1,14 @@
 package org.dreeam.leaf.config;
 
 import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
+import org.dreeam.leaf.config.util.ConfigVersion;
 
 import java.util.Objects;
 
 /** The server-wide Leaf configuration. */
 public final class LeafGlobalConfig extends LeafConfigAccessor {
 
-    LeafGlobalConfig(ConfigFile configFile, LeafConfig.VersionCheck version) {
+    LeafGlobalConfig(ConfigFile configFile, ConfigVersion.Check version) {
         super(configFile);
 
         configFile.set(LeafConfig.VERSION_PATH, version.valueToWrite());

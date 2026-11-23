@@ -8,7 +8,6 @@ import java.util.regex.Pattern;
 @ConfigClassInfo(category = ConfigCategory.MISC, name = "vanilla-username-check")
 public class VanillaUsernameCheck implements ConfigModule {
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "remove-all-check", comments = {
         """
             Remove Vanilla username check,
@@ -21,7 +20,6 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static @Deprecated boolean rawRemoveAllCheck = false;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "enforce-skull-validation", comments = {
         """
             Enforce skull validation,
@@ -32,7 +30,6 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static boolean enforceSkullValidation = true;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "allow-old-players-join", comments = {
         """
             Allow old players to join the server after the username regex is changed,
@@ -43,7 +40,6 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static @Experimental boolean allowOldPlayersJoin = false;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "use-username-regex", comments = {
         """
             Use username regex to validate usernames,
@@ -54,7 +50,6 @@ public class VanillaUsernameCheck implements ConfigModule {
     })
     public static boolean useUsernameRegex = false;
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "username-regex", comments = {
         """
             Username regex,
@@ -68,11 +63,10 @@ public class VanillaUsernameCheck implements ConfigModule {
     private static String rawUsernameRegexString = "^[a-zA-Z0-9_.]*$";
 
     public static @DoNotLoad Pattern usernameRegex;
-
-    // remove-all-check unless it conflicts with use-username-regex; read at runtime instead of the option itself.
     public static @DoNotLoad boolean removeAllCheck = false;
 
-    public static boolean shouldSkipNonPlayerNameCheck() { // helper
+    // helper
+    public static boolean shouldSkipNonPlayerNameCheck() {
         return removeAllCheck || useUsernameRegex;
     }
 
@@ -87,6 +81,7 @@ public class VanillaUsernameCheck implements ConfigModule {
         }
 
         removeAllCheck = rawRemoveAllCheck;
+
         if (useUsernameRegex && rawRemoveAllCheck) {
             LeafConfig.LOGGER.warn("Found conflicting configuration, remove-all-check and use-username-regex cannot be enabled at same time, ignoring remove-all-check...");
             removeAllCheck = false;

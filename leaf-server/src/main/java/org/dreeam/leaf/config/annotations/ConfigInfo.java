@@ -11,12 +11,13 @@ import java.lang.annotation.Target;
 @Target(ElementType.FIELD)
 public @interface ConfigInfo {
 
+    /**
+     * Config option path
+     */
     String name();
 
     /**
-     * Optional option comment. Text blocks are supported.
-     *
-     * <p>Supply one value for all locales, or English and Chinese values in that order.</p>
+     * Section comment, optional
      */
     String[] comments() default {};
 }

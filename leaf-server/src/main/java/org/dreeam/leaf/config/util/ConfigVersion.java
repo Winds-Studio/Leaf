@@ -1,5 +1,9 @@
 package org.dreeam.leaf.config.util;
 
+import io.github.thatsmusic99.configurationmaster.api.ConfigFile;
+import org.dreeam.leaf.config.LeafConfig;
+
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,5 +50,86 @@ public record ConfigVersion(List<Integer> components) implements Comparable<Conf
             }
         }
         return 0;
+    }
+
+    /**
+     * Returns whether {@code storedVersion}, a version a configuration was last written with, predates
+     * {@code version}. For example, {@code isBefore("3.0", "3.1")} is {@code true}.
+     *
+     * @param storedVersion a numeric dot-separated config version
+     * @param version       a numeric dot-separated config version, such as {@code 3.1}
+     * @throws IllegalArgumentException if a version is not a numeric dot-separated version
+     */
+    public static boolean isBefore(String storedVersion, String version) {
+        return parse(storedVersion).compareTo(parse(version)) < 0;
+    }
+
+    /**
+     * Returns whether {@code storedVersion}, a version a configuration was last written with, is not older
+     * than {@code version}.
+     *
+     * @throws IllegalArgumentException if a version is not a numeric dot-separated version
+     */
+    public static boolean isAtLeast(String storedVersion, String version) {
+        return !isBefore(storedVersion, version);
+    }
+
+    /**
+     * The version of a configuration file, checked against {@link LeafConfig#CURRENT_CONFIG_VERSION}.
+     *
+     * @param stored       the version that decides which migrations still have to run
+     * @param valueToWrite the {@code config-version} value to save: the current version, or the file's own
+     *                     version when it is newer than the supported one
+     * @param needsRewrite whether the file has to be saved to bring its version up to date
+     */
+    public record Check(ConfigVersion stored, Object valueToWrite, boolean needsRewrite) {
+
+        public static Check current() {
+            return new Check(parse(LeafConfig.CURRENT_CONFIG_VERSION), LeafConfig.CURRENT_CONFIG_VERSION, false);
+        }
+    }
+
+    /**
+     * The version of a global or world defaults file. Each file records its own migration progress. A file
+     * that does not exist yet starts at the current version.
+     */
+    public static Check checkIfExists(ConfigFile file) {
+        return Files.isRegularFile(file.getFile().toPath())
+            ? check(file)
+            : Check.current();
+    }
+
+    /**
+     * Reads the {@code config-version} of an existing raw file.
+     *
+     * <p>A file without a version is read as the current version: it is warned about, not migrated and
+     * written back with the version. A version that cannot be parsed is rejected. A version newer than the
+     * supported one is warned about, not migrated and keeps its version when saved.</p>
+     *
+     * @throws IllegalArgumentException if the version cannot be parsed
+     */
+    public static Check check(ConfigFile file) {
+        Check current = Check.current();
+        Object raw = file.get(LeafConfig.VERSION_PATH);
+        if (raw == null) {
+            LeafConfig.LOGGER.warn("{} has no {}; reading it as the current version {} without migrating it. The version is added when the file is saved.",
+                file.getFile(), LeafConfig.VERSION_PATH, LeafConfig.CURRENT_CONFIG_VERSION);
+            return new Check(current.stored(), LeafConfig.CURRENT_CONFIG_VERSION, true);
+        }
+
+        ConfigVersion stored;
+        try {
+            stored = parse(String.valueOf(raw));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Invalid " + LeafConfig.VERSION_PATH + " '" + raw + "' in " + file.getFile(), exception);
+        }
+
+        int comparison = stored.compareTo(current.stored());
+        if (comparison > 0) {
+            LeafConfig.LOGGER.warn("{} was written by a newer Leaf version (config-version {}, this server supports up to {}). It is not migrated and keeps its version, options that this version does not know are dropped when it is saved.",
+                file.getFile(), raw, LeafConfig.CURRENT_CONFIG_VERSION);
+            return new Check(stored, raw, false);
+        }
+        return new Check(stored, LeafConfig.CURRENT_CONFIG_VERSION, comparison < 0);
     }
 }

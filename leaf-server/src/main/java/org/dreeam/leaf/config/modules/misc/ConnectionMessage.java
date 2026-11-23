@@ -19,6 +19,7 @@ public class ConnectionMessage implements ConfigModule {
 
     @ConfigInfo(name = "join.enabled")
     public static boolean joinEnabled = true;
+
     @ConfigInfo(name = "join.message", comments = {
         "Join message of player",
         "玩家加入服务器时的消息"
@@ -27,20 +28,19 @@ public class ConnectionMessage implements ConfigModule {
 
     @ConfigInfo(name = "quit.enabled")
     public static boolean quitEnabled = true;
+
     @ConfigInfo(name = "quit.message", comments = {
         "Quit message of player",
         "玩家退出服务器时的消息"
     })
     public static String rawQuitMessage = "default";
 
-    // The messages after legacy placeholders are converted; read at runtime instead of the options.
-    public static @DoNotLoad String joinMessage = "default";
-    public static @DoNotLoad String quitMessage = "default";
+    public static @DoNotLoad String joinMessage;
+    public static @DoNotLoad String quitMessage;
 
     @Override
     public void onLoaded() {
         // Legacy compatibility
-        // TODO: config migration
         joinMessage = rawJoinMessage
             .replace("%player_name%", "<player_name>")
             .replace("%player_displayname%", "<player_displayname>");

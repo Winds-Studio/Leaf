@@ -23,8 +23,7 @@ public class MultithreadedTracker implements ConfigModule {
     @ConfigInfo(name = "threads")
     public static int rawThreads = 0;
 
-    // The thread count after normalization.
-    public static @DoNotLoad int threads = 1;
+    public static @DoNotLoad int threads;
 
     @Override
     public void onLoaded() {

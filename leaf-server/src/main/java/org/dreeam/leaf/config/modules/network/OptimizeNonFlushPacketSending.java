@@ -2,11 +2,12 @@ package org.dreeam.leaf.config.modules.network;
 
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
+import org.dreeam.leaf.config.migration.ConfigMigrationContext;
 
 @ConfigClassInfo(category = ConfigCategory.NETWORK)
 public class OptimizeNonFlushPacketSending implements ConfigModule {
 
-    @ConfigInfo(name = "OptimizeNonFlushPacketSending", comments = {
+    @ConfigInfo(name = "optimize-non-flush-packet-sending", comments = {
         """
             WARNING: This option is NOT compatible with ProtocolLib and may cause
             issues with other plugins that modify packet handling.
@@ -25,4 +26,13 @@ public class OptimizeNonFlushPacketSending implements ConfigModule {
             需要重启服务器才能生效."""
     })
     public static boolean enabled = false;
+
+    public static void migrate(ConfigMigrationContext migrations) {
+        if (migrations.isBefore("3.1")) {
+            migrations.migrate(
+                ConfigMigrationContext.Scope.GLOBAL, "performance.OptimizeNonFlushPacketSending",
+                ConfigMigrationContext.Scope.GLOBAL, "performance.optimize-non-flush-packet-sending"
+            );
+        }
+    }
 }

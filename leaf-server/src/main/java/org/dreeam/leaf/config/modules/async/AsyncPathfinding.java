@@ -33,10 +33,8 @@ public class AsyncPathfinding implements ConfigModule {
     public static String rawRejectPolicy = "default";
 
     public static @DoNotLoad PathfindTaskRejectPolicy rejectPolicy = PathfindTaskRejectPolicy.CALLER_RUNS;
-
-    // The thread count and queue capacity after normalization, 0 threads while disabled.
-    public static @DoNotLoad int maxThreads = 0;
-    public static @DoNotLoad int queueSize = 0;
+    public static @DoNotLoad int maxThreads;
+    public static @DoNotLoad int queueSize;
 
     @Override
     public void onLoaded() {

@@ -14,6 +14,7 @@ public class PreventMoveIntoWeakLoadedChunks implements ConfigModule {
         "设置为 true 以启用以下功能。"
     })
     public static boolean enabled = false;
+
     @ConfigInfo(name = "projectiles", comments = {
         "Prevents projectiles from moving into weak loaded chunks.",
         "阻止弹射物进入弱加载区块。"

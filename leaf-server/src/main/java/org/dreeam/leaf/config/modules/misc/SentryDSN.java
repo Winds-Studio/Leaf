@@ -4,12 +4,12 @@ import org.apache.logging.log4j.Level;
 import org.dreeam.leaf.config.*;
 import org.dreeam.leaf.config.annotations.*;
 
+@HotReloadUnsupported
 @ConfigClassInfo(category = ConfigCategory.MISC, name = "sentry")
 public class SentryDSN implements ConfigModule {
 
     public static @DoNotLoad String sentryDsnConfigPath = "misc.sentry.dsn";
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "dsn", comments = {
         """
             Sentry DSN for improved error logging, leave blank to disable,
@@ -19,14 +19,12 @@ public class SentryDSN implements ConfigModule {
     })
     public static String sentryDsn = "";
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "log-level", comments = {
         "Logs with a level higher than or equal to this level will be recorded.",
         "大于等于该等级的日志会被记录."
     })
     public static String logLevel = "WARN";
 
-    @HotReloadUnsupported
     @ConfigInfo(name = "only-log-thrown", comments = {
         "Only log with a Throwable will be recorded after enabling this.",
         "是否仅记录带有 Throwable 的日志."
@@ -35,9 +33,9 @@ public class SentryDSN implements ConfigModule {
 
     @Override
     public void onLoaded() {
-        String sentryEnvironment = System.getenv("SENTRY_DSN");
-        if (sentryEnvironment != null) {
-            sentryDsn = sentryEnvironment;
+        final String sentryEnv = System.getenv("SENTRY_DSN");
+        if (sentryEnv != null) {
+            sentryDsn = sentryEnv;
         }
 
         if (sentryDsn != null && !sentryDsn.isBlank()) {

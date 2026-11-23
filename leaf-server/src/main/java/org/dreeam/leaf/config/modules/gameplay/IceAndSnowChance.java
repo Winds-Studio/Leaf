@@ -9,8 +9,7 @@ public class IceAndSnowChance implements ConfigModule {
     @ConfigInfo(name = "ice-and-snow-chance")
     public static int rawIceAndSnowChance = 48;
 
-    // The chance after normalization; read at runtime instead of the option itself.
-    public static @DoNotLoad int iceAndSnowChance = 48;
+    public static @DoNotLoad int iceAndSnowChance;
 
     @Override
     public void onLoaded() {

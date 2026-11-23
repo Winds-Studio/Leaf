@@ -13,9 +13,11 @@ import org.dreeam.leaf.config.annotations.Experimental;
 import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
 import org.dreeam.leaf.config.migration.LeafConfigMigration;
 import org.dreeam.leaf.config.migration.ConfigBackupSession;
+import org.dreeam.leaf.config.migration.LegacyConfigCleanup;
 import org.dreeam.leaf.config.migration.gale.GaleConfigMigration;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
 import org.dreeam.leaf.config.util.ConfigFileIO;
+import org.dreeam.leaf.config.util.ConfigLayout;
 import org.dreeam.leaf.config.util.ConfigVersion;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
@@ -75,6 +77,9 @@ public class LeafConfig {
 
     private static final List<ConfigModule> GLOBAL_MODULES = new ArrayList<>();
     private static final List<Field> WORLD_MODULES = new ArrayList<>();
+    // The order files are saved in, see saveConfigs(); computed when the modules are discovered.
+    private static List<String> globalLayout = List.of();
+    private static List<String> worldLayout = List.of();
 
 
     /* Load & Reload */
@@ -178,8 +183,8 @@ public class LeafConfig {
 
             ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
             ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
-            VersionCheck globalVersion = fileVersion(globalConfigFile);
-            VersionCheck defaultsVersion = fileVersion(worldDefaultsFile);
+            ConfigVersion.Check globalVersion = ConfigVersion.checkIfExists(globalConfigFile);
+            ConfigVersion.Check defaultsVersion = ConfigVersion.checkIfExists(worldDefaultsFile);
             // Migrations that were not saved, for example when access was denied, are run again. Gale is not
             // converted again, a Gale file whose values could not be saved is still there for the next start.
             LeafConfigMigration.migrate(globalConfigFile, worldDefaultsFile, migrationModuleClasses(), globalVersion.stored(), defaultsVersion.stored());
@@ -220,7 +225,7 @@ public class LeafConfig {
         files.add(worldDefaultsConfig.configFile);
         files.add(globalConfig.configFile);
         try {
-            return ConfigFileIO.save(files.toArray(new ConfigFile[0]));
+            return saveConfigs(files.toArray(new ConfigFile[0]));
         } catch (ConfigFileIO.ConfigSaveException exception) {
             throw new ReloadException(ReloadStage.SAVE, (Exception) exception.getCause(), exception.report());
         }
@@ -247,7 +252,7 @@ public class LeafConfig {
         }
         ConfigFile overrideConfig = ConfigFileIO.load(worldConfigFile);
         // An override is migrated by its own version. The global version says nothing about it.
-        VersionCheck version = checkVersion(overrideConfig);
+        ConfigVersion.Check version = ConfigVersion.check(overrideConfig);
         boolean migrated = migrateOverride && LeafConfigMigration.migrateWorldOverride(
             overrideConfig,
             version.stored(),
@@ -269,13 +274,13 @@ public class LeafConfig {
 
             ConfigBackupSession backupSession = ConfigBackupSession.create(CONFIG_DIRECTORY.toPath());
 
-            purgeOutdated(backupSession);
+            LegacyConfigCleanup.purge(backupSession);
             createDirectory(CONFIG_DIRECTORY);
 
             ConfigFile globalConfigFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, GLOBAL_CONFIG_FILE));
             ConfigFile worldDefaultsFile = ConfigFileIO.load(new File(CONFIG_DIRECTORY, DEFAULT_WORLD_CONFIG_FILE));
-            VersionCheck globalVersion = fileVersion(globalConfigFile);
-            VersionCheck defaultsVersion = fileVersion(worldDefaultsFile);
+            ConfigVersion.Check globalVersion = ConfigVersion.checkIfExists(globalConfigFile);
+            ConfigVersion.Check defaultsVersion = ConfigVersion.checkIfExists(worldDefaultsFile);
 
             discoverGlobalModules();
             discoverWorldModules();
@@ -337,7 +342,7 @@ public class LeafConfig {
         try {
             LoadedWorld loaded = loadWorldConfig(worldDirectory, worldDefaultsConfig, true);
             if (loaded.needsSave()) {
-                ConfigFileIO.save(loaded.overrideFile());
+                saveConfigs(loaded.overrideFile());
             }
             captureWorldInitialReloadValues(loaded.config());
             GaleConfigMigration.archiveWorldSource(worldDirectory);
@@ -363,6 +368,7 @@ public class LeafConfig {
             ConfigModule module = (ConfigModule) moduleClass.getConstructor().newInstance();
             GLOBAL_MODULES.add(module);
         }
+        globalLayout = ConfigLayout.of(VERSION_PATH, globalModuleClasses());
     }
 
     private static void runGlobalModuleCallbacks(boolean reload) throws IllegalAccessException {
@@ -417,7 +423,7 @@ public class LeafConfig {
         }
     }
 
-    private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile, VersionCheck version) throws ReflectiveOperationException {
+    private static LeafWorldConfig loadWorldDefaults(ConfigFile configFile, ConfigVersion.Check version) throws ReflectiveOperationException {
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
         configFile.set(VERSION_PATH, version.valueToWrite());
         for (Field moduleField : WORLD_MODULES) {
@@ -429,7 +435,7 @@ public class LeafConfig {
 
     private static LeafWorldConfig reloadWorldDefaults(
         ConfigFile configFile,
-        VersionCheck version,
+        ConfigVersion.Check version,
         LeafWorldConfig activeDefaults
     ) throws ReflectiveOperationException {
         LeafWorldConfig config = new LeafWorldConfig(configFile, LeafWorldConfig.Source.WORLD_DEFAULTS);
@@ -451,6 +457,7 @@ public class LeafConfig {
                 WORLD_MODULES.add(field);
             }
         }
+        worldLayout = ConfigLayout.of(VERSION_PATH, worldMigrationModuleClasses());
     }
 
     private static List<Class<?>> migrationModuleClasses() {
@@ -462,6 +469,26 @@ public class LeafConfig {
             moduleClasses.add(field.getType());
         }
         return moduleClasses;
+    }
+
+    private static List<Class<?>> globalModuleClasses() {
+        List<Class<?>> moduleClasses = new ArrayList<>(GLOBAL_MODULES.size());
+        for (ConfigModule module : GLOBAL_MODULES) {
+            moduleClasses.add(module.getClass());
+        }
+        return moduleClasses;
+    }
+
+    /**
+     * Saves Leaf configuration files, each in its {@link ConfigLayout}. Every Leaf file is saved through here.
+     *
+     * @see ConfigFileIO#save(ConfigFile...)
+     */
+    public static ConfigFileIO.SaveReport saveConfigs(ConfigFile... files) throws ConfigFileIO.ConfigSaveException {
+        for (ConfigFile file : files) {
+            ConfigLayout.apply(file, file.getFile().getName().equals(GLOBAL_CONFIG_FILE) ? globalLayout : worldLayout);
+        }
+        return ConfigFileIO.save(files);
     }
 
     private static List<Class<?>> worldMigrationModuleClasses() {
@@ -502,21 +529,11 @@ public class LeafConfig {
             for (ConfigModule module : GLOBAL_MODULES) {
                 ConfigBinder.captureGlobalInitialValues(module);
             }
-            ConfigFileIO.SaveReport report = ConfigFileIO.save(worldDefaultsConfig.configFile, globalConfig.configFile);
+            ConfigFileIO.SaveReport report = saveConfigs(worldDefaultsConfig.configFile, globalConfig.configFile);
             GaleConfigMigration.archiveGlobalSources(report);
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to finish loading Leaf configuration", exception);
         }
-    }
-
-    /**
-     * The version of a global or world defaults file. Each file records its own migration progress. A file
-     * that does not exist yet starts at the current version.
-     */
-    private static VersionCheck fileVersion(ConfigFile file) {
-        return Files.isRegularFile(file.getFile().toPath())
-            ? checkVersion(file)
-            : VersionCheck.current();
     }
 
     private static void runAfterBootstrapCallbacks(boolean reload) {
@@ -651,78 +668,6 @@ public class LeafConfig {
         }
     }
 
-    /**
-     * Returns whether {@code storedVersion}, a version a configuration was last written with, predates
-     * {@code version}. For example, {@code isConfigVersionBefore("3.0", "3.1")} is {@code true}.
-     *
-     * @param storedVersion a numeric dot-separated config version
-     * @param version       a numeric dot-separated config version, such as {@code 3.1}
-     * @throws IllegalArgumentException if a version is not a numeric dot-separated version
-     */
-    public static boolean isConfigVersionBefore(String storedVersion, String version) {
-        return ConfigVersion.parse(storedVersion).compareTo(ConfigVersion.parse(version)) < 0;
-    }
-
-    /**
-     * Returns whether {@code storedVersion}, a version a configuration was last written with, is not older
-     * than {@code version}.
-     *
-     * @throws IllegalArgumentException if a version is not a numeric dot-separated version
-     */
-    public static boolean isConfigVersionAtLeast(String storedVersion, String version) {
-        return !isConfigVersionBefore(storedVersion, version);
-    }
-
-    /**
-     * The version of a configuration file that exists, checked against {@link #CURRENT_CONFIG_VERSION}.
-     *
-     * @param stored       the version that decides which migrations still have to run
-     * @param valueToWrite the {@code config-version} value to save: the current version, or the file's own
-     *                     version when it is newer than the supported one
-     * @param needsRewrite whether the file has to be saved to bring its version up to date
-     */
-    record VersionCheck(ConfigVersion stored, Object valueToWrite, boolean needsRewrite) {
-
-        static VersionCheck current() {
-            return new VersionCheck(ConfigVersion.parse(CURRENT_CONFIG_VERSION), CURRENT_CONFIG_VERSION, false);
-        }
-    }
-
-    /**
-     * Reads the {@code config-version} of an existing raw file.
-     *
-     * <p>A file without a version is read as the current version: it is warned about, not migrated and
-     * written back with the version. A version that cannot be parsed is rejected. A version newer than the
-     * supported one is warned about, not migrated and keeps its version when saved.</p>
-     *
-     * @throws IllegalArgumentException if the version cannot be parsed
-     */
-    static VersionCheck checkVersion(ConfigFile file) {
-        VersionCheck current = VersionCheck.current();
-        Object raw = file.get(VERSION_PATH);
-        if (raw == null) {
-            LOGGER.warn("{} has no {}; reading it as the current version {} without migrating it. The version is added when the file is saved.",
-                file.getFile(), VERSION_PATH, CURRENT_CONFIG_VERSION);
-            return new VersionCheck(current.stored(), CURRENT_CONFIG_VERSION, true);
-        }
-
-        ConfigVersion stored;
-        try {
-            stored = ConfigVersion.parse(String.valueOf(raw));
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Invalid " + VERSION_PATH + " '" + raw + "' in " + file.getFile(), exception);
-        }
-
-        int comparison = stored.compareTo(current.stored());
-        if (comparison > 0) {
-            LOGGER.warn("{} was written by a newer Leaf version (config-version {}, this server supports up to {}). It is not migrated and keeps its version, options that this version does not know are dropped when it is saved.",
-                file.getFile(), raw, CURRENT_CONFIG_VERSION);
-            return new VersionCheck(stored, raw, false);
-        }
-        return new VersionCheck(stored, CURRENT_CONFIG_VERSION, comparison < 0);
-    }
-
-
     /* Register Spark profiler extra server configurations */
 
     private static List<String> buildSparkExtraConfigs() {
@@ -770,45 +715,6 @@ public class LeafConfig {
 
             String hiddenPaths = String.join(",", buildSparkHiddenPaths());
             System.setProperty(SPARK_HIDDEN_PATHS_PROPERTY, hiddenPaths);
-        }
-    }
-
-    /* Purge and backup old Leaf config & Pufferfish config */
-
-    private static boolean moveLegacy(ConfigBackupSession backupSession, File file, String name) {
-        try {
-            backupSession.move(file.toPath(), Path.of(name));
-            return true;
-        } catch (IOException exception) {
-            LOGGER.warn("Could not move legacy config {} to the backup directory, it is left in place.", file, exception);
-            return false;
-        }
-    }
-
-    private static void purgeOutdated(ConfigBackupSession backupSession) {
-        boolean legacyFound = false;
-        String pufferfishConfig = "pufferfish.yml";
-        String leafConfigV1 = "leaf.yml";
-        String leafConfigV2 = "leaf_config";
-
-        File pufferfishConfigFile = new File(pufferfishConfig);
-        File leafConfigV1File = new File(leafConfigV1);
-        File leafConfigV2File = new File(leafConfigV2);
-
-        // Only moves the legacy files, their content is not converted. A file that cannot be moved stays
-        // in place and is tried again at the next start, so a failure only warns.
-        if (pufferfishConfigFile.isFile()) {
-            legacyFound |= moveLegacy(backupSession, pufferfishConfigFile, pufferfishConfig);
-        }
-        if (leafConfigV1File.isFile()) {
-            legacyFound |= moveLegacy(backupSession, leafConfigV1File, leafConfigV1);
-        }
-        if (leafConfigV2File.isDirectory()) {
-            legacyFound |= moveLegacy(backupSession, leafConfigV2File, leafConfigV2);
-        }
-        if (legacyFound) {
-            LOGGER.warn("Found legacy Leaf config files, moved to backup directory: {}", backupSession.directory());
-            LOGGER.warn("New Leaf config located at config/ folder, You need to transfer config to the new one manually and restart the server!");
         }
     }
 }

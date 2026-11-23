@@ -17,7 +17,7 @@ import org.dreeam.leaf.config.annotations.HotReloadUnsupported;
 })
 public class DensityFunctionCompiler implements ConfigModule {
 
-    @HotReloadUnsupported
+    @Experimental
     @ConfigInfo(name = "enabled")
-    public static @Experimental boolean enabled = false;
+    public static @HotReloadUnsupported boolean enabled = false;
 }

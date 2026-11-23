@@ -13,10 +13,8 @@ public class OptimizeDespawn implements ConfigModule {
 
     @Override
     public void onLoaded() {
-        if (enabled) {
-            if (!LeafConstants.ENABLE_FMA) {
-                LeafConfig.LOGGER.info("NOTE: Recommend enabling FMA to work with optimize-mob-despawn.");
-            }
+        if (enabled && !LeafConstants.ENABLE_FMA) {
+            LeafConfig.LOGGER.info("NOTE: Recommend enabling FMA to work with optimize-mob-despawn.");
         }
     }
 }

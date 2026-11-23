@@ -23,6 +23,7 @@ public class DisableWorldDataSaving implements ConfigModule {
             不含 '*' 的条目按完整名称精确匹配。"""
     })
     public static List<String> worldList = new ArrayList<>();
+
     public static @DoNotLoad WorldList worlds = WorldList.EMPTY;
 
     @Override

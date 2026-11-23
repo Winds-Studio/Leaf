@@ -32,7 +32,7 @@ public class ProtocolSupport implements ConfigModule {
     public static boolean xaeroMapProtocol = false;
 
     @ConfigInfo(name = "xaero-map-server-id")
-    public static int xaeroMapServerID = ThreadLocalRandom.current().nextInt(); // Leaf - Faster Random
+    public static int xaeroMapServerID = ThreadLocalRandom.current().nextInt();
 
     @ConfigInfo(name = "syncmatica-protocol")
     public static boolean syncmaticaProtocol = false;
