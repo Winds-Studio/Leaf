@@ -1,22 +1,14 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class CheckSurvivalBeforeGrowth extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF, name = "check-survival-before-growth")
+public class CheckSurvivalBeforeGrowth implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".check-survival-before-growth";
-    }
-
+    @ConfigInfo(name = "cactus-check-survival", comments = {
+        "Check if a cactus can survive before growing.",
+        "在仙人掌生长前检查其是否能够存活。"
+    })
     public static boolean cactusCheckSurvivalBeforeGrowth = false;
-
-    @Override
-    public void onLoaded() {
-        cactusCheckSurvivalBeforeGrowth = globalConfig.getBoolean(basePath() + ".cactus-check-survival", cactusCheckSurvivalBeforeGrowth,
-            globalConfig.pickStringRegionBased("""
-                    Check if a cactus can survive before growing.""",
-                """
-                    在仙人掌生长前检查其是否能够存活。"""));
-    }
 }

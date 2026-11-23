@@ -1,55 +1,60 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.LeafConfig;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class FastRNG extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF, name = "faster-random-generator", comments = {
+    """
+        Use faster random generator?
+        Requires a JVM that supports Xoroshiro128PlusPlus.
+        Some JREs don't support this.""",
+    """
+        是否使用更快的随机生成器?
+        需要支持 Xoroshiro128PlusPlus 的 JVM.
+        一些 JRE 不支持此功能."""
+})
+public class FastRNG implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".faster-random-generator";
-    }
+    @ConfigInfo(name = "enabled")
+    public static boolean rawEnabled = false;
 
-    public static boolean enabled = false;
-    public static boolean enableForWorldgen = false;
+    @ConfigInfo(name = "enable-for-worldgen", comments = {
+        """
+            Enable faster random generator for world generation.
+            WARNING: This will affect world generation!!!""",
+        """
+            是否为世界生成启用更快的随机生成器.
+            警告: 此项会影响世界生成!!!"""
+    })
+    public static @HotReloadUnsupported boolean enableForWorldgen = false;
+
+    @ConfigInfo(name = "warn-for-slime-chunk", comments = {
+        "Warn if you are not using legacy random source for slime chunk generation.",
+        "是否在没有为史莱姆区块使用原版随机生成器的情况下进行警告."
+    })
     public static boolean warnForSlimeChunk = true;
+
+    @ConfigInfo(name = "use-legacy-random-for-slime-chunk", comments = {
+        """
+            Use legacy random source for slime chunk generation,
+            to follow vanilla behavior.""",
+        """
+            是否使用原版随机生成器来生成史莱姆区块."""
+    })
     public static boolean useLegacyForSlimeChunk = false;
 
-    public static boolean worldgen = false;
+    public static @DoNotLoad boolean enabled = false;
+    public static @DoNotLoad boolean worldgen = false;
+    private static @DoNotLoad boolean worldgenDecided;
+
+    // Helper function
     public static boolean worldgenEnabled() {
         return worldgen;
-    } // Helper function
+    }
 
     @Override
     public void onLoaded() {
-        globalConfig.addCommentRegionBased(basePath(), """
-                Use faster random generator?
-                Requires a JVM that supports Xoroshiro128PlusPlus.
-                Some JREs don't support this.""",
-            """
-                是否使用更快的随机生成器?
-                需要支持 Xoroshiro128PlusPlus 的 JVM.
-                一些 JRE 不支持此功能.""");
-
-        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
-        enableForWorldgen = globalConfig.getBoolean(basePath() + ".enable-for-worldgen", enableForWorldgen,
-            globalConfig.pickStringRegionBased(
-                """
-                    Enable faster random generator for world generation.
-                    WARNING: This will affect world generation!!!""",
-                """
-                    是否为世界生成启用更快的随机生成器.
-                    警告: 此项会影响世界生成!!!"""));
-        warnForSlimeChunk = globalConfig.getBoolean(basePath() + ".warn-for-slime-chunk", warnForSlimeChunk,
-            globalConfig.pickStringRegionBased(
-                "Warn if you are not using legacy random source for slime chunk generation.",
-                "是否在没有为史莱姆区块使用原版随机生成器的情况下进行警告."));
-        useLegacyForSlimeChunk = globalConfig.getBoolean(basePath() + ".use-legacy-random-for-slime-chunk", useLegacyForSlimeChunk, globalConfig.pickStringRegionBased(
-            """
-                Use legacy random source for slime chunk generation,
-                to follow vanilla behavior.""",
-            """
-                是否使用原版随机生成器来生成史莱姆区块."""));
+        enabled = rawEnabled;
         if (enabled) {
             try {
                 Class.forName("org.dreeam.leaf.util.math.random.FasterRandomSource");
@@ -69,6 +74,9 @@ public class FastRNG extends ConfigModule {
                 "disable this warning.");
         }
 
-        worldgen = enableForWorldgen && enabled;
+        if (!worldgenDecided) {
+            worldgenDecided = true;
+            worldgen = enableForWorldgen && enabled;
+        }
     }
 }

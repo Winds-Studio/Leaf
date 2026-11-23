@@ -1,18 +1,11 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class SkipMapItemDataUpdates extends ConfigModule {
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class SkipMapItemDataUpdates implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.PERF.basePath();
-    }
-
+    @ConfigInfo(name = "skip-map-item-data-updates-if-map-does-not-have-craftmaprenderer")
     public static boolean enabled = true;
-
-    @Override
-    public void onLoaded() {
-        enabled = globalConfig.getBoolean(basePath() + ".skip-map-item-data-updates-if-map-does-not-have-craftmaprenderer", enabled);
-    }
 }

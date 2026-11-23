@@ -1,26 +1,22 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
+import org.dreeam.leaf.config.migration.ConfigMigrationContext;
 
-public class OptimizeRandomTick extends ConfigModule {
-
-    public String basePath() {
-        return ConfigCategory.PERF.basePath() + ".optimize-random-tick";
-    }
+@ConfigClassInfo(category = ConfigCategory.PERF)
+public class OptimizeRandomTick implements ConfigModule {
 
     @Experimental
+    @ConfigInfo(name = "optimize-random-tick")
     public static boolean enabled = false;
 
-    @Override
-    public void onLoaded() {
-        Boolean old = globalConfig.getBoolean(ConfigCategory.PERF.basePath() + ".optimise-random-tick");
-        if (old != null && old) {
-            enabled = globalConfig.getBoolean(basePath(), true);
-            return;
+    public static void migrate(ConfigMigrationContext migrations) {
+        if (migrations.isBefore("3.1")) {
+            migrations.migrate(
+                ConfigMigrationContext.Scope.GLOBAL, "performance.optimise-random-tick",
+                ConfigMigrationContext.Scope.GLOBAL, "performance.optimize-random-tick"
+            );
         }
-
-        enabled = globalConfig.getBoolean(basePath(), enabled);
     }
 }

@@ -1,66 +1,60 @@
 package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.async.path.PathfindTaskRejectPolicy;
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.LeafConfig;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class AsyncPathfinding extends ConfigModule {
+@HotReloadUnsupported
+@ConfigClassInfo(category = ConfigCategory.ASYNC, name = "async-pathfinding")
+public class AsyncPathfinding implements ConfigModule {
 
-    public String basePath() {
-        return ConfigCategory.ASYNC.basePath() + ".async-pathfinding";
-    }
-
+    @ConfigInfo(name = "enabled")
     public static boolean enabled = false;
-    public static int asyncPathfindingMaxThreads = 0;
-    public static int asyncPathfindingKeepalive = 60;
-    public static int asyncPathfindingQueueSize = 0;
-    public static PathfindTaskRejectPolicy asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.FLUSH_ALL;
-    private static boolean asyncPathfindingInitialized;
+
+    @ConfigInfo(name = "max-threads")
+    public static int rawMaxThreads = 0;
+
+    @ConfigInfo(name = "keepalive")
+    public static int keepalive = 60;
+
+    @ConfigInfo(name = "queue-size")
+    public static int rawQueueSize = 0;
+
+    @ConfigInfo(name = "reject-policy", comments = {
+        """
+            The policy to use when the queue is full and a new task is submitted.
+            FLUSH_ALL: All pending tasks will be run on server thread.
+            CALLER_RUNS: Newly submitted task will be run on server thread.""",
+        """
+            当队列满时, 新提交的任务将使用以下策略处理.
+            FLUSH_ALL: 所有等待中的任务都将在主线程上运行.
+            CALLER_RUNS: 新提交的任务将在主线程上运行."""
+    })
+    public static String rawRejectPolicy = "default";
+
+    public static @DoNotLoad PathfindTaskRejectPolicy rejectPolicy = PathfindTaskRejectPolicy.CALLER_RUNS;
+    public static @DoNotLoad int maxThreads;
+    public static @DoNotLoad int queueSize;
 
     @Override
     public void onLoaded() {
-        globalConfig.addCommentRegionBased(basePath() + ".reject-policy", """
-                The policy to use when the queue is full and a new task is submitted.
-                FLUSH_ALL: All pending tasks will be run on server thread.
-                CALLER_RUNS: Newly submitted task will be run on server thread.""",
-            """
-                当队列满时, 新提交的任务将使用以下策略处理.
-                FLUSH_ALL: 所有等待中的任务都将在主线程上运行.
-                CALLER_RUNS: 新提交的任务将在主线程上运行."""
-        );
-        if (asyncPathfindingInitialized) {
-            globalConfig.getConfigSection(basePath());
-            return;
-        }
-        asyncPathfindingInitialized = true;
-
         final int availableProcessors = Runtime.getRuntime().availableProcessors();
-        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
-        asyncPathfindingMaxThreads = globalConfig.getInt(basePath() + ".max-threads", asyncPathfindingMaxThreads);
-        asyncPathfindingKeepalive = globalConfig.getInt(basePath() + ".keepalive", asyncPathfindingKeepalive);
-        asyncPathfindingQueueSize = globalConfig.getInt(basePath() + ".queue-size", asyncPathfindingQueueSize);
 
-        if (asyncPathfindingMaxThreads <= 0) {
-            asyncPathfindingMaxThreads = Math.max(availableProcessors / 4, 1);
-        }
+        maxThreads = !enabled ? 0 : rawMaxThreads <= 0 ? Math.max(availableProcessors / 4, 1) : rawMaxThreads;
+        queueSize = rawQueueSize <= 0 ? maxThreads * 256 : rawQueueSize;
 
-        if (!enabled) {
-            asyncPathfindingMaxThreads = 0;
-        }
+        String policyStr = rawRejectPolicy;
 
-        if (asyncPathfindingQueueSize <= 0) {
-            asyncPathfindingQueueSize = asyncPathfindingMaxThreads * 256;
-        }
-
-        asyncPathfindingRejectPolicy = PathfindTaskRejectPolicy.fromString(globalConfig.getString(basePath() + ".reject-policy",
-            availableProcessors >= 12 && asyncPathfindingQueueSize < 512
+        if ("default".equalsIgnoreCase(policyStr)) {
+            policyStr = availableProcessors >= 12 && queueSize < 512
                 ? PathfindTaskRejectPolicy.FLUSH_ALL.toString()
-                : PathfindTaskRejectPolicy.CALLER_RUNS.toString())
-        );
+                : PathfindTaskRejectPolicy.CALLER_RUNS.toString();
+        }
+
+        rejectPolicy = PathfindTaskRejectPolicy.fromString(policyStr);
 
         if (enabled) {
-            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", asyncPathfindingMaxThreads);
+            LeafConfig.LOGGER.info("Using {} threads for Async Pathfinding", maxThreads);
             org.dreeam.leaf.async.path.AsyncPathProcessor.init();
         }
     }

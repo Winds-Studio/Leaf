@@ -1,54 +1,44 @@
 package org.dreeam.leaf.config.modules.async;
 
 import org.dreeam.leaf.async.world.UnsafeReadPolicy;
-import org.dreeam.leaf.config.ConfigModule;
-import org.dreeam.leaf.config.ConfigCategory;
-import org.dreeam.leaf.config.LeafConfig;
-import org.dreeam.leaf.config.annotations.Experimental;
+import org.dreeam.leaf.config.*;
+import org.dreeam.leaf.config.annotations.*;
 
-public class SparklyPaperParallelWorldTicking extends ConfigModule {
-
-    public String basePath() {
-        return ConfigCategory.ASYNC.basePath() + ".parallel-world-ticking";
-    }
+@HotReloadUnsupported
+@ConfigClassInfo(category = ConfigCategory.ASYNC, name = "parallel-world-ticking", comments = {
+    """
+        **Experimental feature**
+        Enables parallel world ticking to improve performance on multi-core systems.""",
+    """
+        **实验性功能**
+        启用并行世界处理以提高多核 CPU 使用率."""
+})
+public class SparklyPaperParallelWorldTicking implements ConfigModule {
 
     @Experimental
+    @ConfigInfo(name = "enabled")
     public static boolean enabled = false;
-    public static int threads = 8;
+
+    @ConfigInfo(name = "threads")
+    public static int rawThreads = 8;
+
+    @ConfigInfo(name = "log-container-creation-stacktraces")
     public static boolean logContainerCreationStacktraces = false;
+
+    @ConfigInfo(name = "disable-hard-throw")
     public static boolean disableHardThrow = false;
-    @Deprecated
-    public static Boolean runAsyncTasksSync;
-    public static UnsafeReadPolicy asyncUnsafeReadHandling = UnsafeReadPolicy.DISABLED;
+
+    @ConfigInfo(name = "async-unsafe-read-handling")
+    public static String rawAsyncUnsafeReadHandling = "DISABLED";
+
+    public static @DoNotLoad UnsafeReadPolicy asyncUnsafeReadHandling = UnsafeReadPolicy.DISABLED;
+    public static @DoNotLoad int threads;
 
     @Override
     public void onLoaded() {
-        globalConfig.addCommentRegionBased(basePath(), """
-                **Experimental feature**
-                Enables parallel world ticking to improve performance on multi-core systems.""",
-            """
-                **实验性功能**
-                启用并行世界处理以提高多核 CPU 使用率.""");
+        threads = enabled ? (rawThreads <= 0 ? 8 : rawThreads) : 0;
 
-        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled);
-        threads = globalConfig.getInt(basePath() + ".threads", threads);
-        if (enabled) {
-            if (threads <= 0) threads = 8;
-        } else {
-            threads = 0;
-        }
-
-        logContainerCreationStacktraces = globalConfig.getBoolean(basePath() + ".log-container-creation-stacktraces", logContainerCreationStacktraces);
-        logContainerCreationStacktraces = enabled && logContainerCreationStacktraces;
-        disableHardThrow = globalConfig.getBoolean(basePath() + ".disable-hard-throw", disableHardThrow);
-        disableHardThrow = enabled && disableHardThrow;
-        asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(globalConfig.getString(basePath() + ".async-unsafe-read-handling", asyncUnsafeReadHandling.toString()));
-
-        // Transfer old config
-        runAsyncTasksSync = globalConfig.getBoolean(basePath() + ".run-async-tasks-sync");
-        if (runAsyncTasksSync != null && runAsyncTasksSync) {
-            LeafConfig.LOGGER.warn("The setting '{}.run-async-tasks-sync' is deprecated, removed automatically. Use 'async-unsafe-read-handling: BUFFERED' for buffered reads instead.", basePath());
-        }
+        asyncUnsafeReadHandling = UnsafeReadPolicy.fromString(rawAsyncUnsafeReadHandling);
 
         if (enabled) {
             LeafConfig.LOGGER.info("Using {} threads for Parallel World Ticking", threads);
