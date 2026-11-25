@@ -33,7 +33,7 @@ public final class NatureSpawnChunkMap {
     private static final int MAX_RADIUS = 8;
     private static final int SIZE_RADIUS = 9;
     private static final ServerPlayer[] EMPTY_PLAYERS = {};
-    private static final double MAX_DIST = 16384.0;
+    private static final double MAX_DIST = 16384.0001;
 
     private final LongArrayList[] centersByRadius;
     private final LongSet set;
