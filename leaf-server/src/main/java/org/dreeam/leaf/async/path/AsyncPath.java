@@ -1,6 +1,7 @@
 package org.dreeam.leaf.async.path;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.pathfinder.Node;
 import net.minecraft.world.level.pathfinder.Path;
@@ -8,11 +9,9 @@ import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -21,8 +20,6 @@ import java.util.function.Function;
 public final class AsyncPath extends Path {
 
     private boolean ready = false;
-
-    private final ArrayList<Consumer<Path>> postProcessing = new ArrayList<>();
 
     /**
      * A list of positions that this path could path towards
@@ -78,17 +75,6 @@ public final class AsyncPath extends Path {
     }
 
     /**
-     * Returns the future representing the processing state of this path
-     */
-    public void schedulePostProcessing(Consumer<Path> runnable) {
-        if (this.ready) {
-            runnable.accept(this);
-        } else {
-            this.postProcessing.add(runnable);
-        }
-    }
-
-    /**
      * An easy way to check if this processing path is the same as an attempted new path
      *
      * @param positions - the positions to compare against
@@ -123,12 +109,26 @@ public final class AsyncPath extends Path {
         this.target = bestPath.getTarget();
         this.distToTarget = bestPath.getDistToTarget();
         this.canReach = bestPath.canReach();
+        this.debugData = bestPath.debugData();
         this.pathFn = null;
         this.ready = true;
-        for (Consumer<Path> consumer : this.postProcessing) {
-            consumer.accept(this);
-        }
-        this.postProcessing.clear();
+    }
+
+    @Override
+    public Path.@Nullable DebugData debugData() {
+        return this.isProcessed() ? super.debugData() : null;
+    }
+
+    @Override
+    public Path copy() {
+        this.process();
+        return super.copy();
+    }
+
+    @Override
+    public void writeToStream(FriendlyByteBuf buffer) {
+        this.process();
+        super.writeToStream(buffer);
     }
 
     /*
