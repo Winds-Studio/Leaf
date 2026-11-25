@@ -1,11 +1,11 @@
 package org.dreeam.leaf.util;
 
-import net.minecraft.server.level.ChunkMap;
+import net.minecraft.world.entity.Entity;
 
-public record TrackerSlice(ChunkMap.TrackedEntity[] array, int start, int end) {
+public record TrackerSlice(Entity[] array, int start, int end) {
 
-    public TrackerSlice(final ChunkMap.TrackedEntity[] trackers) {
-        this(trackers, 0, trackers.length);
+    public TrackerSlice(final Entity[] entities) {
+        this(entities, 0, entities.length);
     }
 
     public int size() {

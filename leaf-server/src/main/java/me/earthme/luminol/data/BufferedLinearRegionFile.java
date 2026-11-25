@@ -819,28 +819,6 @@ public class BufferedLinearRegionFile implements me.earthme.luminol.data.RegionF
         this.writeChunk(pos.x(), pos.z(), buf);
     }
 
-    // MCC 的玩意,这东西也用不上给Linear了()
-    @Override
-    public CompoundTag getOversizedData(int x, int z) {
-        return null;
-    }
-
-    @Override
-    public boolean isOversized(int x, int z) {
-        return false;
-    }
-
-    @Override
-    public boolean recalculateHeader() {
-        return false;
-    }
-
-    @Override
-    public void setOversized(int x, int z, boolean oversized) {
-
-    }
-    // MCC end
-
     @Override
     public MoonriseRegionFileIO.RegionDataController.WriteData moonrise$startWrite(CompoundTag data, ChunkPos pos) {
         final ChunkBufferHelper buffer = new ChunkBufferHelper(pos);
@@ -851,6 +829,21 @@ public class BufferedLinearRegionFile implements me.earthme.luminol.data.RegionF
             data, MoonriseRegionFileIO.RegionDataController.WriteData.WriteResult.WRITE,
             out, buffer::moonrise$write
         );
+    }
+
+    @Override
+    public int moonrise$getRecalculateCount() {
+        return 0;
+    }
+
+    @Override
+    public boolean moonrise$recalculateHeader() {
+        return false;
+    }
+
+    @Override
+    public Boolean moonrise$tryRecalcHeader(final int expectedRecalcCount) {
+        return null;
     }
 
     @Override

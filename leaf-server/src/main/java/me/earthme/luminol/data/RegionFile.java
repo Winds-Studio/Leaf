@@ -29,16 +29,4 @@ public interface RegionFile extends ChunkSystemRegionFile, AutoCloseable {
     void close() throws IOException;
 
     void write(ChunkPos pos, ByteBuffer buf) throws IOException;
-
-    CompoundTag getOversizedData(int x, int z) throws IOException;
-
-    boolean isOversized(int x, int z);
-
-    boolean recalculateHeader() throws IOException;
-
-    void setOversized(int x, int z, boolean oversized) throws IOException;
-
-    default int getRecalculateCount() {
-        return 0;
-    } // Shiroha - Configurable region file format
 }
