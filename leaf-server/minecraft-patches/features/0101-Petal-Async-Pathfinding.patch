@@ -247,7 +247,7 @@ index f78464bcbf82fdc7cbf43c2ee586586b2cdfa552..3bed326ec1fe1c414f671367ace67daa
          }
          // Paper end - configurable behavior tick rate and timings
 diff --git a/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java b/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
-index b40da004b5281a041ee896ae176bfb9c4660f353..0e48c2bf7c04f3c18922b1bb33f4a1e331bfaa19 100644
+index b40da004b5281a041ee896ae176bfb9c4660f353..50a79bb2f168d55b8d2a7f02f71b43d9ff6dfe7c 100644
 --- a/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
 +++ b/net/minecraft/world/entity/ai/behavior/MoveToTargetSink.java
 @@ -20,6 +20,8 @@ public class MoveToTargetSink extends Behavior<Mob> {
@@ -320,10 +320,6 @@ index b40da004b5281a041ee896ae176bfb9c4660f353..0e48c2bf7c04f3c18922b1bb33f4a1e3
 +        if (org.dreeam.leaf.config.modules.async.AsyncPathfinding.enabled) {
 +            Brain<?> brain = body.getBrain();
 +            WalkTarget walkTarget = brain.getMemory(MemoryModuleType.WALK_TARGET).get();
-+            if (this.lastTargetPos != null && walkTarget.getTarget().currentBlockPosition().distSqr(this.lastTargetPos) > 4.0D) {
-+                this.start(level, body, timestamp);
-+                return;
-+            }
 +
 +            if (!this.finishedProcessing) {
 +                if (this.path != null && !this.path.isProcessed()) {
@@ -356,6 +352,10 @@ index b40da004b5281a041ee896ae176bfb9c4660f353..0e48c2bf7c04f3c18922b1bb33f4a1e3
 +            }
 +
 +            this.path = this.syncNavigationPath(body);
++            // Only restart after the current request has been applied to nav, otherwise slow requests keep getting discarded
++            if (this.path != null && !body.getNavigation().isDone() && this.lastTargetPos != null && walkTarget.getTarget().currentBlockPosition().distSqr(this.lastTargetPos) > 4.0D) {
++                this.start(level, body, timestamp);
++            }
 +        } else {
 +            // Kaiiju end - petal - async path processing
          Path newPath = body.getNavigation().getPath();
@@ -1197,11 +1197,42 @@ index 21d969b49e22c00f456befc7bea25a927de6f2fb..245f119f54fd75c7f28025081cfccc67
              jumpSize = Mth.floor(Math.max(1.0F, this.mob.maxUpStep()));
          } else {
              jumpSize = 0;
+diff --git a/net/minecraft/world/level/pathfinder/FlyNodeEvaluator.java b/net/minecraft/world/level/pathfinder/FlyNodeEvaluator.java
+index 95985269148e290fed45dd55f5472db9ca8a000b..99c96c349c7ef088f27b48abe70d812785cff49a 100644
+--- a/net/minecraft/world/level/pathfinder/FlyNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/FlyNodeEvaluator.java
+@@ -27,7 +27,7 @@ public class FlyNodeEvaluator extends WalkNodeEvaluator {
+ 
+     @Override
+     public void done() {
+-        this.mob.onPathfindingDone();
++        if (!this.leaf$malusSnapshotted) this.mob.onPathfindingDone(); // Kaiiju - petal - async path processing
+         this.pathTypeByPosCache.clear();
+         super.done();
+     }
+@@ -64,7 +64,7 @@ public class FlyNodeEvaluator extends WalkNodeEvaluator {
+     @Override
+     protected boolean canStartAt(final BlockPos pos) {
+         PathType blockPathType = this.getCachedPathType(pos.getX(), pos.getY(), pos.getZ());
+-        return this.mob.getPathfindingMalus(blockPathType) >= 0.0F;
++        return this.getPathfindingMalus(this.mob, blockPathType) >= 0.0F; // Kaiiju - petal - async path processing
+     }
+ 
+     @Override
+@@ -267,7 +267,7 @@ public class FlyNodeEvaluator extends WalkNodeEvaluator {
+     protected @Nullable Node findAcceptedNode(final int x, final int y, final int z) {
+         Node best = null;
+         PathType pathType = this.getCachedPathType(x, y, z);
+-        float pathCost = this.mob.getPathfindingMalus(pathType);
++        float pathCost = this.getPathfindingMalus(this.mob, pathType); // Kaiiju - petal - async path processing
+         if (pathCost >= 0.0F) {
+             best = this.getNode(x, y, z);
+             best.type = pathType;
 diff --git a/net/minecraft/world/level/pathfinder/NodeEvaluator.java b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
-index f4a30761483c4032b5942f84df7706b10976cb5d..12db6ea0d9ac6fbf764ad7bf3120d7c35c4b3a86 100644
+index f4a30761483c4032b5942f84df7706b10976cb5d..906bc7d8598dd4b12035001a9cca45e6594ddbb2 100644
 --- a/net/minecraft/world/level/pathfinder/NodeEvaluator.java
 +++ b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
-@@ -37,6 +37,17 @@ public abstract class NodeEvaluator {
+@@ -37,6 +37,21 @@ public abstract class NodeEvaluator {
          this.mob = null;
      }
  
@@ -1213,6 +1244,10 @@ index f4a30761483c4032b5942f84df7706b10976cb5d..12db6ea0d9ac6fbf764ad7bf3120d7c3
 +    }
 +    public void clearNodes() {
 +        this.nodes.clear();
++    }
++
++    // Called on the main thread after prepare() for evaluators that will be computed asynchronously
++    public void leaf$prepareAsync() {
 +    }
 +    // Kaiiju end - petal - async path processing
 +
@@ -1292,7 +1327,7 @@ index ce536d07512c3cb9a8f56a1c4f6506db50161f8b..3ad7b4cc201b1463b3ef40d6deb7f136
      }
  
 diff --git a/net/minecraft/world/level/pathfinder/PathFinder.java b/net/minecraft/world/level/pathfinder/PathFinder.java
-index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e68d922586 100644
+index 253074a0a14115cd3d18aaae6fa5822cf32346c9..e6cc83e150259294b9e4c8d5c9b31e0d897e274c 100644
 --- a/net/minecraft/world/level/pathfinder/PathFinder.java
 +++ b/net/minecraft/world/level/pathfinder/PathFinder.java
 @@ -26,8 +26,15 @@ public class PathFinder {
@@ -1311,7 +1346,7 @@ index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e6
          this.nodeEvaluator = nodeEvaluator;
          this.maxVisitedNodes = maxVisitedNodes;
      }
-@@ -49,26 +56,65 @@ public class PathFinder {
+@@ -49,26 +56,66 @@ public class PathFinder {
          final float maxVisitedNodesMultiplier
      ) {
          this.openSet.clear();
@@ -1323,10 +1358,11 @@ index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e6
 +            ? this.nodeEvaluator
 +            : org.dreeam.leaf.async.path.NodeEvaluatorCache.takeNodeEvaluator(this.nodeEvaluatorGenerator, this.nodeEvaluator);
 +        nodeEvaluator.prepare(level, entity);
++        if (this.nodeEvaluatorGenerator != null) nodeEvaluator.leaf$prepareAsync(); // Snapshot mob state on main thread
 +        Node from = nodeEvaluator.getStart();
          if (from == null) {
 +            if (this.nodeEvaluatorGenerator != null) {
-+                org.dreeam.leaf.async.path.NodeEvaluatorCache.removeNodeEvaluator(nodeEvaluator); // Kaiiju - petal - async path processing - handle nodeEvaluatorGenerator
++                org.dreeam.leaf.async.path.NodeEvaluatorCache.removeNodeEvaluator(nodeEvaluator);
 +            }
 +            // Kaiiju end - petal - async path processing
              return null;
@@ -1383,7 +1419,7 @@ index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e6
          ProfilerFiller profiler = Profiler.get();
          profiler.push("find_path");
          profiler.markForCharting(MetricCategory.PATH_FINDING);
-@@ -76,20 +122,20 @@ public class PathFinder {
+@@ -76,20 +123,20 @@ public class PathFinder {
          from.g = 0.0F;
          from.h = this.getBestH(from, targets);
          from.f = from.h;
@@ -1410,7 +1446,7 @@ index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e6
              current.closed = true;
  
              // Paper start - Perf: remove streams and optimize collection
-@@ -112,10 +158,10 @@ public class PathFinder {
+@@ -112,10 +159,10 @@ public class PathFinder {
              }
  
              if (!(current.distanceTo(from) >= maxPathLength)) {
@@ -1423,7 +1459,7 @@ index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e6
                      float distance = this.distance(current, neighbor);
                      neighbor.walkedDistance = current.walkedDistance + distance;
                      float tentativeGScore = current.g + distance + neighbor.costMalus;
-@@ -124,10 +170,10 @@ public class PathFinder {
+@@ -124,10 +171,10 @@ public class PathFinder {
                          neighbor.g = tentativeGScore;
                          neighbor.h = this.getBestH(neighbor, targets) * 1.5F;
                          if (neighbor.inOpenSet()) {
@@ -1436,7 +1472,7 @@ index 253074a0a14115cd3d18aaae6fa5822cf32346c9..8497dbbac2cb63370d40892ae8a526e6
                          }
                      }
                  }
-@@ -152,9 +198,9 @@ public class PathFinder {
+@@ -152,9 +199,9 @@ public class PathFinder {
              for(Map.Entry<Target, BlockPos> entry : targets) {
                  set.add(entry.getKey());
              }
@@ -1462,14 +1498,18 @@ index 64e1a34de133beccb90486f247e7e74d6535941f..5d2f56999657cc9b0d5892ddc7897d96
      private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
  
 diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
-index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e2958fc465a 100644
+index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..261786e3bd7c6d2482b07d2725bcebf825e8af08 100644
 --- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
 +++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
-@@ -34,11 +34,13 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -34,21 +34,48 @@ public class WalkNodeEvaluator extends NodeEvaluator {
      private final Long2ObjectMap<PathType> pathTypesByPosCacheByMob = new Long2ObjectOpenHashMap<>();
      private final Object2BooleanMap<AABB> collisionCache = new Object2BooleanOpenHashMap<>();
      private final Node[] reusableNeighbors = new Node[Direction.Plane.HORIZONTAL.length()];
-+    private int maxFallDistance; // Kaiiju - petal - async path processing - snapshot on main thread
++    // Kaiiju start - petal - async path processing - snapshot on main thread
++    private int maxFallDistance;
++    private final float[] leaf$malusSnapshot = new float[PATH_TYPES.length];
++    protected boolean leaf$malusSnapshotted;
++    // Kaiiju end - petal - async path processing - snapshot on main thread
  
      @Override
      public void prepare(final PathNavigationRegion level, final Mob entity) {
@@ -1479,20 +1519,39 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
      }
  
      @Override
-@@ -49,6 +51,12 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+     public void done() {
+-        this.mob.onPathfindingDone();
++        if (!this.leaf$malusSnapshotted) this.mob.onPathfindingDone(); // Kaiiju - petal - async path processing
++        this.leaf$malusSnapshotted = false; // Kaiiju - petal - async path processing
+         this.pathTypesByPosCacheByMob.clear();
+         this.collisionCache.clear();
          super.done();
      }
  
 +    // Kaiiju start - petal - async path processing
 +    protected float getPathfindingMalus(final Mob mob, final PathType pathType) {
++        if (this.leaf$malusSnapshotted && mob == this.mob) {
++            return this.leaf$malusSnapshot[pathType.ordinal()];
++        }
 +        return mob.getPathfindingMalus(pathType);
++    }
++
++    @Override
++    public void leaf$prepareAsync() {
++        // Capture the costs set up by prepare()/onPathfindingStart(), then run onPathfindingDone() here,
++        // so the async computation never reads or writes the mob's live malus map from a worker thread
++        for (PathType pathType : PATH_TYPES) {
++            this.leaf$malusSnapshot[pathType.ordinal()] = this.mob.getPathfindingMalus(pathType);
++        }
++        this.leaf$malusSnapshotted = true;
++        this.mob.onPathfindingDone();
 +    }
 +    // Kaiiju end - petal - async path processing
 +
      @Override
      public Node getStart() {
          BlockPos.MutableBlockPos reusablePos = new BlockPos.MutableBlockPos();
-@@ -103,13 +111,13 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -103,13 +130,13 @@ public class WalkNodeEvaluator extends NodeEvaluator {
      protected Node getStartNode(final BlockPos pos) {
          Node node = this.getNode(pos);
          node.type = this.getCachedPathType(node.x, node.y, node.z);
@@ -1508,7 +1567,7 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
      }
  
      @Override
-@@ -123,7 +131,7 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -123,7 +150,7 @@ public class WalkNodeEvaluator extends NodeEvaluator {
          int jumpSize = 0;
          PathType blockPathTypeAbove = this.getCachedPathType(pos.x, pos.y + 1, pos.z);
          PathType blockPathTypeCurrent = this.getCachedPathType(pos.x, pos.y, pos.z);
@@ -1517,7 +1576,7 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
              jumpSize = Mth.floor(Math.max(1.0F, this.mob.maxUpStep()));
          }
  
-@@ -239,7 +247,7 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -239,7 +266,7 @@ public class WalkNodeEvaluator extends NodeEvaluator {
          }
  
          PathType pathType = this.getCachedPathType(x, y, z);
@@ -1526,7 +1585,7 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
          if (pathCost >= 0.0F) {
              best = this.getNodeAndUpdateCostToMax(x, y, z, pathType, pathCost);
          }
-@@ -342,7 +350,7 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -342,7 +369,7 @@ public class WalkNodeEvaluator extends NodeEvaluator {
                  return best;
              }
  
@@ -1535,7 +1594,7 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
              y--;
          }
  
-@@ -351,12 +359,12 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -351,12 +378,12 @@ public class WalkNodeEvaluator extends NodeEvaluator {
  
      private Node tryFindFirstGroundNodeBelow(final int x, final int y, final int z) {
          for (int currentY = y - 1; currentY >= this.mob.level().getMinY(); currentY--) {
@@ -1550,7 +1609,7 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
              if (pathType != PathType.OPEN) {
                  if (pathCost >= 0.0F) {
                      return this.getNodeAndUpdateCostToMax(x, currentY, z, pathType, pathCost);
-@@ -393,10 +401,10 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -393,10 +420,10 @@ public class WalkNodeEvaluator extends NodeEvaluator {
          }
  
          PathType highestMalusPathTypeWithinBB = PathType.BLOCKED;
@@ -1563,7 +1622,7 @@ index 29da2af5d4a09f3ff21fa2d0653c05d45c475aa6..9084c3aaf30b41989e98dc4909081e29
              if (malusForPathType < 0.0F) {
                  return pathType;
              }
-@@ -410,8 +418,10 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+@@ -410,8 +437,10 @@ public class WalkNodeEvaluator extends NodeEvaluator {
          PathType currentNodePathType = this.getPathType(context, x, y, z);
          boolean isLargeMob = this.entityWidth > 1;
          if (isLargeMob) {
