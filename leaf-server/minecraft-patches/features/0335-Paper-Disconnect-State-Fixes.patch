@@ -1,0 +1,285 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Owen <23108066+Owen1212055@users.noreply.github.com>
+Date: Sat, 25 Apr 2026 18:06:21 -0400
+Subject: [PATCH] Paper: Disconnect State Fixes
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper commit: https://github.com/PaperMC/Paper/commit/8021488ef48a4aae5246cd3d2f97b8573bffdad9
+
+Backported from Paper 26.1.2
+
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 4e16552680f86cf1589f862cb38c0f43df344e6a..756967523bca9e3923bdd814522c80afb3732723 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -90,6 +90,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     // Paper start - NetworkClient implementation
+     public int protocolVersion;
+     public java.net.InetSocketAddress virtualHost;
++    public boolean handleConnectionDisconnectOnNextTick = false; // Paper - Disconnect State Fixes - Force kill connection ticking
+     private static boolean enableExplicitFlush = Boolean.getBoolean("paper.explicit-flush"); // Paper - Disable explicit network manager flushing
+     // Paper end
+     // Paper start - add utility methods
+@@ -521,7 +522,8 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         }
+         } catch (final Exception e) {
+             LOGGER.error("NetworkException: {}", player, e);
+-            this.disconnect(Component.translatable("disconnect.genericReason", "Internal Exception: " + e.getMessage()));
++            Component reason = Component.translatable("disconnect.genericReason", "Internal Exception: " + e.getMessage()); // Paper - Disconnect State Fixes
++            this.send(new ClientboundDisconnectPacket(reason), PacketSendListener.thenRun(() -> this.disconnect(reason))); // Paper - Disconnect State Fixes
+             packet.onPacketDispatchFinish(player, null);
+         }
+         // Paper end - Optimize network
+@@ -672,7 +674,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         }
+ 
+         if (this.isConnected()) {
+-            this.channel.close(); // We can't wait as this may be called from an event loop.
++            this.channel.close().awaitUninterruptibly(); // Paper - Disconnect State Fixes
+             this.disconnectionDetails = disconnectionDetails;
+         }
+     }
+diff --git a/net/minecraft/network/PacketProcessor.java b/net/minecraft/network/PacketProcessor.java
+index d501168e40f951ee37efcbc464c3ab1307051060..eda0baf2c7736a1fe2694a72677c407f606b6b92 100644
+--- a/net/minecraft/network/PacketProcessor.java
++++ b/net/minecraft/network/PacketProcessor.java
+@@ -93,7 +93,6 @@ public class PacketProcessor implements AutoCloseable {
+         public void handle() {
+             packetProcessing.push(this.listener); // Paper - detailed watchdog information
+             try { // Paper - detailed watchdog information
+-            if (this.listener instanceof net.minecraft.server.network.ServerCommonPacketListenerImpl serverCommonPacketListener && serverCommonPacketListener.processedDisconnect) return; // Paper - Don't handle sync packets for kicked players
+             if (this.listener.shouldHandleMessage(this.packet)) {
+                 try {
+                     this.packet.handle(this.listener);
+diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+index 59a5c6bd8da82c293bba739fba43dc12d28fa8a4..4f6d6850c577a5113b0f939cd3b68437dd80526f 100644
+--- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+@@ -50,7 +50,6 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     private volatile boolean suspendFlushingOnServerThread = false;
+     // CraftBukkit start
+     public final org.bukkit.craftbukkit.CraftServer cserver;
+-    public boolean processedDisconnect;
+     // CraftBukkit end
+     public final java.util.Map<java.util.UUID, net.kyori.adventure.resource.ResourcePackCallback> packCallbacks = new java.util.concurrent.ConcurrentHashMap<>(); // Paper - adventure resource pack callbacks
+     // Gale start - Purpur - send multiple keep-alive packets
+@@ -145,20 +144,16 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+             if (ka.challengeId() == packet.getId()) {
+                 itr.remove();
+ 
+-                if (!this.processedDisconnect) {
+-                    LOGGER.info("Disconnecting {} for sending keepalive response ({}) out-of-order!", this.playerProfile().name(), packet.getId());
+-                    this.disconnectAsync(TIMEOUT_DISCONNECTION_MESSAGE, io.papermc.paper.connection.DisconnectionReason.TIMEOUT);
+-                    return;
+-                }
+-                break;
++                // Paper start - Disconnect State Fixes
++                LOGGER.info("Disconnecting {} for sending keepalive response ({}) out-of-order!", this.playerProfile().name(), packet.getId());
++                this.disconnectAsync(TIMEOUT_DISCONNECTION_MESSAGE, io.papermc.paper.connection.DisconnectionReason.TIMEOUT);
++                return;
++                // Paper end - Disconnect State Fixes
+             }
+         }
+ 
+-        if (!this.processedDisconnect) {
+-            LOGGER.info("Disconnecting {} for sending keepalive response ({}) without matching challenge!", this.playerProfile().name(), packet.getId());
+-            this.disconnectAsync(TIMEOUT_DISCONNECTION_MESSAGE, io.papermc.paper.connection.DisconnectionReason.TIMEOUT);
+-            return;
+-        }
++        LOGGER.info("Disconnecting {} for sending keepalive response ({}) without matching challenge!", this.playerProfile().name(), packet.getId()); // Paper - Disconnect State Fixes
++        this.disconnectAsync(TIMEOUT_DISCONNECTION_MESSAGE, io.papermc.paper.connection.DisconnectionReason.TIMEOUT); // Paper - Disconnect State Fixes
+         // Paper end - improve keepalives
+     }
+ 
+@@ -314,11 +309,11 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+         // Paper start - improve keepalives
+         // Gale start - Purpur - send multiple keep-alive packets
+         if (org.galemc.gale.configuration.GaleGlobalConfiguration.get().misc.keepalive.sendMultiple) {
+-            if (this.checkIfClosed(millis) && !this.processedDisconnect) {
++            if (this.checkIfClosed(millis)) { // Paper - Disconnect State Fixes
+                 long currTime = System.nanoTime();
+                 if ((currTime - this.keepAlive.lastKeepAliveTx) >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1L)) { // 1 second
+                     this.keepAlive.lastKeepAliveTx = currTime;
+-                    if (this.keepAlivePending && !this.processedDisconnect && keepAlives.size() * 1000L >= KEEPALIVE_LIMIT) {
++                    if (this.keepAlivePending && keepAlives.size() * 1000L >= KEEPALIVE_LIMIT) { // Paper - Disconnect State Fixes
+                         LOGGER.info("{} was kicked due to keepalive timeout!", this.playerProfile().name());
+                         this.disconnect(TIMEOUT_DISCONNECTION_MESSAGE, io.papermc.paper.connection.DisconnectionReason.TIMEOUT);
+                     } else if (this.checkIfClosed(millis)) {
+@@ -330,7 +325,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+             }
+         } else {
+             // Gale end - Purpur - send multiple keep-alive packets
+-        if (this.checkIfClosed(millis) && !this.processedDisconnect) {
++        if (this.checkIfClosed(millis)) { // Paper - Disconnect State Fixes
+             long currTime = System.nanoTime();
+ 
+             if ((currTime - this.keepAlive.lastKeepAliveTx) >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1L)) {
+@@ -400,7 +395,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+         }
+         // Leaf end - Mirai - Configurable chat message signatures
+         // CraftBukkit start
+-        if (packet == null || this.processedDisconnect) { // Spigot
++        if (packet == null) { // Paper - Disconnect State Fixes
+             return;
+         } else if (packet instanceof net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket defaultSpawnPositionPacket && this instanceof ServerGamePacketListenerImpl serverGamePacketListener) {
+             serverGamePacketListener.player.compassTarget = org.bukkit.craftbukkit.util.CraftLocation.toBukkit(defaultSpawnPositionPacket.respawnData().pos(), serverGamePacketListener.getPlayer().level());
+@@ -435,7 +430,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+ 
+     public void disconnect(DisconnectionDetails disconnectionDetails) {
+         // CraftBukkit start - fire PlayerKickEvent
+-        if (this.processedDisconnect) {
++        if (!this.connection.isConnected()) { // Paper - Disconnect State Fixes
+             return;
+         }
+         if (!this.cserver.isPrimaryThread()) {
+@@ -506,10 +501,8 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+                         new ClientboundDisconnectPacket(disconnectionDetails.reason()),
+                         PacketSendListener.thenRun(() -> this.connection.disconnect(disconnectionDetails))
+                 );
+-        this.onDisconnect(disconnectionDetails);
+         this.connection.setReadOnly();
+-        // CraftBukkit - Don't wait
+-        this.server.scheduleOnMain(this.connection::handleDisconnection); // Paper
++        this.connection.handleConnectionDisconnectOnNextTick = true; // Paper - Disconnect State Fixes - Force kill connection ticking. Let this close the connection
+     }
+ 
+     // Paper start - add proper async disconnect
+diff --git a/net/minecraft/server/network/ServerConnectionListener.java b/net/minecraft/server/network/ServerConnectionListener.java
+index 33e1cdb00d648c992af03a976899253141314b27..4e6676b57f493ca90e058cdadf324d3627e270a9 100644
+--- a/net/minecraft/server/network/ServerConnectionListener.java
++++ b/net/minecraft/server/network/ServerConnectionListener.java
+@@ -226,6 +226,13 @@ public class ServerConnectionListener {
+                 Connection connection = iterator.next();
+                 if (!connection.isConnecting()) {
+                     if (connection.isConnected()) {
++                        // Paper start - Disconnect State Fixes - Force kill connection ticking
++                        // also call this multiple times, doesnt matter
++                        // See MC-307764
++                        if (connection.handleConnectionDisconnectOnNextTick) {
++                            continue;
++                        }
++                        // Paper end - Disconnect State Fixes - Force kill connection ticking
+                         try {
+                             connection.tick();
+                         } catch (Exception var7) {
+diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+index c0c0244b13c88676e2d8c27b53f52ebc52b03f81..2a107ee7ad68a2098306ed12c4e5b774d825adfd 100644
+--- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+@@ -360,7 +360,6 @@ public class ServerGamePacketListenerImpl
+ 
+     @Override
+     public void tick() {
+-        if (this.isDisconnected()) return; // Paper
+         if (this.ackBlockChangesUpTo > -1) {
+             this.send(new ClientboundBlockChangedAckPacket(this.ackBlockChangesUpTo));
+             this.ackBlockChangesUpTo = -1;
+@@ -2319,13 +2318,6 @@ public class ServerGamePacketListenerImpl
+ 
+     @Override
+     public void onDisconnect(DisconnectionDetails details) {
+-        // CraftBukkit start - Rarely it would send a disconnect line twice
+-        if (this.processedDisconnect) {
+-            return;
+-        } else {
+-            this.processedDisconnect = true;
+-        }
+-        // CraftBukkit end
+         LOGGER.info("{} lost connection: {}", this.player.getPlainTextName(), details.reason().getString());
+         // Paper start - Fix kick event leave message not being sent
+         final net.kyori.adventure.text.Component quitMessage = details.quitMessage().map(io.papermc.paper.adventure.PaperAdventure::asAdventure).orElse(null);
+@@ -3915,7 +3907,7 @@ public class ServerGamePacketListenerImpl
+     }
+ 
+     public final boolean isDisconnected() {
+-        return (!this.player.joining && !this.connection.isConnected()) || this.processedDisconnect; // Paper - Fix duplication bugs
++        return (!this.player.joining && !this.connection.isConnected()); // Paper - Disconnect State Fixes
+     }
+ 
+     @Override
+diff --git a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+index 875fb1360350c3b182758fa64d9ddecd6db4b3c3..9418c1669ed96aab81acc79f02683729b705d130 100644
+--- a/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerLoginPacketListenerImpl.java
+@@ -71,7 +71,6 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+     private int velocityLoginMessageId = -1; // Paper - Add Velocity IP Forwarding Support
+     public java.util.@Nullable UUID requestedUuid; // Paper
+     private final io.papermc.paper.connection.PaperPlayerLoginConnection paperLoginConnection; // Paper - Config API
+-    private volatile boolean disconnecting = false; // Paper - Fix disconnect still ticking login
+ 
+     public ServerLoginPacketListenerImpl(MinecraftServer server, Connection connection, boolean transferred) {
+         this.server = server;
+@@ -84,7 +83,6 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+ 
+     @Override
+     public void tick() {
+-        if (this.disconnecting) return; // Paper - Fix disconnect being called multiple times due to not awaiting for disconnect
+         // Paper start - login cookie API
+         // Don't block the connection
+         if (this.paperLoginConnection.isAwaitingCookies()) {
+@@ -111,7 +109,7 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         int slowLoginTimeout = org.galemc.gale.configuration.GaleGlobalConfiguration.get().misc.premiumAccountSlowLoginTimeout;
+         if (this.tick++ >= (slowLoginTimeout < 1 ? MAX_TICKS_BEFORE_LOGIN : slowLoginTimeout)) {
+             // Gale end - make slow login timeout configurable
+-            this.disconnect(Component.translatable("multiplayer.disconnect.slow_login"));
++            this.disconnectAsync(Component.translatable("multiplayer.disconnect.slow_login")); // Paper - Disconnect State Fixes
+         }
+     }
+ 
+@@ -127,6 +125,26 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         return this.connection.isConnected();
+     }
+ 
++    // Paper start - Disconnect State Fixes
++    public void disconnectAsync(Component reason) {
++        try {
++            // Gale start - Pufferfish - do not log disconnections with null id
++            if (!org.galemc.gale.configuration.GaleGlobalConfiguration.get().logToConsole.nullIdDisconnections && this.authenticatedProfile != null && this.authenticatedProfile.id() == null) {
++                var reasonString = reason.getString();
++
++                if ("Disconnected".equals(reasonString) || Component.translatable("multiplayer.disconnect.generic").getString().equals(reasonString)) {
++                    return;
++                }
++            }
++            // Gale end - Pufferfish - do not log disconnections with null id
++            LOGGER.info("Disconnecting {}: {}", this.getUserName(), reason.getString());
++            this.connection.send(new ClientboundLoginDisconnectPacket(reason), PacketSendListener.thenRun(() -> this.connection.disconnect(reason)));
++            this.connection.handleConnectionDisconnectOnNextTick = true;
++        } catch (Exception var3) {
++            LOGGER.error("Error whilst disconnecting player", (Throwable)var3);
++        }
++    }
++    // Paper end - Disconnect State Fixes
+     public void disconnect(Component reason) {
+         try {
+             // Gale start - Pufferfish - do not log disconnections with null id
+@@ -141,7 +159,6 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+             LOGGER.info("Disconnecting {}: {}", this.getUserName(), reason.getString());
+             this.connection.send(new ClientboundLoginDisconnectPacket(reason));
+             this.connection.disconnect(reason);
+-            this.disconnecting = true; // Paper - Fix disconnect still ticking login
+         } catch (Exception var3) {
+             LOGGER.error("Error whilst disconnecting player", (Throwable)var3);
+         }
+@@ -241,7 +258,7 @@ public class ServerLoginPacketListenerImpl implements ServerLoginPacketListener,
+         PlayerList playerList = this.server.getPlayerList();
+         Component component = org.bukkit.craftbukkit.event.CraftEventFactory.handleLoginResult(playerList.canPlayerLogin(this.connection.getRemoteAddress(), new NameAndId(profile)), this.paperLoginConnection, this.connection, profile, this.server, true); // Paper
+         if (component != null) {
+-            this.disconnect(component);
++            this.disconnectAsync(component); // Paper - Disconnect State Fixes
+         } else {
+             if (this.server.getCompressionThreshold() >= 0 && !this.connection.isMemoryConnection()) {
+                 this.connection
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index 284940e73feb577c28848fa5cce2c541e3c5d02b..ccf2a7d2fbff4bfc9b6e4606059b4b2863071a08 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -623,7 +623,6 @@ public abstract class PlayerList {
+         this.cserver.getPluginManager().callEvent(playerQuitEvent);
+         player.getBukkitEntity().disconnect();
+ 
+-        if (this.server.isSameThread()) player.doTick(); // SPIGOT-924 // Paper - Improved watchdog support; don't tick during emergency shutdowns
+         // CraftBukkit end
+ 
+         // Paper start - Configurable player collision; Remove from collideRule team if needed
