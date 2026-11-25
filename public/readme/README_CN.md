@@ -46,9 +46,9 @@
 关于如何使用/配置 Leaf 的文档：[Leaf 文档](https://www.leafmc.one/zh/docs/getting-started)
 
 ## 📦 构建
-构建用于分发的 Paperclip JAR：
+构建用于分发的 JAR：
 ```bash
-./gradlew applyAllPatches && ./gradlew createPaperclipJar
+./gradlew applyAllPatches && ./gradlew createLeafclipJar
 ```
 
 ## 📦 API
