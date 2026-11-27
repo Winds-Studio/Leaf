@@ -67,6 +67,7 @@ public class DynamicActivationofBrain extends ConfigModule {
                 "不会被 DAB 影响的实体列表"));
 
         startDistanceSquared = startDistance * startDistance;
+        maximumActivationPrio = Math.max(1, maximumActivationPrio);
     }
 
     @Override
