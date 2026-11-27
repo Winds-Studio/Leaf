@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class DeathItemDropKnockback extends ConfigModules {
+public class DeathItemDropKnockback extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".death-item-drop-knockback";
+    public String basePath() {
+        return ConfigCategory.GAMEPLAY.basePath() + ".death-item-drop-knockback";
     }
 
     public static boolean dropAround = true;
@@ -15,20 +15,20 @@ public class DeathItemDropKnockback extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        dropAround = config.getBoolean(getBasePath() + ".drop-around", dropAround,
-            config.pickStringRegionBased(
+        dropAround = globalConfig.getBoolean(basePath() + ".drop-around", dropAround,
+            globalConfig.pickStringRegionBased(
                 "If true, items will drop randomly around the player on death.",
                 "如果为 “true”，物品会在玩家死亡时随机掉落在其周围."
             ));
 
-        horizontalForce = config.getDouble(getBasePath() + ".horizontal-force", horizontalForce,
-            config.pickStringRegionBased(
+        horizontalForce = globalConfig.getDouble(basePath() + ".horizontal-force", horizontalForce,
+            globalConfig.pickStringRegionBased(
                 "Base speed for horizontal velocity when randomly dropping items.",
                 "随机掉落物品时水平速度的基本速度."
             ));
 
-        verticalForce = config.getDouble(getBasePath() + ".vertical-force", verticalForce,
-            config.pickStringRegionBased(
+        verticalForce = globalConfig.getDouble(basePath() + ".vertical-force", verticalForce,
+            globalConfig.pickStringRegionBased(
                 "Upward motion for randomly dropped items.",
                 "随机掉落物品的向上运动."
             ));

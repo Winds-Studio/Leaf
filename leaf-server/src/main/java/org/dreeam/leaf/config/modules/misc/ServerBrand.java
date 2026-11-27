@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class ServerBrand extends ConfigModules {
+public class ServerBrand extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".rebrand";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".rebrand";
     }
 
     public static String serverModName = io.papermc.paper.ServerBuildInfo.buildInfo().brandName();
@@ -14,7 +14,7 @@ public class ServerBrand extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        serverModName = config.getString(getBasePath() + ".server-mod-name", serverModName);
-        serverGUIName = config.getString(getBasePath() + ".server-gui-name", serverGUIName);
+        serverModName = globalConfig.getString(basePath() + ".server-mod-name", serverModName);
+        serverGUIName = globalConfig.getString(basePath() + ".server-gui-name", serverGUIName);
     }
 }

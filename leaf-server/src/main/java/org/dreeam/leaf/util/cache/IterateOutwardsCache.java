@@ -29,7 +29,7 @@ public class IterateOutwardsCache {
 
     private void fillPositionsWithIterateOutwards(LongList entry, int xRange, int yRange, int zRange) {
         // Add all positions to the cached list
-        for (BlockPos pos : BlockPos.withinManhattan(POS_ZERO, xRange, yRange, zRange)) {
+        for (BlockPos pos : BlockPos.withinBoxByManhattanDistance(POS_ZERO, xRange, yRange, zRange)) {
             entry.add(pos.asLong());
         }
     }

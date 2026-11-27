@@ -1,20 +1,20 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class SkipInactiveEntityForExecute extends ConfigModules {
+public class SkipInactiveEntityForExecute extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".datapack";
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".datapack";
     }
 
     public static boolean skipInactiveEntityForExecute = false;
 
     @Override
     public void onLoaded() {
-        skipInactiveEntityForExecute = config.getBoolean(getBasePath() + ".skip-inactive-entity-for-execute-command", skipInactiveEntityForExecute,
-            config.pickStringRegionBased("""
+        skipInactiveEntityForExecute = globalConfig.getBoolean(basePath() + ".skip-inactive-entity-for-execute-command", skipInactiveEntityForExecute,
+            globalConfig.pickStringRegionBased("""
                     Skip selecting inactive entities when using execute command.
                     Will improve performance on servers with massive datapack functions.""",
                 """

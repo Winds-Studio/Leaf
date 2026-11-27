@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 import org.dreeam.leaf.config.annotations.Experimental;
 
-public class OptimizeNoActionTime extends ConfigModules {
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".optimize-no-action-time";
+public class OptimizeNoActionTime extends ConfigModule {
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".optimize-no-action-time";
     }
 
     @Experimental
@@ -14,6 +14,6 @@ public class OptimizeNoActionTime extends ConfigModules {
 
     @Override
     public void onLoaded() {
-        disableLightCheck = config.getBoolean(getBasePath() + ".disable-light-check", disableLightCheck);
+        disableLightCheck = globalConfig.getBoolean(basePath() + ".disable-light-check", disableLightCheck);
     }
 }

@@ -14,7 +14,9 @@ import org.jspecify.annotations.NullMarked;
  */
 @NullMarked
 public class BlockExplosionHitEvent extends BlockEvent implements Cancellable {
-    private static final HandlerList handlers = new HandlerList();
+
+    private static final HandlerList HANDLERS = new HandlerList();
+
     private boolean cancelled;
     private final Entity source;
     private final ExplosionResult result;
@@ -27,11 +29,11 @@ public class BlockExplosionHitEvent extends BlockEvent implements Cancellable {
 
     @Override
     public HandlerList getHandlers() {
-        return handlers;
+        return HANDLERS;
     }
 
     public static HandlerList getHandlerList() {
-        return handlers;
+        return HANDLERS;
     }
 
     @Override

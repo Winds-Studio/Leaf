@@ -1,8 +1,9 @@
 package org.dreeam.leaf.async.tracker;
 
-import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.server.ServerEntityLookup;
+import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ChunkMap;
@@ -10,87 +11,96 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerPlayerConnection;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.Vec3;
 import org.bukkit.event.player.PlayerVelocityEvent;
-import org.dreeam.leaf.async.FixedThreadExecutor;
+import org.dreeam.leaf.async.ThreadPool;
 import org.dreeam.leaf.config.modules.async.MultithreadedTracker;
-import org.dreeam.leaf.util.EntitySlice;
+import org.dreeam.leaf.util.TrackerSlice;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
+import java.util.Objects;
 import java.util.concurrent.*;
 
+@NullMarked
 public final class AsyncTracker {
     private static final String THREAD_NAME = "Leaf Async Tracker Thread";
-    public static final boolean ENABLED = MultithreadedTracker.enabled;
-    public static final int QUEUE = 1024;
-    public static final int MIN_CHUNK = 16;
-    public static final int THREADS = MultithreadedTracker.threads;
-    public static final FixedThreadExecutor TRACKER_EXECUTOR = ENABLED ? new FixedThreadExecutor(
-        THREADS,
-        QUEUE,
-        THREAD_NAME
-    ) : null;
+    private static final int QUEUE = 1024;
 
-    private Future<TrackerCtx>[] fut;
-    private final TrackerCtx local;
+    public static @Nullable ThreadPool TRACKER_EXECUTOR;
 
-    public AsyncTracker(ServerLevel world) {
-        this.local = new TrackerCtx(world);
-    }
+    private Future<TrackerCtx> @Nullable [] fut;
+
+    private final Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> capture = new Reference2ReferenceOpenHashMap<>();
 
     public static void init() {
-        if (TRACKER_EXECUTOR == null || !ENABLED) {
+        if (TRACKER_EXECUTOR != null) {
             throw new IllegalStateException();
         }
+        TRACKER_EXECUTOR = new ThreadPool(
+            MultithreadedTracker.threads,
+            QUEUE,
+            THREAD_NAME
+        );
     }
 
-    public TrackerCtx ctx() {
-        return this.local;
+    public @Nullable TrackerInput get(final ChunkMap.@Nullable TrackedEntity tracker) {
+        if (tracker == null) {
+            return null;
+        }
+        TrackerInput i = capture.computeIfAbsent(tracker, _ -> new TrackerInput(Vec3.ZERO, Vec3.ZERO, false));
+        i.trackingPosition = tracker.serverEntity.entity.trackingPosition();
+        return i;
     }
 
-    public void tick(ServerLevel world) {
+    public void tick(final ServerLevel world, final ReferenceList<Entity> entities) {
+        Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> cap = capture.clone();
+        capture.clear();
         handlePlayer(world);
-        ServerEntityLookup entityLookup = (ServerEntityLookup) world.moonrise$getEntityLookup();
-        ca.spottedleaf.moonrise.common.list.ReferenceList<Entity> trackerEntities = entityLookup.trackerEntities;
-        int trackerEntitiesSize = trackerEntities.size();
-        if (trackerEntitiesSize == 0) {
+        int len = entities.size();
+        if (len == 0) {
             return;
         }
-        Entity[] trackerEntitiesRaw = trackerEntities.getRawDataUnchecked();
-        Entity[] entities = new Entity[trackerEntitiesSize];
-        System.arraycopy(trackerEntitiesRaw, 0, entities, 0, trackerEntitiesSize);
-        EntitySlice slice = new EntitySlice(entities);
-        EntitySlice[] slices = entities.length <= THREADS * MIN_CHUNK ? slice.chunks(MIN_CHUNK) : slice.splitEvenly(THREADS);
+        Entity[] raw = new Entity[len];
+        System.arraycopy(entities.getRawDataUnchecked(), 0, raw, 0, len);
+        TrackerSlice slice = new TrackerSlice(raw);
+
+        ThreadPool exec = Objects.requireNonNull(TRACKER_EXECUTOR);
+        int min = MultithreadedTracker.minEntitiesPerTask;
+        TrackerSlice[] slices = len <= exec.threadCount() * min ? slice.chunks(min) : slice.splitEvenly(exec.threadCount());
         @SuppressWarnings("unchecked")
         Future<TrackerCtx>[] futures = new Future[slices.length];
         for (int i = 0; i < futures.length; i++) {
-            futures[i] = TRACKER_EXECUTOR.submitOrRun(new TrackerTask(world, slices[i]));
+            futures[i] = exec.submitOrRun(new TrackerTask(world, slices[i], cap));
         }
-        TRACKER_EXECUTOR.unpack();
+        exec.unpark();
         this.fut = futures;
     }
 
-    private static void handlePlayer(ServerLevel world) {
-        for (ServerPlayer player : world.players()) {
+    private static void handlePlayer(final ServerLevel world) {
+        for (final ServerPlayer player : world.players()) {
             player.updateDataBeforeSync();
 
-            if (!player.hurtMarked) {
+            if (!player.syncVelocity) {
                 continue;
             }
-            player.hurtMarked = false;
+            player.syncVelocity = false;
             boolean cancelled = false;
 
-            org.bukkit.entity.Player player1 = player.getBukkitEntity();
-            org.bukkit.util.Vector velocity = player1.getVelocity();
+            org.bukkit.entity.Player craftPlayer = player.getBukkitEntity();
+            org.bukkit.util.Vector velocity = craftPlayer.getVelocity();
 
-            PlayerVelocityEvent event = new PlayerVelocityEvent(player1, velocity.clone());
+            PlayerVelocityEvent event = new PlayerVelocityEvent(craftPlayer, velocity.clone());
             if (!event.callEvent()) {
                 cancelled = true;
             } else if (velocity != event.getVelocity() && !velocity.equals(event.getVelocity())) {
-                player1.setVelocity(event.getVelocity());
+                craftPlayer.setVelocity(event.getVelocity());
             }
             if (cancelled) {
                 continue;
             }
             ChunkMap.TrackedEntity trackedEntity = player.moonrise$getTrackedEntity();
+            //noinspection ConstantValue
             if (trackedEntity == null) {
                 continue;
             }
@@ -100,48 +110,39 @@ public final class AsyncTracker {
 
     public void onEntitiesTickEnd() {
         Future<TrackerCtx>[] task = this.fut;
-        TrackerCtx local = this.local;
         if (task == null) {
             return;
         }
-        for (Future<TrackerCtx> fut : task) {
+        for (final Future<TrackerCtx> fut : task) {
             if (!fut.isDone()) {
                 return;
             }
         }
         this.fut = null;
-        handle(task, local);
-        local.reset();
-        // for (ServerPlayer player : world.players()) {
-        //     player.connection.connection.flushChannel();
-        // }
+        handle(task);
     }
 
     public void onTickEnd() {
         Future<TrackerCtx>[] task = this.fut;
-        TrackerCtx local = this.local;
         this.fut = null;
-        handle(task, local);
-        local.reset();
+        if (task == null) {
+            return;
+        }
+        handle(task);
     }
 
-    private static void handle(Future<TrackerCtx>[] futures, TrackerCtx local) {
+    private static void handle(final Future<TrackerCtx>[] futures) {
         try {
-            if (futures == null) {
-                local.handle(new Object2ObjectOpenHashMap[0]);
-            } else {
-                TrackerCtx ctx = futures[0].get();
-                @SuppressWarnings("unchecked")
-                Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>>[] packets = new Object2ObjectOpenHashMap[futures.length];
-                packets[futures.length - 1] = ctx.join(local);
-                for (int i = 1; i < futures.length; i++) {
-                    packets[i - 1] = ctx.join(futures[i].get());
-                }
-                ctx.handle(packets);
+            TrackerCtx ctx = futures[0].get();
+            @SuppressWarnings("unchecked")
+            Object2ObjectOpenHashMap<ServerPlayerConnection, ObjectArrayList<Packet<?>>>[] packets = new Object2ObjectOpenHashMap[futures.length - 1];
+            for (int i = 1; i < futures.length; i++) {
+                packets[i - 1] = ctx.join(futures[i].get());
             }
-        } catch (InterruptedException e) {
+            ctx.handle(packets);
+        } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (ExecutionException e) {
+        } catch (final ExecutionException e) {
             throw new RuntimeException(e);
         }
     }

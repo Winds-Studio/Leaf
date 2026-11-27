@@ -32,7 +32,7 @@ public class GaleGlobalConfiguration extends ConfigurationPart {
 
         public class ReducedIntervals extends ConfigurationPart {
 
-            public int increaseTimeStatistics = 20; // Gale - Hydrinity - increase time statistics in intervals
+            public int increaseTimeStatistics = 1; // Gale - Hydrinity - increase time statistics in intervals
             public int updateEntityLineOfSight = 4; // Gale - Petal - reduce line of sight updates
 
             @PostProcess
@@ -58,7 +58,6 @@ public class GaleGlobalConfiguration extends ConfigurationPart {
 
         public boolean verifyChatOrder = true; // Gale - Pufferfish - make chat order verification configurable
         public int premiumAccountSlowLoginTimeout = -1; // Gale - make slow login timeout configurable
-        public boolean ignoreNullLegacyStructureData = false; // Gale - MultiPaper - ignore null legacy structure data
 
         public Keepalive keepalive;
 

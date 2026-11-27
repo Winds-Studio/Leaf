@@ -2,6 +2,7 @@ package gg.pufferfish.pufferfish.sentry;
 
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
+import com.mojang.logging.LogUtils;
 import io.sentry.Breadcrumb;
 import io.sentry.Sentry;
 import io.sentry.SentryEvent;
@@ -12,17 +13,16 @@ import io.sentry.protocol.User;
 import java.util.Map;
 
 import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
 import org.apache.logging.log4j.core.config.Property;
 import org.apache.logging.log4j.core.filter.AbstractFilter;
 import org.dreeam.leaf.config.modules.misc.SentryDSN;
+import org.slf4j.Logger;
 
 public class PufferfishSentryAppender extends AbstractAppender {
 
-    private static final Logger LOGGER = LogManager.getLogger(PufferfishSentryAppender.class.getSimpleName());
+    private static final Logger LOGGER = LogUtils.getClassLogger();
     private static final Gson GSON = new Gson();
     private final Level logLevel;
 

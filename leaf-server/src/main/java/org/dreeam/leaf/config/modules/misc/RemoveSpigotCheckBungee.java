@@ -1,19 +1,19 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class RemoveSpigotCheckBungee extends ConfigModules {
+public class RemoveSpigotCheckBungee extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".remove-spigot-check-bungee-config";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".remove-spigot-check-bungee-config";
     }
 
     public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath(), enabled, config.pickStringRegionBased("""
+        enabled = globalConfig.getBoolean(basePath(), enabled, globalConfig.pickStringRegionBased("""
                 Enable player enter backend server through proxy
                 without backend server enabling its bungee mode.""",
             """

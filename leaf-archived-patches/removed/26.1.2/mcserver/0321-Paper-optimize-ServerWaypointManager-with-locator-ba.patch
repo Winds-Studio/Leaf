@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Owen1212055 <23108066+Owen1212055@users.noreply.github.com>
+Date: Sat, 4 Apr 2026 22:14:19 -0400
+Subject: [PATCH] Paper: optimize ServerWaypointManager with locator bar
+ disabled
+
+Removed since Leaf 26.1.2, optimized in Paper
+
+Original license: GPL-3.0-only
+Original project: https://github.com/PaperMC/Paper
+Paper commit: https://github.com/PaperMC/Paper/commit/7e34fba07666e93a4dd066d97b6373a18eb0f570
+
+Backported from Paper 26.1.1
+
+The waypoint system iterates over each player for running waypoint calculations. This, most notably, is done on setPosRaw
+which is executed twice for each player (one for non players).
+This results in every time a player moves, it iterates over each player twice.
+
+So instead, we cache the game rule and instead use this to prevent iterating over all the players and avoid the redundant
+connection logic checks.
+
+This performance issue is most noticeable with many players on the same level.
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index cfd43f555d3f648ef08b20667135d8f5a658f400..5b4aa5a7e3ce6788ff9cb6468df34126de3bda45 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -3055,6 +3055,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         } else if (rule == GameRules.LOCATOR_BAR) {
+             // this.getAllLevels().forEach(serverLevel -> { // Paper - per-world game rules
+                 ServerWaypointManager waypointManager = serverLevel.getWaypointManager();
++                waypointManager.locatorBarEnabled = (Boolean) value; // Paper - optimize ServerWaypointManager with locator bar disabled
+                 if ((Boolean)value) {
+                     serverLevel.players().forEach(waypointManager::updatePlayer);
+                 } else {
+diff --git a/net/minecraft/server/waypoints/ServerWaypointManager.java b/net/minecraft/server/waypoints/ServerWaypointManager.java
+index 56dd9ff0bd35a7d20ef0aa8b465708029b01bea9..60208e0385d6a4c5f8f70dec2e2778f4d3070bdd 100644
+--- a/net/minecraft/server/waypoints/ServerWaypointManager.java
++++ b/net/minecraft/server/waypoints/ServerWaypointManager.java
+@@ -19,16 +19,19 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     private final Set<WaypointTransmitter> waypoints = new HashSet<>();
+     private final Set<ServerPlayer> players = new HashSet<>();
+     private final Table<ServerPlayer, WaypointTransmitter, WaypointTransmitter.Connection> connections = HashBasedTable.create();
++    public boolean locatorBarEnabled; // Paper - optimize ServerWaypointManager with locator bar disabled - Avoid a gamerule lookup for each player
+ 
+     // Leaf start - SparklyPaper - parallel world ticking
+     private final net.minecraft.server.level.ServerLevel level;
+     public ServerWaypointManager(net.minecraft.server.level.ServerLevel level) {
+         this.level = level;
++        this.locatorBarEnabled = level.getGameRules().get(GameRules.LOCATOR_BAR); // Paper - optimize ServerWaypointManager with locator bar disabled
+     }
+     // Leaf end - SparklyPaper - parallel world ticking
+ 
+     @Override
+     public void trackWaypoint(WaypointTransmitter waypoint) {
++        if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot track waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.waypoints.add(waypoint);
+ 
+@@ -39,6 +42,7 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+ 
+     @Override
+     public void updateWaypoint(WaypointTransmitter waypoint) {
++        if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         if (this.waypoints.contains(waypoint)) {
+             Map<ServerPlayer, WaypointTransmitter.Connection> map = Tables.transpose(this.connections).row(waypoint);
+@@ -63,6 +67,7 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void addPlayer(ServerPlayer player) {
++        if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot add player to waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         this.players.add(player);
+ 
+@@ -76,6 +81,7 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+     }
+ 
+     public void updatePlayer(ServerPlayer player) {
++        if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot update player for waypoints off-main"); // Leaf - SparklyPaper - parallel world ticking
+         Map<WaypointTransmitter, WaypointTransmitter.Connection> map = this.connections.row(player);
+         SetView<WaypointTransmitter> set = Sets.difference(this.waypoints, map.keySet());
+@@ -101,11 +107,13 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+ 
+     public void breakAllConnections() {
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot break all waypoint connections off-main"); // Leaf - SparklyPaper - parallel world ticking
++        if (!this.locatorBarEnabled || this.connections.isEmpty()) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         this.connections.values().forEach(WaypointTransmitter.Connection::disconnect);
+         this.connections.clear();
+     }
+ 
+     public void remakeConnections(WaypointTransmitter waypoint) {
++        if (!this.locatorBarEnabled) return; // Paper - optimize ServerWaypointManager with locator bar disabled
+         if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) { ca.spottedleaf.moonrise.common.util.TickThread.ensureTickThread(this.level, "Cannot remake waypoint connections off-main"); } // Leaf - SparklyPaper - parallel world ticking
+         for (ServerPlayer serverPlayer : this.players) {
+             this.createConnection(serverPlayer, waypoint);
+@@ -116,8 +124,11 @@ public class ServerWaypointManager implements WaypointManager<WaypointTransmitte
+         return this.waypoints;
+     }
+ 
+-    private static boolean isLocatorBarEnabledFor(ServerPlayer player) {
+-        return player.level().getGameRules().get(GameRules.LOCATOR_BAR);
++    // Paper start - optimize ServerWaypointManager with locator bar disabled
++    // Avoid a gamerule lookup for each player
++    private boolean isLocatorBarEnabledFor(final ServerPlayer player) {
++        return locatorBarEnabled;
++        // Paper end - optimize ServerWaypointManager with locator bar disabled
+     }
+ 
+     private void createConnection(ServerPlayer player, WaypointTransmitter waypoint) {

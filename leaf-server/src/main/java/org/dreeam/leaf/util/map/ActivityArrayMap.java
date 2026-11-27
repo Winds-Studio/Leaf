@@ -354,7 +354,9 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
 
         @Override
         public int hashCode() {
-            return Objects.hashCode(key) ^ Objects.hashCode(value);
+            // Consistent with getKey()/equals(): the entry key is the Activity, not
+            // its raw registry id, so hash the Activity per the Map.Entry contract.
+            return Objects.hashCode(RegistryTypeManager.ACTIVITY_DIRECT[key]) ^ Objects.hashCode(value);
         }
 
         @Override
@@ -383,7 +385,10 @@ public final class ActivityArrayMap<V> implements Map<Activity, V> {
     public int hashCode() {
         int hash = 0;
         for (int i = 0; i < size; i++) {
-            hash += Objects.hashCode(k[i]) ^ Objects.hashCode(v[i]);
+            // Map.hashCode sums entry hashes, and an entry's key hash is the
+            // Activity's hashCode(), not its raw registry id, so this stays
+            // consistent with equals() (which compares against arbitrary maps).
+            hash += Objects.hashCode(RegistryTypeManager.ACTIVITY_DIRECT[k[i]]) ^ Objects.hashCode(v[i]);
         }
         return hash;
     }

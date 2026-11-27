@@ -1,18 +1,18 @@
 package org.dreeam.leaf.config.modules.gameplay;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class UseSpigotItemMergingMech extends ConfigModules {
+public class UseSpigotItemMergingMech extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.GAMEPLAY.getBaseKeyName() + ".use-spigot-item-merging-mechanism";
+    public String basePath() {
+        return ConfigCategory.GAMEPLAY.basePath() + ".use-spigot-item-merging-mechanism";
     }
 
     public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath(), enabled);
+        enabled = globalConfig.getBoolean(basePath(), enabled);
     }
 }

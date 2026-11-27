@@ -1,6 +1,6 @@
 package org.dreeam.leaf.command.subcommands;
 
-import ca.spottedleaf.moonrise.common.time.TickData;
+import ca.spottedleaf.common.time.TickData;
 import net.kyori.adventure.text.Component;
 import net.minecraft.server.MinecraftServer;
 import org.dreeam.leaf.command.LeafCommand;

@@ -16,14 +16,15 @@ public class SparklyPaperServerLevelTickExecutorThreadFactory implements ThreadF
 
     @Override
     public Thread newThread(Runnable runnable) {
-        TickThread.ServerLevelTickThread tickThread = new TickThread.ServerLevelTickThread(runnable, "Leaf World Ticking Thread - " + this.worldName);
+        TickThread.ServerLevelTickThread tickThread = new TickThread.ServerLevelTickThread(runnable, "Leaf Level Ticking Thread - " + this.worldName);
 
         if (tickThread.isDaemon()) {
             tickThread.setDaemon(false);
         }
 
-        if (tickThread.getPriority() != 5) {
-            tickThread.setPriority(5);
+        tickThread.setPriority(Thread.NORM_PRIORITY + 1);
+        if (Runtime.getRuntime().availableProcessors() > 4) {
+            tickThread.setPriority(7);
         }
 
         return tickThread;

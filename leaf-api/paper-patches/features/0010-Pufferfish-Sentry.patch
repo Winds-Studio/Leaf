@@ -1,0 +1,235 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Raneri <kevin.raneri@gmail.com>
+Date: Tue, 9 Nov 2021 14:01:56 -0500
+Subject: [PATCH] Pufferfish: Sentry
+
+Original license: GPL-3.0-only
+Original project: https://github.com/pufferfish-gg/Pufferfish
+
+diff --git a/src/main/java/gg/pufferfish/pufferfish/sentry/SentryContext.java b/src/main/java/gg/pufferfish/pufferfish/sentry/SentryContext.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f607154e5fd8caa82d1cb81da717125c1d8fc84f
+--- /dev/null
++++ b/src/main/java/gg/pufferfish/pufferfish/sentry/SentryContext.java
+@@ -0,0 +1,171 @@
++package gg.pufferfish.pufferfish.sentry;
++
++import com.google.gson.Gson;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Modifier;
++import java.util.Map;
++import java.util.TreeMap;
++
++import org.apache.logging.log4j.ThreadContext;
++import org.jspecify.annotations.NullMarked;
++import org.jspecify.annotations.NullUnmarked;
++import org.jspecify.annotations.Nullable;
++import org.bukkit.command.Command;
++import org.bukkit.command.CommandSender;
++import org.bukkit.entity.Player;
++import org.bukkit.event.Event;
++import org.bukkit.event.player.PlayerEvent;
++import org.bukkit.plugin.Plugin;
++import org.bukkit.plugin.RegisteredListener;
++
++@NullMarked
++public class SentryContext {
++
++    private static final Gson GSON = new Gson();
++
++    public static void setPluginContext(@Nullable Plugin plugin) {
++        if (plugin != null) {
++            ThreadContext.put("pufferfishsentry_pluginname", plugin.getName());
++            ThreadContext.put("pufferfishsentry_pluginversion", plugin.getPluginMeta().getVersion());
++        }
++    }
++
++    public static void removePluginContext() {
++        ThreadContext.remove("pufferfishsentry_pluginname");
++        ThreadContext.remove("pufferfishsentry_pluginversion");
++    }
++
++    public static void setSenderContext(@Nullable CommandSender sender) {
++        if (sender != null) {
++            ThreadContext.put("pufferfishsentry_playername", sender.getName());
++            if (sender instanceof Player player) {
++                ThreadContext.put("pufferfishsentry_playerid", player.getUniqueId().toString());
++            }
++        }
++    }
++
++    public static void removeSenderContext() {
++        ThreadContext.remove("pufferfishsentry_playername");
++        ThreadContext.remove("pufferfishsentry_playerid");
++    }
++
++    public static void setEventContext(Event event, RegisteredListener registration) {
++        setPluginContext(registration.getPlugin());
++
++        try {
++            // Find the player that was involved with this event
++            Player player = null;
++            if (event instanceof PlayerEvent playerEvent) {
++                player = playerEvent.getPlayer();
++            } else {
++                Class<? extends Event> eventClass = event.getClass();
++
++                Field playerField = null;
++
++                for (Field field : eventClass.getDeclaredFields()) {
++                    if (field.getType().equals(Player.class)) {
++                        playerField = field;
++                        break;
++                    }
++                }
++
++                if (playerField != null) {
++                    playerField.setAccessible(true);
++                    player = (Player) playerField.get(event);
++                }
++            }
++
++            if (player != null) {
++                setSenderContext(player);
++            }
++        } catch (Exception ignored) {
++        } // We can't really safely log exceptions.
++
++        ThreadContext.put("pufferfishsentry_eventdata", GSON.toJson(serializeFields(event)));
++    }
++
++    public static void removeEventContext() {
++        removePluginContext();
++        removeSenderContext();
++        ThreadContext.remove("pufferfishsentry_eventdata");
++    }
++
++    private static Map<String, String> serializeFields(Object object) {
++        Map<String, String> fields = new TreeMap<>();
++        fields.put("_class", object.getClass().getName());
++        for (Field declaredField : object.getClass().getDeclaredFields()) {
++            try {
++                if (Modifier.isStatic(declaredField.getModifiers())) {
++                    continue;
++                }
++
++                String fieldName = declaredField.getName();
++                if (fieldName.equals("handlers")) {
++                    continue;
++                }
++                declaredField.setAccessible(true);
++                Object value = declaredField.get(object);
++                if (value != null) {
++                    fields.put(fieldName, value.toString());
++                } else {
++                    fields.put(fieldName, "<null>");
++                }
++            } catch (Exception ignored) {
++            } // We can't really safely log exceptions.
++        }
++        return fields;
++    }
++
++    // I don't know what it used for
++    @NullUnmarked
++    @SuppressWarnings("unused")
++    public static class State {
++
++        private Plugin plugin;
++        private Command command;
++        private String commandLine;
++        private Event event;
++        private RegisteredListener registeredListener;
++
++        public Plugin getPlugin() {
++            return plugin;
++        }
++
++        public void setPlugin(Plugin plugin) {
++            this.plugin = plugin;
++        }
++
++        public Command getCommand() {
++            return command;
++        }
++
++        public void setCommand(Command command) {
++            this.command = command;
++        }
++
++        public String getCommandLine() {
++            return commandLine;
++        }
++
++        public void setCommandLine(String commandLine) {
++            this.commandLine = commandLine;
++        }
++
++        public Event getEvent() {
++            return event;
++        }
++
++        public void setEvent(Event event) {
++            this.event = event;
++        }
++
++        public RegisteredListener getRegisteredListener() {
++            return registeredListener;
++        }
++
++        public void setRegisteredListener(RegisteredListener registeredListener) {
++            this.registeredListener = registeredListener;
++        }
++    }
++}
+diff --git a/src/main/java/org/bukkit/plugin/SimplePluginManager.java b/src/main/java/org/bukkit/plugin/SimplePluginManager.java
+index d1a13d8893ffbbd2a3f90ec8f89bd584ef96032e..8eef253214979b22ca723f8a89b9fcc5aba92cd9 100644
+--- a/src/main/java/org/bukkit/plugin/SimplePluginManager.java
++++ b/src/main/java/org/bukkit/plugin/SimplePluginManager.java
+@@ -596,7 +596,9 @@ public final class SimplePluginManager implements PluginManager {
+ 
+     // Paper start
+     private void handlePluginException(String msg, Throwable ex, Plugin plugin) {
++        gg.pufferfish.pufferfish.sentry.SentryContext.setPluginContext(plugin); // Pufferfish
+         server.getLogger().log(Level.SEVERE, msg, ex);
++        gg.pufferfish.pufferfish.sentry.SentryContext.removePluginContext(); // Pufferfish
+         callEvent(new com.destroystokyo.paper.event.server.ServerExceptionEvent(new com.destroystokyo.paper.exception.ServerPluginEnableDisableException(msg, ex, plugin)));
+     }
+     // Paper end
+@@ -666,9 +668,11 @@ public final class SimplePluginManager implements PluginManager {
+                             ));
+                 }
+             } catch (Throwable ex) {
++                gg.pufferfish.pufferfish.sentry.SentryContext.setEventContext(event, registration); // Pufferfish
+                 // Paper start - error reporting
+                 String msg = "Could not pass event " + event.getEventName() + " to " + registration.getPlugin().getDescription().getFullName();
+                 server.getLogger().log(Level.SEVERE, msg, ex);
++                gg.pufferfish.pufferfish.sentry.SentryContext.removeEventContext(); // Pufferfish
+                 if (!(event instanceof com.destroystokyo.paper.event.server.ServerExceptionEvent)) { // We don't want to cause an endless event loop
+                     callEvent(new com.destroystokyo.paper.event.server.ServerExceptionEvent(new com.destroystokyo.paper.exception.ServerEventException(msg, ex, registration.getPlugin(), registration.getListener(), event)));
+                 }
+diff --git a/src/main/java/org/bukkit/plugin/java/JavaPluginLoader.java b/src/main/java/org/bukkit/plugin/java/JavaPluginLoader.java
+index 40913c3a382f7417058f61e4084415b44477c0b0..498e3f781368cca3b0051424903e417c2a666acb 100644
+--- a/src/main/java/org/bukkit/plugin/java/JavaPluginLoader.java
++++ b/src/main/java/org/bukkit/plugin/java/JavaPluginLoader.java
+@@ -341,7 +341,9 @@ public final class JavaPluginLoader implements PluginLoader {
+             try {
+                 jPlugin.setEnabled(true);
+             } catch (Throwable ex) {
++                gg.pufferfish.pufferfish.sentry.SentryContext.setPluginContext(plugin); // Pufferfish
+                 server.getLogger().log(Level.SEVERE, "Error occurred while enabling " + plugin.getDescription().getFullName() + " (Is it up to date?)", ex);
++                gg.pufferfish.pufferfish.sentry.SentryContext.removePluginContext(); // Pufferfish
+             }
+ 
+             // Perhaps abort here, rather than continue going, but as it stands,
+@@ -366,7 +368,9 @@ public final class JavaPluginLoader implements PluginLoader {
+             try {
+                 jPlugin.setEnabled(false);
+             } catch (Throwable ex) {
++                gg.pufferfish.pufferfish.sentry.SentryContext.setPluginContext(plugin); // Pufferfish
+                 server.getLogger().log(Level.SEVERE, "Error occurred while disabling " + plugin.getDescription().getFullName() + " (Is it up to date?)", ex);
++                gg.pufferfish.pufferfish.sentry.SentryContext.removePluginContext(); // Pufferfish
+             }
+ 
+             if (cloader instanceof PluginClassLoader) {

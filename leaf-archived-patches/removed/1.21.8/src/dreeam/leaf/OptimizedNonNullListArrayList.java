@@ -15,7 +15,7 @@ import javax.annotation.Nullable;
 
 /**
  * optimized version of ObjectArrayList for NonNullList
- * Licensed under: LGPL-3.0 (https://www.gnu.org/licenses/lgpl-3.0.html)
+ * Licensed under: LGPL-3.0-only (https://www.gnu.org/licenses/lgpl-3.0.html)
  * By: @taiyouh at discord
  */
 public class OptimizedNonNullListArrayList<E> extends AbstractObjectList<E>

@@ -1,12 +1,12 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class OptimizeBlockEntities extends ConfigModules {
+public class OptimizeBlockEntities extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName();
+    public String basePath() {
+        return ConfigCategory.PERF.basePath();
     }
 
     public static boolean enabled = true;
@@ -14,11 +14,11 @@ public class OptimizeBlockEntities extends ConfigModules {
     @Override
     public void onLoaded() {
         // Transfer old config
-        Boolean optimiseBlockEntities = config.getBoolean(getBasePath() + ".optimise-block-entities");
+        Boolean optimiseBlockEntities = globalConfig.getBoolean(basePath() + ".optimise-block-entities");
         if (optimiseBlockEntities != null && optimiseBlockEntities) {
             enabled =  true;
         }
 
-        enabled = config.getBoolean(getBasePath() + ".optimize-block-entities", enabled);
+        enabled = globalConfig.getBoolean(basePath() + ".optimize-block-entities", enabled);
     }
 }

@@ -1,20 +1,20 @@
 package org.dreeam.leaf.config.modules.opt;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
-public class OptimizedPoweredRails extends ConfigModules {
+public class OptimizedPoweredRails extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.PERF.getBaseKeyName() + ".optimized-powered-rails";
+    public String basePath() {
+        return ConfigCategory.PERF.basePath() + ".optimized-powered-rails";
     }
 
     public static boolean enabled = false;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath(), enabled,
-            config.pickStringRegionBased(
+        enabled = globalConfig.getBoolean(basePath(), enabled,
+            globalConfig.pickStringRegionBased(
                 """
                     Whether to use optimized powered rails.
                     The implementation is based on RailOptimization made by GitHub@FxMorin""",

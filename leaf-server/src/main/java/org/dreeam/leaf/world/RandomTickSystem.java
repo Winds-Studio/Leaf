@@ -13,6 +13,7 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.levelgen.BitRandomSource;
 import net.minecraft.world.level.material.FluidState;
+import org.dreeam.leaf.config.modules.gameplay.IceAndSnowChance;
 
 public final class RandomTickSystem {
     private static final long SCALE = 0x100000L;
@@ -35,17 +36,19 @@ public final class RandomTickSystem {
     public void tick(ServerLevel world) {
         queue.clear();
 
-        final BitRandomSource random = world.simpleRandom;
         final ReferenceList<LevelChunk> entityTickingChunks = world.moonrise$getEntityTickingChunks();
-        final int randomTickSpeed = world.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
         final LevelChunk[] raw = entityTickingChunks.getRawDataUnchecked();
         final int size = entityTickingChunks.size();
         final boolean disableIceAndSnow = world.paperConfig().environment.disableIceAndSnow;
+        final int randomTickSpeed = world.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
         if (randomTickSpeed <= 0) {
             return;
         }
+
+        final BitRandomSource random = world.simpleRandom;
         if (!disableIceAndSnow) {
-            iceSnow(world, size, randomTickSpeed, random, raw);
+            final int speed = IceAndSnowChance.iceAndSnowChance * 2 - 1;
+            iceSnow(world, size, randomTickSpeed, Math.max(1, speed), random, raw);
         }
         final long weightsSum = collectTickingChunks(size, random, raw, randomTickSpeed);
         if (weightsSum != 0L) {
@@ -53,10 +56,20 @@ public final class RandomTickSystem {
         }
         final long[] q = queue.elements();
         final int minY = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection(world) << 4;
-        for (int k = 0, len = queue.size(); k < len; ++k) {
-            final long packed = q[k];
-            final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
-            tickBlock(world, chunk, (int) (packed & SECTION_MASK), random, minY);
+        final boolean doubleTickFluids = !ca.spottedleaf.moonrise.common.PlatformHooks.get().configFixMC224294();
+        if (org.dreeam.leaf.config.modules.opt.MutableBlockPos.enabled) {
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+            for (int k = 0, len = queue.size(); k < len; ++k) {
+                final long packed = q[k];
+                final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
+                tickBlockMutable(world, chunk, (int) (packed & SECTION_MASK), random, minY, doubleTickFluids, pos);
+            }
+        } else {
+            for (int k = 0, len = queue.size(); k < len; ++k) {
+                final long packed = q[k];
+                final LevelChunk chunk = raw[(int) (packed >>> SECTION_BITS)];
+                tickBlock(world, chunk, (int) (packed & SECTION_MASK), random, minY, doubleTickFluids);
+            }
         }
     }
 
@@ -72,7 +85,9 @@ public final class RandomTickSystem {
         final long[] s = samples;
         long accumulated = w[0];
         final long spoke = weightsSum / chosen;
-        if (spoke == 0L) return;
+        if (spoke == 0L) {
+            return;
+        }
 
         long current = boundedNextLong(random, spoke);
         int i = 0;
@@ -209,12 +224,12 @@ public final class RandomTickSystem {
         }
     }
 
-    private static void iceSnow(ServerLevel world, int size, int randomTickSpeed, BitRandomSource random, LevelChunk[] raw) {
-        int currentIceAndSnowTick = random.nextInt(48 * 16);
+    private static void iceSnow(ServerLevel world, int size, int tickSpeed, int speed, BitRandomSource random, LevelChunk[] raw) {
+        int rand = 1 + boundedNextInt(random, speed);
         for (int i = 0; i < size; i++) {
-            currentIceAndSnowTick -= randomTickSpeed;
-            if (currentIceAndSnowTick <= 0) {
-                currentIceAndSnowTick = random.nextInt(48 * 16);
+            rand -= tickSpeed;
+            if (rand <= 0) {
+                rand = 1 + boundedNextInt(random, speed);
                 LevelChunk chunk = raw[i];
                 ChunkPos pos = chunk.getPos();
                 world.tickPrecipitation(world.getBlockRandomPos(pos.getMinBlockX(), 0, pos.getMinBlockZ(), 15));
@@ -222,17 +237,15 @@ public final class RandomTickSystem {
         }
     }
 
-    private static void tickBlock(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection) {
+    private static void tickBlockMutable(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection, boolean doubleTickFluids, BlockPos.MutableBlockPos pos) {
         LevelChunkSection section = chunk.getSection(sectionIdx);
         ShortList list = section.moonrise$getTickingBlockList();
         int size = list.size();
         if (size == 0) return;
         short location = list.getRaw(boundedNextInt(random, size));
-        BlockState state = section.states.get(location);
-        final BlockPos pos = new BlockPos((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
+        BlockState state = section.getStates().get(location);
+        pos.set((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
         state.randomTick(world, pos, random);
-
-        final boolean doubleTickFluids = !ca.spottedleaf.moonrise.common.PlatformHooks.get().configFixMC224294();
         if (doubleTickFluids) {
             final FluidState fluidState = state.getFluidState();
             if (fluidState.isRandomlyTicking()) {
@@ -241,6 +254,24 @@ public final class RandomTickSystem {
         }
     }
 
+    private static void tickBlock(ServerLevel world, LevelChunk chunk, int sectionIdx, BitRandomSource random, int minSection, boolean doubleTickFluids) {
+        LevelChunkSection section = chunk.getSection(sectionIdx);
+        ShortList list = section.moonrise$getTickingBlockList();
+        int size = list.size();
+        if (size == 0) return;
+        short location = list.getRaw(boundedNextInt(random, size));
+        BlockState state = section.getStates().get(location);
+        BlockPos pos = new BlockPos((location & 15) | (chunk.locX << 4), (location >>> 8) | (minSection + (sectionIdx << 4)), ((location >>> 4) & 15) | (chunk.locZ << 4));
+        state.randomTick(world, pos, random);
+        if (doubleTickFluids) {
+            final FluidState fluidState = state.getFluidState();
+            if (fluidState.isRandomlyTicking()) {
+                fluidState.randomTick(world, pos, random);
+            }
+        }
+    }
+
+    // bound > 0
     private static long boundedNextLong(BitRandomSource rng, long bound) {
         final long m = bound - 1L;
         long r = rng.nextLong();
@@ -256,6 +287,7 @@ public final class RandomTickSystem {
         return r;
     }
 
+    // bound > 0
     private static int boundedNextInt(BitRandomSource rng, int bound) {
         final int m = bound - 1;
         int r = rng.nextInt();

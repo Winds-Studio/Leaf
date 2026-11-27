@@ -1,0 +1,79 @@
+name: Build Leaf 26.3
+
+on:
+  push:
+    branches: [ "ver/26.3" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Run workflow only on main repo
+    if: ${{ github.repository == 'Winds-Studio/Leaf' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      MC_VERSION: "26.3"
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Checkout repository
+        uses: useblacksmith/checkout@v1
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: '25'
+          cache: gradle
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "no-reply@github.com"
+          git config --global user.name "Github Actions"
+
+      - name: Apply patches
+        run: ./gradlew applyAllPatches --stacktrace --no-daemon
+      - name: Create LeafclipJar
+        run: ./gradlew createLeafclipJar --stacktrace --no-daemon
+
+      - name: Prepare release notes and artifacts
+        run: |
+          chmod +x ./scripts/prepareRelease.sh
+          ./scripts/prepareRelease.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          MC_VERSION: ${{ env.MC_VERSION }}
+          BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
+
+      - name: Release Leaf
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Leaf ${{ env.MC_VERSION }}"
+          tag_name: "ver-${{ env.MC_VERSION }}"
+          files: "./leaf-${{ env.MC_VERSION }}-${{ env.BUILD_NUMBER }}.jar"
+          body_path: "./release_notes.md"
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          target_commitish: "${{ github.sha }}"
+          draft: false
+          prerelease: false
+
+      - name: Publish to download API
+        env:
+          FILL_USERNAME: ${{ secrets.FILL_USERNAME }}
+          FILL_PASSWORD: ${{ secrets.FILL_PASSWORD }}
+          FILL_USER_AGENT: "Leaf-CI/${{ env.MC_VERSION }}-${{ env.BUILD_NUMBER }} (https://github.com/Winds-Studio/Leaf)"
+        run: |
+          node scripts/publish-build.mjs --api https://dl.leafmc.one --project leaf \
+            --family "$(echo "$MC_VERSION" | cut -d. -f1-2)" --version "$MC_VERSION" \
+            --build "$BUILD_NUMBER" \
+            --repo . --download "server:default=./leaf-$MC_VERSION-$BUILD_NUMBER.jar" \
+            --channel ALPHA
+
+      - name: Notify Leaf website builds fetch
+        env:
+          BUILD_WEBHOOK_TOKEN: ${{ secrets.BUILD_WEBHOOK_TOKEN }}
+        run: |
+          curl -fsS -X POST \
+          -H "Authorization: Bearer $BUILD_WEBHOOK_TOKEN" \
+          https://www.leafmc.one/api/webhooks/build-published

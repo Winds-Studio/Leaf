@@ -2,16 +2,18 @@ package org.dreeam.leaf.async.tracker;
 
 import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
-import ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity;
+import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import org.dreeam.leaf.util.EntitySlice;
+import org.dreeam.leaf.util.TrackerSlice;
+import org.jspecify.annotations.NullMarked;
 
 import java.util.concurrent.Callable;
 
-public record TrackerTask(ServerLevel world, EntitySlice entities) implements Callable<TrackerCtx> {
+@NullMarked
+public record TrackerTask(ServerLevel world, TrackerSlice entities, Reference2ReferenceOpenHashMap<ChunkMap.TrackedEntity, TrackerInput> cap) implements Callable<TrackerCtx> {
 
     @Override
     public TrackerCtx call() throws Exception {
@@ -19,24 +21,29 @@ public record TrackerTask(ServerLevel world, EntitySlice entities) implements Ca
         final Entity[] raw = entities.array();
         for (int i = entities.start(); i < entities.end(); i++) {
             final Entity entity = raw[i];
-            final ChunkMap.TrackedEntity tracker = ((EntityTrackerEntity) entity).moonrise$getTrackedEntity();
-            // removed in world if null
-            if (tracker == null) {
+            final ChunkMap.TrackedEntity tracker = entity.moonrise$getTrackedEntity();
+            if (tracker == null || !tracker.serverEntity.leaf$isInLevel(this.world)) {
                 continue;
             }
             if (tracker.getClass() != ChunkMap.TrackedEntity.class) {
-                ctx.citizensEntity(tracker);
+                ctx.pluginEntity(tracker);
                 continue;
             }
-            ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
-            boolean flag = tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
-            if (!flag) {
-                FullChunkStatus status = ((ChunkSystemEntity) entity).moonrise$getChunkStatus();
-                // removed in world if null
-                flag = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
+
+            TrackerInput input = tracker.serverEntity.leaf$trackerInput;
+            TrackerInput patch = cap.get(tracker);
+            if (patch != null) {
+                input.apply(patch);
             }
-            if (flag) {
-                tracker.serverEntity.leaf$sendChanges(ctx, tracker, false);
+
+            ChunkData chunkData = ((ChunkSystemEntity) entity).moonrise$getChunkData();
+            boolean sendChanges = tracker.leaf$tick(ctx, chunkData == null ? null : chunkData.nearbyPlayers);
+            if (!sendChanges) {
+                FullChunkStatus status = entity.moonrise$getChunkStatus();
+                sendChanges = status != null && status.isOrAfter(FullChunkStatus.ENTITY_TICKING);
+            }
+            if (sendChanges || entity.needsSync) {
+                tracker.serverEntity.leaf$sendChanges(ctx, tracker, input, false);
             }
         }
         return ctx;

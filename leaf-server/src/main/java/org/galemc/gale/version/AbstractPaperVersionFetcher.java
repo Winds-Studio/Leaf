@@ -126,7 +126,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
                 case 0 -> apiResult.ifPresent(result -> {
                     COMPONENT_LOGGER.warn(text("*************************************************************************************"));
                     COMPONENT_LOGGER.warn(text("You are running the latest build for your Minecraft version (" + BUILD_INFO.minecraftVersionId() + ")"));
-                    COMPONENT_LOGGER.warn(text("However, you are " + result.distance() + " release(s) behind the latest stable release (" + result.latestVersion() + ")!"));
+                    COMPONENT_LOGGER.warn(text("However, you are " + result.distance() + " release" + (result.distance() == 1 ? "" : "s") + " behind the latest stable release (" + result.latestVersion() + ")!"));
                     COMPONENT_LOGGER.warn(text("It is recommended that you update as soon as possible"));
                     COMPONENT_LOGGER.warn(text(PaperVersionFetcher.DOWNLOAD_PAGE));
                     COMPONENT_LOGGER.warn(text("*************************************************************************************"));
@@ -134,10 +134,11 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
                 case DISTANCE_UNKNOWN -> COMPONENT_LOGGER.warn(text("*** You are running an unknown version! Cannot fetch version info ***"));
                 default -> {
                     if (apiResult.isPresent()) {
-                        COMPONENT_LOGGER.warn(text("*** You are running an outdated version of Minecraft, which is " + apiResult.get().distance() + " release(s) and " + distance + " build(s) behind!"));
+                        final MinecraftVersionFetcher result = apiResult.get();
+                        COMPONENT_LOGGER.warn(text("*** You are running an outdated version of Minecraft, which is " + result.distance() + " release" + (result.distance() == 1 ? "" : "s") + " and " + distance + " build" + (distance == 1 ? "" : "s") + " behind!"));
                         COMPONENT_LOGGER.warn(text("*** Please update to the latest stable version on " + PaperVersionFetcher.DOWNLOAD_PAGE + " ***"));
                     } else {
-                        COMPONENT_LOGGER.info(text("*** Currently you are " + distance + " build(s) behind ***"));
+                        COMPONENT_LOGGER.info(text("*** Currently you are " + distance + " build" + (distance == 1 ? "" : "s") + " behind ***"));
                         COMPONENT_LOGGER.info(text("*** It is highly recommended to download the latest build from " + PaperVersionFetcher.DOWNLOAD_PAGE + " ***"));
                     }
                 }
@@ -204,6 +205,11 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
                                 final int currentIndex = versionList.indexOf(currentVersion);
                                 final int latestIndex = versionList.indexOf(latestVersion);
                                 final int distance = currentIndex - latestIndex;
+                                if (distance < 0) {
+                                    // Avoid logging warnings for early unpublished snapshot builds
+                                    return Optional.empty();
+                                }
+
                                 return Optional.of(new MinecraftVersionFetcher(latestVersion, distance));
                             }
                         } catch (final JsonSyntaxException ex) {
@@ -260,6 +266,32 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
             .orElseThrow();
     }
 
+    // Leaf start - Fill v3 channel-aware
+    // Only counts the builds in the current channel
+    // Always fetches the latest build for the experimental channel
+    private static int getDistanceFromFillV3Channel(final BufferedReader reader, final int currBuild) {
+        final List<JsonObject> builds = StreamSupport.stream(GSON.fromJson(reader, JsonArray.class).spliterator(), false)
+            .map(JsonElement::getAsJsonObject)
+            .toList();
+        final Optional<JsonObject> current = builds.stream()
+            .filter(build -> build.get("id").getAsInt() == currBuild)
+            .findFirst();
+        if (current.isEmpty()) {
+            return DISTANCE_UNKNOWN;
+        }
+
+        final boolean stable = isStable(current.get());
+        return (int) builds.stream()
+            .filter(build -> build.get("id").getAsInt() > currBuild)
+            .filter(build -> !stable || isStable(build))
+            .count();
+    }
+
+    private static boolean isStable(final JsonObject build) {
+        return "STABLE".equals(build.get("channel").getAsString());
+    }
+    // Leaf end - Fill v3 channel-aware
+
     private static int getLatestBuildFromBibliothekApi(final BufferedReader reader) {
         final JsonArray builds = GSON.fromJson(reader, JsonObject.class).getAsJsonArray("builds");
         return StreamSupport.stream(builds.spliterator(), false)
@@ -278,6 +310,7 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
             if (userAgent != null) connection.setRequestProperty("User-Agent", userAgent); // Gale - branding changes - version fetcher
             connection.setRequestProperty("Accept", "application/json");
             try (final BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                if (apiType == ApiType.FILLV3_CHANNEL_AWARE) return getDistanceFromFillV3Channel(reader, currBuild); // Leaf - Fill v3 channel-aware
                 final int latestBuildId = apiType == ApiType.FILLV3 ? getLatestBuildFromFillV3(reader) : getLatestBuildFromBibliothekApi(reader); // Gale - branding changes - version fetcher
                 return Math.max(latestBuildId - currBuild, 0); // Gale - branding changes - version fetcher
             } catch (final JsonSyntaxException ex) {
@@ -333,8 +366,16 @@ public abstract class AbstractPaperVersionFetcher implements VersionFetcher {
 
     // Gale start - branding changes - version fetcher
     public enum ApiType {
+        // Paper's fill v3
         FILLV3,
+
+        // Paper's fill v3 with channel aware
+        FILLV3_CHANNEL_AWARE, // Leaf - Fill v3 channel-aware
+
+        // Paper's bibliothek v2
         BIBLIOTHEK,
+
+        // GitHub commit based
         GITHUB
     }
     // Gale end - branding changes - version fetcher

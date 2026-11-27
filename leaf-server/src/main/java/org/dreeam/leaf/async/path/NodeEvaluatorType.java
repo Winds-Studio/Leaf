@@ -12,9 +12,11 @@ public enum NodeEvaluatorType {
     FLY;
 
     public static NodeEvaluatorType fromNodeEvaluator(NodeEvaluator nodeEvaluator) {
-        if (nodeEvaluator instanceof SwimNodeEvaluator) return SWIM;
-        if (nodeEvaluator instanceof FlyNodeEvaluator) return FLY;
-        if (nodeEvaluator instanceof AmphibiousNodeEvaluator) return AMPHIBIOUS;
-        return WALK;
+        return switch (nodeEvaluator) {
+            case SwimNodeEvaluator ignored -> SWIM;
+            case FlyNodeEvaluator ignored -> FLY;
+            case AmphibiousNodeEvaluator ignored -> AMPHIBIOUS;
+            default -> WALK;
+        };
     }
 }
