@@ -181,7 +181,7 @@ index ca046e44445c68f430ac1936b1f6312386cd5569..a518b7f52b93fecf034d7695a766b75a
                  // Paper end
                  // CraftBukkit start
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f117684765ecb 100644
+index 099cf0bc7436866abff63ae00056ce972d581db4..8895678a17f8a4233cab004e337e0df82d8b24b3 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -336,6 +336,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
@@ -196,7 +196,7 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f1176
      private long lastMidTickExecute;
      private long lastMidTickExecuteFailure;
  
-+    // Leaf start - Submit heaviest worlds first when worlds exceed PWT threads
++    // Leaf start - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
 +    private static final java.util.Comparator<ServerLevel> PWT$HEAVIEST_FIRST = (a, b) -> Long.compare(b.pwt$lastTickNanos, a.pwt$lastTickNanos);
 +    private final java.util.ArrayList<ServerLevel> pwt$submitOrder = new java.util.ArrayList<>();
 +
@@ -209,7 +209,7 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f1176
 +        sorted.sort(PWT$HEAVIEST_FIRST);
 +        return sorted;
 +    }
-+    // Leaf end - Submit heaviest worlds first when worlds exceed PWT threads
++    // Leaf end - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
 +
 +    // Leaf start - SparklyPaper - parallel world ticking
 +    private boolean pwt$tickLevelMidTickTasks(final ServerLevel world) {
@@ -263,14 +263,17 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f1176
              result = true;
          }
  
-@@ -1828,6 +1861,20 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1828,6 +1861,23 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
      public final io.papermc.paper.threadedregions.EntityScheduler.EntitySchedulerTickList entitySchedulerTickList = new io.papermc.paper.threadedregions.EntityScheduler.EntitySchedulerTickList(); // Paper - optimise Folia entity scheduler
  
 +    // Leaf start - SparklyPaper - parallel world ticking - move level ticking logic out for branch convergence
 +    private void tickLevel(final ServerLevel level, final BooleanSupplier haveTime) {
 +        try {
++            final long levelTickStart = Util.getNanos();
 +            level.tick(haveTime);
++            final long lastLevelTickTime = Util.getNanos() - levelTickStart;
++            level.pwt$lastTickNanos = lastLevelTickTime; // Submit heaviest worlds first when worlds exceed PWT threads
 +        } catch (Throwable t) {
 +            CrashReport report = CrashReport.forThrowable(t, "Exception ticking world");
 +            level.fillReportDetails(report);
@@ -284,7 +287,7 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f1176
      protected void tickChildren(final BooleanSupplier haveTime) {
          ProfilerFiller profiler = Profiler.get();
          this.getPlayerList().getPlayers().forEach(playerx -> playerx.connection.suspendFlushing());
-@@ -1878,27 +1925,52 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1878,27 +1928,52 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          this.updateEffectiveRespawnData();
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
@@ -292,11 +295,11 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f1176
 +        // Leaf start - SparklyPaper - parallel world ticking
 +        final boolean parallelWorldTicking = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled; // Leaf - Avoid allocating world tick queue without PWT
 +        final java.util.ArrayDeque<java.util.concurrent.Future<ServerLevel>> tasks = parallelWorldTicking ? new java.util.ArrayDeque<>() : null; // Leaf - Avoid allocating world tick queue without PWT
-+        // Leaf start - Submit heaviest worlds first when worlds exceed PWT threads
++        // Leaf start - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
 +        final Iterable<ServerLevel> levelsToTick = parallelWorldTicking && this.levels.size() > org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.threads ? this.pwt$levelsHeaviestFirst() : this.getAllLevels();
-+        // Leaf end - Submit heaviest worlds first when worlds exceed PWT threads
++        // Leaf end - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
 +        try {
-+        for (ServerLevel level : levelsToTick) { // Leaf - Submit heaviest worlds first when worlds exceed PWT threads
++        for (ServerLevel level : levelsToTick) { // Leaf - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
              level.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
@@ -342,11 +345,11 @@ index 099cf0bc7436866abff63ae00056ce972d581db4..660aa3a4ccdd466b58de8d4bb40f1176
 +            throw new RuntimeException(e); // Propagate exception
 +        }
 +        // Leaf end - SparklyPaper - parallel world ticking
-+        this.pwt$submitOrder.clear(); // Leaf - Submit heaviest worlds first when worlds exceed PWT threads
++        this.pwt$submitOrder.clear(); // Leaf - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
          this.isIteratingOverLevels = false; // Paper - Throw exception on world create while being ticked
  
          profiler.popPush("connection");
-@@ -1989,6 +2061,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1989,6 +2064,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          Map<ResourceKey<Level>, ServerLevel> oldLevels = this.levels;
          Map<ResourceKey<Level>, ServerLevel> newLevels = Maps.newLinkedHashMap(oldLevels);
          newLevels.remove(level.dimension());
@@ -453,7 +456,7 @@ index e543b992e18c9eb12dd2032aacbf30dcb9dcf412..598e382d5f6c4a243c4e7eff2e06838c
                  continue;
              }
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 66bca6ce0b1f51a3782f675f186908b9d5348b29..12f176994e378fe7f9764bdba6d220a20fb777fe 100644
+index 66bca6ce0b1f51a3782f675f186908b9d5348b29..28e6b67c3b7658563edd16b625bab6ddba81be25 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -197,7 +197,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
@@ -481,7 +484,7 @@ index 66bca6ce0b1f51a3782f675f186908b9d5348b29..12f176994e378fe7f9764bdba6d220a2
      private final ca.spottedleaf.moonrise.patches.chunk_system.io.datacontroller.ChunkDataController chunkDataController;
      private final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkTaskScheduler chunkTaskScheduler;
      private long lastMidTickFailure;
-+    public long pwt$lastTickNanos; // Leaf - Submit heaviest worlds first when worlds exceed PWT threads
++    public long pwt$lastTickNanos; // Leaf - SparklyPaper - parallel world ticking - Submit heaviest worlds first when worlds exceed PWT threads
      private long tickedBlocksOrFluids;
      private final ca.spottedleaf.moonrise.common.misc.NearbyPlayers nearbyPlayers = new ca.spottedleaf.moonrise.common.misc.NearbyPlayers((ServerLevel)(Object)this);
      private static final LevelChunk[] EMPTY_LEVEL_CHUNKS = new LevelChunk[0];
