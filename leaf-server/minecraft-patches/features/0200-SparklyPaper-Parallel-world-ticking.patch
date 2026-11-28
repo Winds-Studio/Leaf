@@ -58,18 +58,87 @@ index 09fe3dc6d661b7f21d899dcb04e249d39cd4b6ba..887854b2c985310bc2ddcb8ff24cc93f
          if (!PlatformHooks.get().allowAsyncTicketUpdates() && isTickThread) {
              TickThread.ensureTickThread("Cannot asynchronously process ticket updates");
 diff --git a/io/papermc/paper/entity/activation/ActivationRange.java b/io/papermc/paper/entity/activation/ActivationRange.java
-index ff46777225fc102e25d4e6ff3a9a3ab748173ca2..45b17a4fbb7f4941f23f5bf4983f9eccf425b73f 100644
+index ff46777225fc102e25d4e6ff3a9a3ab748173ca2..aea5a4c68c014724ad44d36537180ce4ad739ea2 100644
 --- a/io/papermc/paper/entity/activation/ActivationRange.java
 +++ b/io/papermc/paper/entity/activation/ActivationRange.java
-@@ -134,7 +134,7 @@ public final class ActivationRange {
+@@ -95,6 +95,7 @@ public final class ActivationRange {
+     // Gale end - variable entity wake-up duration
+ 
+     static AABB maxBB = new AABB(0, 0, 0, 0, 0, 0);
++    private static final int ACTIVATION_TYPE_COUNT = ActivationType.values().length; // Leaf - SparklyPaper - parallel world ticking
+ 
+     /**
+      * These entities are excluded from Activation range checks.
+@@ -134,7 +135,7 @@ public final class ActivationRange {
       *
       * @param world
       */
 -    public static void activateEntities(final Level world) {
-+    public synchronized static void activateEntities(final Level world) { // Leaf - SparklyPaper - parallel world ticking
++    public static void activateEntities(final Level world) { // Leaf - SparklyPaper - parallel world ticking
          final int miscActivationRange = world.spigotConfig.miscActivationRange;
          final int raiderActivationRange = world.spigotConfig.raiderActivationRange;
          final int animalActivationRange = world.spigotConfig.animalActivationRange;
+@@ -155,6 +156,7 @@ public final class ActivationRange {
+         maxRange = Math.max(maxRange, villagerActivationRange);
+         maxRange = Math.min((world.spigotConfig.simulationDistance << 4) - 8, maxRange);
+ 
++        final AABB[] activationBoxes = new AABB[ACTIVATION_TYPE_COUNT]; // Leaf - SparklyPaper - parallel world ticking
+         for (final Player player : world.players()) {
+             player.activatedTick = MinecraftServer.currentTick;
+             if (world.spigotConfig.ignoreSpectatorActivation && player.isSpectator()) {
+@@ -164,23 +166,26 @@ public final class ActivationRange {
+             if (!player.level().purpurConfig.idleTimeoutTickNearbyEntities && player.isAfk()) continue; // Purpur - AFK API
+ 
+             final int worldHeight = world.getHeight();
+-            ActivationRange.maxBB = player.getBoundingBox().inflate(maxRange, worldHeight, maxRange);
+-            ActivationType.MISC.boundingBox = player.getBoundingBox().inflate(miscActivationRange, worldHeight, miscActivationRange);
+-            ActivationType.RAIDER.boundingBox = player.getBoundingBox().inflate(raiderActivationRange, worldHeight, raiderActivationRange);
+-            ActivationType.ANIMAL.boundingBox = player.getBoundingBox().inflate(animalActivationRange, worldHeight, animalActivationRange);
+-            ActivationType.MONSTER.boundingBox = player.getBoundingBox().inflate(monsterActivationRange, worldHeight, monsterActivationRange);
+-            ActivationType.WATER.boundingBox = player.getBoundingBox().inflate(waterActivationRange, worldHeight, waterActivationRange);
+-            ActivationType.FLYING_MONSTER.boundingBox = player.getBoundingBox().inflate(flyingActivationRange, worldHeight, flyingActivationRange);
+-            ActivationType.VILLAGER.boundingBox = player.getBoundingBox().inflate(villagerActivationRange, worldHeight, villagerActivationRange);
++            // Leaf start - SparklyPaper - parallel world ticking
++            final AABB playerBox = player.getBoundingBox();
++            final AABB maxBB = playerBox.inflate(maxRange, worldHeight, maxRange);
++            activationBoxes[ActivationType.MISC.ordinal()] = playerBox.inflate(miscActivationRange, worldHeight, miscActivationRange);
++            activationBoxes[ActivationType.RAIDER.ordinal()] = playerBox.inflate(raiderActivationRange, worldHeight, raiderActivationRange);
++            activationBoxes[ActivationType.ANIMAL.ordinal()] = playerBox.inflate(animalActivationRange, worldHeight, animalActivationRange);
++            activationBoxes[ActivationType.MONSTER.ordinal()] = playerBox.inflate(monsterActivationRange, worldHeight, monsterActivationRange);
++            activationBoxes[ActivationType.WATER.ordinal()] = playerBox.inflate(waterActivationRange, worldHeight, waterActivationRange);
++            activationBoxes[ActivationType.FLYING_MONSTER.ordinal()] = playerBox.inflate(flyingActivationRange, worldHeight, flyingActivationRange);
++            activationBoxes[ActivationType.VILLAGER.ordinal()] = playerBox.inflate(villagerActivationRange, worldHeight, villagerActivationRange);
+ 
+-            final List<Entity> entities = world.getEntities((Entity) null, ActivationRange.maxBB, e -> true);
++            final List<Entity> entities = world.getEntities((Entity) null, maxBB, e -> true);
++            // Leaf end - SparklyPaper - parallel world ticking
+             final boolean tickMarkers = world.paperConfig().entities.markers.tick;
+             for (final Entity entity : entities) {
+                 if (!tickMarkers && entity instanceof Marker) {
+                     continue;
+                 }
+ 
+-                ActivationRange.activateEntity(entity);
++                ActivationRange.activateEntity(entity, activationBoxes); // Leaf - SparklyPaper - parallel world ticking
+ 
+                 // Pufferfish start
+                 if (org.dreeam.leaf.config.modules.opt.DynamicActivationofBrain.enabled && entity.getType().dabEnabled &&
+@@ -206,13 +211,13 @@ public final class ActivationRange {
+      *
+      * @param entity
+      */
+-    private static void activateEntity(final Entity entity) {
++    private static void activateEntity(final Entity entity, final AABB[] activationBoxes) { // Leaf - SparklyPaper - parallel world ticking
+         if (MinecraftServer.currentTick > entity.activatedTick) {
+             if (entity.defaultActivationState) { // Pufferfish - diff on change
+                 entity.activatedTick = MinecraftServer.currentTick;
+                 return;
+             }
+-            if (entity.activationType.boundingBox.intersects(entity.getBoundingBox())) { // Pufferfish - diff on change
++            if (activationBoxes[entity.activationType.ordinal()].intersects(entity.getBoundingBox())) { // Pufferfish - diff on change // Leaf - SparklyPaper - parallel world ticking
+                 entity.activatedTick = MinecraftServer.currentTick;
+             }
+         }
 diff --git a/io/papermc/paper/redstone/RedstoneWireTurbo.java b/io/papermc/paper/redstone/RedstoneWireTurbo.java
 index ff747a1ecdf3c888bca0d69de4f85dcd810b6139..0838b3d60e94a280a6fdd1aef413078a0ec71a1c 100644
 --- a/io/papermc/paper/redstone/RedstoneWireTurbo.java
