@@ -1297,18 +1297,27 @@ index b11ff87df7b75f2a3065bbed7b13cc52f7df83fc..b1adac6d0303ad2936024461b28e3903
                  return true;
              } else {
 diff --git a/net/minecraft/world/level/block/RedStoneWireBlock.java b/net/minecraft/world/level/block/RedStoneWireBlock.java
-index 6d98bc37d88459d1e0a171b52bbff5810d775c38..ebc43f02c356e94d889e20ed26f66dc216b305a6 100644
+index 6d98bc37d88459d1e0a171b52bbff5810d775c38..8d5f901204ec073f2c97a472d18fd68631893d07 100644
 --- a/net/minecraft/world/level/block/RedStoneWireBlock.java
 +++ b/net/minecraft/world/level/block/RedStoneWireBlock.java
-@@ -65,6 +65,7 @@ public class RedStoneWireBlock extends Block {
+@@ -65,6 +65,16 @@ public class RedStoneWireBlock extends Block {
      private final BlockState crossState;
      private final RedstoneWireEvaluator evaluator = new DefaultRedstoneWireEvaluator(this);
      public boolean shouldSignal = true;
 +    private final ThreadLocal<Boolean> shouldSignalTL = ThreadLocal.withInitial(() -> true); // Leaf - SparklyPaper - parallel world ticking
++
++    // Leaf start - SparklyPaper - parallel world ticking - Per world thread redstone signal flag
++    private boolean currentShouldSignal() {
++        if (Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread) {
++            return thread.redstoneShouldSignal;
++        }
++        return org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal;
++    }
++    // Leaf end - SparklyPaper - parallel world ticking - Per world thread redstone signal flag
  
      @Override
      public MapCodec<RedStoneWireBlock> codec() {
-@@ -282,7 +283,13 @@ public class RedStoneWireBlock extends Block {
+@@ -282,7 +292,13 @@ public class RedStoneWireBlock extends Block {
              if (orientation != null) {
                  source = pos.relative(orientation.getFront().getOpposite());
              }
@@ -1323,7 +1332,7 @@ index 6d98bc37d88459d1e0a171b52bbff5810d775c38..ebc43f02c356e94d889e20ed26f66dc2
              return;
          }
          updatePowerStrength(worldIn, pos, state, orientation, blockAdded);
-@@ -310,7 +317,13 @@ public class RedStoneWireBlock extends Block {
+@@ -310,7 +326,13 @@ public class RedStoneWireBlock extends Block {
                  // [Space Walker] suppress shape updates and emit those manually to
                  // bypass the new neighbor update stack.
                  if (level.setBlock(pos, state, Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_CLIENTS)) {
@@ -1338,7 +1347,7 @@ index 6d98bc37d88459d1e0a171b52bbff5810d775c38..ebc43f02c356e94d889e20ed26f66dc2
                  }
              }
          }
-@@ -327,10 +340,19 @@ public class RedStoneWireBlock extends Block {
+@@ -327,10 +349,24 @@ public class RedStoneWireBlock extends Block {
      }
  
      public int getBlockSignal(Level level, BlockPos pos) {
@@ -1347,7 +1356,12 @@ index 6d98bc37d88459d1e0a171b52bbff5810d775c38..ebc43f02c356e94d889e20ed26f66dc2
 -        this.shouldSignal = true;
 -        return bestNeighborSignal;
 +        // Leaf start - SparklyPaper - parallel world ticking
-+        if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
++        if (Thread.currentThread() instanceof ca.spottedleaf.moonrise.common.util.TickThread.ServerLevelTickThread thread) { // Leaf - SparklyPaper - parallel world ticking - Per world thread redstone signal flag
++            thread.redstoneShouldSignal = false;
++            int bestNeighborSignal = level.getBestNeighborSignal(pos);
++            thread.redstoneShouldSignal = true;
++            return bestNeighborSignal;
++        } else if (org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled) {
 +            this.shouldSignalTL.set(false);
 +            int bestNeighborSignal = level.getBestNeighborSignal(pos);
 +            this.shouldSignalTL.set(true);
@@ -1362,13 +1376,13 @@ index 6d98bc37d88459d1e0a171b52bbff5810d775c38..ebc43f02c356e94d889e20ed26f66dc2
      }
  
      private void checkCornerChangeAt(Level level, BlockPos pos) {
-@@ -421,12 +443,18 @@ public class RedStoneWireBlock extends Block {
+@@ -421,12 +457,18 @@ public class RedStoneWireBlock extends Block {
  
      @Override
      protected int getDirectSignal(BlockState state, BlockGetter level, BlockPos pos, Direction side) {
 -        return !this.shouldSignal ? 0 : state.getSignal(level, pos, side);
 +        // Leaf start - SparklyPaper - parallel world ticking
-+        boolean signal = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal;
++        boolean signal = this.currentShouldSignal(); // Leaf - SparklyPaper - parallel world ticking - Per world thread redstone signal flag
 +        return !signal ? 0 : state.getSignal(level, pos, side);
 +        // Leaf end - SparklyPaper - parallel world ticking
      }
@@ -1377,18 +1391,18 @@ index 6d98bc37d88459d1e0a171b52bbff5810d775c38..ebc43f02c356e94d889e20ed26f66dc2
      protected int getSignal(BlockState state, BlockGetter level, BlockPos pos, Direction side) {
 -        if (this.shouldSignal && side != Direction.DOWN) {
 +        // Leaf start - SparklyPaper - parallel world ticking
-+        final boolean signal = org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal;
++        final boolean signal = this.currentShouldSignal(); // Leaf - SparklyPaper - parallel world ticking - Per world thread redstone signal flag
 +        if (signal && side != Direction.DOWN) {
 +            // Leaf end - SparklyPaper - parallel world ticking
              int powerValue = state.getValue(POWER);
              if (powerValue == 0) {
                  return 0;
-@@ -458,7 +486,7 @@ public class RedStoneWireBlock extends Block {
+@@ -458,7 +500,7 @@ public class RedStoneWireBlock extends Block {
  
      @Override
      protected boolean isSignalSource(BlockState state) {
 -        return this.shouldSignal;
-+        return org.dreeam.leaf.config.modules.async.SparklyPaperParallelWorldTicking.enabled ? this.shouldSignalTL.get() : this.shouldSignal; // Leaf - SparklyPaper - parallel world ticking
++        return this.currentShouldSignal(); // Leaf - SparklyPaper - parallel world ticking - Per world thread redstone signal flag
      }
  
      public static int getColorForPower(int power) {
